@@ -625,6 +625,18 @@ pub fn fill_wildcard_values(
                 ));
             }
         }
+        let st_args = st.args();
+
+        for (st_tmpl_arg, st_arg) in st_tmpl.args.iter().zip(&st_args) {
+            if let Err(st_tmpl_check_error) = check_st_tmpl(st_tmpl_arg, st_arg, wildcard_map) {
+                return Err(Error::statements_dont_match(
+                    st.clone(),
+                    st_tmpl.clone(),
+                    wildcard_map.to_vec(),
+                    st_tmpl_check_error,
+                ));
+            }
+        }
     }
     Ok(())
 }

@@ -1,7 +1,7 @@
 //! Lowering from frontend AST to middleware structures
 //!
 //! This module converts validated frontend AST to middleware data structures.
-//! Currently implements basic 1:1 conversion without automatic predicate splitting.
+//! Supports automatic predicate splitting and multi-batch packing.
 
 use std::{
     collections::{HashMap, HashSet},
@@ -10,31 +10,221 @@ use std::{
 };
 
 use crate::{
-    frontend::{
-        BuilderArg, CustomPredicateBatchBuilder, PredicateOrWildcard, StatementTmplBuilder,
-    },
+    frontend::{BuilderArg, PredicateOrWildcard, StatementTmplBuilder},
     lang::{
         frontend_ast::*,
+        frontend_ast_batch::{self, PredicateBatches},
         frontend_ast_split,
-        frontend_ast_validate::{PredicateKind, ValidatedAST},
+        frontend_ast_validate::{PredicateKind, SymbolTable, ValidatedAST},
     },
     middleware::{
-        self, containers, CustomPredicateBatch, IntroPredicateRef, NativePredicate, Params,
-        Predicate, StatementTmpl as MWStatementTmpl, StatementTmplArg as MWStatementTmplArg,
-        Wildcard,
+        self, containers, CustomPredicateBatch, CustomPredicateRef, IntroPredicateRef, Key,
+        NativePredicate, Params, Predicate, StatementTmpl as MWStatementTmpl,
+        StatementTmplArg as MWStatementTmplArg, Value, Wildcard,
     },
 };
 
-/// Result of lowering: optional custom predicate batch and optional request
+/// Context for predicate resolution - determines how local custom predicates are resolved
+pub enum ResolutionContext<'a> {
+    /// Request context: local custom predicates resolve to Intro/CustomPredicateRef via batches
+    Request {
+        batches: Option<&'a PredicateBatches>,
+    },
+    /// Batch context: local custom predicates may resolve to BatchSelf or Intro/CustomPredicateRef
+    Batch {
+        current_batch_idx: usize,
+        reference_map: &'a HashMap<String, (usize, usize)>,
+        existing_batches: &'a [Arc<CustomPredicateBatch>],
+        custom_predicate_name: &'a str,
+    },
+}
+
+/// Resolve a predicate name to a Predicate using the symbol table
+pub fn resolve_predicate(
+    pred_name: &str,
+    symbols: &SymbolTable,
+    context: &ResolutionContext,
+) -> Option<PredicateOrWildcard> {
+    // 0. Try wildcard first
+    if let ResolutionContext::Batch {
+        custom_predicate_name,
+        ..
+    } = context
+    {
+        if let Some(wc_scope) = symbols.wildcard_scopes.get(*custom_predicate_name) {
+            if wc_scope.wildcards.contains_key(pred_name) {
+                return Some(PredicateOrWildcard::Wildcard(pred_name.to_string()));
+            }
+        }
+    }
+
+    // 1. Try native predicate second
+    if let Ok(native) = NativePredicate::from_str(pred_name) {
+        return Some(PredicateOrWildcard::Predicate(Predicate::Native(native)));
+    }
+
+    // 2. Look up in symbol table
+    if let Some(info) = symbols.predicates.get(pred_name) {
+        let predicate = match &info.kind {
+            PredicateKind::Native(np) => Predicate::Native(*np),
+
+            PredicateKind::Custom { .. } => match context {
+                ResolutionContext::Request { batches } => {
+                    let batches = batches.as_ref()?;
+                    let pred_ref = batches.predicate_ref_by_name(pred_name)?;
+                    Predicate::Custom(pred_ref)
+                }
+                ResolutionContext::Batch {
+                    current_batch_idx,
+                    reference_map,
+                    existing_batches,
+                    ..
+                } => resolve_local_predicate(
+                    pred_name,
+                    *current_batch_idx,
+                    reference_map,
+                    existing_batches,
+                )?,
+            },
+
+            PredicateKind::BatchImported { batch, index } => {
+                Predicate::Custom(CustomPredicateRef::new(batch.clone(), *index))
+            }
+
+            PredicateKind::IntroImported {
+                name,
+                verifier_data_hash,
+            } => Predicate::Intro(IntroPredicateRef {
+                name: name.clone(),
+                args_len: info.public_arity,
+                verifier_data_hash: *verifier_data_hash,
+            }),
+        };
+        return Some(PredicateOrWildcard::Predicate(predicate));
+    }
+
+    // 3. In batch context, also check reference_map for split chain pieces
+    //    (predicates created by splitting that aren't in the original symbol table)
+    if let ResolutionContext::Batch {
+        current_batch_idx,
+        reference_map,
+        existing_batches,
+        ..
+    } = context
+    {
+        if reference_map.contains_key(pred_name) {
+            return resolve_local_predicate(
+                pred_name,
+                *current_batch_idx,
+                reference_map,
+                existing_batches,
+            )
+            .map(PredicateOrWildcard::Predicate);
+        }
+    }
+
+    None
+}
+
+/// Resolve a local predicate (one in this document or a split chain piece) using the reference_map
+fn resolve_local_predicate(
+    pred_name: &str,
+    current_batch_idx: usize,
+    reference_map: &HashMap<String, (usize, usize)>,
+    existing_batches: &[Arc<CustomPredicateBatch>],
+) -> Option<Predicate> {
+    let &(target_batch, target_idx) = reference_map.get(pred_name)?;
+    if target_batch == current_batch_idx {
+        Some(Predicate::BatchSelf(target_idx))
+    } else if target_batch < current_batch_idx {
+        let batch = &existing_batches[target_batch];
+        Some(Predicate::Custom(CustomPredicateRef::new(
+            batch.clone(),
+            target_idx,
+        )))
+    } else {
+        unreachable!(
+            "Forward cross-batch reference should be impossible: {} -> {}",
+            current_batch_idx, target_batch
+        );
+    }
+}
+
+// ============================================================================
+// Shared lowering utilities
+// ============================================================================
+// These functions convert AST types to middleware/builder types and are used
+// by both the request lowering (in this module) and predicate batching
+// (in frontend_ast_batch).
+
+/// Lower a literal value from AST to middleware Value.
+///
+/// This is a pure conversion that cannot fail.
+pub fn lower_literal(lit: &LiteralValue) -> Value {
+    match lit {
+        LiteralValue::Int(i) => Value::from(i.value),
+        LiteralValue::Bool(b) => Value::from(b.value),
+        LiteralValue::String(s) => Value::from(s.value.clone()),
+        LiteralValue::Raw(r) => Value::from(r.hash.hash),
+        LiteralValue::PublicKey(pk) => Value::from(pk.point),
+        LiteralValue::SecretKey(sk) => Value::from(sk.secret_key.clone()),
+        LiteralValue::Array(a) => {
+            let elements: Vec<_> = a.elements.iter().map(lower_literal).collect();
+            let array = containers::Array::new(elements);
+            Value::from(array)
+        }
+        LiteralValue::Set(s) => {
+            let elements: std::collections::HashSet<_> =
+                s.elements.iter().map(lower_literal).collect();
+            let set = containers::Set::new(elements);
+            Value::from(set)
+        }
+        LiteralValue::Dict(d) => {
+            let pairs: HashMap<_, _> = d
+                .pairs
+                .iter()
+                .map(|pair| {
+                    let key = Key::from(pair.key.value.as_str());
+                    let value = lower_literal(&pair.value);
+                    (key, value)
+                })
+                .collect();
+            let dict = containers::Dictionary::new(pairs);
+            Value::from(dict)
+        }
+    }
+}
+
+/// Lower a statement argument from AST to BuilderArg.
+///
+/// This is a pure conversion that cannot fail.
+pub fn lower_statement_arg(arg: &StatementTmplArg) -> BuilderArg {
+    match arg {
+        StatementTmplArg::Literal(lit) => {
+            let value = lower_literal(lit);
+            BuilderArg::Literal(value)
+        }
+        StatementTmplArg::Wildcard(id) => BuilderArg::WildcardLiteral(id.name.clone()),
+        StatementTmplArg::AnchoredKey(ak) => {
+            let key_str = match &ak.key {
+                AnchoredKeyPath::Bracket(s) => s.value.clone(),
+                AnchoredKeyPath::Dot(id) => id.name.clone(),
+            };
+            BuilderArg::Key(ak.root.name.clone(), key_str)
+        }
+    }
+}
+
+/// Result of lowering: optional custom predicate batches and optional request
 ///
 /// A Podlang file can contain:
-/// - Just custom predicates (batch: Some, request: None)
-/// - Just a request (batch: None, request: Some)
-/// - Both (batch: Some, request: Some)
-/// - Neither (batch: None, request: None) - just imports
+/// - Just custom predicates (batches: Some, request: None)
+/// - Just a request (batches: None, request: Some)
+/// - Both (batches: Some, request: Some)
+/// - Neither (batches: None, request: None) - just imports
 #[derive(Debug, Clone)]
 pub struct LoweredOutput {
-    pub batch: Option<Arc<CustomPredicateBatch>>,
+    pub batches: Option<PredicateBatches>,
     pub request: Option<crate::frontend::PodRequest>,
 }
 
@@ -62,71 +252,47 @@ pub fn lower(
 struct Lowerer<'a> {
     validated: ValidatedAST,
     params: &'a Params,
-    /// Map of predicate names to their index in the current batch (for split predicates)
-    batch_predicate_index: HashMap<String, usize>,
 }
 
 impl<'a> Lowerer<'a> {
     fn new(validated: ValidatedAST, params: &'a Params) -> Self {
-        Self {
-            validated,
-            params,
-            batch_predicate_index: HashMap::new(),
-        }
+        Self { validated, params }
     }
 
-    fn lower(mut self, batch_name: String) -> Result<LoweredOutput, LoweringError> {
-        // Lower custom predicates (if any)
-        let batch = self.lower_batch(batch_name)?;
+    fn lower(self, batch_name: String) -> Result<LoweredOutput, LoweringError> {
+        // Lower custom predicates (if any) - now supports multiple batches
+        let batches = self.lower_batches(batch_name)?;
 
-        // Lower request (if any) - pass batch so BatchSelf refs can be converted to Custom refs
-        let request = self.lower_request(batch.as_ref())?;
+        // Lower request (if any) - pass batches so refs can be resolved
+        let request = self.lower_request(batches.as_ref())?;
 
-        Ok(LoweredOutput { batch, request })
+        Ok(LoweredOutput { batches, request })
     }
 
-    fn lower_batch(
-        &mut self,
-        batch_name: String,
-    ) -> Result<Option<Arc<CustomPredicateBatch>>, LoweringError> {
+    fn lower_batches(&self, batch_name: String) -> Result<Option<PredicateBatches>, LoweringError> {
         // Extract and split custom predicates from document
-        let (custom_predicates, original_count) = self.extract_and_split_predicates()?;
+        let custom_predicates = self.extract_and_split_predicates()?;
 
         // If no custom predicates, return None
         if custom_predicates.is_empty() {
             return Ok(None);
         }
 
-        // Check batch size constraint
-        if custom_predicates.len() > Params::max_custom_batch_size() {
-            return Err(LoweringError::TooManyPredicates {
-                batch_name: batch_name.clone(),
-                count: custom_predicates.len(),
-                max: Params::max_custom_batch_size(),
-                original_count,
-            });
-        }
+        // Use the new batching module to pack predicates into batches
+        // Pass the symbol table for unified predicate resolution
+        let batches = frontend_ast_batch::batch_predicates(
+            custom_predicates,
+            self.params,
+            &batch_name,
+            self.validated.symbols(),
+        )?;
 
-        // Build index of all predicates in the batch
-        for (idx, pred) in custom_predicates.iter().enumerate() {
-            self.batch_predicate_index
-                .insert(pred.name.name.clone(), idx);
-        }
-
-        // Create custom predicate batch using builder
-        let mut cpb_builder =
-            CustomPredicateBatchBuilder::new(self.params.clone(), batch_name.clone());
-
-        for pred_def in &custom_predicates {
-            self.lower_custom_predicate(pred_def, &mut cpb_builder)?;
-        }
-
-        Ok(Some(cpb_builder.finish()))
+        Ok(Some(batches))
     }
 
     fn lower_request(
         &self,
-        batch: Option<&Arc<CustomPredicateBatch>>,
+        batches: Option<&PredicateBatches>,
     ) -> Result<Option<crate::frontend::PodRequest>, LoweringError> {
         let doc = self.validated.document();
 
@@ -143,48 +309,48 @@ impl<'a> Lowerer<'a> {
         // Build wildcard map from all wildcards used in the request statements
         let wildcard_map = self.build_request_wildcard_map(request_def);
 
-        // Lower each statement to a builder first
-        let mut statement_builders = Vec::new();
-        for stmt in &request_def.statements {
-            let stmt_builder = self.lower_statement_to_builder(stmt, &HashSet::new())?;
-            statement_builders.push(stmt_builder);
-        }
-
-        // Resolve builders to middleware statement templates
+        // Lower each statement to middleware templates, resolving predicates
         let mut request_templates = Vec::new();
-        for stmt_builder in statement_builders {
-            let mw_stmt =
-                self.resolve_request_statement_builder(stmt_builder, &wildcard_map, batch)?;
+        for stmt in &request_def.statements {
+            let mw_stmt = self.lower_request_statement(stmt, &wildcard_map, batches)?;
             request_templates.push(mw_stmt);
         }
 
         Ok(Some(crate::frontend::PodRequest::new(request_templates)))
     }
 
-    fn resolve_request_statement_builder(
+    fn lower_request_statement(
         &self,
-        stmt_builder: StatementTmplBuilder,
+        stmt: &StatementTmpl,
         wildcard_map: &HashMap<String, usize>,
-        batch: Option<&Arc<CustomPredicateBatch>>,
+        batches: Option<&PredicateBatches>,
     ) -> Result<MWStatementTmpl, LoweringError> {
-        // First desugar the builder
-        let desugared = stmt_builder.desugar();
+        // Enforce argument count limit for request statements
+        if stmt.args.len() > Params::max_statement_args() {
+            return Err(LoweringError::TooManyStatementArgs {
+                count: stmt.args.len(),
+                max: Params::max_statement_args(),
+            });
+        }
 
-        // Convert BatchSelf predicate to Custom if we have a batch
-        let pred_or_wc = match desugared.pred_or_wc {
-            PredicateOrWildcard::Predicate(pred) => middleware::PredicateOrWildcard::Predicate({
-                match (batch, pred) {
-                    (Some(batch_ref), Predicate::BatchSelf(index)) => Predicate::Custom(
-                        middleware::CustomPredicateRef::new(batch_ref.clone(), index),
-                    ),
-                    (_, pred) => pred,
-                }
-            }),
-            PredicateOrWildcard::Wildcard(name) => {
-                let index = wildcard_map.get(&name).expect("Wildcard not found");
-                middleware::PredicateOrWildcard::Wildcard(Wildcard::new(name, *index))
+        let pred_name = &stmt.predicate.name;
+        let symbols = self.validated.symbols();
+
+        // Resolve predicate using the unified resolution function
+        let context = ResolutionContext::Request { batches };
+        let predicate = resolve_predicate(pred_name, symbols, &context).ok_or_else(|| {
+            LoweringError::PredicateNotFound {
+                name: pred_name.clone(),
             }
-        };
+        })?;
+
+        // Create a builder with the resolved predicate and desugar
+        let mut builder = StatementTmplBuilder::new(predicate.clone());
+        for arg in &stmt.args {
+            let builder_arg = lower_statement_arg(arg);
+            builder = builder.arg(builder_arg);
+        }
+        let desugared = builder.desugar();
 
         // Convert BuilderArgs to StatementTmplArgs
         let mut mw_args = Vec::new();
@@ -200,15 +366,21 @@ impl<'a> Lowerer<'a> {
                         .get(&root_name)
                         .expect("Root wildcard not found");
                     let wildcard = Wildcard::new(root_name, *root_index);
-                    let key = middleware::Key::from(key_str.as_str());
+                    let key = Key::from(key_str.as_str());
                     MWStatementTmplArg::AnchoredKey(wildcard, key)
                 }
             };
             mw_args.push(mw_arg);
         }
 
+        let predicate = match desugared.pred_or_wc {
+            PredicateOrWildcard::Predicate(p) => p,
+            PredicateOrWildcard::Wildcard(_) => {
+                unreachable!("wildcard predicates aren't considered in requests")
+            }
+        };
         Ok(MWStatementTmpl {
-            pred_or_wc,
+            pred_or_wc: middleware::PredicateOrWildcard::Predicate(predicate),
             args: mw_args,
         })
     }
@@ -257,7 +429,7 @@ impl<'a> Lowerer<'a> {
 
     fn extract_and_split_predicates(
         &self,
-    ) -> Result<(Vec<CustomPredicateDef>, usize), LoweringError> {
+    ) -> Result<Vec<frontend_ast_split::SplitResult>, LoweringError> {
         let doc = self.validated.document();
         let predicates: Vec<CustomPredicateDef> = doc
             .items
@@ -268,191 +440,14 @@ impl<'a> Lowerer<'a> {
             })
             .collect();
 
-        let original_count = predicates.len();
-
         // Apply splitting to each predicate as needed
-        let mut split_predicates = Vec::new();
+        let mut split_results = Vec::new();
         for pred in predicates {
-            let chain = frontend_ast_split::split_predicate_if_needed(pred, self.params)?;
-            split_predicates.extend(chain);
+            let result = frontend_ast_split::split_predicate_if_needed(pred, self.params)?;
+            split_results.push(result);
         }
 
-        Ok((split_predicates, original_count))
-    }
-
-    fn lower_custom_predicate(
-        &self,
-        pred_def: &CustomPredicateDef,
-        cpb_builder: &mut CustomPredicateBatchBuilder,
-    ) -> Result<(), LoweringError> {
-        let name = pred_def.name.name.clone();
-
-        // Note: Constraint checking is handled by the splitting phase
-        // Predicates passed here should already be within limits
-
-        // Collect public and private argument names
-        let mut public_arg_names = Vec::new();
-        let mut private_arg_names = Vec::new();
-
-        for arg in &pred_def.args.public_args {
-            public_arg_names.push(arg.name.clone());
-        }
-
-        if let Some(private_args) = &pred_def.args.private_args {
-            for arg in private_args {
-                private_arg_names.push(arg.name.clone());
-            }
-        }
-
-        let wc_names: HashSet<String> = public_arg_names
-            .iter()
-            .chain(private_arg_names.iter())
-            .cloned()
-            .collect();
-
-        // Lower statements to builders
-        let mut statement_builders = Vec::new();
-        for stmt in &pred_def.statements {
-            let stmt_builder = self.lower_statement_to_builder(stmt, &wc_names)?;
-            statement_builders.push(stmt_builder);
-        }
-
-        // Convert to &str slices for builder API
-        let public_args_str: Vec<&str> = public_arg_names.iter().map(|s| s.as_str()).collect();
-        let private_args_str: Vec<&str> = private_arg_names.iter().map(|s| s.as_str()).collect();
-
-        // Add predicate to batch using builder
-        let conjunction = pred_def.conjunction_type == ConjunctionType::And;
-
-        cpb_builder
-            .predicate(
-                &name,
-                conjunction,
-                &public_args_str,
-                &private_args_str,
-                &statement_builders,
-            )
-            .map_err(|e| match e {
-                crate::frontend::Error::Middleware(mw_err) => LoweringError::Middleware(mw_err),
-                _ => LoweringError::InvalidArgumentType,
-            })?;
-
-        Ok(())
-    }
-
-    fn lower_statement_to_builder(
-        &self,
-        stmt: &StatementTmpl,
-        wc_names: &HashSet<String>,
-    ) -> Result<StatementTmplBuilder, LoweringError> {
-        // Get predicate
-        let pred_name = &stmt.predicate.name;
-        let symbols = self.validated.symbols();
-
-        // Check for native predicates first
-        let pred_or_wc = if let Ok(native) = NativePredicate::from_str(pred_name) {
-            PredicateOrWildcard::Predicate(Predicate::Native(native))
-        } else if let Some(&index) = self.batch_predicate_index.get(pred_name) {
-            // References to other predicates in the same batch (including split chains)
-            PredicateOrWildcard::Predicate(Predicate::BatchSelf(index))
-        } else if let Some(info) = symbols.predicates.get(pred_name) {
-            PredicateOrWildcard::Predicate(match &info.kind {
-                PredicateKind::Native(np) => Predicate::Native(*np),
-                PredicateKind::Custom { index } => Predicate::BatchSelf(*index),
-                PredicateKind::BatchImported { batch, index } => {
-                    Predicate::Custom(middleware::CustomPredicateRef::new(batch.clone(), *index))
-                }
-                PredicateKind::IntroImported {
-                    name,
-                    verifier_data_hash,
-                } => Predicate::Intro(IntroPredicateRef {
-                    name: name.clone(),
-                    args_len: info.public_arity,
-                    verifier_data_hash: *verifier_data_hash,
-                }),
-            })
-        } else if wc_names.contains(pred_name) {
-            PredicateOrWildcard::Wildcard(pred_name.clone())
-        } else {
-            unreachable!("Predicate {} not found", pred_name);
-        };
-
-        // Check args count
-        if stmt.args.len() > Params::max_statement_args() {
-            return Err(LoweringError::TooManyStatementArgs {
-                count: stmt.args.len(),
-                max: Params::max_statement_args(),
-            });
-        }
-
-        // Convert AST args to BuilderArgs
-        let mut builder = StatementTmplBuilder::new(pred_or_wc);
-        for arg in &stmt.args {
-            let builder_arg = Self::lower_statement_arg_to_builder(arg)?;
-            builder = builder.arg(builder_arg);
-        }
-
-        // Return builder without calling .desugar() - that will happen later
-        Ok(builder)
-    }
-
-    fn lower_statement_arg_to_builder(arg: &StatementTmplArg) -> Result<BuilderArg, LoweringError> {
-        match arg {
-            StatementTmplArg::Literal(lit) => {
-                let value = Self::lower_literal(lit)?;
-                Ok(BuilderArg::Literal(value))
-            }
-            StatementTmplArg::Wildcard(id) => {
-                // For builder, we just need the wildcard name
-                Ok(BuilderArg::WildcardLiteral(id.name.clone()))
-            }
-            StatementTmplArg::AnchoredKey(ak) => {
-                let key_str = match &ak.key {
-                    AnchoredKeyPath::Bracket(s) => s.value.clone(),
-                    AnchoredKeyPath::Dot(id) => id.name.clone(),
-                };
-                Ok(BuilderArg::Key(ak.root.name.clone(), key_str))
-            }
-        }
-    }
-
-    fn lower_literal(lit: &LiteralValue) -> Result<middleware::Value, LoweringError> {
-        let value = match lit {
-            LiteralValue::Int(i) => middleware::Value::from(i.value),
-            LiteralValue::Bool(b) => middleware::Value::from(b.value),
-            LiteralValue::String(s) => middleware::Value::from(s.value.clone()),
-            LiteralValue::Raw(r) => middleware::Value::from(r.hash.hash),
-            LiteralValue::PublicKey(pk) => middleware::Value::from(pk.point),
-            LiteralValue::SecretKey(sk) => middleware::Value::from(sk.secret_key.clone()),
-            LiteralValue::Array(a) => {
-                let elements: Result<Vec<_>, _> =
-                    a.elements.iter().map(Self::lower_literal).collect();
-                let array = containers::Array::new(elements?);
-                middleware::Value::from(array)
-            }
-            LiteralValue::Set(s) => {
-                let elements: Result<Vec<_>, _> =
-                    s.elements.iter().map(Self::lower_literal).collect();
-                let set_values: std::collections::HashSet<_> = elements?.into_iter().collect();
-                let set = containers::Set::new(set_values);
-                middleware::Value::from(set)
-            }
-            LiteralValue::Dict(d) => {
-                let pairs: Result<Vec<(middleware::Key, middleware::Value)>, LoweringError> = d
-                    .pairs
-                    .iter()
-                    .map(|pair| {
-                        let key = middleware::Key::from(pair.key.value.as_str());
-                        let value = Self::lower_literal(&pair.value)?;
-                        Ok((key, value))
-                    })
-                    .collect();
-                let dict_map: std::collections::HashMap<_, _> = pairs?.into_iter().collect();
-                let dict = containers::Dictionary::new(dict_map);
-                middleware::Value::from(dict)
-            }
-        };
-        Ok(value)
+        Ok(split_results)
     }
 }
 
@@ -473,9 +468,16 @@ mod tests {
         lower(validated, params, "test_batch".to_string())
     }
 
-    // Helper to get the batch from the output (expecting it to exist)
-    fn expect_batch(output: &LoweredOutput) -> &Arc<CustomPredicateBatch> {
-        output.batch.as_ref().expect("Expected batch to be present")
+    // Helper to get the first batch from the output (expecting it to exist)
+    fn expect_batch(
+        output: &LoweredOutput,
+    ) -> &std::sync::Arc<crate::middleware::CustomPredicateBatch> {
+        output
+            .batches
+            .as_ref()
+            .expect("Expected batches to be present")
+            .first_batch()
+            .expect("Expected at least one batch")
     }
 
     #[test]
@@ -562,13 +564,20 @@ mod tests {
 
         let lowered = result.unwrap();
         // Should be automatically split into 2 predicates (my_pred and my_pred_1)
-        assert_eq!(expect_batch(&lowered).predicates().len(), 2);
+        let batches = lowered.batches.as_ref().expect("Expected batches");
+        assert_eq!(batches.total_predicate_count(), 2);
 
-        // First predicate should have 5 statements (4 + chain call)
-        assert_eq!(expect_batch(&lowered).predicates()[0].statements().len(), 5);
-
-        // Second predicate should have 2 statements
-        assert_eq!(expect_batch(&lowered).predicates()[1].statements().len(), 2);
+        // With topological sorting, my_pred_1 comes first (since my_pred depends on it)
+        // my_pred_1 has 2 statements
+        // my_pred has 5 statements (4 + chain call)
+        // Just verify we have the right total statement counts
+        let batch = batches.first_batch().unwrap();
+        let total_statements: usize = batch
+            .predicates()
+            .iter()
+            .map(|p| p.statements().len())
+            .sum();
+        assert_eq!(total_statements, 7); // 5 + 2 = 7 total statements
     }
 
     #[test]
@@ -673,116 +682,117 @@ mod tests {
     }
 
     #[test]
-    fn test_error_message_with_splitting() {
-        // Create a document with predicates that will exceed the batch limit after splitting
-        // We'll create 5 predicates with 2 statements each (max arity = 5)
-        // Each will NOT split individually, but together they exceed a small batch limit
+    fn test_multi_batch_packing() {
+        // Create more predicates than fit in a single batch
+        // With max_custom_batch_size = 4, 5 predicates should span 2 batches
         let input = r#"
-            pred1(A) = AND (
-                Equal(A["a"], 1)
-                Equal(A["b"], 2)
-            )
-            pred2(B) = AND (
-                Equal(B["c"], 3)
-                Equal(B["d"], 4)
-            )
-            pred3(C) = AND (
-                Equal(C["e"], 5)
-                Equal(C["f"], 6)
-            )
-            pred4(D) = AND (
-                Equal(D["g"], 7)
-                Equal(D["h"], 8)
-            )
-            pred5(E) = AND (
-                Equal(E["i"], 9)
-                Equal(E["j"], 10)
-            )
+            pred1(A) = AND(Equal(A["a"], 1))
+            pred2(B) = AND(Equal(B["b"], 2))
+            pred3(C) = AND(Equal(C["c"], 3))
+            pred4(D) = AND(Equal(D["d"], 4))
+            pred5(E) = AND(Equal(E["e"], 5))
         "#;
 
-        let params = Params::default();
+        let params = Params::default(); // max_custom_batch_size = 4
 
         let result = parse_validate_and_lower(input, &params);
+        assert!(result.is_ok());
 
-        // Should fail with TooManyPredicates error
-        assert!(result.is_err());
-        let err = result.unwrap_err();
+        let lowered = result.unwrap();
+        let batches = lowered.batches.as_ref().expect("Expected batches");
 
-        if let LoweringError::TooManyPredicates {
-            count,
-            max,
-            original_count,
-            ..
-        } = err
-        {
-            assert_eq!(count, 5); // 2 predicates after splitting (no splitting occurred)
-            assert_eq!(max, 4);
-            assert_eq!(original_count, 5); // Started with 2 predicates
+        // Should have 2 batches
+        assert_eq!(batches.batch_count(), 2);
+        assert_eq!(batches.total_predicate_count(), 5);
 
-            // Error message should NOT mention splitting since no splitting occurred
-            let err_msg = format!("{}", err);
-            assert!(!err_msg.contains("before automatic splitting"));
-        } else {
-            panic!("Expected TooManyPredicates error, got: {:?}", err);
-        }
+        // First batch should have 4 predicates
+        assert_eq!(batches.batches()[0].predicates().len(), 4);
+        // Second batch should have 1 predicate
+        assert_eq!(batches.batches()[1].predicates().len(), 1);
     }
 
     #[test]
-    fn test_error_message_after_splitting() {
-        // Create TWO predicates that will split into 2 and 3 predicates
-        // This tests the case where splitting causes the batch to be too large
-        // but no individual predicate chain exceeds the limit
+    fn test_split_chains_span_batches() {
+        // Create predicates that will split, plus additional predicates
+        // to force the split chains across batch boundaries
         let input = r#"
-            pred1(A) = AND (
-                Equal(A["a"], 1)
-                Equal(A["b"], 2)
-                Equal(A["c"], 3)
-                Equal(A["d"], 4)
-                Equal(A["e"], 5)
-                Equal(A["f"], 6)
-            )
-            pred2(B) = AND (
-                Equal(B["a"], 1)
-                Equal(B["b"], 2)
-                Equal(B["c"], 3)
-                Equal(B["d"], 4)
-                Equal(B["e"], 5)
-                Equal(B["f"], 6)
-                Equal(B["g"], 7)
-                Equal(B["h"], 8)
-                Equal(B["i"], 9)
-                Equal(B["j"], 10)
+            pred1(A) = AND(Equal(A["a"], 1))
+            pred2(B) = AND(Equal(B["b"], 2))
+            pred3(C) = AND(Equal(C["c"], 3))
+            large_pred(D) = AND(
+                Equal(D["a"], 1)
+                Equal(D["b"], 2)
+                Equal(D["c"], 3)
+                Equal(D["d"], 4)
+                Equal(D["e"], 5)
+                Equal(D["f"], 6)
             )
         "#;
 
-        // max_custom_batch_size is 4
-        // Default max_custom_predicate_arity is 5, so each will split into 2 predicates
-        // Total: 2 original predicates -> 5 after splitting (exceeds limit of 4)
         let params = Params::default();
 
         let result = parse_validate_and_lower(input, &params);
+        assert!(result.is_ok());
 
-        // Should fail with TooManyPredicates error
-        assert!(result.is_err());
-        let err = result.unwrap_err();
+        let lowered = result.unwrap();
+        let batches = lowered.batches.as_ref().expect("Expected batches");
 
-        if let LoweringError::TooManyPredicates {
-            count,
-            max,
-            original_count,
-            ..
-        } = err
-        {
-            assert_eq!(count, 5); // 5 predicates after splitting (2 and 3 from each)
-            assert_eq!(max, 4);
-            assert_eq!(original_count, 2); // Started with 2 predicates
+        // pred1, pred2, pred3 + large_pred split into 2 = 5 total predicates
+        // Should span 2 batches
+        assert_eq!(batches.total_predicate_count(), 5);
+        assert_eq!(batches.batch_count(), 2);
+    }
 
-            // Error message SHOULD mention splitting since splitting occurred
-            let err_msg = format!("{}", err);
-            assert!(err_msg.contains("before automatic splitting"));
-            assert!(err_msg.contains("started with 2 predicates"));
-        } else {
-            panic!("Expected TooManyPredicates error, got: {:?}", err);
+    #[test]
+    fn test_intro_predicate_in_custom_predicate() {
+        use hex::ToHex;
+
+        use crate::middleware::EMPTY_HASH;
+
+        // Import an intro predicate and use it inside a custom predicate definition
+        let intro_hash = EMPTY_HASH.encode_hex::<String>();
+        let input = format!(
+            r#"
+            use intro external_check(X) from 0x{intro_hash}
+
+            my_pred(A) = AND (
+                Equal(A["foo"], 42)
+                external_check(A)
+            )
+        "#
+        );
+
+        let params = Params::default();
+
+        // Parse, validate, and lower
+        let parsed = parse_podlang(&input).expect("Failed to parse");
+        let document =
+            parse_document(parsed.into_iter().next().unwrap()).expect("Failed to parse document");
+        let validated = validate(document, &[]).expect("Failed to validate");
+        let result = lower(validated, &params, "test_batch".to_string());
+
+        assert!(result.is_ok(), "Lowering failed: {:?}", result.err());
+
+        let lowered = result.unwrap();
+        let batch = expect_batch(&lowered);
+
+        // Should have one custom predicate
+        assert_eq!(batch.predicates().len(), 1);
+
+        let pred = &batch.predicates()[0];
+        assert_eq!(pred.name, "my_pred");
+        // 2 statements: Equal and external_check
+        assert_eq!(pred.statements().len(), 2);
+
+        // Verify the second statement is an intro predicate reference
+        let intro_stmt = &pred.statements()[1];
+        match intro_stmt.pred_or_wc() {
+            middleware::PredicateOrWildcard::Predicate(Predicate::Intro(intro_ref)) => {
+                assert_eq!(intro_ref.name, "external_check");
+                assert_eq!(intro_ref.args_len, 1);
+                assert_eq!(intro_ref.verifier_data_hash, EMPTY_HASH);
+            }
+            other => panic!("Expected Intro predicate, got {:?}", other),
         }
     }
 }

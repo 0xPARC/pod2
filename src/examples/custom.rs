@@ -32,7 +32,11 @@ pub fn eth_dos_batch(params: &Params) -> Result<Arc<CustomPredicateBatch>> {
             eth_dos_ind(src, dst, distance)
         )
         "#;
-    let batch = parse(input, params, &[]).expect("lang parse").custom_batch;
+    let batch = parse(input, params, &[])
+        .expect("lang parse")
+        .first_batch()
+        .expect("Expected batch")
+        .clone();
     println!("a.0. {}", batch.predicates[0]);
     println!("a.1. {}", batch.predicates[1]);
     println!("a.2. {}", batch.predicates[2]);
