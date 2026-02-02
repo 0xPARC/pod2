@@ -128,7 +128,7 @@ impl Display for NativePredicate {
 }
 
 impl ToFields for NativePredicate {
-    fn to_fields(&self, _params: &Params) -> Vec<F> {
+    fn to_fields(&self) -> Vec<F> {
         vec![F::from_canonical_u64(*self as u64)]
     }
 }
@@ -209,7 +209,7 @@ impl From<PredicatePrefix> for F {
 }
 
 impl ToFields for Predicate {
-    fn to_fields(&self, params: &Params) -> Vec<F> {
+    fn to_fields(&self) -> Vec<F> {
         // serialize:
         // NativePredicate(id) as (1, id, 0...) -- id: usize
         // BatchSelf(i) as (2, i, 0...) -- i: usize
@@ -222,7 +222,7 @@ impl ToFields for Predicate {
         // in every case: pad to `Params::predicate_size()` field elements
         let mut fields: Vec<F> = match self {
             Self::Native(p) => iter::once(F::from(PredicatePrefix::Native))
-                .chain(p.to_fields(params))
+                .chain(p.to_fields())
                 .collect(),
             Self::BatchSelf(i) => iter::once(F::from(PredicatePrefix::BatchSelf))
                 .chain(iter::once(F::from_canonical_usize(*i)))
@@ -245,8 +245,8 @@ impl ToFields for Predicate {
 }
 
 impl Predicate {
-    pub fn hash(&self, params: &Params) -> middleware::Hash {
-        hash_fields(&self.to_fields(params))
+    pub fn hash(&self) -> middleware::Hash {
+        hash_fields(&self.to_fields())
     }
 }
 
@@ -503,11 +503,11 @@ impl Statement {
 }
 
 impl ToFields for Statement {
-    fn to_fields(&self, params: &Params) -> Vec<F> {
-        let predicate_hash = hash_fields(&self.predicate().to_fields(params));
+    fn to_fields(&self) -> Vec<F> {
+        let predicate_hash = hash_fields(&self.predicate().to_fields());
         let mut fields = predicate_hash.0.to_vec();
-        fields.extend(self.args().iter().flat_map(|arg| arg.to_fields(params)));
-        fields.resize_with(params.statement_size(), || F::ZERO);
+        fields.extend(self.args().iter().flat_map(|arg| arg.to_fields()));
+        fields.resize_with(Params::statement_size(), || F::ZERO);
         fields
     }
 }
@@ -573,7 +573,7 @@ impl ToFields for StatementArg {
     /// - Literal(v) => `[[v], 0, 0, 0, 0]`
     /// - Key(root, key) => `[[root], [key]]`
     /// - WildcardLiteral(v) => `[[v], 0, 0, 0, 0]`
-    fn to_fields(&self, params: &Params) -> Vec<F> {
+    fn to_fields(&self) -> Vec<F> {
         // NOTE for @ax0: I removed the old comment because may `to_fields` implementations do
         // padding and we need fixed output length for the circuits.
         let f = match self {
@@ -585,8 +585,8 @@ impl ToFields for StatementArg {
                 .chain(iter::repeat(F::ZERO).take(STATEMENT_ARG_F_LEN - VALUE_SIZE))
                 .collect(),
             StatementArg::Key(ak) => {
-                let mut fields = ak.root.to_fields(params);
-                fields.extend(ak.key.to_fields(params));
+                let mut fields = ak.root.to_fields();
+                fields.extend(ak.key.to_fields());
                 fields
             }
         };

@@ -167,7 +167,7 @@ impl MockMainPod {
         let operations = process_public_statements_operations(params, &statements, operations)?;
 
         // get the id out of the public statements
-        let sts_hash = calculate_statements_hash(&public_statements, params);
+        let sts_hash = calculate_statements_hash(&public_statements);
 
         let pad_pod = MockEmptyPod::new_boxed(params, inputs.vd_set.clone());
         let input_pods: Vec<Box<dyn Pod>> = inputs

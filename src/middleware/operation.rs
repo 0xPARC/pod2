@@ -54,10 +54,10 @@ impl ToFields for OperationType {
     /// Encoding:
     /// - Native(native_op) => `[1, [native_op], 0, 0, 0, 0]`
     /// - Custom(batch, index) => `[3, [batch.id], index]`
-    fn to_fields(&self, params: &Params) -> Vec<F> {
+    fn to_fields(&self) -> Vec<F> {
         let mut fields: Vec<F> = match self {
             Self::Native(p) => iter::once(F::from_canonical_u64(1))
-                .chain(p.to_fields(params))
+                .chain(p.to_fields())
                 .collect(),
             Self::Custom(CustomPredicateRef { batch, index }) => {
                 iter::once(F::from_canonical_u64(3))
@@ -118,7 +118,7 @@ impl NativeOperation {
 }
 
 impl ToFields for NativeOperation {
-    fn to_fields(&self, _params: &Params) -> Vec<F> {
+    fn to_fields(&self) -> Vec<F> {
         vec![F::from_canonical_u64(*self as u64)]
     }
 }
@@ -605,14 +605,25 @@ pub fn check_st_tmpl(
 }
 
 pub fn fill_wildcard_values(
-    params: &Params,
     pred: &CustomPredicate,
     args: &[Statement],
     wildcard_map: &mut [Option<Value>],
 ) -> Result<()> {
     for (st_tmpl, st) in pred.statements.iter().zip(args) {
         if let PredicateOrWildcard::Wildcard(wc) = &st_tmpl.pred_or_wc {
-            wc_check_or_set(Value::from(st.predicate().hash(params)), wc, wildcard_map)?;
+            wc_check_or_set(Value::from(st.predicate().hash()), wc, wildcard_map)?;
+        }
+        let st_args = st.args();
+
+        for (st_tmpl_arg, st_arg) in st_tmpl.args.iter().zip(&st_args) {
+            if let Err(st_tmpl_check_error) = check_st_tmpl(st_tmpl_arg, st_arg, wildcard_map) {
+                return Err(Error::statements_dont_match(
+                    st.clone(),
+                    st_tmpl.clone(),
+                    wildcard_map.to_vec(),
+                    st_tmpl_check_error,
+                ));
+            }
         }
         let st_args = st.args();
 
@@ -642,7 +653,7 @@ pub fn wildcard_values_from_op_st(
         .chain(core::iter::repeat(None))
         .take(params.max_custom_predicate_wildcards)
         .collect_vec();
-    fill_wildcard_values(params, pred, op_args, &mut wildcard_map)?;
+    fill_wildcard_values(pred, op_args, &mut wildcard_map)?;
     // NOTE: We set unresolved wildcard slots with an empty value.  They can be unresolved because
     // they are beyond the number of used wildcards in this custom predicate, or they could be
     // private arguments that are unused in a particular disjunction.
@@ -653,7 +664,6 @@ pub fn wildcard_values_from_op_st(
 }
 
 fn check_custom_pred_argument(
-    params: &Params,
     custom_pred_ref: &CustomPredicateRef,
     template: &StatementTmpl,
     statement: &Statement,
@@ -676,11 +686,11 @@ fn check_custom_pred_argument(
             }
         }
         PredicateOrWildcard::Wildcard(wc) => {
-            let pred_hash = Value::from(statement.predicate().hash(params));
-            if wc_values[wc.index] != pred_hash {
+            let pred_value = Value::from(statement.predicate());
+            if wc_values[wc.index] != pred_value {
                 return Err(Error::mismatched_statement_wc_pred(
                     wc_values[wc.index].clone(),
-                    pred_hash,
+                    pred_value,
                     statement.predicate(),
                 ));
             }
@@ -748,7 +758,7 @@ pub(crate) fn check_custom_pred(
         if !pred.conjunction && matches!(st, Statement::None) {
             continue;
         }
-        check_custom_pred_argument(params, custom_pred_ref, st_tmpl, st, &wc_values)?;
+        check_custom_pred_argument(custom_pred_ref, st_tmpl, st, &wc_values)?;
         match_exists = true;
     }
 
@@ -761,7 +771,7 @@ pub(crate) fn check_custom_pred(
 }
 
 impl ToFields for Operation {
-    fn to_fields(&self, _params: &Params) -> Vec<F> {
+    fn to_fields(&self) -> Vec<F> {
         todo!()
     }
 }

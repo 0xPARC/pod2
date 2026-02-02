@@ -50,21 +50,20 @@ use crate::{
 /// circuits with a small `max_public_statements` only pay for `max_public_statements` by starting
 /// the poseidon state with a precomputed constant corresponding to the front-padding part: `id =
 /// hash(serialize(reverse(statements || none-statements)))`
-pub fn calculate_statements_hash(statements: &[Statement], params: &Params) -> middleware::Hash {
-    assert!(statements.len() <= params.num_public_statements_hash);
-    assert!(params.max_public_statements <= params.num_public_statements_hash);
+pub fn calculate_statements_hash(statements: &[Statement]) -> middleware::Hash {
+    assert!(statements.len() <= Params::num_public_statements_hash());
 
     let mut none_st: Statement = middleware::Statement::None.into();
-    pad_statement(params, &mut none_st);
+    pad_statement(&mut none_st);
     let statements_back_padded = statements
         .iter()
         .chain(iter::repeat(&none_st))
-        .take(params.num_public_statements_hash)
+        .take(Params::num_public_statements_hash())
         .collect_vec();
     let field_elems = statements_back_padded
         .iter()
         .rev()
-        .flat_map(|statement| statement.to_fields(params))
+        .flat_map(|statement| statement.to_fields())
         .collect::<Vec<_>>();
     Hash(PoseidonHash::hash_no_pad(&field_elems).elements)
 }
@@ -115,7 +114,7 @@ pub(crate) fn extract_custom_predicate_verifications(
                     .find_map(|(i, cpb)| (cpb.id() == cpr.batch.id()).then_some(i))
                     .expect("find the custom predicate from the extracted unique list");
                 let custom_predicate_table_index =
-                    batch_index * params.max_custom_batch_size + cpr.index;
+                    batch_index * Params::max_custom_batch_size() + cpr.index;
                 aux_list[i] = OperationAux::CustomPredVerifyIndex(table.len());
                 table.push(CustomPredicateVerification {
                     custom_predicate_table_index,
@@ -326,8 +325,8 @@ fn fill_pad<T: Clone>(v: &mut Vec<T>, pad_value: T, len: usize) {
     }
 }
 
-pub fn pad_statement(params: &Params, s: &mut Statement) {
-    fill_pad(&mut s.1, StatementArg::None, params.max_statement_args)
+pub fn pad_statement(s: &mut Statement) {
+    fill_pad(&mut s.1, StatementArg::None, Params::max_statement_args())
 }
 
 fn pad_operation_args(params: &Params, args: &mut Vec<OperationArg>) {
@@ -353,7 +352,7 @@ pub(crate) fn layout_statements(
         // We mocking or we don't need padding so we skip creating an EmptyPod
         MockEmptyPod::new_boxed(params, inputs.vd_set.clone())
     } else {
-        EmptyPod::new_boxed(params, inputs.vd_set.clone())
+        EmptyPod::new_boxed(inputs.vd_set.clone())
     };
     let empty_pod = empty_pod_box.as_ref();
     assert!(inputs.pods.len() <= params.max_input_pods);
@@ -367,7 +366,7 @@ pub(crate) fn layout_statements(
                 .unwrap_or(&middleware::Statement::None)
                 .clone()
                 .into();
-            pad_statement(params, &mut st);
+            pad_statement(&mut st);
             statements.push(st);
         }
     }
@@ -386,7 +385,7 @@ pub(crate) fn layout_statements(
             .unwrap_or(&middleware::Statement::None)
             .clone()
             .into();
-        pad_statement(params, &mut st);
+        pad_statement(&mut st);
         statements.push(st);
     }
 
@@ -399,7 +398,7 @@ pub(crate) fn layout_statements(
             .unwrap_or(&middleware::Statement::None)
             .clone()
             .into();
-        pad_statement(params, &mut st);
+        pad_statement(&mut st);
         statements.push(st);
     }
 
@@ -475,7 +474,7 @@ impl MainPodProver for Prover {
             // We don't need padding so we skip creating an EmptyPod
             MockEmptyPod::new_boxed(params, inputs.vd_set.clone())
         } else {
-            EmptyPod::new_boxed(params, inputs.vd_set.clone())
+            EmptyPod::new_boxed(inputs.vd_set.clone())
         };
         let inputs = MainPodInputs {
             pods: &inputs
@@ -491,10 +490,7 @@ impl MainPodProver for Prover {
         let input_pods_pub_self_statements = inputs
             .pods
             .iter()
-            .map(|pod| {
-                assert_eq!(params.id_params(), pod.params().id_params());
-                pod.pub_self_statements()
-            })
+            .map(|pod| pod.pub_self_statements())
             .collect_vec();
 
         // Aux values for backend::Operation
@@ -527,7 +523,7 @@ impl MainPodProver for Prover {
         let operations = process_public_statements_operations(params, &statements, operations)?;
 
         // get the id out of the public statements
-        let sts_hash = calculate_statements_hash(&public_statements, params);
+        let sts_hash = calculate_statements_hash(&public_statements);
 
         let common_hash: String = cache_get_rec_main_pod_common_hash(params).clone();
         let proofs = inputs
@@ -718,7 +714,7 @@ impl Pod for MainPod {
             )));
         }
         // 2. get the id out of the public statements
-        let sts_hash = calculate_statements_hash(&self.public_statements, &self.params);
+        let sts_hash = calculate_statements_hash(&self.public_statements);
         if sts_hash != self.sts_hash {
             return Err(Error::statements_hash_not_equal(self.sts_hash, sts_hash));
         }
@@ -738,7 +734,7 @@ impl Pod for MainPod {
         let rec_main_pod_verifier_circuit_data =
             &*cache_get_rec_main_pod_verifier_circuit_data(&self.params);
         let public_inputs = sts_hash
-            .to_fields(&self.params)
+            .to_fields()
             .iter()
             .chain(self.vd_set.root().0.iter())
             .cloned()
@@ -998,14 +994,10 @@ pub mod tests {
             max_input_pods_public_statements: 2,
             max_statements: 5,
             max_public_statements: 2,
-            num_public_statements_hash: 4,
-            max_statement_args: 4,
-            max_operation_args: 4,
+            max_operation_args: 5,
             max_custom_predicate_batches: 2,
             max_custom_predicate_verifications: 2,
-            max_custom_predicate_arity: 2,
             max_custom_predicate_wildcards: 3,
-            max_custom_batch_size: 2,
             max_merkle_proofs_containers: 2,
             max_merkle_tree_state_transition_proofs_containers: 2,
             max_public_key_of: 2,
@@ -1067,10 +1059,7 @@ pub mod tests {
             max_input_pods: 0,
             max_statements: 9,
             max_public_statements: 4,
-            max_statement_args: 4,
-            max_operation_args: 4,
-            max_custom_predicate_arity: 3,
-            max_custom_batch_size: 3,
+            max_operation_args: 5,
             max_custom_predicate_wildcards: 4,
             max_custom_predicate_verifications: 2,
             max_merkle_proofs_containers: 3,

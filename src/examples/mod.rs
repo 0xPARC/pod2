@@ -258,21 +258,21 @@ pub fn great_boy_pod_builder(
 
     let mut great_boy = MainPodBuilder::new(params, vd_set);
     for good_boy_signed_dict in good_boy_signed_dicts {
-        great_boy.pub_op(Operation::dict_signed_by(good_boy_signed_dict))?;
+        great_boy.priv_op(Operation::dict_signed_by(good_boy_signed_dict))?;
     }
     for friend_signed_dict in friend_signed_dicts {
-        great_boy.pub_op(Operation::dict_signed_by(friend_signed_dict))?;
+        great_boy.priv_op(Operation::dict_signed_by(friend_signed_dict))?;
     }
 
     for good_boy_idx in 0..2 {
         for issuer_idx in 0..2 {
             // Each good boy POD comes from a valid issuer
-            great_boy.pub_op(Operation::set_contains(
+            great_boy.priv_op(Operation::set_contains(
                 good_boy_issuers,
                 good_boy_signed_dicts[good_boy_idx * 2 + issuer_idx].public_key,
             ))?;
             // Each good boy has 2 good boy pods
-            great_boy.pub_op(Operation::eq(
+            great_boy.priv_op(Operation::eq(
                 (good_boy_signed_dicts[good_boy_idx * 2 + issuer_idx], "user"),
                 friend_signed_dicts[good_boy_idx].public_key,
             ))?;
@@ -302,8 +302,6 @@ pub fn great_boy_pod_full_flow() -> Result<MainPodBuilder> {
         max_signed_by: 6,
         max_input_pods: 0,
         max_statements: 100,
-        max_public_statements: 50,
-        num_public_statements_hash: 50,
         ..Default::default()
     };
     let vd_set = &*MOCK_VD_SET;

@@ -600,7 +600,7 @@ impl MainPodBuilder {
                     }
                     wildcard_map[index] = Some(value);
                 }
-                fill_wildcard_values(&self.params, pred, &args, &mut wildcard_map)?;
+                fill_wildcard_values(pred, &args, &mut wildcard_map)?;
                 let v_default = Value::from(0);
                 let st_args: Vec<_> = wildcard_map
                     .into_iter()

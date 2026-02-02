@@ -355,7 +355,7 @@ pub fn batch_predicates(
     }
 
     // Plan batch assignments in declaration order
-    let assignments = plan_batch_assignments(&predicates, params.max_custom_batch_size)?;
+    let assignments = plan_batch_assignments(&predicates, Params::max_custom_batch_size())?;
 
     // Build reference map: name -> (batch_idx, idx_in_batch)
     let reference_map: HashMap<String, (usize, usize)> = assignments
@@ -1039,18 +1039,18 @@ mod tests {
 
     #[test]
     fn test_mutual_recursion_exceeds_capacity_error() {
-        // Two predicates that call each other (SCC size = 2) with max batch size 1
+        // Two predicates that call each other (SCC size = 5) with max batch size 4
         // Should error because an SCC cannot be split across batches
         let input = r#"
             pred1(A) = AND(pred2(A))
-            pred2(B) = AND(pred1(B))
+            pred2(B) = AND(pred3(B))
+            pred3(B) = AND(pred4(B))
+            pred4(B) = AND(pred5(B))
+            pred5(B) = AND(pred1(B))
         "#;
 
         let (predicates, validated) = parse_and_validate(input);
-        let params = Params {
-            max_custom_batch_size: 1, // force SCC > capacity
-            ..Default::default()
-        };
+        let params = Params::default();
 
         let result = batch_predicates(
             preds_to_split_results(predicates),

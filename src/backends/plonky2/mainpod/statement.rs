@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     backends::plonky2::error::{Error, Result},
-    middleware::{self, NativePredicate, Params, Predicate, StatementArg, ToFields, Value},
+    middleware::{self, NativePredicate, Predicate, StatementArg, ToFields, Value, BASE_PARAMS},
 };
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -30,14 +30,14 @@ impl Statement {
 }
 
 impl ToFields for Statement {
-    fn to_fields(&self, params: &Params) -> Vec<middleware::F> {
-        let mut fields = self.0.hash(params).to_fields(params);
+    fn to_fields(&self) -> Vec<middleware::F> {
+        let mut fields = self.0.hash().to_fields();
         fields.extend(
             self.1
                 .iter()
                 .chain(iter::repeat(&StatementArg::None))
-                .take(params.max_statement_args)
-                .flat_map(|arg| arg.to_fields(params)),
+                .take(BASE_PARAMS.max_statement_args)
+                .flat_map(|arg| arg.to_fields()),
         );
         fields
     }

@@ -326,10 +326,10 @@ impl<'a> Lowerer<'a> {
         batches: Option<&PredicateBatches>,
     ) -> Result<MWStatementTmpl, LoweringError> {
         // Enforce argument count limit for request statements
-        if stmt.args.len() > self.params.max_statement_args {
+        if stmt.args.len() > Params::max_statement_args() {
             return Err(LoweringError::TooManyStatementArgs {
                 count: stmt.args.len(),
-                max: self.params.max_statement_args,
+                max: Params::max_statement_args(),
             });
         }
 
@@ -446,6 +446,7 @@ impl<'a> Lowerer<'a> {
             let result = frontend_ast_split::split_predicate_if_needed(pred, self.params)?;
             split_results.push(result);
         }
+
         Ok(split_results)
     }
 }
@@ -676,7 +677,8 @@ mod tests {
         "#;
 
         let params = Params::default();
-        parse_validate_and_lower(input, &params).unwrap();
+        let result = parse_validate_and_lower(input, &params);
+        assert!(result.is_ok());
     }
 
     #[test]

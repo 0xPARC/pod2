@@ -104,13 +104,12 @@ impl StatementCache {
                 .collect::<Vec<_>>()
         };
         assert!(params.max_operation_args >= MAX_VALUE_ARGS);
-        assert!(params.max_statement_args >= MAX_VALUE_ARGS);
+        assert!(Params::max_statement_args() >= MAX_VALUE_ARGS);
         let equations = array::from_fn(|i| {
-            let pred_is_none = op_args[i].has_native_type(builder, params, NativePredicate::None);
+            let pred_is_none = op_args[i].has_native_type(builder, NativePredicate::None);
             let arg_is_value = builder.statement_arg_is_value(&st.args[i]);
             let is_literal = builder.and(pred_is_none, arg_is_value);
-            let pred_is_contains =
-                op_args[i].has_native_type(builder, params, NativePredicate::Contains);
+            let pred_is_contains = op_args[i].has_native_type(builder, NativePredicate::Contains);
             let ref_is_value_arg: [_; 3] =
                 array::from_fn(|j| builder.statement_arg_is_value(&op_args[i].args[j]));
             let ref_is_value = builder.and(ref_is_value_arg[0], ref_is_value_arg[1]);
@@ -435,8 +434,8 @@ fn verify_operation_circuit(
     if !cache.op_args.is_empty() {
         op_checks.extend_from_slice(&[
             verify_copy_circuit(builder, st, &op.op_type, &cache.op_args),
-            verify_eq_neq_from_entries_circuit(params, builder, st, &op.op_type, &cache),
-            verify_lt_lteq_from_entries_circuit(params, builder, st, &op.op_type, &cache),
+            verify_eq_neq_from_entries_circuit(builder, st, &op.op_type, &cache),
+            verify_lt_lteq_from_entries_circuit(builder, st, &op.op_type, &cache),
             verify_transitive_eq_circuit(params, builder, st, &op.op_type, &cache.op_args),
             verify_lt_to_neq_circuit(params, builder, st, &op.op_type, &cache.op_args),
             verify_hash_of_circuit(params, builder, st, &op.op_type, &cache),
@@ -881,7 +880,6 @@ fn verify_custom_circuit(
 /// Carries out the checks necessary for EqualFromEntries and
 /// NotEqualFromEntries.
 fn verify_eq_neq_from_entries_circuit(
-    params: &Params,
     builder: &mut CircuitBuilder,
     st: &StatementTarget,
     op_type: &OperationTypeTarget,
@@ -890,12 +888,12 @@ fn verify_eq_neq_from_entries_circuit(
     let measure = measure_gates_begin!(builder, "OpEqNeqFromEntries");
     let eq_op_st_code_ok = {
         let op_code_ok = op_type.has_native(builder, NativeOperation::EqualFromEntries);
-        let st_code_ok = st.has_native_type(builder, params, NativePredicate::Equal);
+        let st_code_ok = st.has_native_type(builder, NativePredicate::Equal);
         builder.and(op_code_ok, st_code_ok)
     };
     let neq_op_st_code_ok = {
         let op_code_ok = op_type.has_native(builder, NativeOperation::NotEqualFromEntries);
-        let st_code_ok = st.has_native_type(builder, params, NativePredicate::NotEqual);
+        let st_code_ok = st.has_native_type(builder, NativePredicate::NotEqual);
         builder.and(op_code_ok, st_code_ok)
     };
     let op_st_code_ok = builder.or(eq_op_st_code_ok, neq_op_st_code_ok);
@@ -911,7 +909,7 @@ fn verify_eq_neq_from_entries_circuit(
     let expected_st_args: Vec<_> = [arg1_expected, arg2_expected]
         .into_iter()
         .chain(std::iter::repeat_with(|| StatementArgTarget::none(builder)))
-        .take(params.max_statement_args)
+        .take(Params::max_statement_args())
         .flat_map(|arg| arg.elements)
         .collect();
 
@@ -931,7 +929,6 @@ fn verify_eq_neq_from_entries_circuit(
 /// Carries out the checks necessary for LtFromEntries and
 /// LtEqFromEntries.
 fn verify_lt_lteq_from_entries_circuit(
-    params: &Params,
     builder: &mut CircuitBuilder,
     st: &StatementTarget,
     op_type: &OperationTypeTarget,
@@ -943,12 +940,12 @@ fn verify_lt_lteq_from_entries_circuit(
 
     let lt_op_st_code_ok = {
         let op_code_ok = op_type.has_native(builder, NativeOperation::LtFromEntries);
-        let st_code_ok = st.has_native_type(builder, params, NativePredicate::Lt);
+        let st_code_ok = st.has_native_type(builder, NativePredicate::Lt);
         builder.and(op_code_ok, st_code_ok)
     };
     let lteq_op_st_code_ok = {
         let op_code_ok = op_type.has_native(builder, NativeOperation::LtEqFromEntries);
-        let st_code_ok = st.has_native_type(builder, params, NativePredicate::LtEq);
+        let st_code_ok = st.has_native_type(builder, NativePredicate::LtEq);
         builder.and(op_code_ok, st_code_ok)
     };
     let op_st_code_ok = builder.or(lt_op_st_code_ok, lteq_op_st_code_ok);
@@ -981,7 +978,7 @@ fn verify_lt_lteq_from_entries_circuit(
     let expected_st_args: Vec<_> = [arg1_expected, arg2_expected]
         .into_iter()
         .chain(std::iter::repeat_with(|| StatementArgTarget::none(builder)))
-        .take(params.max_statement_args)
+        .take(Params::max_statement_args())
         .flat_map(|arg| arg.elements)
         .collect();
 
@@ -1233,8 +1230,8 @@ fn verify_transitive_eq_circuit(
     let measure = measure_gates_begin!(builder, "OpTransitiveEq");
     let op_code_ok = op_type.has_native(builder, NativeOperation::TransitiveEqualFromStatements);
 
-    let arg1_type_ok = resolved_op_args[0].has_native_type(builder, params, NativePredicate::Equal);
-    let arg2_type_ok = resolved_op_args[1].has_native_type(builder, params, NativePredicate::Equal);
+    let arg1_type_ok = resolved_op_args[0].has_native_type(builder, NativePredicate::Equal);
+    let arg2_type_ok = resolved_op_args[1].has_native_type(builder, NativePredicate::Equal);
     let arg_types_ok = builder.all([arg1_type_ok, arg2_type_ok]);
 
     let arg1_lhs = &resolved_op_args[0].args[0];
@@ -1285,7 +1282,7 @@ fn verify_lt_to_neq_circuit(
     let measure = measure_gates_begin!(builder, "OpLtToNeq");
     let op_code_ok = op_type.has_native(builder, NativeOperation::LtToNotEqual);
 
-    let arg_type_ok = resolved_op_args[0].has_native_type(builder, params, NativePredicate::Lt);
+    let arg_type_ok = resolved_op_args[0].has_native_type(builder, NativePredicate::Lt);
 
     let arg1_expected = resolved_op_args[0].args[0].clone();
     let arg2_expected = resolved_op_args[0].args[1].clone();
@@ -1442,7 +1439,7 @@ fn make_custom_statement_circuit(
     let st_predicate = PredicateTarget::new_custom(builder, batch_id, index);
     let arg_none = ValueTarget::zero(builder);
     let lt_mask = builder.lt_mask(
-        params.max_statement_args,
+        Params::max_statement_args(),
         custom_predicate.predicate.args_len,
     );
     let st_args = std::iter::zip(lt_mask, args)
@@ -1466,7 +1463,7 @@ fn make_custom_statement_circuit(
         .collect();
     // expected_sts.len() == params.max_custom_predicate_arity
     // op_args.len() == params.max_operation_args;
-    assert!(params.max_custom_predicate_arity <= params.max_operation_args);
+    assert!(Params::max_custom_predicate_arity() <= params.max_operation_args);
 
     let sts_eq: Vec<_> = expected_sts
         .iter()
@@ -1508,19 +1505,18 @@ fn normalize_statement_circuit(
 /// statements reversed.  The part of the hash from the front-padded none-statements is
 /// precomputed.
 pub fn calculate_statements_hash_circuit(
-    params: &Params,
     builder: &mut CircuitBuilder,
     // These statements will be padded to reach `num_statements`
     statements: &[StatementTarget],
 ) -> HashOutTarget {
-    assert!(statements.len() <= params.num_public_statements_hash);
+    assert!(statements.len() <= Params::num_public_statements_hash());
     let measure = measure_gates_begin!(builder, "CalculateStsHash");
     let statements_rev_flattened = statements.iter().rev().flat_map(|s| s.flatten());
     let mut none_st = mainpod::Statement::from(Statement::None);
-    pad_statement(params, &mut none_st);
+    pad_statement(&mut none_st);
     let front_pad_elts = iter::repeat(&none_st)
-        .take(params.num_public_statements_hash - statements.len())
-        .flat_map(|s| s.to_fields(params))
+        .take(Params::num_public_statements_hash() - statements.len())
+        .flat_map(|s| s.to_fields())
         .collect_vec();
     let (perm, front_pad_elts_rem) =
         precompute_hash_state::<F, PoseidonPermutation<F>>(&front_pad_elts);
@@ -1581,7 +1577,7 @@ fn build_custom_predicate_table_circuit(
 ) -> Result<Vec<HashOutTarget>> {
     let measure = measure_gates_begin!(builder, "BuildCustomPredTbl");
     let mut custom_predicate_table =
-        Vec::with_capacity(params.max_custom_predicate_batches * params.max_custom_batch_size);
+        Vec::with_capacity(params.max_custom_predicate_batches * Params::max_custom_batch_size());
     for cpb in custom_predicate_batches {
         let measure_cpb = measure_gates_begin!(builder, "CustomPredBatch");
         let id = cpb.id(builder); // constrain the id
@@ -1655,7 +1651,7 @@ fn verify_main_pod_circuit(
         let mut intro_ok = is_blank_intro;
         for self_st in &input_pod_self_statements[1..] {
             let st_is_intro = self_st.pred_is_blank_intro(builder);
-            let st_is_none = self_st.has_native_type(builder, params, NativePredicate::None);
+            let st_is_none = self_st.has_native_type(builder, NativePredicate::None);
             let st_is_intro_or_none = builder.or(st_is_intro, st_is_none);
             intro_ok = builder.and(intro_ok, st_is_intro_or_none);
         }
@@ -1671,8 +1667,7 @@ fn verify_main_pod_circuit(
             );
             statements.push(normalized_st);
         }
-        let sts_hash =
-            calculate_statements_hash_circuit(params, builder, input_pod_self_statements);
+        let sts_hash = calculate_statements_hash_circuit(builder, input_pod_self_statements);
         builder.connect_hashes(expected_sts_hash, sts_hash);
 
         //
@@ -1730,7 +1725,7 @@ fn verify_main_pod_circuit(
     )?;
 
     // 2. Calculate the Pod Id from the public statements
-    let sts_hash = calculate_statements_hash_circuit(params, builder, pub_statements);
+    let sts_hash = calculate_statements_hash_circuit(builder, pub_statements);
 
     // 5. Verify input statements
     for (i, (st, op)) in izip!(&main_pod.input_statements, &main_pod.operations).enumerate() {
@@ -1774,12 +1769,12 @@ impl MainPodVerifyTarget {
             input_pods_self_statements: (0..params.max_input_pods)
                 .map(|_| {
                     (0..params.max_input_pods_public_statements)
-                        .map(|_| builder.add_virtual_statement(params, false))
+                        .map(|_| builder.add_virtual_statement(false))
                         .collect_vec()
                 })
                 .collect(),
             input_statements: (0..params.max_statements)
-                .map(|_| builder.add_virtual_statement(params, false))
+                .map(|_| builder.add_virtual_statement(false))
                 .collect(),
             operations: (0..params.max_statements)
                 .map(|_| builder.add_virtual_operation(params))
@@ -1805,7 +1800,7 @@ impl MainPodVerifyTarget {
                 })
                 .collect(),
             custom_predicate_batches: (0..params.max_custom_predicate_batches)
-                .map(|_| builder.add_virtual_custom_predicate_batch(params, true))
+                .map(|_| builder.add_virtual_custom_predicate_batch(true))
                 .collect(),
             custom_predicate_verifications: (0..params.max_custom_predicate_verifications)
                 .map(|_| CustomPredicateVerifyEntryTarget::new_virtual(params, builder))
@@ -1849,16 +1844,16 @@ fn set_targets_input_pods_self_statements(
         statements_target.len(),
         params.max_input_pods_public_statements
     );
-    assert!(statements.len() <= params.num_public_statements_hash);
+    assert!(statements.len() <= Params::num_public_statements_hash());
 
     for (i, statement) in statements.iter().enumerate() {
-        statements_target[i].set_targets(pw, params, &statement.clone().into())?;
+        statements_target[i].set_targets(pw, &statement.clone().into())?;
     }
     // Padding
     let mut none_st = mainpod::Statement::from(Statement::None);
-    pad_statement(params, &mut none_st);
+    pad_statement(&mut none_st);
     for statement_target in statements_target.iter().skip(statements.len()) {
-        statement_target.set_targets(pw, params, &none_st)?;
+        statement_target.set_targets(pw, &none_st)?;
     }
     Ok(())
 }
@@ -1903,7 +1898,7 @@ impl InnerCircuit for MainPodVerifyTarget {
         }
         // Padding
         if input_pods_len != self.params.max_input_pods {
-            let empty_pod = EmptyPod::new_boxed(&self.params, input.vds_set.clone());
+            let empty_pod = EmptyPod::new_boxed(input.vds_set.clone());
             let empty_pod_statements = empty_pod.pub_statements();
             let empty_mt_proof = MerkleClaimAndProof {
                 root: input.vds_set.root(),
@@ -1924,7 +1919,7 @@ impl InnerCircuit for MainPodVerifyTarget {
 
         assert_eq!(input.statements.len(), self.params.max_statements);
         for (i, (st, op)) in zip_eq(&input.statements, &input.operations).enumerate() {
-            self.input_statements[i].set_targets(pw, &self.params, st)?;
+            self.input_statements[i].set_targets(pw, st)?;
             self.operations[i].set_targets(pw, &self.params, op)?;
         }
 
@@ -1979,7 +1974,7 @@ impl InnerCircuit for MainPodVerifyTarget {
 
         assert!(input.custom_predicate_batches.len() <= self.params.max_custom_predicate_batches);
         for (i, cpb) in input.custom_predicate_batches.iter().enumerate() {
-            self.custom_predicate_batches[i].set_targets(pw, &self.params, cpb)?;
+            self.custom_predicate_batches[i].set_targets(pw, cpb)?;
         }
         // Padding
         let pad_cpb = CustomPredicateBatch::new(
@@ -1988,7 +1983,7 @@ impl InnerCircuit for MainPodVerifyTarget {
             vec![CustomPredicate::empty()],
         );
         for i in input.custom_predicate_batches.len()..self.params.max_custom_predicate_batches {
-            self.custom_predicate_batches[i].set_targets(pw, &self.params, &pad_cpb)?;
+            self.custom_predicate_batches[i].set_targets(pw, &pad_cpb)?;
         }
 
         assert!(
@@ -2048,7 +2043,7 @@ mod tests {
         frontend::{self, literal, CustomPredicateBatchBuilder, StatementTmplBuilder},
         middleware::{
             hash_values, AnchoredKey, Hash, Key, OperationType, Predicate, PredicateOrWildcard,
-            RawValue, StatementArg, StatementTmpl, StatementTmplArg, Wildcard,
+            RawValue, StatementArg, StatementTmpl, StatementTmplArg, Wildcard, EMPTY_VALUE,
         },
     };
 
@@ -2108,10 +2103,10 @@ mod tests {
         let config = CircuitConfig::standard_recursion_config();
         let mut builder = CircuitBuilder::new(config);
 
-        let st_target = builder.add_virtual_statement(&params, false);
+        let st_target = builder.add_virtual_statement(false);
         let op_target = builder.add_virtual_operation(&params);
         let prev_statements_target: Vec<_> = (0..prev_statements.len())
-            .map(|_| builder.add_virtual_statement(&params, false))
+            .map(|_| builder.add_virtual_statement(false))
             .collect();
 
         let merkle_proofs_target: Vec<_> = aux
@@ -2166,10 +2161,10 @@ mod tests {
         )?;
 
         let mut pw = PartialWitness::<F>::new();
-        st_target.set_targets(&mut pw, &params, &st)?;
+        st_target.set_targets(&mut pw, &st)?;
         op_target.set_targets(&mut pw, &params, &op)?;
         for (prev_st_target, prev_st) in prev_statements_target.iter().zip(prev_statements.iter()) {
-            prev_st_target.set_targets(&mut pw, &params, prev_st)?;
+            prev_st_target.set_targets(&mut pw, prev_st)?;
         }
         for (signed_by_target, signed_by) in signed_by_targets.iter().zip(aux.signed_bys.iter()) {
             signed_by_target.set_targets(&mut pw, signed_by)?
@@ -3065,11 +3060,11 @@ mod tests {
 
         let mut pw = PartialWitness::<F>::new();
 
-        st_tmpl_arg_target.set_targets(&mut pw, params, &st_tmpl_arg)?;
+        st_tmpl_arg_target.set_targets(&mut pw, &st_tmpl_arg)?;
         for (arg_target, arg) in args_target.iter().zip(args.iter()) {
             arg_target.set_targets(&mut pw, arg)?;
         }
-        expected_st_arg_target.set_targets(&mut pw, params, &expected_st_arg)?;
+        expected_st_arg_target.set_targets(&mut pw, &expected_st_arg)?;
 
         // generate & verify proof
         let data = builder.build::<C>();
@@ -3122,7 +3117,7 @@ mod tests {
         let config = CircuitConfig::standard_recursion_config();
         let mut builder = CircuitBuilder::new(config);
 
-        let st_tmpl_target = builder.add_virtual_statement_tmpl(params, false);
+        let st_tmpl_target = builder.add_virtual_statement_tmpl(false);
         let args_target: Vec<_> = (0..args.len())
             .map(|_| builder.add_virtual_value())
             .collect();
@@ -3133,16 +3128,16 @@ mod tests {
             &args_target,
         );
         // TODO: Instead of connect, assign witness to result
-        let expected_st_target = builder.add_virtual_statement(params, false);
+        let expected_st_target = builder.add_virtual_statement(false);
         builder.connect_flattenable(&expected_st_target, &st_target);
 
         let mut pw = PartialWitness::<F>::new();
 
-        st_tmpl_target.set_targets(&mut pw, params, &st_tmpl)?;
+        st_tmpl_target.set_targets(&mut pw, &st_tmpl)?;
         for (arg_target, arg) in args_target.iter().zip(args.iter()) {
             arg_target.set_targets(&mut pw, arg)?;
         }
-        expected_st_target.set_targets(&mut pw, params, &expected_st.into())?;
+        expected_st_target.set_targets(&mut pw, &expected_st.into())?;
 
         // generate & verify proof
         let data = builder.build::<C>();
@@ -3179,7 +3174,7 @@ mod tests {
                 StatementTmplArg::Literal(Value::from("value")),
             ],
         };
-        let pred_hash = Predicate::Native(NativePredicate::NotEqual).hash(&params);
+        let pred_hash = Predicate::Native(NativePredicate::NotEqual).hash();
         let args = vec![Value::from(1), Value::from(dict), Value::from(pred_hash)];
         let expected_st = Statement::not_equal(
             AnchoredKey::new(dict, Key::from("key")),
@@ -3193,16 +3188,24 @@ mod tests {
     fn helper_custom_operation_verify_gadget(
         params: &Params,
         custom_predicate: CustomPredicateRef,
-        op_args: Vec<Statement>,
-        args: Vec<Value>,
+        mut op_args: Vec<Statement>,
+        mut args: Vec<Value>,
         expected_st: Option<Statement>,
     ) -> Result<()> {
+        // Pad
+        for _ in op_args.len()..params.max_operation_args {
+            op_args.push(Statement::None);
+        }
+        for _ in args.len()..params.max_custom_predicate_wildcards {
+            args.push(Value::from(EMPTY_VALUE));
+        }
+
         let config = CircuitConfig::standard_recursion_config();
         let mut builder = CircuitBuilder::new(config);
 
-        let custom_predicate_target = builder.add_virtual_custom_predicate_entry(params);
-        let op_args_target: Vec<_> = (0..args.len())
-            .map(|_| builder.add_virtual_statement(params, false))
+        let custom_predicate_target = builder.add_virtual_custom_predicate_entry();
+        let op_args_target: Vec<_> = (0..op_args.len())
+            .map(|_| builder.add_virtual_statement(false))
             .collect();
         let args_target: Vec<_> = (0..args.len())
             .map(|_| builder.add_virtual_value())
@@ -3218,20 +3221,20 @@ mod tests {
         let mut pw = PartialWitness::<F>::new();
 
         // Input
-        custom_predicate_target.set_targets(&mut pw, params, &custom_predicate)?;
+        custom_predicate_target.set_targets(&mut pw, &custom_predicate)?;
         for (op_arg_target, op_arg) in op_args_target.iter().zip(op_args.into_iter()) {
-            op_arg_target.set_targets(&mut pw, params, &op_arg.into())?;
+            op_arg_target.set_targets(&mut pw, &op_arg.into())?;
         }
         for (arg_target, arg) in args_target.iter().zip(args.iter()) {
             arg_target.set_targets(&mut pw, &Value::from(arg.raw()))?;
         }
         // Expected Output
         if let Some(expected_st) = expected_st {
-            st_target.set_targets(&mut pw, params, &expected_st.into())?;
+            st_target.set_targets(&mut pw, &expected_st.into())?;
         }
 
         let expected_op_type = OperationType::Custom(custom_predicate);
-        op_type_target.set_targets(&mut pw, params, &expected_op_type)?;
+        op_type_target.set_targets(&mut pw, &expected_op_type)?;
 
         // generate & verify proof
         let data = builder.build::<C>();
@@ -3242,15 +3245,7 @@ mod tests {
     // TODO: Add negative tests
     #[test]
     fn test_custom_operation_verify_gadget_positive() -> frontend::Result<()> {
-        // We set the parameters to the exact sizes we have in the test so that we don't have to
-        // pad.
-        let params = Params {
-            max_custom_predicate_arity: 2,
-            max_custom_predicate_wildcards: 2,
-            max_operation_args: 2,
-            max_statement_args: 2,
-            ..Default::default()
-        };
+        let params = Params::default();
 
         use NativePredicate as NP;
         use StatementTmplBuilder as STB;
@@ -3340,15 +3335,7 @@ mod tests {
 
     #[test]
     fn test_custom_operation_verify_gadget_negative() -> frontend::Result<()> {
-        // We set the parameters to the exact sizes we have in the test so that we don't have to
-        // pad.
-        let params = Params {
-            max_custom_predicate_arity: 2,
-            max_custom_predicate_wildcards: 2,
-            max_operation_args: 2,
-            max_statement_args: 2,
-            ..Default::default()
-        };
+        let params = Params::default();
 
         use NativePredicate as NP;
         use StatementTmplBuilder as STB;
@@ -3500,10 +3487,9 @@ mod tests {
         let mut builder = CircuitBuilder::new(config);
 
         let statements_target = (0..params.max_public_statements)
-            .map(|_| builder.add_virtual_statement(params, false))
+            .map(|_| builder.add_virtual_statement(false))
             .collect_vec();
-        let sts_hash_target =
-            calculate_statements_hash_circuit(params, &mut builder, &statements_target);
+        let sts_hash_target = calculate_statements_hash_circuit(&mut builder, &statements_target);
 
         let mut pw = PartialWitness::<F>::new();
 
@@ -3512,15 +3498,15 @@ mod tests {
             .iter()
             .map(|st| {
                 let mut st = mainpod::Statement::from(st.clone());
-                pad_statement(params, &mut st);
+                pad_statement(&mut st);
                 st
             })
             .collect_vec();
         for (st_target, st) in statements_target.iter().zip(statements.iter()) {
-            st_target.set_targets(&mut pw, params, st)?;
+            st_target.set_targets(&mut pw, st)?;
         }
         // Expected Output
-        let expected_sts_hash = calculate_statements_hash(&statements, params);
+        let expected_sts_hash = calculate_statements_hash(&statements);
         pw.set_hash_target(
             sts_hash_target,
             HashOut {
@@ -3536,10 +3522,10 @@ mod tests {
 
     #[test]
     fn test_calculate_sts_hash() -> frontend::Result<()> {
+        assert_eq!(Params::num_public_statements_hash(), 16);
         // Case with no public public statements
         let params = Params {
             max_public_statements: 0,
-            num_public_statements_hash: 8,
             ..Default::default()
         };
 
@@ -3547,30 +3533,20 @@ mod tests {
 
         // Case with number of statements for the sts_hash equal to number of public statements
         let params = Params {
-            max_public_statements: 2,
-            num_public_statements_hash: 2,
+            max_public_statements: Params::num_public_statements_hash(),
             ..Default::default()
         };
 
         let dict = Hash([F(1), F(2), F(3), F(4)]);
-        let statements = [
-            Statement::equal(AnchoredKey::from((dict, "foo")), Value::from(42)),
-            Statement::equal(
-                AnchoredKey::from((dict, "bar")),
-                AnchoredKey::from((dict, "baz")),
-            ),
-        ]
-        .into_iter()
-        .chain(iter::repeat(Statement::None))
-        .take(params.max_public_statements)
-        .collect_vec();
+        let statements = (0..Params::num_public_statements_hash())
+            .map(|i| Statement::equal(AnchoredKey::from((dict, "foo")), Value::from(i as i64)))
+            .collect_vec();
 
         helper_calculate_statements_hash(&params, &statements).unwrap();
 
-        // Case with more  statements for the sts_hash than the number of public statements
+        // Case with more statements for the sts_hash than the number of public statements
         let params = Params {
             max_public_statements: 4,
-            num_public_statements_hash: 6,
             ..Default::default()
         };
 
