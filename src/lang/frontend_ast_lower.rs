@@ -10,7 +10,7 @@ use std::{
 };
 
 use crate::{
-    frontend::{BuilderArg, StatementTmplBuilder},
+    frontend::{BuilderArg, PredicateOrWildcard, StatementTmplBuilder},
     lang::{
         frontend_ast::*,
         frontend_ast_batch::{self, PredicateBatches},
@@ -18,8 +18,8 @@ use crate::{
         frontend_ast_validate::{PredicateKind, SymbolTable, ValidatedAST},
     },
     middleware::{
-        containers, CustomPredicateBatch, CustomPredicateRef, IntroPredicateRef, Key,
-        NativePredicate, Params, Predicate, PredicateOrWildcard, StatementTmpl as MWStatementTmpl,
+        self, containers, CustomPredicateBatch, CustomPredicateRef, IntroPredicateRef, Key,
+        NativePredicate, Params, Predicate, StatementTmpl as MWStatementTmpl,
         StatementTmplArg as MWStatementTmplArg, Value, Wildcard,
     },
 };
@@ -35,6 +35,7 @@ pub enum ResolutionContext<'a> {
         current_batch_idx: usize,
         reference_map: &'a HashMap<String, (usize, usize)>,
         existing_batches: &'a [Arc<CustomPredicateBatch>],
+        custom_predicate_name: &'a str,
     },
 }
 
@@ -43,10 +44,23 @@ pub fn resolve_predicate(
     pred_name: &str,
     symbols: &SymbolTable,
     context: &ResolutionContext,
-) -> Option<Predicate> {
-    // 1. Try native predicate first
+) -> Option<PredicateOrWildcard> {
+    // 0. Try wildcard first
+    if let ResolutionContext::Batch {
+        custom_predicate_name,
+        ..
+    } = context
+    {
+        if let Some(wc_scope) = symbols.wildcard_scopes.get(*custom_predicate_name) {
+            if wc_scope.wildcards.contains_key(pred_name) {
+                return Some(PredicateOrWildcard::Wildcard(pred_name.to_string()));
+            }
+        }
+    }
+
+    // 1. Try native predicate second
     if let Ok(native) = NativePredicate::from_str(pred_name) {
-        return Some(Predicate::Native(native));
+        return Some(PredicateOrWildcard::Predicate(Predicate::Native(native)));
     }
 
     // 2. Look up in symbol table
@@ -64,6 +78,7 @@ pub fn resolve_predicate(
                     current_batch_idx,
                     reference_map,
                     existing_batches,
+                    ..
                 } => resolve_local_predicate(
                     pred_name,
                     *current_batch_idx,
@@ -85,7 +100,7 @@ pub fn resolve_predicate(
                 verifier_data_hash: *verifier_data_hash,
             }),
         };
-        return Some(predicate);
+        return Some(PredicateOrWildcard::Predicate(predicate));
     }
 
     // 3. In batch context, also check reference_map for split chain pieces
@@ -94,6 +109,7 @@ pub fn resolve_predicate(
         current_batch_idx,
         reference_map,
         existing_batches,
+        ..
     } = context
     {
         if reference_map.contains_key(pred_name) {
@@ -102,7 +118,8 @@ pub fn resolve_predicate(
                 *current_batch_idx,
                 reference_map,
                 existing_batches,
-            );
+            )
+            .map(PredicateOrWildcard::Predicate);
         }
     }
 
@@ -328,7 +345,7 @@ impl<'a> Lowerer<'a> {
         })?;
 
         // Create a builder with the resolved predicate and desugar
-        let mut builder = StatementTmplBuilder::new(predicate);
+        let mut builder = StatementTmplBuilder::new(predicate.clone());
         for arg in &stmt.args {
             let builder_arg = lower_statement_arg(arg);
             builder = builder.arg(builder_arg);
@@ -356,9 +373,14 @@ impl<'a> Lowerer<'a> {
             mw_args.push(mw_arg);
         }
 
+        let predicate = match desugared.pred_or_wc {
+            PredicateOrWildcard::Predicate(p) => p,
+            PredicateOrWildcard::Wildcard(_) => {
+                unreachable!("wildcard predicates aren't considered in requests")
+            }
+        };
         Ok(MWStatementTmpl {
-            // TODO: Support wildcard
-            pred_or_wc: PredicateOrWildcard::Predicate(desugared.predicate),
+            pred_or_wc: middleware::PredicateOrWildcard::Predicate(predicate),
             args: mw_args,
         })
     }
@@ -424,7 +446,6 @@ impl<'a> Lowerer<'a> {
             let result = frontend_ast_split::split_predicate_if_needed(pred, self.params)?;
             split_results.push(result);
         }
-
         Ok(split_results)
     }
 }
@@ -601,7 +622,7 @@ mod tests {
         // Should be BatchSelf(0) referring to pred1
         assert!(matches!(
             stmt.pred_or_wc,
-            PredicateOrWildcard::Predicate(Predicate::BatchSelf(0))
+            middleware::PredicateOrWildcard::Predicate(Predicate::BatchSelf(0))
         ));
     }
 
@@ -639,8 +660,23 @@ mod tests {
         // Should desugar to the Contains predicate
         assert!(matches!(
             stmt.pred_or_wc,
-            PredicateOrWildcard::Predicate(Predicate::Native(NativePredicate::Contains))
+            middleware::PredicateOrWildcard::Predicate(Predicate::Native(
+                NativePredicate::Contains
+            ))
         ));
+    }
+
+    #[test]
+    fn test_wc_pred() {
+        let input = r#"
+            my_pred(X, DynPred) = AND (
+                Equal(X["pred"], DynPred)
+                DynPred(X)
+            )
+        "#;
+
+        let params = Params::default();
+        parse_validate_and_lower(input, &params).unwrap();
     }
 
     #[test]
@@ -749,7 +785,7 @@ mod tests {
         // Verify the second statement is an intro predicate reference
         let intro_stmt = &pred.statements()[1];
         match intro_stmt.pred_or_wc() {
-            PredicateOrWildcard::Predicate(Predicate::Intro(intro_ref)) => {
+            middleware::PredicateOrWildcard::Predicate(Predicate::Intro(intro_ref)) => {
                 assert_eq!(intro_ref.name, "external_check");
                 assert_eq!(intro_ref.args_len, 1);
                 assert_eq!(intro_ref.verifier_data_hash, EMPTY_HASH);

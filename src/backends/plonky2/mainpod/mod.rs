@@ -1083,11 +1083,11 @@ pub mod tests {
         let vd_set = VDSet::new(&vds);
 
         let mut cpb_builder = CustomPredicateBatchBuilder::new(params.clone(), "cpb".into());
-        let stb0 = STB::new(NP::Contains)
+        let stb0 = STB::new_from_pred(NP::Contains)
             .arg("dict")
             .arg(literal("score"))
             .arg(literal(42));
-        let stb1 = STB::new(NP::Equal)
+        let stb1 = STB::new_from_pred(NP::Equal)
             .arg(("secret_dict", "key"))
             .arg(("dict", "score"));
         let _ = cpb_builder.predicate_and(

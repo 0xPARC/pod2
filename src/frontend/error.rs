@@ -1,34 +1,13 @@
 use std::{backtrace::Backtrace, fmt::Debug};
 
-use crate::middleware::{BackendError, Statement, StatementTmpl, Value};
+use crate::middleware::BackendError;
 
 pub type Result<T, E = Error> = core::result::Result<T, E>;
-
-fn display_wc_map(wc_map: &[Option<Value>]) -> String {
-    let mut out = String::new();
-    use std::fmt::Write;
-    for (i, v) in wc_map.iter().enumerate() {
-        write!(out, "- {}: ", i).unwrap();
-        if let Some(v) = v {
-            writeln!(out, "{}", v).unwrap();
-        } else {
-            writeln!(out, "none").unwrap();
-        }
-    }
-    out
-}
 
 #[derive(thiserror::Error, Debug)]
 pub enum InnerError {
     #[error("{0} {1} is over the limit {2}")]
     MaxLength(String, usize, usize),
-    #[error("{0} doesn't match {1:#}.\nWildcard map:\n{map}\nInternal error: {3}", map=display_wc_map(.2))]
-    StatementsDontMatch(
-        Statement,
-        StatementTmpl,
-        Vec<Option<Value>>,
-        crate::middleware::Error,
-    ),
     #[error("invalid arguments to {0} operation")]
     OpInvalidArgs(String),
     #[error("Podlang parse error: {0}")]
@@ -98,14 +77,6 @@ impl Error {
     }
     pub(crate) fn op_invalid_args(s: String) -> Self {
         new!(OpInvalidArgs(s))
-    }
-    pub(crate) fn statements_dont_match(
-        s0: Statement,
-        s1: StatementTmpl,
-        wc_map: Vec<Option<Value>>,
-        mid_error: crate::middleware::Error,
-    ) -> Self {
-        new!(StatementsDontMatch(s0, s1, wc_map, mid_error))
     }
     pub(crate) fn max_length(obj: String, found: usize, expect: usize) -> Self {
         new!(MaxLength(obj, found, expect))

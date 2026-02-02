@@ -619,6 +619,7 @@ fn build_single_batch(
                     batch_idx,
                     reference_map,
                     existing_batches,
+                    name,
                     symbols,
                 )
             })
@@ -648,6 +649,7 @@ fn build_statement_with_resolved_refs(
     current_batch_idx: usize,
     reference_map: &HashMap<String, (usize, usize)>,
     existing_batches: &[Arc<CustomPredicateBatch>],
+    custom_predicate_name: &str, // custom pred that defines this statement template
     symbols: &SymbolTable,
 ) -> Result<StatementTmplBuilder, BatchingError> {
     let callee_name = &stmt.predicate.name;
@@ -657,16 +659,17 @@ fn build_statement_with_resolved_refs(
         current_batch_idx,
         reference_map,
         existing_batches,
+        custom_predicate_name,
     };
 
-    let predicate = resolve_predicate(callee_name, symbols, &context).ok_or_else(|| {
+    let pred_or_wc = resolve_predicate(callee_name, symbols, &context).ok_or_else(|| {
         BatchingError::Internal {
             message: format!("Unknown predicate reference: '{}'", callee_name),
         }
     })?;
 
     // Build the statement template
-    let mut builder = StatementTmplBuilder::new(predicate);
+    let mut builder = StatementTmplBuilder::new(pred_or_wc);
 
     for arg in &stmt.args {
         builder = builder.arg(lower_statement_arg(arg));
