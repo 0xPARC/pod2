@@ -1277,8 +1277,6 @@ pub trait CircuitBuilderPod<F: RichField + Extendable<D>, const D: usize> {
     fn add_virtual_statement_tmpl_arg(&mut self) -> StatementTmplArgTarget;
     fn add_virtual_statement_tmpl(&mut self, with_pred: bool) -> StatementTmplTarget;
     fn add_virtual_custom_predicate(&mut self, with_pred: bool) -> CustomPredicateTarget;
-    // fn add_virtual_custom_predicate_batch(&mut self, with_pred: bool)
-    //     -> CustomPredicateBatchTarget;
     fn add_virtual_custom_predicate_entry(&mut self) -> CustomPredicateEntryTarget;
     fn select_value(&mut self, b: BoolTarget, x: ValueTarget, y: ValueTarget) -> ValueTarget;
     fn select_statement_arg(
@@ -1466,18 +1464,6 @@ impl CircuitBuilderPod<F, D> for CircuitBuilder {
             args_len: self.add_virtual_target(),
         }
     }
-
-    // /// See `add_virtual_statement_tmpl` for the meaning of `with_pred`.
-    // fn add_virtual_custom_predicate_batch(
-    //     &mut self,
-    //     with_pred: bool,
-    // ) -> CustomPredicateBatchTarget {
-    //     CustomPredicateBatchTarget {
-    //         predicates: (0..Params::max_custom_batch_size())
-    //             .map(|_| self.add_virtual_custom_predicate(with_pred))
-    //             .collect(),
-    //     }
-    // }
 
     /// See `add_virtual_statement_tmpl` for the meaning of `with_pred`.
     fn add_virtual_custom_predicate_entry(&mut self) -> CustomPredicateEntryTarget {
