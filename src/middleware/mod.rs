@@ -766,14 +766,17 @@ pub struct BaseParams {
     /// max number of statements that can be ANDed or ORed together
     /// in a custom predicate
     pub max_custom_predicate_arity: usize,
-    pub max_custom_batch_size: usize,
+    // TODO: Remove
+    // pub max_custom_batch_size: usize,
+    pub max_depth_custom_batch_mt: usize,
 }
 
 pub const BASE_PARAMS: BaseParams = BaseParams {
     num_public_statements_hash: 16,
     max_statement_args: 5,
     max_custom_predicate_arity: 5,
-    max_custom_batch_size: 4,
+    // max_custom_batch_size: 4,
+    max_depth_custom_batch_mt: 16,
 };
 
 /// Params: non dynamic parameters that define the circuit.
@@ -786,7 +789,10 @@ pub struct Params {
     pub max_public_statements: usize,
     pub max_operation_args: usize,
     // max number of custom predicates batches that a MainPod can use
+    // TODO: Remove
     pub max_custom_predicate_batches: usize,
+    // max number of different custom predicates that can be used in a MainPod
+    pub max_custom_predicates: usize,
     // max number of operations using custom predicates that can be verified in the MainPod
     pub max_custom_predicate_verifications: usize,
     pub max_custom_predicate_wildcards: usize,
@@ -816,6 +822,7 @@ impl Default for Params {
             max_public_statements: 8,
             max_operation_args: 5,
             max_custom_predicate_batches: 4,
+            max_custom_predicates: 8,
             max_custom_predicate_verifications: 8,
             max_custom_predicate_wildcards: 8,
             max_merkle_proofs_containers: 20,
@@ -841,7 +848,7 @@ impl Params {
         BASE_PARAMS.max_custom_predicate_arity
     }
     pub const fn max_custom_batch_size() -> usize {
-        BASE_PARAMS.max_custom_batch_size
+        2usize.pow(BASE_PARAMS.max_depth_custom_batch_mt as u32)
     }
 
     pub fn max_priv_statements(&self) -> usize {
@@ -877,8 +884,8 @@ impl Params {
         BASE_PARAMS.max_custom_predicate_arity * Self::statement_tmpl_size() + 2
     }
 
-    pub const fn custom_predicate_batch_size_field_elts() -> usize {
-        BASE_PARAMS.max_custom_batch_size * Self::custom_predicate_size()
+    pub const fn max_depth_custom_batch_mt() -> usize {
+        BASE_PARAMS.max_depth_custom_batch_mt
     }
 
     /// Total size of the statement table including None, input statements from signed pods and
@@ -896,10 +903,6 @@ impl Params {
         println!("  Predicate: {}", Self::predicate_size());
         println!("  Statement template: {}", Self::statement_tmpl_size());
         println!("  Custom predicate: {}", Self::custom_predicate_size());
-        println!(
-            "  Custom predicate batch: {}",
-            Self::custom_predicate_batch_size_field_elts()
-        );
         println!();
     }
 }

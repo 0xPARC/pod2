@@ -508,8 +508,16 @@ impl CustomPredicateBatch {
     }
     pub fn predicates(&self) -> &[CustomPredicate] {
         match &self.data {
-            CustomPredicateBatchData::Opaque { .. } => &[],
+            // TODO: Return Option here instead of panic
+            CustomPredicateBatchData::Opaque { .. } => panic!("opaque batch"),
             CustomPredicateBatchData::Full { predicates, .. } => predicates,
+        }
+    }
+    pub fn mt(&self) -> &MerkleTree {
+        match &self.data {
+            // TODO: Return Option here instead of panic
+            CustomPredicateBatchData::Opaque { .. } => panic!("opaque batch"),
+            CustomPredicateBatchData::Full { mt, .. } => mt,
         }
     }
     pub fn predicate_ref_by_name(
@@ -521,13 +529,29 @@ impl CustomPredicateBatch {
             .enumerate()
             .find_map(|(i, cp)| (cp.name == name).then(|| CustomPredicateRef::new(self.clone(), i)))
     }
+    pub fn predicate_ref_by_index(
+        self: &Arc<CustomPredicateBatch>,
+        index: usize,
+    ) -> Option<CustomPredicateRef> {
+        self.predicates()
+            .get(index)
+            .map(|_| CustomPredicateRef::new(self.clone(), index))
+    }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, Hash, Serialize, Deserialize, JsonSchema)]
 pub struct CustomPredicateRef {
     pub batch: Arc<CustomPredicateBatch>,
     pub index: usize,
 }
+
+impl PartialEq for CustomPredicateRef {
+    fn eq(&self, other: &Self) -> bool {
+        self.batch.id() == other.batch.id() && self.index == other.index
+    }
+}
+
+impl Eq for CustomPredicateRef {}
 
 impl CustomPredicateRef {
     pub fn new(batch: Arc<CustomPredicateBatch>, index: usize) -> Self {
