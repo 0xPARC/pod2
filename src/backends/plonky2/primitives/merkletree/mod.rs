@@ -23,6 +23,13 @@ pub struct MerkleTree {
     root: Node,
 }
 
+impl PartialEq for MerkleTree {
+    fn eq(&self, other: &Self) -> bool {
+        self.root() == other.root()
+    }
+}
+impl Eq for MerkleTree {}
+
 impl MerkleTree {
     /// builds a new `MerkleTree` where the leaves contain the given key-values
     pub fn new(kvs: &HashMap<RawValue, RawValue>) -> Self {

@@ -1,13 +1,16 @@
-use std::{fmt, iter, sync::Arc};
+use std::{collections::HashMap, fmt, iter, sync::Arc};
 
 use itertools::Itertools;
 use plonky2::field::types::Field;
 use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 
-use crate::middleware::{
-    hash_fields, Error, Hash, Key, NativePredicate, Params, Predicate, Result, ToFields, Value,
-    BASE_PARAMS, EMPTY_HASH, F, VALUE_SIZE,
+use crate::{
+    backends::plonky2::primitives::merkletree::MerkleTree,
+    middleware::{
+        hash_fields, Error, Hash, Key, NativePredicate, Params, Predicate, RawValue, Result,
+        ToFields, Value, BASE_PARAMS, EMPTY_HASH, F, VALUE_SIZE,
+    },
 };
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
@@ -420,71 +423,104 @@ impl fmt::Display for CustomPredicate {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, JsonSchema)]
+enum CustomPredicateBatchData {
+    Full {
+        #[serde(skip)]
+        #[schemars(skip)]
+        mt: MerkleTree,
+        predicates: Vec<CustomPredicate>,
+    },
+    Opaque {
+        id: Hash,
+    },
+}
+
+// TODO: Rename Batch for Module everywhere in the code base
+impl CustomPredicateBatchData {
+    fn new_full(params: &Params, predicates: Vec<CustomPredicate>) -> Self {
+        let kvs: HashMap<RawValue, RawValue> = predicates
+            .iter()
+            .enumerate()
+            .map(|(index, pred)| {
+                let cp_hash = hash_fields(&pred.to_fields(params));
+                (Value::from(index as i64).raw(), Value::from(cp_hash).raw())
+            })
+            .collect();
+        let mt = MerkleTree::new(&kvs);
+        Self::Full { mt, predicates }
+    }
+    fn new_opaque(id: Hash) -> Self {
+        Self::Opaque { id }
+    }
+}
+
+impl<'de> Deserialize<'de> for CustomPredicateBatchData {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        enum Aux {
+            Full { predicates: Vec<CustomPredicate> },
+            Opaque { id: Hash },
+        }
+        let aux = Aux::deserialize(deserializer)?;
+        Ok(match aux {
+            Aux::Opaque { id } => Self::new_opaque(id),
+            Aux::Full { predicates } => {
+                // TODO: Remove after https://github.com/0xPARC/pod2/pull/458
+                let params = todo!();
+                Self::new_full(&params, predicates)
+            }
+        })
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct CustomPredicateBatch {
-    id: Hash,
     pub name: String,
-    pub(crate) predicates: Vec<CustomPredicate>,
+    data: CustomPredicateBatchData,
 }
 
 impl std::hash::Hash for CustomPredicateBatch {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.id.hash(state);
-    }
-}
-
-impl ToFields for CustomPredicateBatch {
-    fn to_fields(&self) -> Vec<F> {
-        // all the custom predicates in order
-        let pad_pred = CustomPredicate::empty();
-        self.predicates
-            .iter()
-            .chain(iter::repeat(&pad_pred))
-            .take(BASE_PARAMS.max_custom_batch_size)
-            .flat_map(|p| p.to_fields())
-            .collect_vec()
+        self.id().hash(state);
     }
 }
 
 impl CustomPredicateBatch {
-    pub fn new(_params: &Params, name: String, predicates: Vec<CustomPredicate>) -> Arc<Self> {
-        let mut cpb = Self {
-            id: EMPTY_HASH,
+    pub fn new(params: &Params, name: String, predicates: Vec<CustomPredicate>) -> Arc<Self> {
+        Arc::new(Self {
             name,
-            predicates,
-        };
-        let id = cpb.calculate_id();
-        cpb.id = id;
-        Arc::new(cpb)
+            data: CustomPredicateBatchData::new_full(params, predicates),
+        })
     }
 
     pub fn new_opaque(name: String, id: Hash) -> Arc<Self> {
         Arc::new(Self {
-            id,
             name,
-            predicates: vec![],
+            data: CustomPredicateBatchData::Opaque { id },
         })
     }
 
-    /// Cryptographic identifier for the batch.
-    fn calculate_id(&self) -> Hash {
-        // NOTE: This implementation just hashes the concatenation of all the custom predicates,
-        // but ideally we want to use the root of a merkle tree built from the custom predicates.
-        let input = self.to_fields();
-        hash_fields(&input)
-    }
-
     pub fn id(&self) -> Hash {
-        self.id
+        match &self.data {
+            CustomPredicateBatchData::Opaque { id } => *id,
+            CustomPredicateBatchData::Full { mt, .. } => mt.root(),
+        }
     }
     pub fn predicates(&self) -> &[CustomPredicate] {
-        &self.predicates
+        match &self.data {
+            CustomPredicateBatchData::Opaque { .. } => &[],
+            CustomPredicateBatchData::Full { predicates, .. } => predicates,
+        }
     }
     pub fn predicate_ref_by_name(
         self: &Arc<CustomPredicateBatch>,
         name: &str,
     ) -> Option<CustomPredicateRef> {
-        self.predicates
+        self.predicates()
             .iter()
             .enumerate()
             .find_map(|(i, cp)| (cp.name == name).then(|| CustomPredicateRef::new(self.clone(), i)))
@@ -505,7 +541,7 @@ impl CustomPredicateRef {
         self.predicate().args_len
     }
     pub fn predicate(&self) -> &CustomPredicate {
-        &self.batch.predicates[self.index]
+        &self.batch.predicates()[self.index]
     }
 }
 
