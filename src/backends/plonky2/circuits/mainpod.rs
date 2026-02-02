@@ -1977,11 +1977,8 @@ impl InnerCircuit for MainPodVerifyTarget {
             self.custom_predicate_batches[i].set_targets(pw, cpb)?;
         }
         // Padding
-        let pad_cpb = CustomPredicateBatch::new(
-            &self.params,
-            "empty".to_string(),
-            vec![CustomPredicate::empty()],
-        );
+        let pad_cpb =
+            CustomPredicateBatch::new("empty".to_string(), vec![CustomPredicate::empty()]);
         for i in input.custom_predicate_batches.len()..self.params.max_custom_predicate_batches {
             self.custom_predicate_batches[i].set_targets(pw, &pad_cpb)?;
         }

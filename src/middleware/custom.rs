@@ -9,7 +9,7 @@ use crate::{
     backends::plonky2::primitives::merkletree::MerkleTree,
     middleware::{
         hash_fields, Error, Hash, Key, NativePredicate, Params, Predicate, RawValue, Result,
-        ToFields, Value, BASE_PARAMS, EMPTY_HASH, F, VALUE_SIZE,
+        ToFields, Value, BASE_PARAMS, F, VALUE_SIZE,
     },
 };
 
@@ -438,12 +438,12 @@ enum CustomPredicateBatchData {
 
 // TODO: Rename Batch for Module everywhere in the code base
 impl CustomPredicateBatchData {
-    fn new_full(params: &Params, predicates: Vec<CustomPredicate>) -> Self {
+    fn new_full(predicates: Vec<CustomPredicate>) -> Self {
         let kvs: HashMap<RawValue, RawValue> = predicates
             .iter()
             .enumerate()
             .map(|(index, pred)| {
-                let cp_hash = hash_fields(&pred.to_fields(params));
+                let cp_hash = hash_fields(&pred.to_fields());
                 (Value::from(index as i64).raw(), Value::from(cp_hash).raw())
             })
             .collect();
@@ -468,11 +468,7 @@ impl<'de> Deserialize<'de> for CustomPredicateBatchData {
         let aux = Aux::deserialize(deserializer)?;
         Ok(match aux {
             Aux::Opaque { id } => Self::new_opaque(id),
-            Aux::Full { predicates } => {
-                // TODO: Remove after https://github.com/0xPARC/pod2/pull/458
-                let params = todo!();
-                Self::new_full(&params, predicates)
-            }
+            Aux::Full { predicates } => Self::new_full(predicates),
         })
     }
 }
@@ -490,10 +486,10 @@ impl std::hash::Hash for CustomPredicateBatch {
 }
 
 impl CustomPredicateBatch {
-    pub fn new(params: &Params, name: String, predicates: Vec<CustomPredicate>) -> Arc<Self> {
+    pub fn new(name: String, predicates: Vec<CustomPredicate>) -> Arc<Self> {
         Arc::new(Self {
             name,
-            data: CustomPredicateBatchData::new_full(params, predicates),
+            data: CustomPredicateBatchData::new_full(predicates),
         })
     }
 
@@ -592,7 +588,6 @@ mod tests {
         p:product_of(S1, Constant, S2)
          */
         let cust_pred_batch = CustomPredicateBatch::new(
-            &params,
             "is_double".to_string(),
             vec![CustomPredicate::and(
                 &params,
@@ -673,7 +668,7 @@ mod tests {
         )?;
 
         let eth_friend_batch =
-            CustomPredicateBatch::new(&params, "eth_friend".to_string(), vec![eth_friend]);
+            CustomPredicateBatch::new("eth_friend".to_string(), vec![eth_friend]);
 
         // 0
         let eth_dos_base = CustomPredicate::and(
@@ -750,7 +745,6 @@ mod tests {
         )?;
 
         let eth_dos_distance_batch = CustomPredicateBatch::new(
-            &params,
             "ETHDoS_distance".to_string(),
             vec![eth_dos_base, eth_dos_ind, eth_dos],
         );

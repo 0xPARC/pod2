@@ -179,11 +179,8 @@ mod tests {
             2, // args_len (PodA, PodB)
             names(&["PodA", "PodB"]),
         )?;
-        let expected_batch = CustomPredicateBatch::new(
-            &params,
-            "PodlangBatch".to_string(),
-            vec![expected_predicate],
-        );
+        let expected_batch =
+            CustomPredicateBatch::new("PodlangBatch".to_string(), vec![expected_predicate]);
 
         assert_eq!(*batch_result, expected_batch);
 
@@ -270,11 +267,8 @@ mod tests {
             1, // args_len (A)
             names(&["A", "Temp"]),
         )?;
-        let expected_batch = CustomPredicateBatch::new(
-            &params,
-            "PodlangBatch".to_string(),
-            vec![expected_predicate],
-        );
+        let expected_batch =
+            CustomPredicateBatch::new("PodlangBatch".to_string(), vec![expected_predicate]);
 
         assert_eq!(*batch_result, expected_batch);
 
@@ -316,11 +310,8 @@ mod tests {
             2, // args_len (X, Y)
             names(&["X", "Y"]),
         )?;
-        let expected_batch = CustomPredicateBatch::new(
-            &params,
-            "PodlangBatch".to_string(),
-            vec![expected_predicate],
-        );
+        let expected_batch =
+            CustomPredicateBatch::new("PodlangBatch".to_string(), vec![expected_predicate]);
 
         assert_eq!(*batch_result, expected_batch);
 
@@ -727,7 +718,6 @@ mod tests {
         )?;
 
         let expected_batch = CustomPredicateBatch::new(
-            &params,
             "PodlangBatch".to_string(),
             vec![
                 expected_friend_pred,
@@ -766,7 +756,7 @@ mod tests {
             names(&["A", "B"]),
         )?;
         let available_batch =
-            CustomPredicateBatch::new(&params, "MyBatch".to_string(), vec![imported_predicate]);
+            CustomPredicateBatch::new("MyBatch".to_string(), vec![imported_predicate]);
         let available_batches = vec![available_batch.clone()];
 
         // 2. Create the input string that uses the batch
@@ -819,7 +809,7 @@ mod tests {
         let pred3 = CustomPredicate::and(&params, "p3".into(), vec![], 1, names(&["D"]))?;
 
         let available_batch =
-            CustomPredicateBatch::new(&params, "MyBatch".to_string(), vec![pred1, pred2, pred3]);
+            CustomPredicateBatch::new("MyBatch".to_string(), vec![pred1, pred2, pred3]);
         let available_batches = vec![available_batch.clone()];
 
         // 2. Create the input string that uses the batch with skips
@@ -883,7 +873,7 @@ mod tests {
             names(&["A", "B"]),
         )?;
         let available_batch =
-            CustomPredicateBatch::new(&params, "MyBatch".to_string(), vec![imported_predicate]);
+            CustomPredicateBatch::new("MyBatch".to_string(), vec![imported_predicate]);
         let available_batches = vec![available_batch.clone()];
 
         // 2. Create the input string that defines a new predicate using the imported one

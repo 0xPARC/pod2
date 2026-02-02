@@ -1994,7 +1994,7 @@ pub(crate) mod tests {
         helper_custom_predicate_batch_target_id(&custom_predicate_batch).unwrap();
 
         let custom_predicate_batch =
-            CustomPredicateBatch::new(&params, "empty".to_string(), vec![CustomPredicate::empty()]);
+            CustomPredicateBatch::new("empty".to_string(), vec![CustomPredicate::empty()]);
         helper_custom_predicate_batch_target_id(&custom_predicate_batch).unwrap();
 
         Ok(())

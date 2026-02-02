@@ -777,7 +777,7 @@ mod tests {
         )
         .unwrap();
 
-        let batch = CustomPredicateBatch::new(&params, "TestBatch".to_string(), vec![pred]);
+        let batch = CustomPredicateBatch::new("TestBatch".to_string(), vec![pred]);
 
         let batch_id = batch.id().encode_hex::<String>();
         let input = format!(

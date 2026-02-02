@@ -244,7 +244,7 @@ impl CustomPredicateBatchBuilder {
     }
 
     pub fn finish(self) -> Arc<CustomPredicateBatch> {
-        CustomPredicateBatch::new(&self.params, self.name, self.predicates)
+        CustomPredicateBatch::new(self.name, self.predicates)
     }
 }
 
