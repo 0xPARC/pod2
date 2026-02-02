@@ -766,8 +766,6 @@ pub struct BaseParams {
     /// max number of statements that can be ANDed or ORed together
     /// in a custom predicate
     pub max_custom_predicate_arity: usize,
-    // TODO: Remove
-    // pub max_custom_batch_size: usize,
     pub max_depth_custom_batch_mt: usize,
 }
 
@@ -775,8 +773,7 @@ pub const BASE_PARAMS: BaseParams = BaseParams {
     num_public_statements_hash: 16,
     max_statement_args: 5,
     max_custom_predicate_arity: 5,
-    // max_custom_batch_size: 4,
-    max_depth_custom_batch_mt: 16,
+    max_depth_custom_batch_mt: 16, // up to 65k (2^16) custom predicates in a batch
 };
 
 /// Params: non dynamic parameters that define the circuit.
@@ -788,9 +785,6 @@ pub struct Params {
     pub max_statements: usize,
     pub max_public_statements: usize,
     pub max_operation_args: usize,
-    // max number of custom predicates batches that a MainPod can use
-    // TODO: Remove
-    pub max_custom_predicate_batches: usize,
     // max number of different custom predicates that can be used in a MainPod
     pub max_custom_predicates: usize,
     // max number of operations using custom predicates that can be verified in the MainPod
@@ -821,7 +815,6 @@ impl Default for Params {
             max_statements: 48,
             max_public_statements: 8,
             max_operation_args: 5,
-            max_custom_predicate_batches: 4,
             max_custom_predicates: 8,
             max_custom_predicate_verifications: 8,
             max_custom_predicate_wildcards: 8,

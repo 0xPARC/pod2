@@ -774,7 +774,7 @@ impl CustomPredicateInBatchTarget {
         pw.set_target_arr(&self.id.elements, &predicate_ref.batch.id().0)?;
         pw.set_target(self.index, F::from_canonical_usize(predicate_ref.index))?;
         let predicate = predicate_ref.predicate();
-        self.self_predicate.set_targets(pw, &predicate)?;
+        self.self_predicate.set_targets(pw, predicate)?;
         let mtp_claim = MerkleClaimAndProof {
             root: predicate_ref.batch.id(),
             key: Value::from(predicate_ref.index as i64).raw(),
@@ -878,11 +878,9 @@ pub struct CustomPredicateVerifyEntryTarget {
 
 impl CustomPredicateVerifyEntryTarget {
     pub fn new_virtual(params: &Params, builder: &mut CircuitBuilder) -> Self {
-        let custom_predicate_table_len =
-            params.max_custom_predicate_batches * Params::max_custom_batch_size();
         CustomPredicateVerifyEntryTarget {
             custom_predicate_table_index: IndexTarget::new_virtual(
-                custom_predicate_table_len,
+                params.max_custom_predicates,
                 builder,
             ),
             custom_predicate: builder.add_virtual_custom_predicate_entry(),

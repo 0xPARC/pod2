@@ -849,7 +849,7 @@ pub mod tests {
             // Currently the circuit uses random access that only supports vectors of length 64.
             // With max_input_main_pods=3 we need random access to a vector of length 73.
             max_input_pods: 0,
-            max_custom_predicate_batches: 0,
+            max_custom_predicates: 0,
             max_custom_predicate_verifications: 0,
             ..Default::default()
         };
@@ -970,7 +970,7 @@ pub mod tests {
             max_merkle_proofs_containers: 0,
             max_public_key_of: 0,
             max_custom_predicate_verifications: 0,
-            max_custom_predicate_batches: 0,
+            max_custom_predicates: 0,
             ..Default::default()
         };
         let mut vds = DEFAULT_VD_LIST.clone();
@@ -1005,7 +1005,6 @@ pub mod tests {
             max_public_statements: 2,
             max_operation_args: 5,
             max_custom_predicates: 2,
-            max_custom_predicate_batches: 2,
             max_custom_predicate_verifications: 2,
             max_custom_predicate_wildcards: 3,
             max_merkle_proofs_containers: 2,

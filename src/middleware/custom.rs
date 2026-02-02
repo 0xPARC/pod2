@@ -539,10 +539,16 @@ impl CustomPredicateBatch {
     }
 }
 
-#[derive(Clone, Debug, Hash, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct CustomPredicateRef {
     pub batch: Arc<CustomPredicateBatch>,
     pub index: usize,
+}
+
+impl std::hash::Hash for CustomPredicateRef {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        (self.batch.id(), self.index).hash(state);
+    }
 }
 
 impl PartialEq for CustomPredicateRef {

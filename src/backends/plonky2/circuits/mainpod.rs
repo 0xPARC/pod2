@@ -2098,7 +2098,7 @@ mod tests {
                 .merkle_tree_state_transition_proofs
                 .len(),
             max_custom_predicate_verifications: 0,
-            max_custom_predicate_batches: 0,
+            max_custom_predicates: 0,
             ..Default::default()
         };
 
