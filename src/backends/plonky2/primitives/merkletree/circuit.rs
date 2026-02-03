@@ -421,6 +421,10 @@ fn hash_with_flag_target<H: AlgebraicHasher<F>>(
 ) -> HashOutTarget {
     assert_eq!(inputs.len(), H::AlgebraicPermutation::RATE);
 
+    // here we set `state` to a  `SPONGE_RATE+SPONGE_CAPACITY` (8+4=12) in our
+    // case to a vector of repeated `flag` value. Later at the absorption step,
+    // it will fit the inputs values at positions 0-8, keeping the flag values
+    // at positions 8-12.
     let mut state = H::AlgebraicPermutation::new(core::iter::repeat(flag));
 
     // Absorb all input chunks.

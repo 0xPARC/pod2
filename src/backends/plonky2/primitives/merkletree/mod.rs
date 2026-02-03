@@ -390,6 +390,10 @@ fn hash_with_flag(flag: F, inputs: &[F]) -> Hash {
         <PoseidonPermutation<F> as PlonkyPermutation<F>>::RATE
     );
 
+    // this will set `perm` to a  `SPONGE_RATE+SPONGE_CAPACITY` (8+4=12) in our
+    // case to a vector of repeated `flag` value. Later at the absorption step,
+    // it will fit the inputs values at positions 0-8, keeping the flag values
+    // at positions 8-12.
     let mut perm = <PoseidonPermutation<F> as PlonkyPermutation<F>>::new(core::iter::repeat(flag));
 
     // Absorb all input chunks.
