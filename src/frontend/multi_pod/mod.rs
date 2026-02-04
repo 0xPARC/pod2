@@ -630,7 +630,7 @@ mod tests {
         for (i, pod) in result.pods.iter().enumerate() {
             pod.pod
                 .verify()
-                .expect(&format!("POD {} verification failed", i));
+                .unwrap_or_else(|_| panic!("POD {} verification failed", i));
         }
 
         Ok(())
@@ -751,7 +751,7 @@ mod tests {
         for (i, pod) in result.pods.iter().enumerate() {
             pod.pod
                 .verify()
-                .expect(&format!("POD {} verification failed", i));
+                .unwrap_or_else(|_| panic!("POD {} verification failed", i));
         }
 
         Ok(())
@@ -802,7 +802,7 @@ mod tests {
         for (i, pod) in result.pods.iter().enumerate() {
             pod.pod
                 .verify()
-                .expect(&format!("POD {} verification failed", i));
+                .unwrap_or_else(|_| panic!("POD {} verification failed", i));
         }
 
         Ok(())
@@ -953,7 +953,7 @@ mod tests {
         for (i, pod) in result.pods.iter().enumerate() {
             pod.pod
                 .verify()
-                .expect(&format!("POD {} verification failed", i));
+                .unwrap_or_else(|_| panic!("POD {} verification failed", i));
         }
 
         Ok(())
@@ -1245,7 +1245,7 @@ mod tests {
         for (i, pod) in result.pods.iter().enumerate() {
             pod.pod
                 .verify()
-                .expect(&format!("POD {} verification failed", i));
+                .unwrap_or_else(|_| panic!("POD {} verification failed", i));
         }
 
         Ok(())
@@ -1309,7 +1309,7 @@ mod tests {
         for (i, pod) in result.pods.iter().enumerate() {
             pod.pod
                 .verify()
-                .expect(&format!("POD {} verification failed", i));
+                .unwrap_or_else(|_| panic!("POD {} verification failed", i));
         }
 
         Ok(())
@@ -1368,7 +1368,7 @@ mod tests {
         for (i, pod) in result.pods.iter().enumerate() {
             pod.pod
                 .verify()
-                .expect(&format!("POD {} verification failed", i));
+                .unwrap_or_else(|_| panic!("POD {} verification failed", i));
         }
 
         Ok(())
@@ -1493,7 +1493,7 @@ mod tests {
         for (i, pod) in result.pods.iter().enumerate() {
             pod.pod
                 .verify()
-                .expect(&format!("POD {} verification failed", i));
+                .unwrap_or_else(|_| panic!("POD {} verification failed", i));
         }
 
         Ok(())
@@ -1610,7 +1610,7 @@ mod tests {
         for (i, pod) in result.pods.iter().enumerate() {
             pod.pod
                 .verify()
-                .expect(&format!("POD {} verification failed", i));
+                .unwrap_or_else(|_| panic!("POD {} verification failed", i));
         }
 
         Ok(())
