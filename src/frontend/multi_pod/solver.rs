@@ -461,14 +461,6 @@ fn try_solve_with_pods(
         }
     }
 
-    // Batch count per POD
-    for p in 0..target_pods {
-        let batch_sum: Expression = (0..all_batches.len()).map(|b| batch_used[b][p]).sum();
-        model.add_constraint(constraint!(
-            batch_sum <= (input.params.max_custom_predicate_batches as f64) * pod_used[p]
-        ));
-    }
-
     // Constraint 7b: Anchored key tracking
     //
     // anchored_key_used[ak][p] = 1 when auto-insertion of a Contains is needed for anchored key ak in POD p.

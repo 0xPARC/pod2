@@ -244,7 +244,7 @@ impl CustomPredicateBatchBuilder {
     }
 
     pub fn finish(self) -> Arc<CustomPredicateBatch> {
-        CustomPredicateBatch::new(&self.params, self.name, self.predicates)
+        CustomPredicateBatch::new(self.name, self.predicates)
     }
 }
 
@@ -291,8 +291,6 @@ mod tests {
 
         let eth_dos_batch_mw: middleware::CustomPredicateBatch =
             Arc::unwrap_or_clone(eth_dos_batch);
-        let fields = eth_dos_batch_mw.to_fields();
-        println!("Batch b, serialized: {:?}", fields);
 
         Ok(())
     }

@@ -162,7 +162,7 @@ mod tests {
         let request_result = processed.request.templates();
 
         assert_eq!(request_result.len(), 0);
-        assert_eq!(batch_result.predicates.len(), 1);
+        assert_eq!(batch_result.predicates().len(), 1);
 
         // Expected structure
         let expected_statements = vec![StatementTmpl {
@@ -179,11 +179,8 @@ mod tests {
             2, // args_len (PodA, PodB)
             names(&["PodA", "PodB"]),
         )?;
-        let expected_batch = CustomPredicateBatch::new(
-            &params,
-            "PodlangBatch".to_string(),
-            vec![expected_predicate],
-        );
+        let expected_batch =
+            CustomPredicateBatch::new("PodlangBatch".to_string(), vec![expected_predicate]);
 
         assert_eq!(*batch_result, expected_batch);
 
@@ -244,7 +241,7 @@ mod tests {
         let request_result = processed.request.templates();
 
         assert_eq!(request_result.len(), 0);
-        assert_eq!(batch_result.predicates.len(), 1);
+        assert_eq!(batch_result.predicates().len(), 1);
 
         // Expected structure: Public args: A (index 0). Private args: Temp (index 1)
         let expected_statements = vec![
@@ -270,11 +267,8 @@ mod tests {
             1, // args_len (A)
             names(&["A", "Temp"]),
         )?;
-        let expected_batch = CustomPredicateBatch::new(
-            &params,
-            "PodlangBatch".to_string(),
-            vec![expected_predicate],
-        );
+        let expected_batch =
+            CustomPredicateBatch::new("PodlangBatch".to_string(), vec![expected_predicate]);
 
         assert_eq!(*batch_result, expected_batch);
 
@@ -298,7 +292,7 @@ mod tests {
         let batch_result = first_batch(&processed);
         let request_templates = processed.request.templates();
 
-        assert_eq!(batch_result.predicates.len(), 1);
+        assert_eq!(batch_result.predicates().len(), 1);
         assert!(!request_templates.is_empty());
 
         // Expected Batch structure
@@ -316,11 +310,8 @@ mod tests {
             2, // args_len (X, Y)
             names(&["X", "Y"]),
         )?;
-        let expected_batch = CustomPredicateBatch::new(
-            &params,
-            "PodlangBatch".to_string(),
-            vec![expected_predicate],
-        );
+        let expected_batch =
+            CustomPredicateBatch::new("PodlangBatch".to_string(), vec![expected_predicate]);
 
         assert_eq!(*batch_result, expected_batch);
 
@@ -362,7 +353,7 @@ mod tests {
         let batch_result = first_batch(&processed);
         let request_templates = processed.request.templates();
 
-        assert_eq!(batch_result.predicates.len(), 1); // some_pred is defined
+        assert_eq!(batch_result.predicates().len(), 1); // some_pred is defined
         assert!(!request_templates.is_empty());
 
         // Expected Wildcard Indices in Request Scope:
@@ -607,7 +598,7 @@ mod tests {
             "Expected no request templates"
         );
         assert_eq!(
-            first_batch(&processed).predicates.len(),
+            first_batch(&processed).predicates().len(),
             4,
             "Expected 4 custom predicates"
         );
@@ -727,7 +718,6 @@ mod tests {
         )?;
 
         let expected_batch = CustomPredicateBatch::new(
-            &params,
             "PodlangBatch".to_string(),
             vec![
                 expected_friend_pred,
@@ -766,7 +756,7 @@ mod tests {
             names(&["A", "B"]),
         )?;
         let available_batch =
-            CustomPredicateBatch::new(&params, "MyBatch".to_string(), vec![imported_predicate]);
+            CustomPredicateBatch::new("MyBatch".to_string(), vec![imported_predicate]);
         let available_batches = vec![available_batch.clone()];
 
         // 2. Create the input string that uses the batch
@@ -819,7 +809,7 @@ mod tests {
         let pred3 = CustomPredicate::and(&params, "p3".into(), vec![], 1, names(&["D"]))?;
 
         let available_batch =
-            CustomPredicateBatch::new(&params, "MyBatch".to_string(), vec![pred1, pred2, pred3]);
+            CustomPredicateBatch::new("MyBatch".to_string(), vec![pred1, pred2, pred3]);
         let available_batches = vec![available_batch.clone()];
 
         // 2. Create the input string that uses the batch with skips
@@ -883,7 +873,7 @@ mod tests {
             names(&["A", "B"]),
         )?;
         let available_batch =
-            CustomPredicateBatch::new(&params, "MyBatch".to_string(), vec![imported_predicate]);
+            CustomPredicateBatch::new("MyBatch".to_string(), vec![imported_predicate]);
         let available_batches = vec![available_batch.clone()];
 
         // 2. Create the input string that defines a new predicate using the imported one
@@ -908,13 +898,13 @@ mod tests {
             "No request should be defined"
         );
         assert_eq!(
-            first_batch(&processed).predicates.len(),
+            first_batch(&processed).predicates().len(),
             1,
             "Expected one custom predicate to be defined"
         );
 
         // 4. Check the resulting predicate definition
-        let defined_pred = &first_batch(&processed).predicates[0];
+        let defined_pred = &first_batch(&processed).predicates()[0];
         assert_eq!(defined_pred.name, "wrapper_pred");
         assert_eq!(defined_pred.statements.len(), 1);
 

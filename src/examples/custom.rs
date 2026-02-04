@@ -37,10 +37,10 @@ pub fn eth_dos_batch(params: &Params) -> Result<Arc<CustomPredicateBatch>> {
         .first_batch()
         .expect("Expected batch")
         .clone();
-    println!("a.0. {}", batch.predicates[0]);
-    println!("a.1. {}", batch.predicates[1]);
-    println!("a.2. {}", batch.predicates[2]);
-    println!("a.3. {}", batch.predicates[3]);
+    println!("a.0. {}", batch.predicates()[0]);
+    println!("a.1. {}", batch.predicates()[1]);
+    println!("a.2. {}", batch.predicates()[2]);
+    println!("a.3. {}", batch.predicates()[3]);
     Ok(batch)
 }
 

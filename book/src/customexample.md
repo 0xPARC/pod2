@@ -37,7 +37,7 @@ SELF.1(?1, ?2, ?3, ?4, ?5, ?6) = OR(
 ```
 and similarly for the other two definitions.
 
-The above definition is serialized in-circuit and hashed with a zk-friendly hash to generate the "group hash", a unique cryptographic identifier for the group.
+The above definition is serialized in-circuit and merkelized with a zk-friendly hash to generate the "group hash", a unique cryptographic identifier for the group.
 
 Then the individual statements in the group are identified as:
 ```

@@ -71,7 +71,7 @@ impl StatementTmpl {
                 }
                 Predicate::BatchSelf(index) => {
                     if let Some(batch) = batch_context {
-                        if let Some(predicate) = batch.predicates.get(*index) {
+                        if let Some(predicate) = batch.predicates().get(*index) {
                             write!(w, "{}", predicate.name)?;
                         } else {
                             write!(w, "batch_self_{}", index)?;
@@ -108,7 +108,7 @@ impl PrettyPrint for StatementTmplArg {
 
 impl PrettyPrint for CustomPredicateBatch {
     fn fmt_podlang_with_indent(&self, w: &mut dyn Write, indent: usize) -> std::fmt::Result {
-        for (i, predicate) in self.predicates.iter().enumerate() {
+        for (i, predicate) in self.predicates().iter().enumerate() {
             if i > 0 {
                 write!(w, "\n\n")?;
             }
@@ -405,9 +405,11 @@ mod tests {
 
         // Step 4: Verify the ASTs are equivalent
         assert_eq!(
-            batch.predicates, reparsed_batch.predicates,
+            batch.predicates(),
+            reparsed_batch.predicates(),
             "Original AST should match reparsed AST.\nOriginal input:\n{}\nPretty-printed:\n{}\n",
-            input, pretty_printed
+            input,
+            pretty_printed
         );
     }
 
@@ -565,7 +567,7 @@ mod tests {
         let reparsed = parse(&pretty_printed, &params, &[]).expect("Reparsing should succeed");
         let reparsed_batch = reparsed.first_batch().expect("Expected batch");
 
-        assert_eq!(batch.predicates, reparsed_batch.predicates);
+        assert_eq!(batch.predicates(), reparsed_batch.predicates());
     }
 
     #[test]
@@ -637,9 +639,11 @@ mod tests {
             let reparsed_batch = reparsed_result.first_batch().expect("Expected batch");
 
             assert_eq!(
-                batch.predicates, reparsed_batch.predicates,
+                batch.predicates(),
+                reparsed_batch.predicates(),
                 "Round-trip failed for string: {:?}\nPretty-printed: {}",
-                test_string, pretty_printed
+                test_string,
+                pretty_printed
             );
         }
     }
