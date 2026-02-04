@@ -485,11 +485,11 @@ impl MultiPodBuilder {
         // Build statement content groups for deduplication.
         // Statements with identical content share a single slot in the POD.
         // Group statement indices by their content.
-        let mut statement_dedup_index: HashMap<&Statement, usize> = HashMap::new();
+        let mut statement_content_group_index: HashMap<&Statement, usize> = HashMap::new();
         let mut statement_content_groups = Vec::new();
         for (idx, stmt) in self.statements.iter().enumerate() {
             use std::collections::hash_map::Entry;
-            match statement_dedup_index.entry(stmt) {
+            match statement_content_group_index.entry(stmt) {
                 Entry::Vacant(e) => {
                     e.insert(statement_content_groups.len());
                     statement_content_groups.push(vec![idx]);
