@@ -18,17 +18,16 @@ pub struct Document {
 /// Top-level items that can appear in a document
 #[derive(Debug, Clone, PartialEq)]
 pub enum DocumentItem {
-    UseBatchStatement(UseBatchStatement),
+    UseModuleStatement(UseModuleStatement),
     UseIntroStatement(UseIntroStatement),
     CustomPredicateDef(CustomPredicateDef),
     RequestDef(RequestDef),
 }
 
-/// Import statement: `use batch pred1, pred2, _ from 0x...`
+/// Module import statement: `use module helpers`
 #[derive(Debug, Clone, PartialEq)]
-pub struct UseBatchStatement {
-    pub imports: Vec<ImportName>,
-    pub batch_ref: HashHex,
+pub struct UseModuleStatement {
+    pub name: Identifier,
     pub span: Option<Span>,
 }
 
@@ -38,19 +37,6 @@ pub struct UseIntroStatement {
     pub name: Identifier,
     pub args: Vec<Identifier>,
     pub intro_hash: HashHex,
-    pub span: Option<Span>,
-}
-/// Individual import name (identifier or unused "_")
-#[derive(Debug, Clone, PartialEq)]
-pub enum ImportName {
-    Named(String),
-    Unused, // "_"
-}
-
-/// Batch reference (hash)
-#[derive(Debug, Clone, PartialEq)]
-pub struct BatchRef {
-    pub hash: HashHex,
     pub span: Option<Span>,
 }
 
@@ -96,9 +82,49 @@ pub enum ConjunctionType {
 /// Statement template: predicate call with arguments
 #[derive(Debug, Clone, PartialEq)]
 pub struct StatementTmpl {
-    pub predicate: Identifier,
+    pub predicate: PredicateRef,
     pub args: Vec<StatementTmplArg>,
     pub span: Option<Span>,
+}
+
+/// Reference to a predicate (local or qualified with module name)
+#[derive(Debug, Clone, PartialEq)]
+pub enum PredicateRef {
+    /// Unqualified name (local or native predicate)
+    Local(Identifier),
+    /// Qualified name (module::predicate)
+    Qualified {
+        module: Identifier,
+        predicate: Identifier,
+    },
+}
+
+impl PredicateRef {
+    /// Get the predicate name (without module qualifier)
+    pub fn predicate_name(&self) -> &str {
+        match self {
+            PredicateRef::Local(id) => &id.name,
+            PredicateRef::Qualified { predicate, .. } => &predicate.name,
+        }
+    }
+
+    /// Get the module name if qualified, None if local
+    pub fn module_name(&self) -> Option<&str> {
+        match self {
+            PredicateRef::Local(_) => None,
+            PredicateRef::Qualified { module, .. } => Some(&module.name),
+        }
+    }
+
+    /// Get a display name for error messages (includes module:: prefix if qualified)
+    pub fn display_name(&self) -> String {
+        match self {
+            PredicateRef::Local(id) => id.name.clone(),
+            PredicateRef::Qualified { module, predicate } => {
+                format!("{}::{}", module.name, predicate.name)
+            }
+        }
+    }
 }
 
 /// Arguments that can be passed to statements
@@ -256,7 +282,7 @@ impl fmt::Display for Document {
 impl fmt::Display for DocumentItem {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            DocumentItem::UseBatchStatement(u) => write!(f, "{}", u),
+            DocumentItem::UseModuleStatement(u) => write!(f, "{}", u),
             DocumentItem::UseIntroStatement(u) => write!(f, "{}", u),
             DocumentItem::CustomPredicateDef(c) => write!(f, "{}", c),
             DocumentItem::RequestDef(r) => write!(f, "{}", r),
@@ -264,16 +290,9 @@ impl fmt::Display for DocumentItem {
     }
 }
 
-impl fmt::Display for UseBatchStatement {
+impl fmt::Display for UseModuleStatement {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "use batch ")?;
-        for (i, import) in self.imports.iter().enumerate() {
-            if i > 0 {
-                write!(f, ", ")?;
-            }
-            write!(f, "{}", import)?;
-        }
-        write!(f, " from {}", self.batch_ref)
+        write!(f, "use module {}", self.name)
     }
 }
 
@@ -290,18 +309,14 @@ impl fmt::Display for UseIntroStatement {
     }
 }
 
-impl fmt::Display for ImportName {
+impl fmt::Display for PredicateRef {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            ImportName::Named(name) => write!(f, "{}", name),
-            ImportName::Unused => write!(f, "_"),
+            PredicateRef::Local(id) => write!(f, "{}", id),
+            PredicateRef::Qualified { module, predicate } => {
+                write!(f, "{}::{}", module, predicate)
+            }
         }
-    }
-}
-
-impl fmt::Display for BatchRef {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.hash)
     }
 }
 
@@ -536,10 +551,10 @@ pub mod parse {
 
         for inner_pair in pair.into_inner() {
             match inner_pair.as_rule() {
-                Rule::use_batch_statement => {
-                    items.push(DocumentItem::UseBatchStatement(parse_use_batch_statement(
-                        inner_pair,
-                    )));
+                Rule::use_module_statement => {
+                    items.push(DocumentItem::UseModuleStatement(
+                        parse_use_module_statement(inner_pair),
+                    ));
                 }
                 Rule::use_intro_statement => {
                     items.push(DocumentItem::UseIntroStatement(parse_use_intro_statement(
@@ -562,25 +577,15 @@ pub mod parse {
         Ok(Document { items })
     }
 
-    fn parse_use_batch_statement(pair: Pair<Rule>) -> UseBatchStatement {
-        assert_eq!(pair.as_rule(), Rule::use_batch_statement);
+    fn parse_use_module_statement(pair: Pair<Rule>) -> UseModuleStatement {
+        assert_eq!(pair.as_rule(), Rule::use_module_statement);
         let span = get_span(&pair);
         let mut inner = pair.into_inner();
 
-        let use_list_pair = inner
-            .find(|p| p.as_rule() == Rule::use_predicate_list)
-            .unwrap();
-        let batch_ref_pair = inner.find(|p| p.as_rule() == Rule::batch_ref).unwrap();
+        let name = parse_identifier(inner.next().unwrap());
 
-        let imports = use_list_pair
-            .into_inner()
-            .filter(|p| p.as_rule() == Rule::import_name)
-            .map(parse_import_name)
-            .collect();
-
-        UseBatchStatement {
-            imports,
-            batch_ref: parse_hash_hex(batch_ref_pair.into_inner().next().unwrap()),
+        UseModuleStatement {
+            name,
             span: Some(span),
         }
     }
@@ -619,16 +624,6 @@ pub mod parse {
             args,
             intro_hash: parse_hash_hex(intro_predicate_ref_pair.into_inner().next().unwrap()),
             span: Some(span),
-        }
-    }
-
-    fn parse_import_name(pair: Pair<Rule>) -> ImportName {
-        assert_eq!(pair.as_rule(), Rule::import_name);
-        let s = pair.as_str();
-        if s == "_" {
-            ImportName::Unused
-        } else {
-            ImportName::Named(s.to_string())
         }
     }
 
@@ -748,7 +743,7 @@ pub mod parse {
         let span = get_span(&pair);
         let mut inner = pair.into_inner();
 
-        let predicate = parse_identifier(inner.next().unwrap());
+        let predicate = parse_predicate_ref(inner.next().unwrap());
         let mut args = Vec::new();
 
         if let Some(arg_list) = inner.next() {
@@ -766,6 +761,22 @@ pub mod parse {
             args,
             span: Some(span),
         })
+    }
+
+    fn parse_predicate_ref(pair: Pair<Rule>) -> PredicateRef {
+        assert_eq!(pair.as_rule(), Rule::predicate_ref);
+        let inner = pair.into_inner().next().unwrap();
+
+        match inner.as_rule() {
+            Rule::qualified_predicate_ref => {
+                let mut parts = inner.into_inner();
+                let module = parse_identifier(parts.next().unwrap());
+                let predicate = parse_identifier(parts.next().unwrap());
+                PredicateRef::Qualified { module, predicate }
+            }
+            Rule::identifier => PredicateRef::Local(parse_identifier(inner)),
+            _ => unreachable!("Unexpected predicate_ref rule: {:?}", inner.as_rule()),
+        }
     }
 
     fn parse_statement_arg(pair: Pair<Rule>) -> Result<StatementTmplArg, parser::ParseError> {
@@ -1047,9 +1058,9 @@ mod tests {
     fn clear_spans(doc: &mut Document) {
         for item in &mut doc.items {
             match item {
-                DocumentItem::UseBatchStatement(u) => {
+                DocumentItem::UseModuleStatement(u) => {
                     u.span = None;
-                    u.batch_ref.span = None;
+                    u.name.span = None;
                 }
                 DocumentItem::UseIntroStatement(u) => {
                     u.span = None;
@@ -1082,9 +1093,19 @@ mod tests {
         }
     }
 
+    fn clear_predicate_ref_spans(pred_ref: &mut PredicateRef) {
+        match pred_ref {
+            PredicateRef::Local(id) => id.span = None,
+            PredicateRef::Qualified { module, predicate } => {
+                module.span = None;
+                predicate.span = None;
+            }
+        }
+    }
+
     fn clear_statement_spans(stmt: &mut StatementTmpl) {
         stmt.span = None;
-        stmt.predicate.span = None;
+        clear_predicate_ref_spans(&mut stmt.predicate);
         for arg in &mut stmt.args {
             match arg {
                 StatementTmplArg::Literal(lit) => clear_literal_spans(lit),
@@ -1168,8 +1189,8 @@ mod tests {
     }
 
     #[test]
-    fn test_use_batch_statement() {
-        let input = r#"use batch pred1, pred2, _ from 0x0000000000000000000000000000000000000000000000000000000000000000"#;
+    fn test_use_module_statement() {
+        let input = r#"use module helpers"#;
         test_roundtrip(input);
     }
 
@@ -1223,11 +1244,11 @@ mod tests {
 
     #[test]
     fn test_complete_document() {
-        let input = r#"use batch imported_pred from 0xabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcd
+        let input = r#"use module imported
 
 is_valid(User, private: Config) = AND (
     Equal(User["age"], Config["min_age"])
-    imported_pred(User, Config)
+    imported::some_pred(User, Config)
 )
 
 check_both(A, B, C) = OR (
@@ -1306,7 +1327,7 @@ REQUEST(
         // Check request structure
         if let DocumentItem::RequestDef(req) = &ast.items[1] {
             assert_eq!(req.statements.len(), 1);
-            assert_eq!(req.statements[0].predicate.name, "my_pred");
+            assert_eq!(req.statements[0].predicate.predicate_name(), "my_pred");
             assert_eq!(req.statements[0].args.len(), 2);
         } else {
             panic!("Expected RequestDef");

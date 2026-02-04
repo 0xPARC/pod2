@@ -817,7 +817,10 @@ impl Pod for MainPod {
 
 #[cfg(test)]
 pub mod tests {
-    use std::{any::Any, collections::HashSet};
+    use std::{
+        any::Any,
+        collections::{HashMap, HashSet},
+    };
 
     use num::{BigUint, One};
 
@@ -1174,7 +1177,7 @@ pub mod tests {
             )
             "#,
             &params,
-            &[],
+            &HashMap::new(),
         )
         .unwrap()
         .first_batch()

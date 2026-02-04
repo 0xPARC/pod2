@@ -1,10 +1,8 @@
-use std::sync::Arc;
-
-use hex::ToHex;
+use std::{collections::HashMap, sync::Arc};
 
 use crate::{
     frontend::{PodRequest, Result},
-    lang::parse,
+    lang::{parse, Module},
     middleware::{CustomPredicateBatch, Params},
 };
 
@@ -32,7 +30,7 @@ pub fn eth_dos_batch(params: &Params) -> Result<Arc<CustomPredicateBatch>> {
             eth_dos_ind(src, dst, distance)
         )
         "#;
-    let batch = parse(input, params, &[])
+    let batch = parse(input, params, &HashMap::new())
         .expect("lang parse")
         .first_batch()
         .expect("Expected batch")
@@ -46,16 +44,18 @@ pub fn eth_dos_batch(params: &Params) -> Result<Arc<CustomPredicateBatch>> {
 
 pub fn eth_dos_request() -> Result<PodRequest> {
     let batch = eth_dos_batch(&Params::default())?;
-    let batch_id = batch.id().encode_hex::<String>();
-    let input = format!(
-        r#"
-        use batch _, _, _, eth_dos from 0x{batch_id}
+    let eth_dos_module = Arc::new(Module::new(batch, HashMap::new()));
+
+    let mut available_modules = HashMap::new();
+    available_modules.insert("eth_dos_mod".to_string(), eth_dos_module);
+
+    let input = r#"
+        use module eth_dos_mod
         REQUEST(
-            eth_dos(src, dst, distance)
+            eth_dos_mod::eth_dos(src, dst, distance)
         )
-        "#,
-    );
-    let parsed = parse(&input, &Params::default(), &[batch])?;
+        "#;
+    let parsed = parse(input, &Params::default(), &available_modules)?;
     Ok(parsed.request)
 }
 

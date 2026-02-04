@@ -8,7 +8,7 @@
 //!
 //! Run in real mode: `cargo run --release --example main_pod_points`
 //! Run in mock mode: `cargo run --release --example main_pod_points -- --mock`
-use std::env;
+use std::{collections::HashMap, env};
 
 use pod2::{
     backends::plonky2::{
@@ -88,7 +88,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         game_pk = game_pk,
     );
     println!("# custom predicate batch:{}", input);
-    let batch = parse(&input, &params, &[])?
+    let batch = parse(&input, &params, &HashMap::new())?
         .first_batch()
         .expect("Expected batch")
         .clone();

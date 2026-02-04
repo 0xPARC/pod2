@@ -1,42 +1,59 @@
 //! Lowering from frontend AST to middleware structures
 //!
 //! This module converts validated frontend AST to middleware data structures.
-//! Supports automatic predicate splitting and multi-batch packing.
+//! Supports automatic predicate splitting.
 
 use std::{
     collections::{HashMap, HashSet},
     str::FromStr,
-    sync::Arc,
 };
 
 use crate::{
     frontend::{BuilderArg, PredicateOrWildcard, StatementTmplBuilder},
     lang::{
         frontend_ast::*,
-        frontend_ast_batch::{self, PredicateBatches},
-        frontend_ast_split,
+        frontend_ast_batch, frontend_ast_split,
         frontend_ast_validate::{PredicateKind, SymbolTable, ValidatedAST},
+        Module,
     },
     middleware::{
-        self, containers, CustomPredicateBatch, CustomPredicateRef, IntroPredicateRef, Key,
-        NativePredicate, Params, Predicate, StatementTmpl as MWStatementTmpl,
-        StatementTmplArg as MWStatementTmplArg, Value, Wildcard,
+        self, containers, CustomPredicateRef, IntroPredicateRef, Key, NativePredicate, Params,
+        Predicate, StatementTmpl as MWStatementTmpl, StatementTmplArg as MWStatementTmplArg, Value,
+        Wildcard,
     },
 };
 
 /// Context for predicate resolution - determines how local custom predicates are resolved
 pub enum ResolutionContext<'a> {
-    /// Request context: local custom predicates resolve to Intro/CustomPredicateRef via batches
-    Request {
-        batches: Option<&'a PredicateBatches>,
-    },
-    /// Batch context: local custom predicates may resolve to BatchSelf or Intro/CustomPredicateRef
-    Batch {
-        current_batch_idx: usize,
-        reference_map: &'a HashMap<String, (usize, usize)>,
-        existing_batches: &'a [Arc<CustomPredicateBatch>],
+    /// Request context: local custom predicates resolve to Intro/CustomPredicateRef via module
+    Request { module: Option<&'a Module> },
+    /// Module context: local custom predicates resolve to BatchSelf
+    Module {
+        /// Maps predicate name to index within the module
+        reference_map: &'a HashMap<String, usize>,
+        /// Name of the custom predicate being defined (for wildcard scope lookup)
         custom_predicate_name: &'a str,
     },
+}
+
+/// Resolve a predicate reference to a Predicate using the symbol table
+pub fn resolve_predicate_ref(
+    pred_ref: &PredicateRef,
+    symbols: &SymbolTable,
+    context: &ResolutionContext,
+) -> Option<PredicateOrWildcard> {
+    match pred_ref {
+        PredicateRef::Qualified { module, predicate } => {
+            // Look up the module in the imported_modules
+            let imported_module = symbols.imported_modules.get(&module.name)?;
+            // Find the predicate index in the module
+            let idx = *imported_module.predicate_index.get(&predicate.name)?;
+            Some(PredicateOrWildcard::Predicate(Predicate::Custom(
+                CustomPredicateRef::new(imported_module.batch.clone(), idx),
+            )))
+        }
+        PredicateRef::Local(id) => resolve_predicate(&id.name, symbols, context),
+    }
 }
 
 /// Resolve a predicate name to a Predicate using the symbol table
@@ -45,8 +62,8 @@ pub fn resolve_predicate(
     symbols: &SymbolTable,
     context: &ResolutionContext,
 ) -> Option<PredicateOrWildcard> {
-    // 0. Try wildcard first
-    if let ResolutionContext::Batch {
+    // 0. Try wildcard first (only in module context where we're defining predicates)
+    if let ResolutionContext::Module {
         custom_predicate_name,
         ..
     } = context
@@ -69,26 +86,34 @@ pub fn resolve_predicate(
             PredicateKind::Native(np) => Predicate::Native(*np),
 
             PredicateKind::Custom { .. } => match context {
-                ResolutionContext::Request { batches } => {
-                    let batches = batches.as_ref()?;
-                    let pred_ref = batches.predicate_ref_by_name(pred_name)?;
+                ResolutionContext::Request { module } => {
+                    let module = module.as_ref()?;
+                    let pred_ref = module.predicate_ref_by_name(pred_name)?;
                     Predicate::Custom(pred_ref)
                 }
-                ResolutionContext::Batch {
-                    current_batch_idx,
-                    reference_map,
-                    existing_batches,
-                    ..
-                } => resolve_local_predicate(
-                    pred_name,
-                    *current_batch_idx,
-                    reference_map,
-                    existing_batches,
-                )?,
+                ResolutionContext::Module { reference_map, .. } => {
+                    resolve_local_predicate(pred_name, reference_map)?
+                }
             },
 
             PredicateKind::BatchImported { batch, index } => {
                 Predicate::Custom(CustomPredicateRef::new(batch.clone(), *index))
+            }
+
+            PredicateKind::ModuleImported {
+                module_name,
+                predicate_index,
+                ..
+            } => {
+                // Look up the module in the imported_modules
+                let module = symbols
+                    .imported_modules
+                    .get(module_name)
+                    .expect("Module should exist if ModuleImported predicate kind exists");
+                Predicate::Custom(CustomPredicateRef::new(
+                    module.batch.clone(),
+                    *predicate_index,
+                ))
             }
 
             PredicateKind::IntroImported {
@@ -103,51 +128,25 @@ pub fn resolve_predicate(
         return Some(PredicateOrWildcard::Predicate(predicate));
     }
 
-    // 3. In batch context, also check reference_map for split chain pieces
+    // 3. In module context, also check reference_map for split chain pieces
     //    (predicates created by splitting that aren't in the original symbol table)
-    if let ResolutionContext::Batch {
-        current_batch_idx,
-        reference_map,
-        existing_batches,
-        ..
-    } = context
-    {
+    if let ResolutionContext::Module { reference_map, .. } = context {
         if reference_map.contains_key(pred_name) {
-            return resolve_local_predicate(
-                pred_name,
-                *current_batch_idx,
-                reference_map,
-                existing_batches,
-            )
-            .map(PredicateOrWildcard::Predicate);
+            return resolve_local_predicate(pred_name, reference_map)
+                .map(PredicateOrWildcard::Predicate);
         }
     }
 
     None
 }
 
-/// Resolve a local predicate (one in this document or a split chain piece) using the reference_map
+/// Resolve a local predicate (one in this module or a split chain piece) using the reference_map
 fn resolve_local_predicate(
     pred_name: &str,
-    current_batch_idx: usize,
-    reference_map: &HashMap<String, (usize, usize)>,
-    existing_batches: &[Arc<CustomPredicateBatch>],
+    reference_map: &HashMap<String, usize>,
 ) -> Option<Predicate> {
-    let &(target_batch, target_idx) = reference_map.get(pred_name)?;
-    if target_batch == current_batch_idx {
-        Some(Predicate::BatchSelf(target_idx))
-    } else if target_batch < current_batch_idx {
-        let batch = &existing_batches[target_batch];
-        Some(Predicate::Custom(CustomPredicateRef::new(
-            batch.clone(),
-            target_idx,
-        )))
-    } else {
-        unreachable!(
-            "Forward cross-batch reference should be impossible: {} -> {}",
-            current_batch_idx, target_batch
-        );
-    }
+    let &idx = reference_map.get(pred_name)?;
+    Some(Predicate::BatchSelf(idx))
 }
 
 // ============================================================================
@@ -218,13 +217,13 @@ pub fn lower_statement_arg(arg: &StatementTmplArg) -> BuilderArg {
 /// Result of lowering: optional custom predicate batches and optional request
 ///
 /// A Podlang file can contain:
-/// - Just custom predicates (batches: Some, request: None)
-/// - Just a request (batches: None, request: Some)
-/// - Both (batches: Some, request: Some)
-/// - Neither (batches: None, request: None) - just imports
+/// - Just custom predicates (module: Some, request: None)
+/// - Just a request (module: None, request: Some)
+/// - Both (module: Some, request: Some)
+/// - Neither (module: None, request: None) - just imports
 #[derive(Debug, Clone)]
 pub struct LoweredOutput {
-    pub batches: Option<PredicateBatches>,
+    pub module: Option<Module>,
     pub request: Option<crate::frontend::PodRequest>,
 }
 
@@ -232,12 +231,12 @@ pub use crate::lang::error::LoweringError;
 
 /// Lower a validated AST to middleware structures
 ///
-/// Returns both the custom predicate batch (if any) and the request (if any).
+/// Returns both the module (if any predicates defined) and the request (if any).
 /// At least one will be Some if the document contains custom predicates or a request.
 pub fn lower(
     validated: ValidatedAST,
     params: &Params,
-    batch_name: String,
+    module_name: String,
 ) -> Result<LoweredOutput, LoweringError> {
     if !validated.diagnostics().is_empty() {
         // For now, treat any diagnostics as errors
@@ -246,7 +245,7 @@ pub fn lower(
     }
 
     let lowerer = Lowerer::new(validated, params);
-    lowerer.lower(batch_name)
+    lowerer.lower(module_name)
 }
 
 struct Lowerer<'a> {
@@ -259,17 +258,17 @@ impl<'a> Lowerer<'a> {
         Self { validated, params }
     }
 
-    fn lower(self, batch_name: String) -> Result<LoweredOutput, LoweringError> {
-        // Lower custom predicates (if any) - now supports multiple batches
-        let batches = self.lower_batches(batch_name)?;
+    fn lower(self, module_name: String) -> Result<LoweredOutput, LoweringError> {
+        // Lower custom predicates (if any)
+        let module = self.lower_module(module_name)?;
 
-        // Lower request (if any) - pass batches so refs can be resolved
-        let request = self.lower_request(batches.as_ref())?;
+        // Lower request (if any) - pass module so refs can be resolved
+        let request = self.lower_request(module.as_ref())?;
 
-        Ok(LoweredOutput { batches, request })
+        Ok(LoweredOutput { module, request })
     }
 
-    fn lower_batches(&self, batch_name: String) -> Result<Option<PredicateBatches>, LoweringError> {
+    fn lower_module(&self, module_name: String) -> Result<Option<Module>, LoweringError> {
         // Extract and split custom predicates from document
         let custom_predicates = self.extract_and_split_predicates()?;
 
@@ -278,21 +277,20 @@ impl<'a> Lowerer<'a> {
             return Ok(None);
         }
 
-        // Use the new batching module to pack predicates into batches
-        // Pass the symbol table for unified predicate resolution
-        let batches = frontend_ast_batch::batch_predicates(
+        // Build the module from split predicates
+        let module = frontend_ast_batch::build_module(
             custom_predicates,
             self.params,
-            &batch_name,
+            &module_name,
             self.validated.symbols(),
         )?;
 
-        Ok(Some(batches))
+        Ok(Some(module))
     }
 
     fn lower_request(
         &self,
-        batches: Option<&PredicateBatches>,
+        module: Option<&Module>,
     ) -> Result<Option<crate::frontend::PodRequest>, LoweringError> {
         let doc = self.validated.document();
 
@@ -312,7 +310,7 @@ impl<'a> Lowerer<'a> {
         // Lower each statement to middleware templates, resolving predicates
         let mut request_templates = Vec::new();
         for stmt in &request_def.statements {
-            let mw_stmt = self.lower_request_statement(stmt, &wildcard_map, batches)?;
+            let mw_stmt = self.lower_request_statement(stmt, &wildcard_map, module)?;
             request_templates.push(mw_stmt);
         }
 
@@ -323,7 +321,7 @@ impl<'a> Lowerer<'a> {
         &self,
         stmt: &StatementTmpl,
         wildcard_map: &HashMap<String, usize>,
-        batches: Option<&PredicateBatches>,
+        module: Option<&Module>,
     ) -> Result<MWStatementTmpl, LoweringError> {
         // Enforce argument count limit for request statements
         if stmt.args.len() > Params::max_statement_args() {
@@ -333,16 +331,16 @@ impl<'a> Lowerer<'a> {
             });
         }
 
-        let pred_name = &stmt.predicate.name;
         let symbols = self.validated.symbols();
 
         // Resolve predicate using the unified resolution function
-        let context = ResolutionContext::Request { batches };
-        let predicate = resolve_predicate(pred_name, symbols, &context).ok_or_else(|| {
-            LoweringError::PredicateNotFound {
-                name: pred_name.clone(),
-            }
-        })?;
+        let context = ResolutionContext::Request { module };
+        let predicate =
+            resolve_predicate_ref(&stmt.predicate, symbols, &context).ok_or_else(|| {
+                LoweringError::PredicateNotFound {
+                    name: stmt.predicate.display_name(),
+                }
+            })?;
 
         // Create a builder with the resolved predicate and desugar
         let mut builder = StatementTmplBuilder::new(predicate.clone());
@@ -453,6 +451,8 @@ impl<'a> Lowerer<'a> {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+
     use super::*;
     use crate::lang::{
         frontend_ast::parse::parse_document, frontend_ast_validate::validate, parser::parse_podlang,
@@ -464,20 +464,19 @@ mod tests {
     ) -> Result<LoweredOutput, LoweringError> {
         let parsed = parse_podlang(input).expect("Failed to parse");
         let document = parse_document(parsed.into_iter().next().unwrap()).expect("Failed to parse");
-        let validated = validate(document, &[]).expect("Failed to validate");
+        let validated = validate(document, &HashMap::new()).expect("Failed to validate");
         lower(validated, params, "test_batch".to_string())
     }
 
-    // Helper to get the first batch from the output (expecting it to exist)
+    // Helper to get the batch from the module (expecting it to exist)
     fn expect_batch(
         output: &LoweredOutput,
     ) -> &std::sync::Arc<crate::middleware::CustomPredicateBatch> {
-        output
-            .batches
+        &output
+            .module
             .as_ref()
-            .expect("Expected batches to be present")
-            .first_batch()
-            .expect("Expected at least one batch")
+            .expect("Expected module to be present")
+            .batch
     }
 
     #[test]
@@ -564,14 +563,14 @@ mod tests {
 
         let lowered = result.unwrap();
         // Should be automatically split into 2 predicates (my_pred and my_pred_1)
-        let batches = lowered.batches.as_ref().expect("Expected batches");
-        assert_eq!(batches.total_predicate_count(), 2);
+        let module = lowered.module.as_ref().expect("Expected module");
+        assert_eq!(module.batch.predicates().len(), 2);
 
         // With topological sorting, my_pred_1 comes first (since my_pred depends on it)
         // my_pred_1 has 2 statements
         // my_pred has 5 statements (4 + chain call)
         // Just verify we have the right total statement counts
-        let batch = batches.first_batch().unwrap();
+        let batch = &module.batch;
         let total_statements: usize = batch
             .predicates()
             .iter()
@@ -706,7 +705,7 @@ mod tests {
         let parsed = parse_podlang(&input).expect("Failed to parse");
         let document =
             parse_document(parsed.into_iter().next().unwrap()).expect("Failed to parse document");
-        let validated = validate(document, &[]).expect("Failed to validate");
+        let validated = validate(document, &HashMap::new()).expect("Failed to validate");
         let result = lower(validated, &params, "test_batch".to_string());
 
         assert!(result.is_ok(), "Lowering failed: {:?}", result.err());

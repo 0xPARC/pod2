@@ -797,6 +797,7 @@ impl MainPodCompiler {
 
 #[cfg(test)]
 pub mod tests {
+    use std::collections::HashMap;
 
     use num::BigUint;
 
@@ -1381,7 +1382,7 @@ pub mod tests {
             Equal(b, 5)
         )
         "#;
-        let batch = parse(input, &params, &[])
+        let batch = parse(input, &params, &HashMap::new())
             .unwrap()
             .first_batch()
             .unwrap()
@@ -1433,7 +1434,7 @@ pub mod tests {
             c(6, 3)
         )
         "#;
-        let batch = parse(input, &params, &[])
+        let batch = parse(input, &params, &HashMap::new())
             .unwrap()
             .first_batch()
             .unwrap()
@@ -1458,7 +1459,7 @@ pub mod tests {
             c(6, 3)
         )
         "#;
-        let batch = parse(input, &params, &[])
+        let batch = parse(input, &params, &HashMap::new())
             .unwrap()
             .first_batch()
             .unwrap()
@@ -1500,12 +1501,12 @@ pub mod tests {
         "#;
 
         // Parse and batch the predicate (this handles splitting internally)
-        let parsed = parse(input, &params, &[])?;
-        let batches = &parsed.custom_batches;
+        let parsed = parse(input, &params, &HashMap::new())?;
+        let module = parsed.module.as_ref().expect("Expected module");
 
         // Verify it was split
-        assert!(batches.split_chain("large_pred").is_some());
-        let chain_info = batches.split_chain("large_pred").unwrap();
+        assert!(module.split_chains.contains_key("large_pred"));
+        let chain_info = module.split_chains.get("large_pred").unwrap();
         assert_eq!(chain_info.chain_pieces.len(), 2);
         assert_eq!(chain_info.real_statement_count, 6);
 
@@ -1537,10 +1538,10 @@ pub mod tests {
         let statements = vec![st_a, st_b, st_c, st_d, st_e, st_f];
 
         // Use apply_predicate (primary API) to automatically wire the split chain
-        let result = batches.apply_predicate(&mut builder, "large_pred", statements, true)?;
+        let result = module.apply_predicate(&mut builder, "large_pred", statements, true)?;
 
         // The result should be a valid statement
-        let predicate = batches.predicate_ref_by_name("large_pred").unwrap();
+        let predicate = module.predicate_ref_by_name("large_pred").unwrap();
         match &result {
             Statement::Custom(pred_ref, _) => {
                 assert_eq!(pred_ref, &predicate);

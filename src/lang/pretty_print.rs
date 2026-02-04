@@ -216,6 +216,8 @@ fn fmt_predicate_signature(
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+
     use super::*;
     use crate::{
         backends::plonky2::primitives::ec::schnorr::SecretKey,
@@ -388,11 +390,11 @@ mod tests {
     /// Helper function for round-trip testing
     fn assert_round_trip(input: &str) {
         let params = Params::default();
-        let available_batches = &[];
+        let available_modules = HashMap::new();
 
         // Step 1: Parse the input
         let parsed_result =
-            parse(input, &params, available_batches).expect("Initial parsing should succeed");
+            parse(input, &params, &available_modules).expect("Initial parsing should succeed");
 
         // Step 2: Pretty-print the parsed batch
         let batch = parsed_result.first_batch().expect("Expected batch");
@@ -400,7 +402,7 @@ mod tests {
 
         // Step 3: Parse the pretty-printed result
         let reparsed_result =
-            parse(&pretty_printed, &params, available_batches).expect("Reparsing should succeed");
+            parse(&pretty_printed, &params, &available_modules).expect("Reparsing should succeed");
         let reparsed_batch = reparsed_result.first_batch().expect("Expected batch");
 
         // Step 4: Verify the ASTs are equivalent
@@ -556,7 +558,7 @@ mod tests {
         "#;
 
         let params = Params::default();
-        let parsed_result = parse(input, &params, &[]).expect("Parsing should succeed");
+        let parsed_result = parse(input, &params, &HashMap::new()).expect("Parsing should succeed");
         let batch = parsed_result.first_batch().expect("Expected batch");
 
         let pretty_printed = batch.to_podlang_string();
@@ -564,7 +566,8 @@ mod tests {
         println!("Original input:\n{}", input);
         println!("\nPretty-printed output:\n{}", pretty_printed);
 
-        let reparsed = parse(&pretty_printed, &params, &[]).expect("Reparsing should succeed");
+        let reparsed =
+            parse(&pretty_printed, &params, &HashMap::new()).expect("Reparsing should succeed");
         let reparsed_batch = reparsed.first_batch().expect("Expected batch");
 
         assert_eq!(batch.predicates(), reparsed_batch.predicates());
@@ -629,13 +632,14 @@ mod tests {
             );
 
             let params = Params::default();
-            let parsed_result = parse(&input, &params, &[]).expect("Should parse successfully");
+            let parsed_result =
+                parse(&input, &params, &HashMap::new()).expect("Should parse successfully");
             let batch = parsed_result.first_batch().expect("Expected batch");
 
             let pretty_printed = batch.to_podlang_string();
 
-            let reparsed_result =
-                parse(&pretty_printed, &params, &[]).expect("Should reparse successfully");
+            let reparsed_result = parse(&pretty_printed, &params, &HashMap::new())
+                .expect("Should reparse successfully");
             let reparsed_batch = reparsed_result.first_batch().expect("Expected batch");
 
             assert_eq!(

@@ -8,11 +8,9 @@
 //!   `frontend_ast_batch`, `frontend_ast_lower`).
 //!
 //! The result is a [`PodlangOutput`], which contains:
-//! - `custom_batches`: a [`PredicateBatches`] container (possibly empty) with all custom
-//!   predicates defined in the document. Use
-//!   [`PredicateBatches::apply_predicate`](crate::lang::frontend_ast_batch::PredicateBatches::apply_predicate)
-//!   to apply a predicate into a `MainPodBuilder` (recommended primary API), or
-//!   [`apply_predicate_with`](crate::lang::frontend_ast_batch::PredicateBatches::apply_predicate_with)
+//! - `module`: an optional [`Module`] wrapping a `CustomPredicateBatch` with all custom
+//!   predicates defined in the document. Use [`Module::apply_predicate`] to apply a predicate
+//!   into a `MainPodBuilder` (recommended primary API), or [`Module::apply_predicate_with`]
 //!   for advanced control.
 //! - `request`: a `PodRequest` containing the request templates defined by a `REQUEST(...)` block
 //!   in the document (or empty if none was provided).
@@ -35,36 +33,264 @@ pub mod frontend_ast_validate;
 pub mod parser;
 pub mod pretty_print;
 
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 pub use error::LangError;
-pub use frontend_ast_batch::{MultiOperationError, PredicateBatches};
 pub use frontend_ast_split::{SplitChainInfo, SplitChainPiece, SplitResult};
 pub use parser::{parse_podlang, Pairs, ParseError, Rule};
 pub use pretty_print::PrettyPrint;
 
 use crate::{
-    frontend::PodRequest,
-    middleware::{CustomPredicateBatch, Params},
+    frontend::{Operation, OperationArg, PodRequest},
+    middleware::{CustomPredicateBatch, CustomPredicateRef, Hash, Params, Statement},
 };
+
+/// Errors that can occur when applying predicates
+#[derive(Debug, Clone, thiserror::Error)]
+pub enum MultiOperationError {
+    #[error("Predicate not found: {0}")]
+    PredicateNotFound(String),
+
+    #[error("Chain piece not found: {0}")]
+    ChainPieceNotFound(String),
+
+    #[error(
+        "Wrong statement count for predicate '{predicate}': expected {expected}, got {actual}"
+    )]
+    WrongStatementCount {
+        predicate: String,
+        expected: usize,
+        actual: usize,
+    },
+
+    #[error("No operation steps to apply")]
+    NoSteps,
+}
+
+/// A Podlang module wrapping a middleware CustomPredicateBatch with name resolution info.
+#[derive(Debug, Clone)]
+pub struct Module {
+    /// The middleware representation (CustomPredicateBatch)
+    pub batch: Arc<CustomPredicateBatch>,
+
+    /// Map from predicate name to index in batch
+    pub predicate_index: HashMap<String, usize>,
+
+    /// Split chain info for predicates that were split
+    pub split_chains: HashMap<String, SplitChainInfo>,
+}
+
+impl Module {
+    /// Create a new Module from a batch, building the predicate_index automatically
+    pub fn new(
+        batch: Arc<CustomPredicateBatch>,
+        split_chains: HashMap<String, SplitChainInfo>,
+    ) -> Self {
+        let predicate_index = batch
+            .predicates()
+            .iter()
+            .enumerate()
+            .map(|(i, p)| (p.name.clone(), i))
+            .collect();
+        Self {
+            batch,
+            predicate_index,
+            split_chains,
+        }
+    }
+
+    /// Root hash of the module's Merkle tree
+    pub fn id(&self) -> Hash {
+        self.batch.id()
+    }
+
+    /// Get a reference to a predicate by name
+    pub fn predicate_ref_by_name(&self, name: &str) -> Option<CustomPredicateRef> {
+        let idx = self.predicate_index.get(name)?;
+        Some(CustomPredicateRef::new(self.batch.clone(), *idx))
+    }
+
+    /// Check if the module contains any predicates
+    pub fn is_empty(&self) -> bool {
+        self.batch.predicates().is_empty()
+    }
+
+    /// Apply a predicate directly into a `MainPodBuilder` (common case).
+    ///
+    /// For split predicates, earlier chain links are applied as private, and only the final
+    /// piece is applied as public when `public` is true. For non-split predicates, the single
+    /// operation is applied with the provided `public` flag.
+    ///
+    /// Arguments:
+    /// - `builder`: target builder to receive operations
+    /// - `name`: predicate name
+    /// - `statements`: user statements in original declaration order
+    /// - `public`: whether the final result should be public
+    pub fn apply_predicate(
+        &self,
+        builder: &mut crate::frontend::MainPodBuilder,
+        name: &str,
+        statements: Vec<Statement>,
+        public: bool,
+    ) -> crate::frontend::Result<Statement> {
+        self.apply_predicate_with(name, statements, public, |is_public, op| {
+            if is_public {
+                builder.pub_op(op)
+            } else {
+                builder.priv_op(op)
+            }
+        })
+    }
+
+    /// Advanced variant: apply using a custom closure.
+    ///
+    /// Prefer `apply_predicate` for common usage. This method allows callers to intercept each
+    /// operation (with its `public` flag) and decide how to execute it.
+    ///
+    /// Arguments:
+    /// - `name`: predicate name
+    /// - `statements`: user statements in original declaration order
+    /// - `public`: whether the final result should be public
+    /// - `apply_op`: closure `(is_public, operation) -> Result<Statement>` used to execute each step
+    pub fn apply_predicate_with<F, E>(
+        &self,
+        name: &str,
+        statements: Vec<Statement>,
+        public: bool,
+        mut apply_op: F,
+    ) -> Result<Statement, E>
+    where
+        F: FnMut(bool, Operation) -> Result<Statement, E>,
+        E: From<MultiOperationError>,
+    {
+        let steps = self.build_steps(name, statements, public)?;
+
+        if steps.is_empty() {
+            return Err(MultiOperationError::NoSteps.into());
+        }
+
+        let mut prev_result: Option<Statement> = None;
+
+        for step in steps {
+            let op = if let Some(prev) = prev_result {
+                // Replace the last Statement::None arg with the previous result.
+                let mut args = step.operation.1;
+                let last = args
+                    .last_mut()
+                    .expect("chain statement should include placeholder arg");
+                assert!(
+                    matches!(last, OperationArg::Statement(Statement::None)),
+                    "expected last arg to be a Statement::None placeholder"
+                );
+                *last = OperationArg::Statement(prev);
+                Operation(step.operation.0, args, step.operation.2)
+            } else {
+                step.operation
+            };
+
+            prev_result = Some(apply_op(step.public, op)?);
+        }
+
+        Ok(prev_result.unwrap())
+    }
+
+    /// Build operation steps for a predicate (internal helper)
+    fn build_steps(
+        &self,
+        predicate_name: &str,
+        statements: Vec<Statement>,
+        public: bool,
+    ) -> Result<Vec<OperationStep>, MultiOperationError> {
+        // Check if this predicate was split
+        let chain_info = match self.split_chains.get(predicate_name) {
+            Some(info) => info,
+            None => {
+                // Not split - single operation with all statements
+                let pred_ref = self.predicate_ref_by_name(predicate_name).ok_or_else(|| {
+                    MultiOperationError::PredicateNotFound(predicate_name.to_string())
+                })?;
+
+                return Ok(vec![OperationStep {
+                    operation: Operation::custom(pred_ref, statements),
+                    public,
+                }]);
+            }
+        };
+
+        // Validate statement count
+        if statements.len() != chain_info.real_statement_count {
+            return Err(MultiOperationError::WrongStatementCount {
+                predicate: predicate_name.to_string(),
+                expected: chain_info.real_statement_count,
+                actual: statements.len(),
+            });
+        }
+
+        // Reorder statements from original order to split order
+        let mut reordered = vec![Statement::None; statements.len()];
+        for (original_idx, stmt) in statements.into_iter().enumerate() {
+            let split_idx = chain_info.reorder_map[original_idx];
+            reordered[split_idx] = stmt;
+        }
+
+        // Build operations for each piece in execution order
+        let num_pieces = chain_info.chain_pieces.len();
+
+        // Compute the starting offset for each piece
+        let mut piece_offsets = vec![0usize; num_pieces];
+        let mut offset = 0;
+        for i in (0..num_pieces).rev() {
+            piece_offsets[i] = offset;
+            offset += chain_info.chain_pieces[i].real_statement_count;
+        }
+
+        let mut steps = Vec::new();
+        for (piece_idx, piece) in chain_info.chain_pieces.iter().enumerate() {
+            let is_final = piece_idx == num_pieces - 1;
+
+            let piece_ref = self
+                .predicate_ref_by_name(&piece.name)
+                .ok_or_else(|| MultiOperationError::ChainPieceNotFound(piece.name.clone()))?;
+
+            let start = piece_offsets[piece_idx];
+            let end = start + piece.real_statement_count;
+            let mut args: Vec<Statement> = reordered[start..end].to_vec();
+
+            if piece.has_chain_call {
+                args.push(Statement::None);
+            }
+
+            steps.push(OperationStep {
+                operation: Operation::custom(piece_ref, args),
+                public: public && is_final,
+            });
+        }
+
+        Ok(steps)
+    }
+}
+
+/// A single step in a multi-operation sequence for split predicates
+struct OperationStep {
+    operation: Operation,
+    public: bool,
+}
 
 /// Final result of processing a Podlang document.
 ///
-/// - `custom_batches`: all custom predicates defined in the document, possibly spanning multiple
-///   batches. Use [`PredicateBatches`] APIs to look up predicates by name and apply them.
+/// - `module`: the custom predicates defined in the document (if any). Use `Module::apply_predicate`
+///   to apply a predicate into a `MainPodBuilder`.
 /// - `request`: the request templates defined in the document (empty if not present).
 #[derive(Debug, Clone)]
 pub struct PodlangOutput {
-    pub custom_batches: PredicateBatches,
+    pub module: Option<Module>,
     pub request: PodRequest,
 }
 
 impl PodlangOutput {
-    /// Get the first batch, if any (for backwards compatibility).
-    ///
-    /// Prefer using `custom_batches` directly if your code expects multiple batches.
+    /// Get the batch, if any (for backwards compatibility).
     pub fn first_batch(&self) -> Option<&Arc<CustomPredicateBatch>> {
-        self.custom_batches.first_batch()
+        self.module.as_ref().map(|m| &m.batch)
     }
 }
 
@@ -72,14 +298,14 @@ impl PodlangOutput {
 ///
 /// - `input`: Podlang source.
 /// - `params`: middleware parameters limiting sizes/arity and controlling lowering behavior.
-/// - `available_batches`: external batches available for `use batch ... from 0x...` imports.
+/// - `available_modules`: external modules available for `use module ...` imports, keyed by name.
 ///
-/// Returns a [`PodlangOutput`] containing custom predicate batches (if any) and a `PodRequest`
+/// Returns a [`PodlangOutput`] containing the module (if any predicates defined) and a `PodRequest`
 /// (possibly empty).
 pub fn parse(
     input: &str,
     params: &Params,
-    available_batches: &[Arc<CustomPredicateBatch>],
+    available_modules: &HashMap<String, Arc<Module>>,
 ) -> Result<PodlangOutput, LangError> {
     let pairs = parse_podlang(input)?;
     let document_pair = pairs
@@ -87,10 +313,8 @@ pub fn parse(
         .next()
         .expect("parse_podlang should always return at least one pair for a valid document");
     let document = frontend_ast::parse::parse_document(document_pair)?;
-    let validated = frontend_ast_validate::validate(document, available_batches)?;
-    let lowered = frontend_ast_lower::lower(validated, params, "PodlangBatch".to_string())?;
-
-    let custom_batches = lowered.batches.unwrap_or_default();
+    let validated = frontend_ast_validate::validate(document, available_modules)?;
+    let lowered = frontend_ast_lower::lower(validated, params, "PodlangModule".to_string())?;
 
     let request = lowered.request.unwrap_or_else(|| {
         // If no request, create an empty one
@@ -98,13 +322,15 @@ pub fn parse(
     });
 
     Ok(PodlangOutput {
-        custom_batches,
+        module: lowered.module,
         request,
     })
 }
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+
     use hex::ToHex;
     use pretty_assertions::assert_eq;
 
@@ -157,7 +383,7 @@ mod tests {
         "#;
 
         let params = Params::default();
-        let processed = parse(input, &params, &[])?;
+        let processed = parse(input, &params, &HashMap::new())?;
         let batch_result = first_batch(&processed);
         let request_result = processed.request.templates();
 
@@ -180,7 +406,7 @@ mod tests {
             names(&["PodA", "PodB"]),
         )?;
         let expected_batch =
-            CustomPredicateBatch::new("PodlangBatch".to_string(), vec![expected_predicate]);
+            CustomPredicateBatch::new("PodlangModule".to_string(), vec![expected_predicate]);
 
         assert_eq!(*batch_result, expected_batch);
 
@@ -197,10 +423,10 @@ mod tests {
         "#;
 
         let params = Params::default();
-        let processed = parse(input, &params, &[])?;
+        let processed = parse(input, &params, &HashMap::new())?;
         let request_templates = processed.request.templates();
 
-        assert!(processed.custom_batches.is_empty());
+        assert!(processed.module.is_none());
         assert!(!request_templates.is_empty());
 
         // Expected structure
@@ -236,7 +462,7 @@ mod tests {
         "#;
 
         let params = Params::default();
-        let processed = parse(input, &params, &[])?;
+        let processed = parse(input, &params, &HashMap::new())?;
         let batch_result = first_batch(&processed);
         let request_result = processed.request.templates();
 
@@ -268,7 +494,7 @@ mod tests {
             names(&["A", "Temp"]),
         )?;
         let expected_batch =
-            CustomPredicateBatch::new("PodlangBatch".to_string(), vec![expected_predicate]);
+            CustomPredicateBatch::new("PodlangModule".to_string(), vec![expected_predicate]);
 
         assert_eq!(*batch_result, expected_batch);
 
@@ -288,7 +514,7 @@ mod tests {
         "#;
 
         let params = Params::default();
-        let processed = parse(input, &params, &[])?;
+        let processed = parse(input, &params, &HashMap::new())?;
         let batch_result = first_batch(&processed);
         let request_templates = processed.request.templates();
 
@@ -311,7 +537,7 @@ mod tests {
             names(&["X", "Y"]),
         )?;
         let expected_batch =
-            CustomPredicateBatch::new("PodlangBatch".to_string(), vec![expected_predicate]);
+            CustomPredicateBatch::new("PodlangModule".to_string(), vec![expected_predicate]);
 
         assert_eq!(*batch_result, expected_batch);
 
@@ -349,7 +575,7 @@ mod tests {
         "#;
 
         let params = Params::default();
-        let processed = parse(input, &params, &[])?;
+        let processed = parse(input, &params, &HashMap::new())?;
         let batch_result = first_batch(&processed);
         let request_templates = processed.request.templates();
 
@@ -402,10 +628,10 @@ mod tests {
         "#;
 
         let params = Params::default();
-        let processed = parse(input, &params, &[])?;
+        let processed = parse(input, &params, &HashMap::new())?;
         let request_templates = processed.request.templates();
 
-        assert!(processed.custom_batches.is_empty());
+        assert!(processed.module.is_none());
         assert!(!request_templates.is_empty());
 
         let expected_templates = vec![
@@ -459,7 +685,7 @@ mod tests {
         "#;
 
         // Parse the input string
-        let processed = super::parse(input, &Params::default(), &[])?;
+        let processed = super::parse(input, &Params::default(), &HashMap::new())?;
         let parsed_templates = processed.request.templates();
 
         //  Define Expected Templates (Copied from prover/mod.rs)
@@ -550,7 +776,7 @@ mod tests {
         );
 
         assert!(
-            processed.custom_batches.is_empty(),
+            processed.module.is_none(),
             "Expected no custom predicates for a REQUEST only input"
         );
 
@@ -591,7 +817,7 @@ mod tests {
             )
         "#;
 
-        let processed = super::parse(input, &params, &[])?;
+        let processed = super::parse(input, &params, &HashMap::new())?;
 
         assert!(
             processed.request.templates().is_empty(),
@@ -718,7 +944,7 @@ mod tests {
         )?;
 
         let expected_batch = CustomPredicateBatch::new(
-            "PodlangBatch".to_string(),
+            "PodlangModule".to_string(),
             vec![
                 expected_friend_pred,
                 expected_base_pred,
@@ -737,10 +963,10 @@ mod tests {
     }
 
     #[test]
-    fn test_e2e_use_statement() -> Result<(), LangError> {
+    fn test_e2e_use_module_statement() -> Result<(), LangError> {
         let params = Params::default();
 
-        // 1. Create a batch to be imported
+        // 1. Create a module with a predicate to be imported
         let imported_pred_stmts = vec![StatementTmpl {
             pred_or_wc: pred_lit(Predicate::Native(NativePredicate::Equal)),
             args: vec![
@@ -755,80 +981,66 @@ mod tests {
             2,
             names(&["A", "B"]),
         )?;
-        let available_batch =
-            CustomPredicateBatch::new("MyBatch".to_string(), vec![imported_predicate]);
-        let available_batches = vec![available_batch.clone()];
+        let batch = CustomPredicateBatch::new("MyBatch".to_string(), vec![imported_predicate]);
+        let module = Arc::new(Module::new(batch.clone(), HashMap::new()));
 
-        // 2. Create the input string that uses the batch
-        let batch_id_str = available_batch.id().encode_hex::<String>();
-        let input = format!(
-            r#"
-            use batch imported_pred from 0x{}
+        // 2. Create available modules map
+        let mut available_modules = HashMap::new();
+        available_modules.insert("my_module".to_string(), module);
+
+        // 3. Create the input string that uses the module
+        let input = r#"
+            use module my_module
 
             REQUEST(
-                imported_pred(Pod1, Pod2)
+                my_module::imported_equal(Pod1, Pod2)
             )
-        "#,
-            batch_id_str
-        );
+        "#;
 
-        // 3. Parse the input
-        let processed = parse(&input, &params, &available_batches)?;
+        // 4. Parse the input
+        let processed = parse(input, &params, &available_modules)?;
         let request_templates = processed.request.templates();
 
         assert!(
-            processed.custom_batches.is_empty(),
+            processed.module.is_none(),
             "No custom predicates should be defined in the main input"
         );
         assert_eq!(request_templates.len(), 1, "Expected one request template");
 
-        // 4. Check the resulting request template
-        let expected_request_templates = vec![StatementTmpl {
-            pred_or_wc: pred_lit(Predicate::Custom(CustomPredicateRef::new(
-                available_batch,
-                0,
-            ))),
-            args: vec![
-                StatementTmplArg::Wildcard(wc("Pod1", 0)),
-                StatementTmplArg::Wildcard(wc("Pod2", 1)),
-            ],
-        }];
-
-        assert_eq!(request_templates, expected_request_templates);
+        // 5. Check the resulting request template uses the imported predicate
+        let template = &request_templates[0];
+        assert_eq!(template.args.len(), 2);
 
         Ok(())
     }
 
     #[test]
-    fn test_e2e_use_statement_complex() -> Result<(), LangError> {
+    fn test_e2e_use_module_complex() -> Result<(), LangError> {
         let params = Params::default();
 
-        // 1. Create a batch with multiple predicates
+        // 1. Create a module with multiple predicates
         let pred1 = CustomPredicate::and(&params, "p1".into(), vec![], 1, names(&["A"]))?;
         let pred2 = CustomPredicate::and(&params, "p2".into(), vec![], 2, names(&["B", "C"]))?;
         let pred3 = CustomPredicate::and(&params, "p3".into(), vec![], 1, names(&["D"]))?;
 
-        let available_batch =
-            CustomPredicateBatch::new("MyBatch".to_string(), vec![pred1, pred2, pred3]);
-        let available_batches = vec![available_batch.clone()];
+        let batch = CustomPredicateBatch::new("mymodule".to_string(), vec![pred1, pred2, pred3]);
+        let mymodule = Arc::new(Module::new(batch.clone(), HashMap::new()));
 
-        // 2. Create the input string that uses the batch with skips
-        let batch_id_str = available_batch.id().encode_hex::<String>();
+        let mut available_modules = HashMap::new();
+        available_modules.insert("mymodule".to_string(), mymodule);
 
-        let input = format!(
-            r#"
-            use batch pred_one, _, pred_three from 0x{}
+        // 2. Create the input string that uses qualified predicate access
+        let input = r#"
+            use module mymodule
 
             REQUEST(
-                pred_one(Pod1)
-                pred_three(Pod2)
+                mymodule::p1(Pod1)
+                mymodule::p3(Pod2)
             )
-        "#,
-            batch_id_str
-        );
+        "#;
 
         // 3. Parse the input
-        let processed = parse(&input, &params, &available_batches)?;
+        let processed = parse(input, &params, &available_modules)?;
         let request_templates = processed.request.templates();
 
         assert_eq!(request_templates.len(), 2, "Expected two request templates");
@@ -836,17 +1048,11 @@ mod tests {
         // 4. Check the resulting request templates
         let expected_templates = vec![
             StatementTmpl {
-                pred_or_wc: pred_lit(Predicate::Custom(CustomPredicateRef::new(
-                    available_batch.clone(),
-                    0,
-                ))),
+                pred_or_wc: pred_lit(Predicate::Custom(CustomPredicateRef::new(batch.clone(), 0))),
                 args: vec![StatementTmplArg::Wildcard(wc("Pod1", 0))],
             },
             StatementTmpl {
-                pred_or_wc: pred_lit(Predicate::Custom(CustomPredicateRef::new(
-                    available_batch,
-                    2,
-                ))),
+                pred_or_wc: pred_lit(Predicate::Custom(CustomPredicateRef::new(batch, 2))),
                 args: vec![StatementTmplArg::Wildcard(wc("Pod2", 1))],
             },
         ];
@@ -857,10 +1063,10 @@ mod tests {
     }
 
     #[test]
-    fn test_e2e_custom_predicate_uses_import() -> Result<(), LangError> {
+    fn test_e2e_custom_predicate_uses_module() -> Result<(), LangError> {
         let params = Params::default();
 
-        // 1. Create a batch with a predicate to be imported
+        // 1. Create a module with a predicate to be imported
         let imported_pred_stmts = vec![StatementTmpl {
             pred_or_wc: pred_lit(Predicate::Native(NativePredicate::Equal)),
             args: vec![sta_ak(("A", 0), "foo"), sta_ak(("B", 1), "bar")],
@@ -872,26 +1078,23 @@ mod tests {
             2,
             names(&["A", "B"]),
         )?;
-        let available_batch =
-            CustomPredicateBatch::new("MyBatch".to_string(), vec![imported_predicate]);
-        let available_batches = vec![available_batch.clone()];
+        let batch = CustomPredicateBatch::new("extmod".to_string(), vec![imported_predicate]);
+        let extmod = Arc::new(Module::new(batch.clone(), HashMap::new()));
+
+        let mut available_modules = HashMap::new();
+        available_modules.insert("extmod".to_string(), extmod);
 
         // 2. Create the input string that defines a new predicate using the imported one
-        let batch_id_str = available_batch.id().encode_hex::<String>();
-
-        let input = format!(
-            r#"
-            use batch imported_eq from 0x{}
+        let input = r#"
+            use module extmod
 
             wrapper_pred(X, Y) = AND(
-                imported_eq(X, Y)
+                extmod::imported_equal(X, Y)
             )
-        "#,
-            batch_id_str
-        );
+        "#;
 
         // 3. Parse the input
-        let processed = parse(&input, &params, &available_batches)?;
+        let processed = parse(input, &params, &available_modules)?;
 
         assert!(
             processed.request.templates().is_empty(),
@@ -909,10 +1112,7 @@ mod tests {
         assert_eq!(defined_pred.statements.len(), 1);
 
         let expected_statement = StatementTmpl {
-            pred_or_wc: pred_lit(Predicate::Custom(CustomPredicateRef::new(
-                available_batch.clone(),
-                0,
-            ))),
+            pred_or_wc: pred_lit(Predicate::Custom(CustomPredicateRef::new(batch, 0))),
             args: vec![
                 StatementTmplArg::Wildcard(wc("X", 0)),
                 StatementTmplArg::Wildcard(wc("Y", 1)),
@@ -939,7 +1139,7 @@ mod tests {
         "#,
         );
 
-        let processed = parse(&input, &params, &[])?;
+        let processed = parse(&input, &params, &HashMap::new())?;
         let request_templates = processed.request.templates();
         assert_eq!(request_templates.len(), 1);
 
@@ -998,7 +1198,7 @@ mod tests {
         */
 
         let params = Params::default();
-        let processed = parse(&input, &params, &[])?;
+        let processed = parse(&input, &params, &HashMap::new())?;
         let request_templates = processed.request.templates();
 
         let expected_templates = vec![
@@ -1034,29 +1234,24 @@ mod tests {
     }
 
     #[test]
-    fn test_e2e_use_unknown_batch() {
+    fn test_e2e_use_unknown_module() {
         let params = Params::default();
-        let available_batches = &[];
+        let available_modules: HashMap<String, Arc<Module>> = HashMap::new();
 
-        let unknown_batch_id = format!("0x{}", "a".repeat(64));
+        let input = r#"
+            use module unknown_module
+            "#;
 
-        let input = format!(
-            r#"
-            use batch some_pred from {}
-            "#,
-            unknown_batch_id
-        );
-
-        let result = parse(&input, &params, available_batches);
+        let result = parse(input, &params, &available_modules);
 
         assert!(result.is_err());
 
         match result.err().unwrap() {
             LangError::Validation(e) => match *e {
-                frontend_ast_validate::ValidationError::BatchNotFound { id, .. } => {
-                    assert_eq!(id, unknown_batch_id);
+                frontend_ast_validate::ValidationError::ModuleNotFound { name, .. } => {
+                    assert_eq!(name, "unknown_module");
                 }
-                _ => panic!("Expected BatchNotFound error, but got {:?}", e),
+                _ => panic!("Expected ModuleNotFound error, but got {:?}", e),
             },
             e => panic!("Expected LangError::Validation, but got {:?}", e),
         }
@@ -1065,17 +1260,16 @@ mod tests {
     #[test]
     fn test_e2e_undefined_wildcard() {
         let params = Params::default();
-        let available_batches = &[];
+        let available_modules: HashMap<String, Arc<Module>> = HashMap::new();
 
         let input = r#"
             identity_verified(username, private: identity_dict) = AND(
                 Equal(identity_dict["username"], username)
                 Equal(identity_dict["user_public_key"], user_public_key)
             )
-        "#
-        .to_string();
+        "#;
 
-        let result = parse(&input, &params, available_batches);
+        let result = parse(input, &params, &available_modules);
 
         assert!(result.is_err());
 

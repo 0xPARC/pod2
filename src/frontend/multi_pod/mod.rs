@@ -672,7 +672,7 @@ mod tests {
             pred_b(X) = AND(pred_a(X))
             "#,
             &params,
-            &[],
+            &HashMap::new(),
         )
         .expect("parse predicates");
         let batch = parsed
@@ -1406,7 +1406,7 @@ mod tests {
             pred_d(X) = AND(pred_c(X))
             "#,
             &params,
-            &[],
+            &HashMap::new(),
         )
         .expect("parse predicates");
         let batch = parsed
@@ -1536,7 +1536,7 @@ mod tests {
             )
             "#,
             &params,
-            &[],
+            &HashMap::new(),
         )
         .expect("parse predicates");
         let batch = parsed

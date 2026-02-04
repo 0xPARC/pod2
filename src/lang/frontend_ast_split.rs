@@ -620,7 +620,7 @@ fn generate_chain_predicates(
                 .collect();
 
             let chain_call = StatementTmpl {
-                predicate: next_pred_name,
+                predicate: PredicateRef::Local(next_pred_name),
                 args: chain_call_args,
                 span: None,
             };
@@ -832,7 +832,7 @@ mod tests {
         let original = &chain[1];
         assert_eq!(original.name.name, "complex");
         let last_stmt = original.statements.last().unwrap();
-        assert_eq!(last_stmt.predicate.name, "complex_1");
+        assert_eq!(last_stmt.predicate.predicate_name(), "complex_1");
     }
 
     #[test]

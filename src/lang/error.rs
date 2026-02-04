@@ -50,8 +50,8 @@ pub enum ValidationError {
         span: Option<Span>,
     },
 
-    #[error("Batch not found: {id}")]
-    BatchNotFound { id: String, span: Option<Span> },
+    #[error("Module not found: {name}")]
+    ModuleNotFound { name: String, span: Option<Span> },
 
     #[error("Undefined predicate: {name}")]
     UndefinedPredicate { name: String, span: Option<Span> },
