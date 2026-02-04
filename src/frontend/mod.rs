@@ -28,7 +28,8 @@ mod serialization;
 pub use custom::*;
 pub use error::*;
 pub use multi_pod::{
-    MultiPodBuilder, MultiPodResult, MultiPodSolution, Options as MultiPodOptions,
+    Error as MultiPodError, MultiPodBuilder, MultiPodResult, MultiPodSolution,
+    Options as MultiPodOptions,
 };
 pub use operation::*;
 pub use pod_request::*;
