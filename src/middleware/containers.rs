@@ -1,7 +1,7 @@
 //! This file implements the types defined at
 //! <https://0xparc.github.io/pod2/values.html#dictionary-array-set> .
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet};
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Deserializer, Serialize};
@@ -23,7 +23,7 @@ pub struct Dictionary {
     #[schemars(skip)]
     mt: MerkleTree,
     #[serde(serialize_with = "ordered_map")]
-    kvs: HashMap<Key, Value>,
+    kvs: BTreeMap<Key, Value>,
 }
 
 #[macro_export]
@@ -32,15 +32,15 @@ macro_rules! dict {
         $crate::dict!({ $($key => $val),* })
     );
     ({ $($key:expr => $val:expr),* }) => ({
-        let mut map = ::std::collections::HashMap::new();
+        let mut map = ::std::collections::BTreeMap::new();
         $( map.insert($crate::middleware::Key::from($key), $crate::middleware::Value::from($val)); )*
         $crate::middleware::containers::Dictionary::new( map)
     });
 }
 
 impl Dictionary {
-    pub fn new(kvs: HashMap<Key, Value>) -> Self {
-        let kvs_raw: HashMap<RawValue, RawValue> =
+    pub fn new(kvs: BTreeMap<Key, Value>) -> Self {
+        let kvs_raw: BTreeMap<RawValue, RawValue> =
             kvs.iter().map(|(k, v)| (k.raw(), v.raw())).collect();
         Self {
             mt: MerkleTree::new(&kvs_raw),
@@ -90,7 +90,7 @@ impl Dictionary {
         MerkleTree::verify_state_transition(proof).map_err(|e| e.into())
     }
     // TODO: Rename to dict to be consistent maybe?
-    pub fn kvs(&self) -> &HashMap<Key, Value> {
+    pub fn kvs(&self) -> &BTreeMap<Key, Value> {
         &self.kvs
     }
 }
@@ -110,7 +110,7 @@ impl<'de> Deserialize<'de> for Dictionary {
         #[derive(Deserialize)]
         struct Aux {
             #[serde(serialize_with = "ordered_map")]
-            kvs: HashMap<Key, Value>,
+            kvs: BTreeMap<Key, Value>,
         }
         let aux = Aux::deserialize(deserializer)?;
         Ok(Dictionary::new(aux.kvs))
@@ -126,12 +126,12 @@ pub struct Set {
     #[schemars(skip)]
     mt: MerkleTree,
     #[serde(serialize_with = "ordered_set")]
-    set: HashSet<Value>,
+    set: BTreeSet<Value>,
 }
 
 impl Set {
-    pub fn new(set: HashSet<Value>) -> Self {
-        let kvs_raw: HashMap<RawValue, RawValue> = set
+    pub fn new(set: BTreeSet<Value>) -> Self {
+        let kvs_raw: BTreeMap<RawValue, RawValue> = set
             .iter()
             .map(|e| {
                 let rv = e.raw();
@@ -180,7 +180,7 @@ impl Set {
     pub fn verify_state_transition(proof: &MerkleTreeStateTransitionProof) -> Result<()> {
         MerkleTree::verify_state_transition(proof).map_err(|e| e.into())
     }
-    pub fn set(&self) -> &HashSet<Value> {
+    pub fn set(&self) -> &BTreeSet<Value> {
         &self.set
     }
 }
@@ -200,7 +200,7 @@ impl<'de> Deserialize<'de> for Set {
         #[derive(Deserialize, JsonSchema)]
         struct Aux {
             #[serde(serialize_with = "ordered_set")]
-            set: HashSet<Value>,
+            set: BTreeSet<Value>,
         }
         let aux = Aux::deserialize(deserializer)?;
         Ok(Set::new(aux.set))
@@ -221,7 +221,7 @@ pub struct Array {
 
 impl Array {
     pub fn new(array: Vec<Value>) -> Self {
-        let kvs_raw: HashMap<RawValue, RawValue> = array
+        let kvs_raw: BTreeMap<RawValue, RawValue> = array
             .iter()
             .enumerate()
             .map(|(i, e)| (RawValue::from(i as i64), e.raw()))

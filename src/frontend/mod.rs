@@ -2,7 +2,7 @@
 //! with Pods.
 
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{BTreeMap, HashSet},
     convert::From,
     fmt,
 };
@@ -36,7 +36,7 @@ pub use pod_request::*;
 #[derive(Clone, Debug)]
 pub struct SignedDictBuilder {
     pub params: Params,
-    pub kvs: HashMap<Key, Value>,
+    pub kvs: BTreeMap<Key, Value>,
 }
 
 impl fmt::Display for SignedDictBuilder {
@@ -53,7 +53,7 @@ impl SignedDictBuilder {
     pub fn new(params: &Params) -> Self {
         Self {
             params: params.clone(),
-            kvs: HashMap::new(),
+            kvs: BTreeMap::new(),
         }
     }
 
@@ -105,7 +105,7 @@ impl SignedDict {
             .then_some(())
             .ok_or(Error::custom("Invalid signature!"))
     }
-    pub fn kvs(&self) -> &HashMap<Key, Value> {
+    pub fn kvs(&self) -> &BTreeMap<Key, Value> {
         self.dict.kvs()
     }
     pub fn get(&self, key: impl Into<Key>) -> Option<&Value> {
