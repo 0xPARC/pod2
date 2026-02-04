@@ -2,7 +2,7 @@
 //! Simple example of building a signed dict and verifying it
 //!
 //! Run: `cargo run --release --example signed_dict`
-use std::collections::HashSet;
+use std::collections::BTreeSet;
 
 use pod2::{
     backends::plonky2::{primitives::ec::schnorr::SecretKey, signer::Signer},
@@ -26,7 +26,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     builder.insert("name", "Alice");
     builder.insert("lucky_number", 42);
     builder.insert("human", true);
-    let friends_set: HashSet<Value> = ["Bob", "Charlie", "Dave"]
+    let friends_set: BTreeSet<Value> = ["Bob", "Charlie", "Dave"]
         .into_iter()
         .map(Value::from)
         .collect();
