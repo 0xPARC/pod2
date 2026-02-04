@@ -91,6 +91,18 @@ pub enum ValidationError {
 
     #[error("Wildcard '{name}' collides with a predicate name")]
     WildcardPredicateNameCollision { name: String },
+
+    #[error("Predicate definitions are not allowed in request files")]
+    PredicatesNotAllowedInRequest { span: Option<Span> },
+
+    #[error("REQUEST block is not allowed in module files")]
+    RequestNotAllowedInModule { span: Option<Span> },
+
+    #[error("Module file must contain at least one predicate definition")]
+    NoPredicatesInModule,
+
+    #[error("Request file must contain a REQUEST block")]
+    NoRequestBlock,
 }
 
 /// Lowering errors from frontend AST lowering to middleware

@@ -2,7 +2,7 @@ use std::{collections::HashMap, sync::Arc};
 
 use crate::{
     frontend::{PodRequest, Result},
-    lang::{parse, Module},
+    lang::{load_module, parse_request, Module},
     middleware::{CustomPredicateBatch, Params},
 };
 
@@ -30,11 +30,8 @@ pub fn eth_dos_batch(params: &Params) -> Result<Arc<CustomPredicateBatch>> {
             eth_dos_ind(src, dst, distance)
         )
         "#;
-    let batch = parse(input, params, &HashMap::new())
-        .expect("lang parse")
-        .first_batch()
-        .expect("Expected batch")
-        .clone();
+    let module = load_module(input, "eth_dos", params, &HashMap::new()).expect("lang parse");
+    let batch = module.batch.clone();
     println!("a.0. {}", batch.predicates()[0]);
     println!("a.1. {}", batch.predicates()[1]);
     println!("a.2. {}", batch.predicates()[2]);
@@ -55,8 +52,7 @@ pub fn eth_dos_request() -> Result<PodRequest> {
             eth_dos_mod::eth_dos(src, dst, distance)
         )
         "#;
-    let parsed = parse(input, &Params::default(), &available_modules)?;
-    Ok(parsed.request)
+    Ok(parse_request(input, &Params::default(), &available_modules)?)
 }
 
 #[cfg(test)]

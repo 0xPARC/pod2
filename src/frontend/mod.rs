@@ -813,7 +813,7 @@ pub mod tests {
             tickets_pod_full_flow, zu_kyc_pod_builder, zu_kyc_pod_request,
             zu_kyc_sign_dict_builders, EthDosHelper, MOCK_VD_SET,
         },
-        lang::parse,
+        lang::load_module,
         middleware::{
             containers::{Array, Set},
             Signer as _, Value,
@@ -1382,11 +1382,8 @@ pub mod tests {
             Equal(b, 5)
         )
         "#;
-        let batch = parse(input, &params, &HashMap::new())
-            .unwrap()
-            .first_batch()
-            .unwrap()
-            .clone();
+        let module = load_module(input, "test", &params, &HashMap::new()).unwrap();
+        let batch = module.batch.clone();
         let pred_test = batch.predicate_ref_by_name("Test").unwrap();
 
         // Try to build with wrong type in 1st arg
@@ -1434,11 +1431,8 @@ pub mod tests {
             c(6, 3)
         )
         "#;
-        let batch = parse(input, &params, &HashMap::new())
-            .unwrap()
-            .first_batch()
-            .unwrap()
-            .clone();
+        let module = load_module(input, "test", &params, &HashMap::new()).unwrap();
+        let batch = module.batch.clone();
         let pred_test = batch.predicate_ref_by_name("Test").unwrap();
 
         let mut builder = MainPodBuilder::new(&params, vd_set);
@@ -1459,11 +1453,8 @@ pub mod tests {
             c(6, 3)
         )
         "#;
-        let batch = parse(input, &params, &HashMap::new())
-            .unwrap()
-            .first_batch()
-            .unwrap()
-            .clone();
+        let module = load_module(input, "test", &params, &HashMap::new()).unwrap();
+        let batch = module.batch.clone();
         let pred_test = batch.predicate_ref_by_name("Test").unwrap();
 
         let mut builder = MainPodBuilder::new(&params, vd_set);
@@ -1501,8 +1492,7 @@ pub mod tests {
         "#;
 
         // Parse and batch the predicate (this handles splitting internally)
-        let parsed = parse(input, &params, &HashMap::new())?;
-        let module = parsed.module.as_ref().expect("Expected module");
+        let module = load_module(input, "test", &params, &HashMap::new())?;
 
         // Verify it was split
         assert!(module.split_chains.contains_key("large_pred"));

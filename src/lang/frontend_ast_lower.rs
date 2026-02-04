@@ -23,11 +23,11 @@ use crate::{
     },
 };
 
-/// Context for predicate resolution - determines how local custom predicates are resolved
+/// Context for predicate resolution - determines how predicates are resolved
 pub enum ResolutionContext<'a> {
-    /// Request context: local custom predicates resolve to Intro/CustomPredicateRef via module
-    Request { module: Option<&'a Module> },
-    /// Module context: local custom predicates resolve to BatchSelf
+    /// Request context: predicates resolve via imports only (no local definitions)
+    Request,
+    /// Module context: local predicates resolve to BatchSelf
     Module {
         /// Maps predicate name to index within the module
         reference_map: &'a HashMap<String, usize>,
@@ -86,10 +86,9 @@ pub fn resolve_predicate(
             PredicateKind::Native(np) => Predicate::Native(*np),
 
             PredicateKind::Custom { .. } => match context {
-                ResolutionContext::Request { module } => {
-                    let module = module.as_ref()?;
-                    let pred_ref = module.predicate_ref_by_name(pred_name)?;
-                    Predicate::Custom(pred_ref)
+                ResolutionContext::Request => {
+                    // Request files can't define local predicates, so this shouldn't happen
+                    return None;
                 }
                 ResolutionContext::Module { reference_map, .. } => {
                     resolve_local_predicate(pred_name, reference_map)?
@@ -214,38 +213,37 @@ pub fn lower_statement_arg(arg: &StatementTmplArg) -> BuilderArg {
     }
 }
 
-/// Result of lowering: optional custom predicate batches and optional request
-///
-/// A Podlang file can contain:
-/// - Just custom predicates (module: Some, request: None)
-/// - Just a request (module: None, request: Some)
-/// - Both (module: Some, request: Some)
-/// - Neither (module: None, request: None) - just imports
-#[derive(Debug, Clone)]
-pub struct LoweredOutput {
-    pub module: Option<Module>,
-    pub request: Option<crate::frontend::PodRequest>,
-}
-
 pub use crate::lang::error::LoweringError;
 
-/// Lower a validated AST to middleware structures
+/// Lower a validated module AST to a Module
 ///
-/// Returns both the module (if any predicates defined) and the request (if any).
-/// At least one will be Some if the document contains custom predicates or a request.
-pub fn lower(
+/// The validated AST must have been validated in Module mode.
+pub fn lower_module(
     validated: ValidatedAST,
     params: &Params,
-    module_name: String,
-) -> Result<LoweredOutput, LoweringError> {
+    module_name: &str,
+) -> Result<Module, LoweringError> {
     if !validated.diagnostics().is_empty() {
-        // For now, treat any diagnostics as errors
-        // In future we could allow warnings
         return Err(LoweringError::ValidationErrors);
     }
 
     let lowerer = Lowerer::new(validated, params);
-    lowerer.lower(module_name)
+    lowerer.lower_module(module_name)
+}
+
+/// Lower a validated request AST to a PodRequest
+///
+/// The validated AST must have been validated in Request mode.
+pub fn lower_request(
+    validated: ValidatedAST,
+    params: &Params,
+) -> Result<crate::frontend::PodRequest, LoweringError> {
+    if !validated.diagnostics().is_empty() {
+        return Err(LoweringError::ValidationErrors);
+    }
+
+    let lowerer = Lowerer::new(validated, params);
+    lowerer.lower_request()
 }
 
 struct Lowerer<'a> {
@@ -258,51 +256,33 @@ impl<'a> Lowerer<'a> {
         Self { validated, params }
     }
 
-    fn lower(self, module_name: String) -> Result<LoweredOutput, LoweringError> {
-        // Lower custom predicates (if any)
-        let module = self.lower_module(module_name)?;
-
-        // Lower request (if any) - pass module so refs can be resolved
-        let request = self.lower_request(module.as_ref())?;
-
-        Ok(LoweredOutput { module, request })
-    }
-
-    fn lower_module(&self, module_name: String) -> Result<Option<Module>, LoweringError> {
+    fn lower_module(self, module_name: &str) -> Result<Module, LoweringError> {
         // Extract and split custom predicates from document
         let custom_predicates = self.extract_and_split_predicates()?;
-
-        // If no custom predicates, return None
-        if custom_predicates.is_empty() {
-            return Ok(None);
-        }
 
         // Build the module from split predicates
         let module = frontend_ast_batch::build_module(
             custom_predicates,
             self.params,
-            &module_name,
+            module_name,
             self.validated.symbols(),
         )?;
 
-        Ok(Some(module))
+        Ok(module)
     }
 
-    fn lower_request(
-        &self,
-        module: Option<&Module>,
-    ) -> Result<Option<crate::frontend::PodRequest>, LoweringError> {
+    fn lower_request(self) -> Result<crate::frontend::PodRequest, LoweringError> {
         let doc = self.validated.document();
 
-        // Find request definition (if any)
-        let request_def = doc.items.iter().find_map(|item| match item {
-            DocumentItem::RequestDef(req) => Some(req),
-            _ => None,
-        });
-
-        let Some(request_def) = request_def else {
-            return Ok(None);
-        };
+        // Find request definition
+        let request_def = doc
+            .items
+            .iter()
+            .find_map(|item| match item {
+                DocumentItem::RequestDef(req) => Some(req),
+                _ => None,
+            })
+            .expect("Request mode validation ensures REQUEST block exists");
 
         // Build wildcard map from all wildcards used in the request statements
         let wildcard_map = self.build_request_wildcard_map(request_def);
@@ -310,18 +290,17 @@ impl<'a> Lowerer<'a> {
         // Lower each statement to middleware templates, resolving predicates
         let mut request_templates = Vec::new();
         for stmt in &request_def.statements {
-            let mw_stmt = self.lower_request_statement(stmt, &wildcard_map, module)?;
+            let mw_stmt = self.lower_request_statement(stmt, &wildcard_map)?;
             request_templates.push(mw_stmt);
         }
 
-        Ok(Some(crate::frontend::PodRequest::new(request_templates)))
+        Ok(crate::frontend::PodRequest::new(request_templates))
     }
 
     fn lower_request_statement(
         &self,
         stmt: &StatementTmpl,
         wildcard_map: &HashMap<String, usize>,
-        module: Option<&Module>,
     ) -> Result<MWStatementTmpl, LoweringError> {
         // Enforce argument count limit for request statements
         if stmt.args.len() > Params::max_statement_args() {
@@ -334,7 +313,7 @@ impl<'a> Lowerer<'a> {
         let symbols = self.validated.symbols();
 
         // Resolve predicate using the unified resolution function
-        let context = ResolutionContext::Request { module };
+        let context = ResolutionContext::Request;
         let predicate =
             resolve_predicate_ref(&stmt.predicate, symbols, &context).ok_or_else(|| {
                 LoweringError::PredicateNotFound {
@@ -455,28 +434,17 @@ mod tests {
 
     use super::*;
     use crate::lang::{
-        frontend_ast::parse::parse_document, frontend_ast_validate::validate, parser::parse_podlang,
+        frontend_ast::parse::parse_document,
+        frontend_ast_validate::{validate, ParseMode},
+        parser::parse_podlang,
     };
 
-    fn parse_validate_and_lower(
-        input: &str,
-        params: &Params,
-    ) -> Result<LoweredOutput, LoweringError> {
+    fn parse_validate_and_lower_module(input: &str, params: &Params) -> Result<Module, LoweringError> {
         let parsed = parse_podlang(input).expect("Failed to parse");
         let document = parse_document(parsed.into_iter().next().unwrap()).expect("Failed to parse");
-        let validated = validate(document, &HashMap::new()).expect("Failed to validate");
-        lower(validated, params, "test_batch".to_string())
-    }
-
-    // Helper to get the batch from the module (expecting it to exist)
-    fn expect_batch(
-        output: &LoweredOutput,
-    ) -> &std::sync::Arc<crate::middleware::CustomPredicateBatch> {
-        &output
-            .module
-            .as_ref()
-            .expect("Expected module to be present")
-            .batch
+        let validated =
+            validate(document, &HashMap::new(), ParseMode::Module).expect("Failed to validate");
+        lower_module(validated, params, "test_batch")
     }
 
     #[test]
@@ -488,16 +456,16 @@ mod tests {
         "#;
 
         let params = Params::default();
-        let result = parse_validate_and_lower(input, &params);
+        let result = parse_validate_and_lower_module(input, &params);
         if let Err(e) = &result {
             eprintln!("Error: {:?}", e);
         }
         assert!(result.is_ok());
 
-        let lowered = result.unwrap();
-        assert_eq!(expect_batch(&lowered).predicates().len(), 1);
+        let module = result.unwrap();
+        assert_eq!(module.batch.predicates().len(), 1);
 
-        let pred = &expect_batch(&lowered).predicates()[0];
+        let pred = &module.batch.predicates()[0];
         assert_eq!(pred.name, "my_pred");
         assert_eq!(pred.args_len(), 2);
         assert_eq!(pred.wildcard_names().len(), 2);
@@ -514,11 +482,11 @@ mod tests {
         "#;
 
         let params = Params::default();
-        let result = parse_validate_and_lower(input, &params);
+        let result = parse_validate_and_lower_module(input, &params);
         assert!(result.is_ok());
 
-        let lowered = result.unwrap();
-        let pred = &expect_batch(&lowered).predicates()[0];
+        let module = result.unwrap();
+        let pred = &module.batch.predicates()[0];
         assert_eq!(pred.args_len(), 1); // Only A is public
         assert_eq!(pred.wildcard_names().len(), 3); // A, B, C total
     }
@@ -533,11 +501,11 @@ mod tests {
         "#;
 
         let params = Params::default();
-        let result = parse_validate_and_lower(input, &params);
+        let result = parse_validate_and_lower_module(input, &params);
         assert!(result.is_ok());
 
-        let lowered = result.unwrap();
-        let pred = &expect_batch(&lowered).predicates()[0];
+        let module = result.unwrap();
+        let pred = &module.batch.predicates()[0];
         assert!(pred.is_disjunction());
     }
 
@@ -555,23 +523,22 @@ mod tests {
         "#;
 
         let params = Params::default(); // max_custom_predicate_arity = 5
-        let result = parse_validate_and_lower(input, &params);
+        let result = parse_validate_and_lower_module(input, &params);
         if let Err(e) = &result {
             eprintln!("Splitting error: {:?}", e);
         }
         assert!(result.is_ok());
 
-        let lowered = result.unwrap();
+        let module = result.unwrap();
         // Should be automatically split into 2 predicates (my_pred and my_pred_1)
-        let module = lowered.module.as_ref().expect("Expected module");
         assert_eq!(module.batch.predicates().len(), 2);
 
         // With topological sorting, my_pred_1 comes first (since my_pred depends on it)
         // my_pred_1 has 2 statements
         // my_pred has 5 statements (4 + chain call)
         // Just verify we have the right total statement counts
-        let batch = &module.batch;
-        let total_statements: usize = batch
+        let total_statements: usize = module
+            .batch
             .predicates()
             .iter()
             .map(|p| p.statements().len())
@@ -592,11 +559,11 @@ mod tests {
         "#;
 
         let params = Params::default();
-        let result = parse_validate_and_lower(input, &params);
+        let result = parse_validate_and_lower_module(input, &params);
         assert!(result.is_ok());
 
-        let lowered = result.unwrap();
-        assert_eq!(expect_batch(&lowered).predicates().len(), 2);
+        let module = result.unwrap();
+        assert_eq!(module.batch.predicates().len(), 2);
     }
 
     #[test]
@@ -612,11 +579,11 @@ mod tests {
         "#;
 
         let params = Params::default();
-        let result = parse_validate_and_lower(input, &params);
+        let result = parse_validate_and_lower_module(input, &params);
         assert!(result.is_ok());
 
-        let lowered = result.unwrap();
-        let pred2 = &expect_batch(&lowered).predicates()[1];
+        let module = result.unwrap();
+        let pred2 = &module.batch.predicates()[1];
         let stmt = &pred2.statements()[0];
 
         // Should be BatchSelf(0) referring to pred1
@@ -637,7 +604,7 @@ mod tests {
         "#;
 
         let params = Params::default();
-        let result = parse_validate_and_lower(input, &params);
+        let result = parse_validate_and_lower_module(input, &params);
         assert!(result.is_ok());
     }
 
@@ -650,11 +617,11 @@ mod tests {
         "#;
 
         let params = Params::default();
-        let result = parse_validate_and_lower(input, &params);
+        let result = parse_validate_and_lower_module(input, &params);
         assert!(result.is_ok());
 
-        let lowered = result.unwrap();
-        let pred = &expect_batch(&lowered).predicates()[0];
+        let module = result.unwrap();
+        let pred = &module.batch.predicates()[0];
         let stmt = &pred.statements()[0];
 
         // Should desugar to the Contains predicate
@@ -676,7 +643,7 @@ mod tests {
         "#;
 
         let params = Params::default();
-        let result = parse_validate_and_lower(input, &params);
+        let result = parse_validate_and_lower_module(input, &params);
         assert!(result.is_ok());
     }
 
@@ -705,18 +672,18 @@ mod tests {
         let parsed = parse_podlang(&input).expect("Failed to parse");
         let document =
             parse_document(parsed.into_iter().next().unwrap()).expect("Failed to parse document");
-        let validated = validate(document, &HashMap::new()).expect("Failed to validate");
-        let result = lower(validated, &params, "test_batch".to_string());
+        let validated =
+            validate(document, &HashMap::new(), ParseMode::Module).expect("Failed to validate");
+        let result = lower_module(validated, &params, "test_batch");
 
         assert!(result.is_ok(), "Lowering failed: {:?}", result.err());
 
-        let lowered = result.unwrap();
-        let batch = expect_batch(&lowered);
+        let module = result.unwrap();
 
         // Should have one custom predicate
-        assert_eq!(batch.predicates().len(), 1);
+        assert_eq!(module.batch.predicates().len(), 1);
 
-        let pred = &batch.predicates()[0];
+        let pred = &module.batch.predicates()[0];
         assert_eq!(pred.name, "my_pred");
         // 2 statements: Equal and external_check
         assert_eq!(pred.statements().len(), 2);

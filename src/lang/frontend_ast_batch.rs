@@ -160,7 +160,7 @@ mod tests {
         lang::{
             frontend_ast::parse::parse_document,
             frontend_ast_split::split_predicate_if_needed,
-            frontend_ast_validate::{validate, ValidatedAST},
+            frontend_ast_validate::{validate, ParseMode, ValidatedAST},
             parser::parse_podlang,
         },
         middleware::{Predicate, PredicateOrWildcard},
@@ -170,7 +170,8 @@ mod tests {
     fn parse_and_validate(input: &str) -> (Vec<CustomPredicateDef>, ValidatedAST) {
         let parsed = parse_podlang(input).expect("Failed to parse");
         let document = parse_document(parsed.into_iter().next().unwrap()).expect("Failed to parse");
-        let validated = validate(document.clone(), &HashMap::new()).expect("Failed to validate");
+        let validated =
+            validate(document.clone(), &HashMap::new(), ParseMode::Module).expect("Failed to validate");
 
         let predicates = document
             .items

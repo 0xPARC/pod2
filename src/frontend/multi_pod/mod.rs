@@ -539,7 +539,7 @@ mod tests {
         dict,
         examples::MOCK_VD_SET,
         frontend::{Operation as FrontendOp, SignedDictBuilder},
-        lang::parse,
+        lang::load_module,
     };
 
     #[test]
@@ -666,18 +666,17 @@ mod tests {
 
         // pred_a accepts a Contains statement
         // pred_b accepts a pred_a statement (Custom statement from pred_a)
-        let parsed = parse(
+        let module = load_module(
             r#"
             pred_a(X) = AND(Contains(X, "k", 1))
             pred_b(X) = AND(pred_a(X))
             "#,
+            "test",
             &params,
             &HashMap::new(),
         )
-        .expect("parse predicates");
-        let batch = parsed
-            .first_batch()
-            .expect("parse predicates should have a batch");
+        .expect("load module");
+        let batch = &module.batch;
 
         let mut builder = MultiPodBuilder::new(&params, vd_set);
 
@@ -1398,20 +1397,19 @@ mod tests {
         let vd_set = &*MOCK_VD_SET;
 
         // Chain of predicates: each accepts the output of the previous
-        let parsed = parse(
+        let module = load_module(
             r#"
             pred_a(X) = AND(Contains(X, "k", 1))
             pred_b(X) = AND(pred_a(X))
             pred_c(X) = AND(pred_b(X))
             pred_d(X) = AND(pred_c(X))
             "#,
+            "test",
             &params,
             &HashMap::new(),
         )
-        .expect("parse predicates");
-        let batch = parsed
-            .first_batch()
-            .expect("parse predicates should have a batch");
+        .expect("load module");
+        let batch = &module.batch;
 
         let mut builder = MultiPodBuilder::new(&params, vd_set);
 
@@ -1526,7 +1524,7 @@ mod tests {
         // pred_a takes TWO custom statement arguments (b_out and c_out)
         // pred_b and pred_c each take a Contains
         // Note: AND clauses are newline-separated, not comma-separated
-        let parsed = parse(
+        let module = load_module(
             r#"
             pred_b(X) = AND(Contains(X, "k", 1))
             pred_c(X) = AND(Contains(X, "k", 1))
@@ -1535,13 +1533,12 @@ mod tests {
                 pred_c(Y)
             )
             "#,
+            "test",
             &params,
             &HashMap::new(),
         )
-        .expect("parse predicates");
-        let batch = parsed
-            .first_batch()
-            .expect("parse predicates should have a batch");
+        .expect("load module");
+        let batch = &module.batch;
 
         let mut builder = MultiPodBuilder::new(&params, vd_set);
 

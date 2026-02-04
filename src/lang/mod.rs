@@ -276,55 +276,60 @@ struct OperationStep {
     public: bool,
 }
 
-/// Final result of processing a Podlang document.
+/// Load a module from Podlang source.
 ///
-/// - `module`: the custom predicates defined in the document (if any). Use `Module::apply_predicate`
-///   to apply a predicate into a `MainPodBuilder`.
-/// - `request`: the request templates defined in the document (empty if not present).
-#[derive(Debug, Clone)]
-pub struct PodlangOutput {
-    pub module: Option<Module>,
-    pub request: PodRequest,
-}
-
-impl PodlangOutput {
-    /// Get the batch, if any (for backwards compatibility).
-    pub fn first_batch(&self) -> Option<&Arc<CustomPredicateBatch>> {
-        self.module.as_ref().map(|m| &m.batch)
-    }
-}
-
-/// Parse, validate, and lower a Podlang document into middleware structures.
+/// Module files contain predicate definitions and imports, but no REQUEST block.
 ///
-/// - `input`: Podlang source.
-/// - `params`: middleware parameters limiting sizes/arity and controlling lowering behavior.
-/// - `available_modules`: external modules available for `use module ...` imports, keyed by name.
-///
-/// Returns a [`PodlangOutput`] containing the module (if any predicates defined) and a `PodRequest`
-/// (possibly empty).
-pub fn parse(
-    input: &str,
+/// - `source`: Podlang source code
+/// - `name`: Name for the module (used in batch naming)
+/// - `params`: Middleware parameters limiting sizes/arity
+/// - `available_modules`: External modules available for `use module ...` imports
+pub fn load_module(
+    source: &str,
+    name: &str,
     params: &Params,
     available_modules: &HashMap<String, Arc<Module>>,
-) -> Result<PodlangOutput, LangError> {
-    let pairs = parse_podlang(input)?;
+) -> Result<Module, LangError> {
+    let pairs = parse_podlang(source)?;
     let document_pair = pairs
         .into_iter()
         .next()
         .expect("parse_podlang should always return at least one pair for a valid document");
     let document = frontend_ast::parse::parse_document(document_pair)?;
-    let validated = frontend_ast_validate::validate(document, available_modules)?;
-    let lowered = frontend_ast_lower::lower(validated, params, "PodlangModule".to_string())?;
+    let validated = frontend_ast_validate::validate(
+        document,
+        available_modules,
+        frontend_ast_validate::ParseMode::Module,
+    )?;
+    let module = frontend_ast_lower::lower_module(validated, params, name)?;
+    Ok(module)
+}
 
-    let request = lowered.request.unwrap_or_else(|| {
-        // If no request, create an empty one
-        PodRequest::new(vec![])
-    });
-
-    Ok(PodlangOutput {
-        module: lowered.module,
-        request,
-    })
+/// Parse a request from Podlang source.
+///
+/// Request files contain a REQUEST block and imports, but no predicate definitions.
+///
+/// - `source`: Podlang source code
+/// - `params`: Middleware parameters limiting sizes/arity
+/// - `available_modules`: External modules available for `use module ...` imports
+pub fn parse_request(
+    source: &str,
+    params: &Params,
+    available_modules: &HashMap<String, Arc<Module>>,
+) -> Result<PodRequest, LangError> {
+    let pairs = parse_podlang(source)?;
+    let document_pair = pairs
+        .into_iter()
+        .next()
+        .expect("parse_podlang should always return at least one pair for a valid document");
+    let document = frontend_ast::parse::parse_document(document_pair)?;
+    let validated = frontend_ast_validate::validate(
+        document,
+        available_modules,
+        frontend_ast_validate::ParseMode::Request,
+    )?;
+    let request = frontend_ast_lower::lower_request(validated, params)?;
+    Ok(request)
 }
 
 #[cfg(test)]
@@ -369,11 +374,6 @@ mod tests {
         PredicateOrWildcard::Predicate(pred)
     }
 
-    // Helper to get the first batch from the output
-    fn first_batch(output: &super::PodlangOutput) -> &Arc<CustomPredicateBatch> {
-        output.first_batch().expect("Expected at least one batch")
-    }
-
     #[test]
     fn test_e2e_simple_predicate() -> Result<(), LangError> {
         let input = r#"
@@ -383,12 +383,9 @@ mod tests {
         "#;
 
         let params = Params::default();
-        let processed = parse(input, &params, &HashMap::new())?;
-        let batch_result = first_batch(&processed);
-        let request_result = processed.request.templates();
+        let module = load_module(input, "test_module", &params, &HashMap::new())?;
 
-        assert_eq!(request_result.len(), 0);
-        assert_eq!(batch_result.predicates().len(), 1);
+        assert_eq!(module.batch.predicates().len(), 1);
 
         // Expected structure
         let expected_statements = vec![StatementTmpl {
@@ -406,9 +403,9 @@ mod tests {
             names(&["PodA", "PodB"]),
         )?;
         let expected_batch =
-            CustomPredicateBatch::new("PodlangModule".to_string(), vec![expected_predicate]);
+            CustomPredicateBatch::new("test_module".to_string(), vec![expected_predicate]);
 
-        assert_eq!(*batch_result, expected_batch);
+        assert_eq!(&*module.batch, &*expected_batch);
 
         Ok(())
     }
@@ -423,10 +420,9 @@ mod tests {
         "#;
 
         let params = Params::default();
-        let processed = parse(input, &params, &HashMap::new())?;
-        let request_templates = processed.request.templates();
+        let request = parse_request(input, &params, &HashMap::new())?;
+        let request_templates = request.templates();
 
-        assert!(processed.module.is_none());
         assert!(!request_templates.is_empty());
 
         // Expected structure
@@ -462,12 +458,9 @@ mod tests {
         "#;
 
         let params = Params::default();
-        let processed = parse(input, &params, &HashMap::new())?;
-        let batch_result = first_batch(&processed);
-        let request_result = processed.request.templates();
+        let module = load_module(input, "test_module", &params, &HashMap::new())?;
 
-        assert_eq!(request_result.len(), 0);
-        assert_eq!(batch_result.predicates().len(), 1);
+        assert_eq!(module.batch.predicates().len(), 1);
 
         // Expected structure: Public args: A (index 0). Private args: Temp (index 1)
         let expected_statements = vec![
@@ -494,58 +487,49 @@ mod tests {
             names(&["A", "Temp"]),
         )?;
         let expected_batch =
-            CustomPredicateBatch::new("PodlangModule".to_string(), vec![expected_predicate]);
+            CustomPredicateBatch::new("test_module".to_string(), vec![expected_predicate]);
 
-        assert_eq!(*batch_result, expected_batch);
+        assert_eq!(&*module.batch, &*expected_batch);
 
         Ok(())
     }
 
     #[test]
     fn test_e2e_request_with_custom_call() -> Result<(), LangError> {
-        let input = r#"
+        // First, load the module
+        let module_input = r#"
             my_pred(X, Y) = AND(
                 Equal(X["val"], Y["val"])
-            )
-
-            REQUEST(
-                my_pred(Pod1, Pod2)
             )
         "#;
 
         let params = Params::default();
-        let processed = parse(input, &params, &HashMap::new())?;
-        let batch_result = first_batch(&processed);
-        let request_templates = processed.request.templates();
+        let module = load_module(module_input, "my_module", &params, &HashMap::new())?;
 
-        assert_eq!(batch_result.predicates().len(), 1);
+        assert_eq!(module.batch.predicates().len(), 1);
+
+        // Then, parse the request using the module
+        let request_input = r#"
+            use module my_module
+
+            REQUEST(
+                my_module::my_pred(Pod1, Pod2)
+            )
+        "#;
+
+        let mut available_modules = HashMap::new();
+        available_modules.insert("my_module".to_string(), Arc::new(module.clone()));
+
+        let request = parse_request(request_input, &params, &available_modules)?;
+        let request_templates = request.templates();
+
         assert!(!request_templates.is_empty());
-
-        // Expected Batch structure
-        let expected_pred_statements = vec![StatementTmpl {
-            pred_or_wc: pred_lit(Predicate::Native(NativePredicate::Equal)),
-            args: vec![
-                sta_ak(("X", 0), "val"), // X["val"] -> Wildcard(0), Key("val")
-                sta_ak(("Y", 1), "val"), // Y["val"] -> Wildcard(1), Key("val")
-            ],
-        }];
-        let expected_predicate = CustomPredicate::and(
-            &params,
-            "my_pred".to_string(),
-            expected_pred_statements,
-            2, // args_len (X, Y)
-            names(&["X", "Y"]),
-        )?;
-        let expected_batch =
-            CustomPredicateBatch::new("PodlangModule".to_string(), vec![expected_predicate]);
-
-        assert_eq!(*batch_result, expected_batch);
 
         // Expected Request structure
         // Pod1 -> Wildcard 0, Pod2 -> Wildcard 1
         let expected_request_templates = vec![StatementTmpl {
             pred_or_wc: pred_lit(Predicate::Custom(CustomPredicateRef::new(
-                expected_batch,
+                module.batch.clone(),
                 0,
             ))),
             args: vec![
@@ -561,25 +545,34 @@ mod tests {
 
     #[test]
     fn test_e2e_request_with_various_args() -> Result<(), LangError> {
-        let input = r#"
+        // First, load the module
+        let module_input = r#"
             some_pred(A, B, C) = AND( Equal(A["foo"], B["bar"]) )
+        "#;
+
+        let params = Params::default();
+        let module = load_module(module_input, "some_module", &params, &HashMap::new())?;
+
+        // Then, parse the request
+        let request_input = r#"
+            use module some_module
 
             REQUEST(
-                some_pred(
+                some_module::some_pred(
                     Var1,                  // Wildcard
                     12345,                  // Int Literal
-                    "hello_string"         // String Literal (Removed invalid AK args)
+                    "hello_string"         // String Literal
                 )
                 Equal(AnotherPod["another_key"], Var1["some_field"])
             )
         "#;
 
-        let params = Params::default();
-        let processed = parse(input, &params, &HashMap::new())?;
-        let batch_result = first_batch(&processed);
-        let request_templates = processed.request.templates();
+        let mut available_modules = HashMap::new();
+        available_modules.insert("some_module".to_string(), Arc::new(module.clone()));
 
-        assert_eq!(batch_result.predicates().len(), 1); // some_pred is defined
+        let request = parse_request(request_input, &params, &available_modules)?;
+        let request_templates = request.templates();
+
         assert!(!request_templates.is_empty());
 
         // Expected Wildcard Indices in Request Scope:
@@ -590,7 +583,7 @@ mod tests {
         let expected_templates = vec![
             StatementTmpl {
                 pred_or_wc: pred_lit(Predicate::Custom(CustomPredicateRef::new(
-                    batch_result.clone(),
+                    module.batch.clone(),
                     0,
                 ))), // Refers to some_pred
                 args: vec![
@@ -628,10 +621,9 @@ mod tests {
         "#;
 
         let params = Params::default();
-        let processed = parse(input, &params, &HashMap::new())?;
-        let request_templates = processed.request.templates();
+        let request = parse_request(input, &params, &HashMap::new())?;
+        let request_templates = request.templates();
 
-        assert!(processed.module.is_none());
         assert!(!request_templates.is_empty());
 
         let expected_templates = vec![
@@ -685,8 +677,8 @@ mod tests {
         "#;
 
         // Parse the input string
-        let processed = super::parse(input, &Params::default(), &HashMap::new())?;
-        let parsed_templates = processed.request.templates();
+        let request = parse_request(input, &Params::default(), &HashMap::new())?;
+        let parsed_templates = request.templates();
 
         //  Define Expected Templates (Copied from prover/mod.rs)
         let now_minus_18y_val = Value::from(1169909388_i64);
@@ -775,11 +767,6 @@ mod tests {
             "Parsed ZuKYC request templates do not match the expected hard-coded version"
         );
 
-        assert!(
-            processed.module.is_none(),
-            "Expected no custom predicates for a REQUEST only input"
-        );
-
         Ok(())
     }
 
@@ -817,14 +804,10 @@ mod tests {
             )
         "#;
 
-        let processed = super::parse(input, &params, &HashMap::new())?;
+        let module = load_module(input, "ethdos", &params, &HashMap::new())?;
 
-        assert!(
-            processed.request.templates().is_empty(),
-            "Expected no request templates"
-        );
         assert_eq!(
-            first_batch(&processed).predicates().len(),
+            module.batch.predicates().len(),
             4,
             "Expected 4 custom predicates"
         );
@@ -944,7 +927,7 @@ mod tests {
         )?;
 
         let expected_batch = CustomPredicateBatch::new(
-            "PodlangModule".to_string(),
+            "ethdos".to_string(),
             vec![
                 expected_friend_pred,
                 expected_base_pred,
@@ -954,8 +937,7 @@ mod tests {
         );
 
         assert_eq!(
-            *first_batch(&processed),
-            expected_batch,
+            &*module.batch, &*expected_batch,
             "Processed ETHDoS predicates do not match expected structure"
         );
 
@@ -997,14 +979,10 @@ mod tests {
             )
         "#;
 
-        // 4. Parse the input
-        let processed = parse(input, &params, &available_modules)?;
-        let request_templates = processed.request.templates();
+        // 4. Parse the request
+        let request = parse_request(input, &params, &available_modules)?;
+        let request_templates = request.templates();
 
-        assert!(
-            processed.module.is_none(),
-            "No custom predicates should be defined in the main input"
-        );
         assert_eq!(request_templates.len(), 1, "Expected one request template");
 
         // 5. Check the resulting request template uses the imported predicate
@@ -1039,9 +1017,9 @@ mod tests {
             )
         "#;
 
-        // 3. Parse the input
-        let processed = parse(input, &params, &available_modules)?;
-        let request_templates = processed.request.templates();
+        // 3. Parse the request
+        let request = parse_request(input, &params, &available_modules)?;
+        let request_templates = request.templates();
 
         assert_eq!(request_templates.len(), 2, "Expected two request templates");
 
@@ -1093,21 +1071,17 @@ mod tests {
             )
         "#;
 
-        // 3. Parse the input
-        let processed = parse(input, &params, &available_modules)?;
+        // 3. Load as module
+        let module = load_module(input, "test", &params, &available_modules)?;
 
-        assert!(
-            processed.request.templates().is_empty(),
-            "No request should be defined"
-        );
         assert_eq!(
-            first_batch(&processed).predicates().len(),
+            module.batch.predicates().len(),
             1,
             "Expected one custom predicate to be defined"
         );
 
         // 4. Check the resulting predicate definition
-        let defined_pred = &first_batch(&processed).predicates()[0];
+        let defined_pred = &module.batch.predicates()[0];
         assert_eq!(defined_pred.name, "wrapper_pred");
         assert_eq!(defined_pred.statements.len(), 1);
 
@@ -1139,8 +1113,8 @@ mod tests {
         "#,
         );
 
-        let processed = parse(&input, &params, &HashMap::new())?;
-        let request_templates = processed.request.templates();
+        let request = parse_request(&input, &params, &HashMap::new())?;
+        let request_templates = request.templates();
         assert_eq!(request_templates.len(), 1);
 
         if let PredicateOrWildcard::Predicate(Predicate::Intro(intro_ref)) =
@@ -1198,8 +1172,8 @@ mod tests {
         */
 
         let params = Params::default();
-        let processed = parse(&input, &params, &HashMap::new())?;
-        let request_templates = processed.request.templates();
+        let request = parse_request(&input, &params, &HashMap::new())?;
+        let request_templates = request.templates();
 
         let expected_templates = vec![
             StatementTmpl {
@@ -1240,9 +1214,13 @@ mod tests {
 
         let input = r#"
             use module unknown_module
+
+            REQUEST(
+                Equal(A["x"], 1)
+            )
             "#;
 
-        let result = parse(input, &params, &available_modules);
+        let result = parse_request(input, &params, &available_modules);
 
         assert!(result.is_err());
 
@@ -1269,7 +1247,7 @@ mod tests {
             )
         "#;
 
-        let result = parse(input, &params, &available_modules);
+        let result = load_module(input, "test", &params, &available_modules);
 
         assert!(result.is_err());
 

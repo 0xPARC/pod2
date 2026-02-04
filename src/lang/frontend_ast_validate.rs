@@ -112,12 +112,22 @@ pub enum DiagnosticLevel {
 
 pub use crate::lang::error::ValidationError;
 
-/// Validate an AST document
+/// Mode for parsing/validation - determines what constructs are allowed
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ParseMode {
+    /// Module mode: predicate definitions allowed, REQUEST block not allowed
+    Module,
+    /// Request mode: REQUEST block required, predicate definitions not allowed
+    Request,
+}
+
+/// Validate an AST document in the given mode
 pub fn validate(
     document: Document,
     available_modules: &HashMap<String, Arc<Module>>,
+    mode: ParseMode,
 ) -> Result<ValidatedAST, ValidationError> {
-    let validator = Validator::new(available_modules);
+    let validator = Validator::new(available_modules, mode);
     validator.validate(document)
 }
 
@@ -126,10 +136,11 @@ struct Validator {
     symbols: SymbolTable,
     diagnostics: Vec<Diagnostic>,
     custom_predicate_count: usize,
+    mode: ParseMode,
 }
 
 impl Validator {
-    fn new(available_modules: &HashMap<String, Arc<Module>>) -> Self {
+    fn new(available_modules: &HashMap<String, Arc<Module>>, mode: ParseMode) -> Self {
         Self {
             available_modules: available_modules.clone(),
             symbols: SymbolTable {
@@ -139,6 +150,7 @@ impl Validator {
             },
             diagnostics: Vec::new(),
             custom_predicate_count: 0,
+            mode,
         }
     }
 
@@ -167,17 +179,28 @@ impl Validator {
             }
         }
 
-        // Then process custom predicate definitions
+        // Check mode constraints for predicate definitions
+        let mut has_predicates = false;
         for item in &document.items {
             if let DocumentItem::CustomPredicateDef(pred_def) = item {
+                if self.mode == ParseMode::Request {
+                    return Err(ValidationError::PredicatesNotAllowedInRequest {
+                        span: pred_def.span,
+                    });
+                }
+                has_predicates = true;
                 self.process_custom_predicate_def(pred_def)?;
             }
         }
 
-        // Check for multiple REQUEST definitions (only one allowed)
+        // Check mode constraints for REQUEST blocks
+        let mut has_request = false;
         let mut first_request_span = None;
         for item in &document.items {
             if let DocumentItem::RequestDef(req) = item {
+                if self.mode == ParseMode::Module {
+                    return Err(ValidationError::RequestNotAllowedInModule { span: req.span });
+                }
                 if let Some(first_span) = first_request_span {
                     return Err(ValidationError::MultipleRequestDefinitions {
                         first_span: Some(first_span),
@@ -185,7 +208,19 @@ impl Validator {
                     });
                 }
                 first_request_span = req.span;
+                has_request = true;
             }
+        }
+
+        // Enforce that modules have predicates and requests have a REQUEST block
+        match self.mode {
+            ParseMode::Module if !has_predicates => {
+                return Err(ValidationError::NoPredicatesInModule);
+            }
+            ParseMode::Request if !has_request => {
+                return Err(ValidationError::NoRequestBlock);
+            }
+            _ => {}
         }
 
         Ok(())
@@ -497,7 +532,9 @@ impl Validator {
         // For custom predicates, only wildcards and literals are allowed
         if matches!(
             pred_info.map(|i| &i.kind),
-            Some(PredicateKind::Custom { .. }) | Some(PredicateKind::BatchImported { .. })
+            Some(PredicateKind::Custom { .. })
+                | Some(PredicateKind::BatchImported { .. })
+                | Some(PredicateKind::ModuleImported { .. })
         ) {
             for arg in &stmt.args {
                 match arg {
@@ -566,19 +603,22 @@ mod tests {
         middleware::{CustomPredicate, Params, EMPTY_HASH},
     };
 
-    fn parse_and_validate(
+    fn parse_and_validate_module(
         input: &str,
         modules: &HashMap<String, Arc<Module>>,
     ) -> Result<ValidatedAST, ValidationError> {
         let parsed = parse_podlang(input).expect("Failed to parse");
         let document = parse_document(parsed.into_iter().next().unwrap()).expect("Failed to parse");
-        validate(document, modules)
+        validate(document, modules, ParseMode::Module)
     }
 
-    #[test]
-    fn test_validate_empty() {
-        let result = parse_and_validate("", &HashMap::new());
-        assert!(result.is_ok());
+    fn parse_and_validate_request(
+        input: &str,
+        modules: &HashMap<String, Arc<Module>>,
+    ) -> Result<ValidatedAST, ValidationError> {
+        let parsed = parse_podlang(input).expect("Failed to parse");
+        let document = parse_document(parsed.into_iter().next().unwrap()).expect("Failed to parse");
+        validate(document, modules, ParseMode::Request)
     }
 
     #[test]
@@ -586,7 +626,7 @@ mod tests {
         let input = r#"REQUEST(
             Equal(A["foo"], B["bar"])
         )"#;
-        let result = parse_and_validate(input, &HashMap::new());
+        let result = parse_and_validate_request(input, &HashMap::new());
         assert!(result.is_ok());
     }
 
@@ -597,7 +637,7 @@ mod tests {
                 Equal(A["foo"], B["bar"])
             )
         "#;
-        let result = parse_and_validate(input, &HashMap::new());
+        let result = parse_and_validate_module(input, &HashMap::new());
         assert!(result.is_ok());
 
         let validated = result.unwrap();
@@ -610,7 +650,7 @@ mod tests {
         let input = r#"REQUEST(
             UndefinedPred(A, B)
         )"#;
-        let result = parse_and_validate(input, &HashMap::new());
+        let result = parse_and_validate_request(input, &HashMap::new());
         assert!(matches!(
             result,
             Err(ValidationError::UndefinedPredicate { .. })
@@ -624,7 +664,7 @@ mod tests {
                 Equal(A["foo"], B["bar"])
             )
         "#;
-        let result = parse_and_validate(input, &HashMap::new());
+        let result = parse_and_validate_module(input, &HashMap::new());
         assert!(
             matches!(result, Err(ValidationError::UndefinedWildcard { name, .. }) if name == "B")
         );
@@ -635,7 +675,7 @@ mod tests {
         let input = r#"REQUEST(
             Equal(A, B, C)
         )"#;
-        let result = parse_and_validate(input, &HashMap::new());
+        let result = parse_and_validate_request(input, &HashMap::new());
         assert!(matches!(
             result,
             Err(ValidationError::ArgumentCountMismatch { .. })
@@ -648,7 +688,7 @@ mod tests {
             my_pred(A) = AND (Equal(A["x"], 1))
             my_pred(B) = AND (Equal(B["y"], 2))
         "#;
-        let result = parse_and_validate(input, &HashMap::new());
+        let result = parse_and_validate_module(input, &HashMap::new());
         assert!(matches!(
             result,
             Err(ValidationError::DuplicatePredicate { .. })
@@ -660,7 +700,7 @@ mod tests {
         let input = r#"
             my_pred(A, A) = AND (Equal(A["x"], 1))
         "#;
-        let result = parse_and_validate(input, &HashMap::new());
+        let result = parse_and_validate_module(input, &HashMap::new());
         assert!(matches!(
             result,
             Err(ValidationError::DuplicateWildcard { .. })
@@ -672,7 +712,7 @@ mod tests {
         let input = r#"
             my_pred(A, Lt) = AND (Equal(A["x"], Lt))
         "#;
-        let result = parse_and_validate(input, &HashMap::new());
+        let result = parse_and_validate_module(input, &HashMap::new());
         assert!(matches!(
             result,
             Err(ValidationError::WildcardPredicateNameCollision { .. })
@@ -681,16 +721,32 @@ mod tests {
 
     #[test]
     fn test_custom_predicate_with_anchored_key() {
+        // First create a module with the predicate
+        let params = Params::default();
+        let pred = CustomPredicate::and(
+            &params,
+            "my_pred".to_string(),
+            vec![],
+            2,
+            vec!["A".to_string(), "B".to_string()],
+        )
+        .unwrap();
+
+        let batch = CustomPredicateBatch::new("TestBatch".to_string(), vec![pred]);
+        let test_module = Arc::new(Module::new(batch, HashMap::new()));
+
+        let mut available_modules = HashMap::new();
+        available_modules.insert("testmod".to_string(), test_module);
+
+        // Test that passing anchored key to custom predicate fails
         let input = r#"
-            my_pred(A, B) = AND (
-                Equal(A["foo"], B["bar"])
-            )
-            
+            use module testmod
+
             REQUEST(
-                my_pred(X["key"], Y)
+                testmod::my_pred(X["key"], Y)
             )
         "#;
-        let result = parse_and_validate(input, &HashMap::new());
+        let result = parse_and_validate_request(input, &available_modules);
         assert!(matches!(
             result,
             Err(ValidationError::InvalidArgumentType { .. })
@@ -703,12 +759,12 @@ mod tests {
             pred1(A) = AND (
                 pred2(A)
             )
-            
+
             pred2(B) = AND (
                 Equal(B["x"], 1)
             )
         "#;
-        let result = parse_and_validate(input, &HashMap::new());
+        let result = parse_and_validate_module(input, &HashMap::new());
         assert!(result.is_ok());
     }
 
@@ -720,7 +776,7 @@ mod tests {
                 Equal(B["z"], C["w"])
             )
         "#;
-        let result = parse_and_validate(input, &HashMap::new());
+        let result = parse_and_validate_module(input, &HashMap::new());
         assert!(result.is_ok());
 
         let validated = result.unwrap();
@@ -751,7 +807,7 @@ mod tests {
                 span: None,
             })],
         };
-        let result = validate(document, &HashMap::new());
+        let result = validate(document, &HashMap::new(), ParseMode::Module);
         assert!(matches!(
             result,
             Err(ValidationError::EmptyStatementList { .. })
@@ -764,7 +820,7 @@ mod tests {
             REQUEST(Equal(A["x"], 1))
             REQUEST(Equal(B["y"], 2))
         "#;
-        let result = parse_and_validate(input, &HashMap::new());
+        let result = parse_and_validate_request(input, &HashMap::new());
         assert!(matches!(
             result,
             Err(ValidationError::MultipleRequestDefinitions { .. })
@@ -808,7 +864,7 @@ mod tests {
             EMPTY_HASH.encode_hex::<String>()
         );
 
-        let result = parse_and_validate(&input, &available_modules);
+        let result = parse_and_validate_request(&input, &available_modules);
         assert!(result.is_ok());
 
         let validated = result.unwrap();
@@ -824,7 +880,7 @@ mod tests {
             DictContains(D, K, V)
             SetNotContains(S, E)
         )"#;
-        let result = parse_and_validate(input, &HashMap::new());
+        let result = parse_and_validate_request(input, &HashMap::new());
         assert!(result.is_ok());
     }
 }
