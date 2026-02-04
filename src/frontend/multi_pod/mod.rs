@@ -418,7 +418,6 @@ impl MultiPodBuilder {
             .op(false, wildcard_values.clone(), op.clone())?;
 
         self.statements.push(stmt.clone());
-        println!("DBG op {:#?}", op);
         self.operations.push(op);
         self.operations_wildcard_values.push(wildcard_values);
 
