@@ -563,6 +563,7 @@ fn wc_check_or_set(v: Value, wc: &Wildcard, wildcard_map: &mut [Option<Value>]) 
         }
     } else {
         wildcard_map[wc.index] = Some(v);
+        // println!("{}", display_wc_map(&wildcard_map));
     }
     Ok(())
 }
@@ -604,12 +605,39 @@ pub fn check_st_tmpl(
     }
 }
 
+fn display_wc_map(wc_map: &[Option<Value>]) -> String {
+    let mut out = String::new();
+    use std::fmt::Write;
+    for (i, v) in wc_map.iter().enumerate() {
+        write!(out, "- {}: ", i).unwrap();
+        if let Some(v) = v {
+            writeln!(out, "{}", v).unwrap();
+        } else {
+            writeln!(out, "none").unwrap();
+        }
+    }
+    out
+}
+
 pub fn fill_wildcard_values(
     pred: &CustomPredicate,
     args: &[Statement],
     wildcard_map: &mut [Option<Value>],
 ) -> Result<()> {
+    // if pred.name == "AllItemsInBatchRecursive" {
+    //     println!("=== DBG fill ===\n");
+    //     println!("{}", pred);
+    //     println!();
+    //     println!("{}(...) = (", pred.name);
+    //     for st in args.iter() {
+    //         println!("  {}", st);
+    //     }
+    //     println!("\n");
+    // }
+    // println!("DBG fill_wildcard_values {}", pred.name);
+    // println!("{}", display_wc_map(&wildcard_map));
     for (st_tmpl, st) in pred.statements.iter().zip(args) {
+        // println!("DBG statement {}", st);
         if let PredicateOrWildcard::Wildcard(wc) = &st_tmpl.pred_or_wc {
             wc_check_or_set(Value::from(st.predicate().hash()), wc, wildcard_map)?;
         }
@@ -647,6 +675,21 @@ pub fn wildcard_values_from_op_st(
     op_args: &[Statement],
     st_args: &[Value],
 ) -> Result<Vec<Value>> {
+    // println!("=== DBG Verify ===\n");
+    // println!("{}", pred);
+    // println!();
+    // print!("{}(", pred.name);
+    // for (i, arg) in st_args.iter().enumerate() {
+    //     if i != 0 {
+    //         print!(", ");
+    //     }
+    //     print!("{}", arg)
+    // }
+    // println!(") = (");
+    // for st in op_args.iter() {
+    //     println!("  {}", st);
+    // }
+    // println!("\n");
     let mut wildcard_map = st_args
         .iter()
         .map(|v| Some(v.clone()))

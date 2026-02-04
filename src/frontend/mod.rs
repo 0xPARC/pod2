@@ -28,7 +28,8 @@ mod serialization;
 pub use custom::*;
 pub use error::*;
 pub use multi_pod::{
-    MultiPodBuilder, MultiPodResult, MultiPodSolution, Options as MultiPodOptions,
+    Error as MultiPodError, MultiPodBuilder, MultiPodResult, MultiPodSolution,
+    Options as MultiPodOptions,
 };
 pub use operation::*;
 pub use pod_request::*;
@@ -644,6 +645,7 @@ impl MainPodBuilder {
         self.add_entries_contains(&op)?;
         let op = Self::fill_in_aux(Self::lower_op(op)?)?;
         let st = self.op_statement(wildcard_values, op.clone())?;
+        // println!("DBG Add st {}", st);
         self.insert(public, (st, op))?;
 
         Ok(self.statements[self.statements.len() - 1].clone())
