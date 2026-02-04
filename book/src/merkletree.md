@@ -37,10 +37,12 @@ A Merkle tree with no entry at all is represented by the hash value
 (With the Plonky2 backend, the hash function ```hash``` will output a 4-tuple of field elements.)
 
 A Merkle tree with a single entry ```(key, value)``` is called a "leaf".  It is represented by the hash value
-```root = hash((key, value, 1)).```
+```root = hash(1, (key, value))```, where `1` is a flag indicating that it is a leaf, and it's used as the initial state of the hash (Poseidon) permutation.
 
 A Merkle tree ```tree``` with more than one entry is required to have two subtrees, ```left``` and ```right```.  It is then represented by the hash value
-```root = hash((left_root, right_root, 2)).```
+```root = hash(2, (left_root, right_root))```, where `2` is a flag indicating that it is an intermediate node, and it's used as the initial state of the hash (Poseidon) permutation.
+
+The flags are used as the initial state of the Poseidon permutation so that they don't account for extra inputs in the Poseidon gadget, needing only 1 gate for each node/leaf hash.
 
 (The role of the constants 1 and 2 is to prevent collisions between leaves and non-leaf Merkle roots.  If the constants were omitted, a large Merkle tree could be dishonestly interpreted as a leaf, leading to security vulnerabilities.)
 

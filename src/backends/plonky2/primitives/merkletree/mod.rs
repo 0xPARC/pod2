@@ -3,10 +3,15 @@
 use std::{collections::HashMap, fmt, iter::IntoIterator};
 
 use itertools::zip_eq;
-use plonky2::field::types::Field;
+use plonky2::{
+    field::types::Field,
+    hash::{
+        hash_types::NUM_HASH_OUT_ELTS, hashing::PlonkyPermutation, poseidon::PoseidonPermutation,
+    },
+};
 use serde::{Deserialize, Serialize};
 
-use crate::middleware::{hash_fields, Hash, RawValue, EMPTY_HASH, EMPTY_VALUE, F};
+use crate::middleware::{Hash, RawValue, EMPTY_HASH, EMPTY_VALUE, F};
 
 pub mod circuit;
 pub use circuit::*;
@@ -376,8 +381,45 @@ impl MerkleTree {
 /// mitigate fake proofs.
 pub fn kv_hash(key: &RawValue, value: Option<RawValue>) -> Hash {
     value
-        .map(|v| hash_fields(&[key.0.to_vec(), v.0.to_vec(), vec![F::ONE]].concat()))
+        .map(|v| hash_with_flag(F::ONE, &[key.0.to_vec(), v.0.to_vec()].concat()))
         .unwrap_or(EMPTY_HASH)
+}
+
+/// Variation of Poseidon hash which takes as input 1 Goldilock element as a
+/// flag, and 8 Goldilocks elements as inputs to the hash. Performs the hashing
+/// in a single gate.
+/// The function is a fork of
+/// [hash_n_to_m_no_pad](https://github.com/0xPolygonZero/plonky2/tree/5d9da5a65bbcba2c66eb29c035090eb2e9ccb05f/plonky2/src/hash/hashing.rs#L30)
+/// from plonky2.
+fn hash_with_flag(flag: F, inputs: &[F]) -> Hash {
+    assert_eq!(
+        inputs.len(),
+        <PoseidonPermutation<F> as PlonkyPermutation<F>>::RATE
+    );
+
+    // this will set `perm` to a  `SPONGE_RATE+SPONGE_CAPACITY` (8+4=12) in our
+    // case to a vector of repeated `flag` value. Later at the absorption step,
+    // it will fit the inputs values at positions 0-8, keeping the flag values
+    // at positions 8-12.
+    let mut perm = <PoseidonPermutation<F> as PlonkyPermutation<F>>::new(core::iter::repeat(flag));
+
+    // Absorb all input chunks.
+    for input_chunk in inputs.chunks(<PoseidonPermutation<F> as PlonkyPermutation<F>>::RATE) {
+        perm.set_from_slice(input_chunk, 0);
+        perm.permute();
+    }
+
+    // Squeeze until we have the desired number of outputs.
+    let mut outputs = Vec::new();
+    loop {
+        for &item in perm.squeeze() {
+            outputs.push(item);
+            if outputs.len() == NUM_HASH_OUT_ELTS {
+                return Hash(crate::middleware::HashOut::from_vec(outputs).elements);
+            }
+        }
+        perm.permute();
+    }
 }
 
 impl<'a> IntoIterator for &'a MerkleTree {
@@ -437,13 +479,12 @@ impl MerkleProof {
     fn compute_root_from_node(&self, node_hash: &Hash, path: Vec<bool>) -> TreeResult<Hash> {
         let mut h = *node_hash;
         for (i, sibling) in self.siblings.iter().enumerate().rev() {
-            let mut input: Vec<F> = if path[i] {
+            let input: Vec<F> = if path[i] {
                 [sibling.0, h.0].concat()
             } else {
                 [h.0, sibling.0].concat()
             };
-            input.push(F::TWO);
-            h = hash_fields(&input);
+            h = hash_with_flag(F::TWO, &input);
         }
         Ok(h)
     }
@@ -876,8 +917,8 @@ impl Intermediate {
         }
         let l_hash = self.left.compute_hash();
         let r_hash = self.right.compute_hash();
-        let input: Vec<F> = [l_hash.0.to_vec(), r_hash.0.to_vec(), vec![F::TWO]].concat();
-        let h = hash_fields(&input);
+        let input: Vec<F> = [l_hash.0.to_vec(), r_hash.0.to_vec()].concat();
+        let h = hash_with_flag(F::TWO, &input);
         self.hash = Some(h);
         h
     }
