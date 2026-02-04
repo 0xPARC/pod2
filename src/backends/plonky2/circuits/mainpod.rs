@@ -1574,7 +1574,6 @@ fn build_custom_predicate_table_circuit(
     params: &Params,
     builder: &mut CircuitBuilder,
     custom_predicates: &[CustomPredicateInBatchTarget],
-    // custom_predicate_batches: &[CustomPredicateBatchTarget],
 ) -> Result<Vec<HashOutTarget>> {
     let measure = measure_gates_begin!(builder, "BuildCustomPredTbl");
     let mut custom_predicate_table = Vec::with_capacity(params.max_custom_predicates);
@@ -1752,7 +1751,6 @@ pub struct MainPodVerifyTarget {
     public_key_of_sks: Vec<BigUInt320Target>,
     signed_bys: Vec<SignedByTarget>,
     merkle_tree_state_transition_proofs: Vec<MerkleTreeStateTransitionProofTarget>,
-    // custom_predicate_batches: Vec<CustomPredicateBatchTarget>,
     custom_predicates: Vec<CustomPredicateInBatchTarget>,
     custom_predicate_verifications: Vec<CustomPredicateVerifyEntryTarget>,
 }
@@ -1829,7 +1827,6 @@ pub struct MainPodVerifyInput {
     pub public_key_of_sks: Vec<SecretKey>,
     pub signed_bys: Vec<SignedBy>,
     pub merkle_tree_state_transition_proofs: Vec<MerkleTreeStateTransitionProof>,
-    // pub custom_predicate_batches: Vec<Arc<CustomPredicateBatch>>,
     pub custom_predicates_with_mpt_proofs: Vec<(CustomPredicateRef, MerkleProof)>,
     pub custom_predicate_verifications: Vec<CustomPredicateVerification>,
 }

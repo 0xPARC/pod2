@@ -22,7 +22,7 @@ See [examples](./customexample.md)
 
 ## Hashing and predicate IDs
 
-Each custom predicate is defined as part of a _group_ of predicates. The definitions of all statements in the group are laid out consecutively (see [examples](./customexample.md)) and hashed.  For more details, see the pages on [hashing custom statements](./customhash.md) and [custom predicates](./custompred.md).
+Each custom predicate is defined as part of a _group_ of predicates. The definitions of all statements in the group are merklelized (using sequential indices as keys) (see [examples](./customexample.md)) and the root of the merkle tree is used as the identifier.  For more details, see the pages on [hashing custom statements](./customhash.md) and [custom predicates](./custompred.md).
 
 ## How to prove an application of an operation
 
