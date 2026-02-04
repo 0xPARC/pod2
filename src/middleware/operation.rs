@@ -815,7 +815,7 @@ pub(crate) fn value_from_op(input_st: &Statement, output_ref: &ValueRef) -> Opti
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
+    use std::collections::BTreeMap;
 
     use num::BigUint;
 
@@ -836,7 +836,7 @@ mod tests {
         // Form Merkle tree
         let kvs = (0..10)
             .map(|i| (hash_value(&i.into()).into(), i.into()))
-            .collect::<HashMap<_, _>>();
+            .collect::<BTreeMap<_, _>>();
         let mt = MerkleTree::new(&kvs);
         let root = mt.root();
 
@@ -894,7 +894,7 @@ mod tests {
         // Form Merkle tree
         let kvs = (0..10)
             .map(|i| (hash_value(&i.into()).into(), i.into()))
-            .collect::<HashMap<_, _>>();
+            .collect::<BTreeMap<_, _>>();
         let mut mt = MerkleTree::new(&kvs);
 
         // Check insertion proofs

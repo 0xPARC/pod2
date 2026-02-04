@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{BTreeMap, BTreeSet},
     fmt::Write,
 };
 
@@ -110,7 +110,7 @@ where
 // of the keys and therefore on the Merkle tree, but it makes the serialized
 // output deterministic.
 pub fn ordered_map<S, V: Serialize>(
-    value: &HashMap<Key, V>,
+    value: &BTreeMap<Key, V>,
     serializer: S,
 ) -> Result<S::Ok, S::Error>
 where
@@ -133,7 +133,7 @@ where
 // default.  We want to serialize them in a deterministic way, and we can
 // achieve this by sorting the elements. This takes advantage of the fact that
 // Value implements Ord.
-pub fn ordered_set<S>(value: &HashSet<Value>, serializer: S) -> Result<S::Ok, S::Error>
+pub fn ordered_set<S>(value: &BTreeSet<Value>, serializer: S) -> Result<S::Ok, S::Error>
 where
     S: Serializer,
 {

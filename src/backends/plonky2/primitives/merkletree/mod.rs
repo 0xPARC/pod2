@@ -1,6 +1,6 @@
 //! Module that implements the MerkleTree specified at
 //! <https://0xparc.github.io/pod2/merkletree.html> .
-use std::{collections::HashMap, fmt, iter::IntoIterator};
+use std::{collections::BTreeMap, fmt, iter::IntoIterator};
 
 use itertools::zip_eq;
 use plonky2::field::types::Field;
@@ -32,7 +32,7 @@ impl Eq for MerkleTree {}
 
 impl MerkleTree {
     /// builds a new `MerkleTree` where the leaves contain the given key-values
-    pub fn new(kvs: &HashMap<RawValue, RawValue>) -> Self {
+    pub fn new(kvs: &BTreeMap<RawValue, RawValue>) -> Self {
         // Start with an empty node as root.
         let mut root = Node::None;
 
@@ -968,7 +968,7 @@ pub mod tests {
 
     #[test]
     fn test_merkletree() -> TreeResult<()> {
-        let mut kvs = HashMap::new();
+        let mut kvs = BTreeMap::new();
         for i in 0..8 {
             if i == 1 {
                 continue;
@@ -1043,7 +1043,7 @@ pub mod tests {
 
     #[test]
     fn test_state_transition() -> TreeResult<()> {
-        let mut kvs = HashMap::new();
+        let mut kvs = BTreeMap::new();
         for i in 0..8 {
             kvs.insert(RawValue::from(i), RawValue::from(1000 + i));
         }
