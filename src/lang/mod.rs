@@ -26,6 +26,7 @@
 //! Large predicates are automatically split into chains of smaller predicates;
 //! `apply_predicate` handles this transparently.
 //!
+pub mod diagnostics;
 pub mod error;
 pub mod frontend_ast;
 pub mod frontend_ast_lower;
@@ -37,7 +38,8 @@ pub mod pretty_print;
 
 use std::{collections::HashMap, sync::Arc};
 
-pub use error::LangError;
+pub use diagnostics::render_error;
+pub use error::{LangError, LangErrorKind};
 pub use frontend_ast_split::{SplitChainInfo, SplitChainPiece, SplitResult};
 pub use module::{Module, MultiOperationError};
 pub use parser::{parse_podlang, Pairs, ParseError, Rule};
@@ -54,6 +56,16 @@ use crate::{frontend::PodRequest, middleware::Params};
 /// - `params`: Middleware parameters limiting sizes/arity
 /// - `available_modules`: External modules available for `use module ...` imports
 pub fn load_module(
+    source: &str,
+    name: &str,
+    params: &Params,
+    available_modules: &HashMap<String, Arc<Module>>,
+) -> Result<Module, LangError> {
+    load_module_inner(source, name, params, available_modules)
+        .map_err(|e| e.with_source(source.to_string(), None))
+}
+
+fn load_module_inner(
     source: &str,
     name: &str,
     params: &Params,
@@ -82,6 +94,15 @@ pub fn load_module(
 /// - `params`: Middleware parameters limiting sizes/arity
 /// - `available_modules`: External modules available for `use module ...` imports
 pub fn parse_request(
+    source: &str,
+    params: &Params,
+    available_modules: &HashMap<String, Arc<Module>>,
+) -> Result<PodRequest, LangError> {
+    parse_request_inner(source, params, available_modules)
+        .map_err(|e| e.with_source(source.to_string(), None))
+}
+
+fn parse_request_inner(
     source: &str,
     params: &Params,
     available_modules: &HashMap<String, Arc<Module>>,
@@ -993,8 +1014,8 @@ mod tests {
 
         assert!(result.is_err());
 
-        match result.err().unwrap() {
-            LangError::Validation(e) => match *e {
+        match result.err().unwrap().kind {
+            LangErrorKind::Validation(e) => match *e {
                 frontend_ast_validate::ValidationError::ModuleNotFound { name, .. } => {
                     assert_eq!(name, "unknown_module");
                 }
@@ -1020,8 +1041,8 @@ mod tests {
 
         assert!(result.is_err());
 
-        match result.err().unwrap() {
-            LangError::Validation(e) => match *e {
+        match result.err().unwrap().kind {
+            LangErrorKind::Validation(e) => match *e {
                 frontend_ast_validate::ValidationError::UndefinedWildcard {
                     name,
                     pred_name,
