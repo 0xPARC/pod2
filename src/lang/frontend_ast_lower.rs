@@ -12,9 +12,9 @@ use crate::{
     frontend::{BuilderArg, PredicateOrWildcard, StatementTmplBuilder},
     lang::{
         frontend_ast::*,
-        frontend_ast_batch, frontend_ast_split,
+        frontend_ast_split,
         frontend_ast_validate::{PredicateKind, SymbolTable, ValidatedAST},
-        Module,
+        module, Module,
     },
     middleware::{
         self, containers, CustomPredicateRef, IntroPredicateRef, Key, NativePredicate, Params,
@@ -153,7 +153,7 @@ fn resolve_local_predicate(
 // ============================================================================
 // These functions convert AST types to middleware/builder types and are used
 // by both the request lowering (in this module) and predicate batching
-// (in frontend_ast_batch).
+// (in module.rs).
 
 /// Lower a literal value from AST to middleware Value.
 ///
@@ -261,7 +261,7 @@ impl<'a> Lowerer<'a> {
         let custom_predicates = self.extract_and_split_predicates()?;
 
         // Build the module from split predicates
-        let module = frontend_ast_batch::build_module(
+        let module = module::build_module(
             custom_predicates,
             self.params,
             module_name,
@@ -439,7 +439,10 @@ mod tests {
         parser::parse_podlang,
     };
 
-    fn parse_validate_and_lower_module(input: &str, params: &Params) -> Result<Module, LoweringError> {
+    fn parse_validate_and_lower_module(
+        input: &str,
+        params: &Params,
+    ) -> Result<Module, LoweringError> {
         let parsed = parse_podlang(input).expect("Failed to parse");
         let document = parse_document(parsed.into_iter().next().unwrap()).expect("Failed to parse");
         let validated =

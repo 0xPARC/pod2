@@ -393,16 +393,16 @@ mod tests {
         let available_modules = HashMap::new();
 
         // Step 1: Parse the input
-        let module =
-            load_module(input, "test", &params, &available_modules).expect("Initial parsing should succeed");
+        let module = load_module(input, "test", &params, &available_modules)
+            .expect("Initial parsing should succeed");
 
         // Step 2: Pretty-print the parsed batch
         let batch = &module.batch;
         let pretty_printed = batch.to_podlang_string();
 
         // Step 3: Parse the pretty-printed result
-        let reparsed_module =
-            load_module(&pretty_printed, "test", &params, &available_modules).expect("Reparsing should succeed");
+        let reparsed_module = load_module(&pretty_printed, "test", &params, &available_modules)
+            .expect("Reparsing should succeed");
         let reparsed_batch = &reparsed_module.batch;
 
         // Step 4: Verify the ASTs are equivalent
@@ -558,7 +558,8 @@ mod tests {
         "#;
 
         let params = Params::default();
-        let module = load_module(input, "test", &params, &HashMap::new()).expect("Parsing should succeed");
+        let module =
+            load_module(input, "test", &params, &HashMap::new()).expect("Parsing should succeed");
         let batch = &module.batch;
 
         let pretty_printed = batch.to_podlang_string();
@@ -566,8 +567,8 @@ mod tests {
         println!("Original input:\n{}", input);
         println!("\nPretty-printed output:\n{}", pretty_printed);
 
-        let reparsed =
-            load_module(&pretty_printed, "test", &params, &HashMap::new()).expect("Reparsing should succeed");
+        let reparsed = load_module(&pretty_printed, "test", &params, &HashMap::new())
+            .expect("Reparsing should succeed");
         let reparsed_batch = &reparsed.batch;
 
         assert_eq!(batch.predicates(), reparsed_batch.predicates());
@@ -632,8 +633,8 @@ mod tests {
             );
 
             let params = Params::default();
-            let module =
-                load_module(&input, "test", &params, &HashMap::new()).expect("Should parse successfully");
+            let module = load_module(&input, "test", &params, &HashMap::new())
+                .expect("Should parse successfully");
             let batch = &module.batch;
 
             let pretty_printed = batch.to_podlang_string();
