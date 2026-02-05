@@ -10,12 +10,12 @@
 //! - [`parse_request`]: Parse a request file containing a REQUEST block.
 //!   Returns a [`PodRequest`] with statement templates.
 //!
-//! ## Module vs Request Files
+//! ## Module vs Request
 //!
-//! - **Module files** contain predicate definitions (`pred(A) = AND(...)`) and imports.
+//! - **Modules** contain predicate definitions (`pred(A) = AND(...)`) and imports.
 //!   They cannot contain a REQUEST block.
 //!
-//! - **Request files** contain a REQUEST block and imports.
+//! - **Requests** contain a REQUEST block and imports.
 //!   They cannot define predicates.
 //!
 //! ## Using Modules
@@ -47,7 +47,7 @@ use crate::{frontend::PodRequest, middleware::Params};
 
 /// Load a module from Podlang source.
 ///
-/// Module files contain predicate definitions and imports, but no REQUEST block.
+/// Modules contain predicate definitions and imports, but no REQUEST block.
 ///
 /// - `source`: Podlang source code
 /// - `name`: Name for the module (used in batch naming)
@@ -76,7 +76,7 @@ pub fn load_module(
 
 /// Parse a request from Podlang source.
 ///
-/// Request files contain a REQUEST block and imports, but no predicate definitions.
+/// Requests contain a REQUEST block and imports, but no predicate definitions.
 ///
 /// - `source`: Podlang source code
 /// - `params`: Middleware parameters limiting sizes/arity

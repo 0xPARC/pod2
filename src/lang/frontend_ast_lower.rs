@@ -87,7 +87,7 @@ pub fn resolve_predicate(
 
             PredicateKind::Custom { .. } => match context {
                 ResolutionContext::Request => {
-                    // Request files can't define local predicates, so this shouldn't happen
+                    // Requests can't define local predicates, so this shouldn't happen
                     return None;
                 }
                 ResolutionContext::Module { reference_map, .. } => {
