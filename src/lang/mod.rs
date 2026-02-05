@@ -26,6 +26,7 @@
 //! Large predicates are automatically split into chains of smaller predicates;
 //! `apply_predicate` handles this transparently.
 //!
+pub mod diagnostics;
 pub mod error;
 pub mod frontend_ast;
 pub mod frontend_ast_lower;
@@ -37,7 +38,8 @@ pub mod pretty_print;
 
 use std::sync::Arc;
 
-pub use error::LangError;
+pub use diagnostics::render_error;
+pub use error::{LangError, LangErrorKind};
 pub use frontend_ast_split::{SplitChainInfo, SplitChainPiece, SplitResult};
 pub use module::{Module, MultiOperationError};
 pub use parser::{parse_podlang, Pairs, ParseError, Rule};
@@ -58,6 +60,16 @@ pub fn load_module(
     name: &str,
     params: &Params,
     available_modules: Vec<Arc<Module>>,
+) -> Result<Module, LangError> {
+    load_module_inner(source, name, params, available_modules)
+        .map_err(|e| e.with_source(source.to_string(), None))
+}
+
+fn load_module_inner(
+    source: &str,
+    name: &str,
+    params: &Params,
+    available_modules: &HashMap<String, Arc<Module>>,
 ) -> Result<Module, LangError> {
     let pairs = parse_podlang(source)?;
     let document_pair = pairs
@@ -89,6 +101,15 @@ pub fn parse_request(
     source: &str,
     params: &Params,
     available_modules: &[Arc<Module>],
+) -> Result<PodRequest, LangError> {
+    parse_request_inner(source, params, available_modules)
+        .map_err(|e| e.with_source(source.to_string(), None))
+}
+
+fn parse_request_inner(
+    source: &str,
+    params: &Params,
+    available_modules: &HashMap<String, Arc<Module>>,
 ) -> Result<PodRequest, LangError> {
     let pairs = parse_podlang(source)?;
     let document_pair = pairs
@@ -1011,8 +1032,8 @@ mod tests {
 
         assert!(result.is_err());
 
-        match result.err().unwrap() {
-            LangError::Validation(e) => match *e {
+        match result.err().unwrap().kind {
+            LangErrorKind::Validation(e) => match *e {
                 frontend_ast_validate::ValidationError::ModuleNotFound { name, .. } => {
                     // The error now carries the hex-formatted hash
                     assert_eq!(name, fake_hash);
@@ -1038,8 +1059,8 @@ mod tests {
 
         assert!(result.is_err());
 
-        match result.err().unwrap() {
-            LangError::Validation(e) => match *e {
+        match result.err().unwrap().kind {
+            LangErrorKind::Validation(e) => match *e {
                 frontend_ast_validate::ValidationError::UndefinedWildcard {
                     name,
                     pred_name,
