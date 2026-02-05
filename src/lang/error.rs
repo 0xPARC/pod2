@@ -1,3 +1,5 @@
+use std::{fmt, ops::Deref};
+
 use thiserror::Error;
 
 use crate::{
@@ -7,7 +9,7 @@ use crate::{
 };
 
 #[derive(Error, Debug)]
-pub enum LangError {
+pub enum LangErrorKind {
     #[error("Parsing failed: {0}")]
     Parse(Box<ParseError>),
 
@@ -25,6 +27,68 @@ pub enum LangError {
 
     #[error("Batching error: {0}")]
     Batching(Box<BatchingError>),
+}
+
+/// Top-level error type for the Podlang pipeline.
+///
+/// When source text is attached (e.g. from [`crate::lang::parse`]), `Display` produces a rich,
+/// source-annotated diagnostic. Otherwise it falls back to a plain message.
+///
+/// The inner [`LangErrorKind`] variants are accessible via `Deref`, so existing match patterns
+/// like `LangError::Validation(e)` continue to work.
+pub struct LangError {
+    pub kind: LangErrorKind,
+    source_text: Option<String>,
+    path: Option<String>,
+}
+
+impl LangError {
+    pub fn new(kind: LangErrorKind) -> Self {
+        Self {
+            kind,
+            source_text: None,
+            path: None,
+        }
+    }
+
+    /// Attach source text (and optional path) so that `Display` produces a rich diagnostic.
+    pub fn with_source(mut self, source: impl Into<String>, path: Option<String>) -> Self {
+        self.source_text = Some(source.into());
+        self.path = path;
+        self
+    }
+}
+
+impl fmt::Debug for LangError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(self, f)
+    }
+}
+
+impl Deref for LangError {
+    type Target = LangErrorKind;
+    fn deref(&self) -> &LangErrorKind {
+        &self.kind
+    }
+}
+
+impl fmt::Display for LangError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match &self.source_text {
+            Some(source) => {
+                let rendered =
+                    crate::lang::diagnostics::render_error(source, self.path.as_deref(), self);
+                write!(f, "{}", rendered)
+            }
+            None => write!(f, "{}", self.kind),
+        }
+    }
+}
+
+impl std::error::Error for LangError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        self.kind.source()
+    }
 }
 
 /// Validation errors from frontend AST validation
@@ -295,30 +359,30 @@ pub enum SplittingError {
 
 impl From<ParseError> for LangError {
     fn from(err: ParseError) -> Self {
-        LangError::Parse(Box::new(err))
+        LangError::new(LangErrorKind::Parse(Box::new(err)))
     }
 }
 
 impl From<middleware::Error> for LangError {
     fn from(err: middleware::Error) -> Self {
-        LangError::Middleware(Box::new(err))
+        LangError::new(LangErrorKind::Middleware(Box::new(err)))
     }
 }
 
 impl From<ValidationError> for LangError {
     fn from(err: ValidationError) -> Self {
-        LangError::Validation(Box::new(err))
+        LangError::new(LangErrorKind::Validation(Box::new(err)))
     }
 }
 
 impl From<LoweringError> for LangError {
     fn from(err: LoweringError) -> Self {
-        LangError::Lowering(Box::new(err))
+        LangError::new(LangErrorKind::Lowering(Box::new(err)))
     }
 }
 
 impl From<BatchingError> for LangError {
     fn from(err: BatchingError) -> Self {
-        LangError::Batching(Box::new(err))
+        LangError::new(LangErrorKind::Batching(Box::new(err)))
     }
 }
