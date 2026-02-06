@@ -8,7 +8,10 @@ use itertools::Itertools;
 use strum_macros::FromRepr;
 
 mod basetypes;
-use std::{cmp::PartialEq, hash};
+use std::{
+    cmp::{Ordering, PartialEq, PartialOrd},
+    hash,
+};
 
 use containers::{Array, Dictionary, Set};
 use schemars::JsonSchema;
@@ -449,6 +452,18 @@ impl PartialEq for Value {
 
 impl Eq for Value {}
 
+impl Ord for Value {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.raw.cmp(&other.raw)
+    }
+}
+
+impl PartialOrd for Value {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
 impl hash::Hash for Value {
     fn hash<H: hash::Hasher>(&self, state: &mut H) {
         self.raw.hash(state)
@@ -608,6 +623,18 @@ impl hash::Hash for Key {
 impl PartialEq for Key {
     fn eq(&self, other: &Self) -> bool {
         self.hash == other.hash
+    }
+}
+
+impl Ord for Key {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.hash.cmp(&other.hash)
+    }
+}
+
+impl PartialOrd for Key {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
     }
 }
 

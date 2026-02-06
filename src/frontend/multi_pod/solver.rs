@@ -73,6 +73,7 @@ pub struct MultiPodSolution {
 }
 
 /// Input to the MILP solver.
+#[derive(Debug)]
 pub struct SolverInput<'a> {
     /// Number of statements.
     pub num_statements: usize,

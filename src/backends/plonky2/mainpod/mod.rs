@@ -817,7 +817,7 @@ impl Pod for MainPod {
 
 #[cfg(test)]
 pub mod tests {
-    use std::{any::Any, collections::HashSet};
+    use std::{any::Any, collections::BTreeSet};
 
     use num::{BigUint, One};
 
@@ -1133,7 +1133,7 @@ pub mod tests {
     fn test_set_contains() -> frontend::Result<()> {
         let params = Params::default();
         let mut builder = MainPodBuilder::new(&params, &DEFAULT_VD_SET);
-        let set: HashSet<_> = [1, 2, 3].into_iter().map(|n| n.into()).collect();
+        let set: BTreeSet<_> = [1, 2, 3].into_iter().map(|n| n.into()).collect();
         let set = Set::new(set);
         builder.pub_op(frontend::Operation::set_contains(set, 1))?;
 

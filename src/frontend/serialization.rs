@@ -62,7 +62,7 @@ impl TryFrom<SerializedMainPod> for MainPod {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::{HashMap, HashSet};
+    use std::collections::{BTreeMap, BTreeSet};
 
     use pretty_assertions::assert_eq;
     use schemars::schema_for;
@@ -100,7 +100,7 @@ mod tests {
             ),
             (
                 TypedValue::Dictionary(
-                    Dictionary::new(HashMap::from([
+                    Dictionary::new(BTreeMap::from([
                         // The set of valid keys is equal to the set of valid JSON keys
                         ("foo".into(), 123.into()),
                         // Empty strings are valid JSON keys
@@ -118,7 +118,7 @@ mod tests {
                 "{\"kvs\":{\"\":\"baz\",\"\\u0000\":\"\",\"    hi\":false,\"!@£$%^&&*()\":\"\",\"foo\":{\"Int\":\"123\"},\"🥳\":\"party time!\"}}",
             ),
             (
-                TypedValue::Set(Set::new(HashSet::from(["foo".into(), "bar".into()]))),
+                TypedValue::Set(Set::new(BTreeSet::from(["foo".into(), "bar".into()]))),
                 "{\"set\":[\"bar\",\"foo\"]}",
             ),
         ];
@@ -145,7 +145,7 @@ mod tests {
         builder.insert("very_large_int", 1152921504606846976);
         builder.insert(
             "a_dict_containing_one_key",
-            Dictionary::new(HashMap::from([
+            Dictionary::new(BTreeMap::from([
                 ("foo".into(), 123.into()),
                 (
                     "an_array_containing_three_ints".into(),
@@ -153,7 +153,7 @@ mod tests {
                 ),
                 (
                     "a_set_containing_two_strings".into(),
-                    Set::new(HashSet::from([
+                    Set::new(BTreeSet::from([
                         Array::new(vec!["foo".into(), "bar".into()]).into(),
                         "baz".into(),
                     ]))

@@ -4,7 +4,7 @@
 //! Supports automatic predicate splitting and multi-batch packing.
 
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{BTreeMap, HashMap, HashSet},
     str::FromStr,
     sync::Arc,
 };
@@ -174,13 +174,13 @@ pub fn lower_literal(lit: &LiteralValue) -> Value {
             Value::from(array)
         }
         LiteralValue::Set(s) => {
-            let elements: std::collections::HashSet<_> =
+            let elements: std::collections::BTreeSet<_> =
                 s.elements.iter().map(lower_literal).collect();
             let set = containers::Set::new(elements);
             Value::from(set)
         }
         LiteralValue::Dict(d) => {
-            let pairs: HashMap<_, _> = d
+            let pairs: BTreeMap<_, _> = d
                 .pairs
                 .iter()
                 .map(|pair| {
