@@ -817,10 +817,7 @@ impl Pod for MainPod {
 
 #[cfg(test)]
 pub mod tests {
-    use std::{
-        any::Any,
-        collections::HashSet,
-    };
+    use std::{any::Any, collections::HashSet};
 
     use num::{BigUint, One};
 

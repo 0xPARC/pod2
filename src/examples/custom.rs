@@ -49,11 +49,7 @@ pub fn eth_dos_request() -> Result<PodRequest> {
             eth_dos::eth_dos(src, dst, distance)
         )
         "#;
-    Ok(parse_request(
-        input,
-        &Params::default(),
-        &[eth_dos_module],
-    )?)
+    Ok(parse_request(input, &Params::default(), &[eth_dos_module])?)
 }
 
 #[cfg(test)]

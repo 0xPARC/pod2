@@ -1,9 +1,6 @@
 pub mod custom;
 
-use std::{
-    collections::HashSet,
-    sync::LazyLock,
-};
+use std::{collections::HashSet, sync::LazyLock};
 
 use custom::eth_dos_batch;
 use num::BigUint;
