@@ -836,7 +836,7 @@ pub mod tests {
         frontend::{
             self, literal, CustomPredicateBatchBuilder, MainPodBuilder, StatementTmplBuilder as STB,
         },
-        lang::parse,
+        lang::load_module,
         middleware::{
             self, containers::Set, CustomPredicateRef, NativePredicate as NP, Signer as _,
             DEFAULT_VD_LIST, DEFAULT_VD_SET,
@@ -1165,7 +1165,7 @@ pub mod tests {
     #[test]
     fn test_undetermined_values() {
         let params = Default::default();
-        let batch = parse(
+        let module = load_module(
             r#"
             two_equal(x,y,z) = OR(
                 Equal(x,y)
@@ -1173,13 +1173,12 @@ pub mod tests {
                 Equal(x,z)
             )
             "#,
+            "test",
             &params,
-            &[],
+            vec![],
         )
-        .unwrap()
-        .first_batch()
-        .unwrap()
-        .clone();
+        .unwrap();
+        let batch = module.batch.clone();
         let mut builder = MainPodBuilder::new(&params, &DEFAULT_VD_SET);
         let cpr = CustomPredicateRef { batch, index: 0 };
         let eq_st = builder.priv_op(frontend::Operation::eq(1, 1)).unwrap();
