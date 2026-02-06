@@ -313,23 +313,22 @@ impl SolvedMultiPod {
                     StatementSource::Internal(dep_idx) => {
                         // Check if dependency is in an earlier POD (not local)
                         if !statements_in_pod.contains(dep_idx) {
-                            for earlier_pod_idx in 0..pod_idx {
-                                if solution.pod_public_statements[earlier_pod_idx].contains(dep_idx)
-                                {
-                                    internal_pods.insert(earlier_pod_idx);
-                                    break;
-                                }
-                            }
+                            let earlier_pod_idx = (0..pod_idx)
+                                .find(|earlier_pod_idx| {
+                                    solution.pod_public_statements[*earlier_pod_idx]
+                                        .contains(dep_idx)
+                                })
+                                .expect("internal pod with dependency statement");
+                            internal_pods.insert(earlier_pod_idx);
                         }
                     }
                     StatementSource::External(pod_hash) => {
-                        if let Some(idx) = self
+                        let idx = self
                             .input_pods
                             .iter()
                             .position(|p| p.statements_hash() == *pod_hash)
-                        {
-                            external_pods.insert(idx);
-                        }
+                            .expect("external pod with dependency statement");
+                        external_pods.insert(idx);
                     }
                 }
             }
