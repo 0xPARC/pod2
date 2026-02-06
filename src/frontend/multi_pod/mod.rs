@@ -51,7 +51,7 @@ use std::collections::{BTreeSet, HashMap};
 
 use crate::{
     frontend::{MainPod, MainPodBuilder, Operation, OperationArg},
-    middleware::{Hash, MainPodProver, Params, Statement, VDSet},
+    middleware::{Hash, MainPodProver, Params, Statement, VDSet, Value},
 };
 
 mod cost;
@@ -63,10 +63,11 @@ use deps::{DependencyGraph, StatementSource};
 pub use solver::MultiPodSolution;
 
 /// Error type for multi-POD operations.
-#[derive(Debug, Clone)]
+#[derive(Debug, thiserror::Error)]
 pub enum Error {
+    Custom(String),
     /// Error from the frontend.
-    Frontend(String),
+    Frontend(#[from] crate::frontend::Error),
     /// Error from the MILP solver.
     Solver(String),
     /// No solution exists (shouldn't happen with valid input).
@@ -76,18 +77,11 @@ pub enum Error {
 impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Error::Frontend(msg) => write!(f, "Frontend error: {}", msg),
+            Error::Custom(msg) => write!(f, "Custom error: {}", msg),
+            Error::Frontend(e) => write!(f, "Frontend error: {}", e),
             Error::Solver(msg) => write!(f, "Solver error: {}", msg),
             Error::NoSolution => write!(f, "No solution exists"),
         }
-    }
-}
-
-impl std::error::Error for Error {}
-
-impl From<crate::frontend::Error> for Error {
-    fn from(e: crate::frontend::Error) -> Self {
-        Error::Frontend(e.to_string())
     }
 }
 
@@ -175,6 +169,8 @@ pub struct MultiPodBuilder {
     statements: Vec<Statement>,
     /// Operations that produce each statement.
     operations: Vec<Operation>,
+    /// Optional initial wildcard values for custom operations
+    operations_wildcard_values: Vec<Vec<(usize, Value)>>,
     /// Indices of statements that should be public in output PODs.
     /// Uses Vec since max_public_statements is small (≤8); indices are naturally sorted.
     output_public_indices: Vec<usize>,
@@ -193,6 +189,7 @@ pub struct SolvedMultiPod {
     input_pods: Vec<MainPod>,
     statements: Vec<Statement>,
     operations: Vec<Operation>,
+    operations_wildcard_values: Vec<Vec<(usize, Value)>>,
     solution: MultiPodSolution,
     deps: DependencyGraph,
 }
@@ -313,6 +310,7 @@ impl SolvedMultiPod {
         for &stmt_idx in &statements_sorted {
             let is_public = public_set.contains(&stmt_idx);
             let mut op = self.operations[stmt_idx].clone();
+            let wildcard_values = self.operations_wildcard_values[stmt_idx].clone();
 
             // Remap Statement arguments that reference locally-proved statements.
             // For external dependencies (from input PODs including earlier generated PODs),
@@ -330,17 +328,13 @@ impl SolvedMultiPod {
                 }
             }
 
-            let stmt = builder
-                .op(is_public, vec![], op)
-                .map_err(|e| Error::Frontend(e.to_string()))?;
+            let stmt = builder.op(is_public, wildcard_values, op)?;
 
             added_statements.insert(stmt_idx, stmt);
         }
 
         // Step 4: Prove the POD
-        let pod = builder
-            .prove(prover)
-            .map_err(|e| Error::Frontend(e.to_string()))?;
+        let pod = builder.prove(prover)?;
 
         Ok(pod)
     }
@@ -370,34 +364,48 @@ impl MultiPodBuilder {
             input_pods: Vec::new(),
             statements: Vec::new(),
             operations: Vec::new(),
+            operations_wildcard_values: Vec::new(),
             output_public_indices: Vec::new(),
         }
     }
 
     /// Add an external input POD.
     pub fn add_pod(&mut self, pod: MainPod) -> Result<()> {
-        self.builder
-            .add_pod(pod.clone())
-            .map_err(|e| Error::Frontend(e.to_string()))?;
+        self.builder.add_pod(pod.clone())?;
         self.input_pods.push(pod);
         Ok(())
     }
 
     /// Add a public operation (statement will be public in output).
     pub fn pub_op(&mut self, op: Operation) -> Result<Statement> {
-        let stmt = self.add_operation(op)?;
-        // Index is always new (just added), so push without duplicate check
-        self.output_public_indices.push(self.statements.len() - 1);
-        Ok(stmt)
+        self.op(true, vec![], op)
     }
 
     /// Add a private operation.
     pub fn priv_op(&mut self, op: Operation) -> Result<Statement> {
-        self.add_operation(op)
+        self.op(false, vec![], op)
+    }
+
+    pub fn op(
+        &mut self,
+        public: bool,
+        wildcard_values: Vec<(usize, Value)>,
+        op: Operation,
+    ) -> Result<Statement> {
+        let stmt = self.add_operation(wildcard_values, op)?;
+        if public {
+            // Index is always new (just added), so push without duplicate check
+            self.output_public_indices.push(self.statements.len() - 1);
+        }
+        Ok(stmt)
     }
 
     /// Internal: Add an operation and create its statement.
-    fn add_operation(&mut self, op: Operation) -> Result<Statement> {
+    fn add_operation(
+        &mut self,
+        wildcard_values: Vec<(usize, Value)>,
+        op: Operation,
+    ) -> Result<Statement> {
         // Get or create the cached builder
         //
         // NOTE: We clone input pods here because MainPodBuilder takes ownership.
@@ -407,12 +415,12 @@ impl MultiPodBuilder {
         // while existing code using MainPodBuilder (with the default) would be unaffected.
         let stmt = self
             .builder
-            .op(false, vec![], op.clone())
-            .map_err(|e| Error::Frontend(e.to_string()))?;
+            .op(false, wildcard_values.clone(), op.clone())?;
 
         self.statements.push(stmt.clone());
         println!("DBG op {:#?}", op);
         self.operations.push(op);
+        self.operations_wildcard_values.push(wildcard_values);
 
         Ok(stmt)
     }
@@ -428,7 +436,7 @@ impl MultiPodBuilder {
             }
             Ok(())
         } else {
-            Err(Error::Frontend(
+            Err(Error::Custom(
                 "reveal() called with statement not found in builder".to_string(),
             ))
         }
@@ -521,6 +529,7 @@ impl MultiPodBuilder {
             input_pods: self.input_pods,
             statements: self.statements,
             operations: self.operations,
+            operations_wildcard_values: self.operations_wildcard_values,
             solution,
             deps,
         })
@@ -580,10 +589,7 @@ mod tests {
         assert!(result.intermediate_pods().is_empty());
 
         // Verify the POD
-        result.pods[0]
-            .pod
-            .verify()
-            .map_err(|e| Error::Frontend(e.to_string()))?;
+        result.pods[0].pod.verify().unwrap();
 
         Ok(())
     }
@@ -634,7 +640,7 @@ mod tests {
         for (i, pod) in result.pods.iter().enumerate() {
             pod.pod
                 .verify()
-                .map_err(|e| Error::Frontend(format!("POD {} verification failed: {}", i, e)))?;
+                .unwrap_or_else(|_| panic!("POD {} verification failed", i));
         }
 
         Ok(())
@@ -755,7 +761,7 @@ mod tests {
         for (i, pod) in result.pods.iter().enumerate() {
             pod.pod
                 .verify()
-                .map_err(|e| Error::Frontend(format!("POD {} verification failed: {}", i, e)))?;
+                .unwrap_or_else(|_| panic!("POD {} verification failed", i));
         }
 
         Ok(())
@@ -806,7 +812,7 @@ mod tests {
         for (i, pod) in result.pods.iter().enumerate() {
             pod.pod
                 .verify()
-                .map_err(|e| Error::Frontend(format!("POD {} verification failed: {}", i, e)))?;
+                .unwrap_or_else(|_| panic!("POD {} verification failed", i));
         }
 
         Ok(())
@@ -957,7 +963,7 @@ mod tests {
         for (i, pod) in result.pods.iter().enumerate() {
             pod.pod
                 .verify()
-                .map_err(|e| Error::Frontend(format!("POD {} verification failed: {}", i, e)))?;
+                .unwrap_or_else(|_| panic!("POD {} verification failed", i));
         }
 
         Ok(())
@@ -1197,11 +1203,7 @@ mod tests {
         let result = solved.prove(&prover)?;
         assert_eq!(result.pods.len(), 1);
 
-        result
-            .output_pod()
-            .pod
-            .verify()
-            .map_err(|e| Error::Frontend(format!("Output POD verification failed: {}", e)))?;
+        result.output_pod().pod.verify().unwrap();
 
         Ok(())
     }
@@ -1253,7 +1255,7 @@ mod tests {
         for (i, pod) in result.pods.iter().enumerate() {
             pod.pod
                 .verify()
-                .map_err(|e| Error::Frontend(format!("POD {} verification failed: {}", i, e)))?;
+                .unwrap_or_else(|_| panic!("POD {} verification failed", i));
         }
 
         Ok(())
@@ -1317,7 +1319,7 @@ mod tests {
         for (i, pod) in result.pods.iter().enumerate() {
             pod.pod
                 .verify()
-                .map_err(|e| Error::Frontend(format!("POD {} verification failed: {}", i, e)))?;
+                .unwrap_or_else(|_| panic!("POD {} verification failed", i));
         }
 
         Ok(())
@@ -1376,7 +1378,7 @@ mod tests {
         for (i, pod) in result.pods.iter().enumerate() {
             pod.pod
                 .verify()
-                .map_err(|e| Error::Frontend(format!("POD {} verification failed: {}", i, e)))?;
+                .unwrap_or_else(|_| panic!("POD {} verification failed", i));
         }
 
         Ok(())
@@ -1501,7 +1503,7 @@ mod tests {
         for (i, pod) in result.pods.iter().enumerate() {
             pod.pod
                 .verify()
-                .map_err(|e| Error::Frontend(format!("POD {} verification failed: {}", i, e)))?;
+                .unwrap_or_else(|_| panic!("POD {} verification failed", i));
         }
 
         Ok(())
@@ -1618,7 +1620,7 @@ mod tests {
         for (i, pod) in result.pods.iter().enumerate() {
             pod.pod
                 .verify()
-                .map_err(|e| Error::Frontend(format!("POD {} verification failed: {}", i, e)))?;
+                .unwrap_or_else(|_| panic!("POD {} verification failed", i));
         }
 
         Ok(())
