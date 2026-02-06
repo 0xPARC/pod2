@@ -1,6 +1,9 @@
 pub mod custom;
 
-use std::{collections::HashSet, sync::LazyLock};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::LazyLock,
+};
 
 use custom::eth_dos_batch;
 use num::BigUint;
@@ -12,7 +15,7 @@ use crate::{
     frontend::{
         MainPod, MainPodBuilder, Operation, PodRequest, Result, SignedDict, SignedDictBuilder,
     },
-    lang::parse,
+    lang::parse_request,
     middleware::{
         self, containers::Set, hash_values, CustomPredicateRef, Params, Predicate, PublicKey,
         Signer as _, Statement, StatementArg, TypedValue, VDSet, Value,
@@ -90,8 +93,7 @@ pub fn zu_kyc_pod_request(gov_signer: &Value, pay_signer: &Value) -> Result<PodR
     )
     "#,
     );
-    let parsed = parse(&input, &Params::default(), &[])?;
-    Ok(parsed.request)
+    Ok(parse_request(&input, &Params::default(), &HashMap::new())?)
 }
 
 // ETHDoS
