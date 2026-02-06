@@ -171,11 +171,7 @@ pub fn solve(input: &SolverInput) -> Result<MultiPodSolution> {
     // Incremental approach: try solving with increasing POD counts
     // Start with min_pods and increment until we find a feasible solution
     for target_pods in min_pods..=input.max_pods {
-        println!("DBG try solve for {} pods", target_pods);
         if let Some(solution) = try_solve_with_pods(input, target_pods, &all_batches)? {
-            println!("DBG solution found!");
-            dbg!(&input);
-            dbg!(&solution);
             return Ok(solution);
         }
         // Infeasible with target_pods, try more
