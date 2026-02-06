@@ -13,7 +13,12 @@ pub fn validate_podlang(input: &str) -> String {
 
     match parse(input, &params, &[]) {
         Ok(result) => {
-            let predicates = result.custom_batch.predicates();
+            let predicates: Vec<_> = result
+                .custom_batches
+                .batches()
+                .iter()
+                .flat_map(|batch| batch.predicates())
+                .collect();
             let predicate_names: Vec<String> =
                 predicates.iter().map(|p| p.name.to_string()).collect();
 
