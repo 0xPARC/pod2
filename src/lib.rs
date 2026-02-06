@@ -10,6 +10,9 @@ pub mod frontend;
 pub mod lang;
 pub mod middleware;
 
+#[cfg(feature = "wasm")]
+pub mod wasm;
+
 #[cfg(any(test, feature = "examples"))]
 pub mod examples;
 
