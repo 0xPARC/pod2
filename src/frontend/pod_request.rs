@@ -177,8 +177,6 @@ impl Display for PodRequest {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
-
     use crate::{
         backends::plonky2::{
             mock::mainpod::MockProver, primitives::ec::schnorr::SecretKey, signer::Signer,
@@ -219,7 +217,7 @@ mod tests {
         )
         "#,
             &params,
-            &HashMap::new(),
+            &[],
         )
         .unwrap();
         assert!(non_matching_request.exact_match_pod(&*kyc.pod).is_err());
@@ -249,7 +247,7 @@ mod tests {
         )
         "#,
             &params,
-            &HashMap::new(),
+            &[],
         )
         .unwrap();
 

@@ -673,7 +673,7 @@ mod tests {
             "#,
             "test",
             &params,
-            &HashMap::new(),
+            vec![],
         )
         .expect("load module");
         let batch = &module.batch;
@@ -1406,7 +1406,7 @@ mod tests {
             "#,
             "test",
             &params,
-            &HashMap::new(),
+            vec![],
         )
         .expect("load module");
         let batch = &module.batch;
@@ -1535,7 +1535,7 @@ mod tests {
             "#,
             "test",
             &params,
-            &HashMap::new(),
+            vec![],
         )
         .expect("load module");
         let batch = &module.batch;

@@ -107,24 +107,6 @@ impl PredicateRef {
             PredicateRef::Qualified { predicate, .. } => &predicate.name,
         }
     }
-
-    /// Get the module name if qualified, None if local
-    pub fn module_name(&self) -> Option<&str> {
-        match self {
-            PredicateRef::Local(_) => None,
-            PredicateRef::Qualified { module, .. } => Some(&module.name),
-        }
-    }
-
-    /// Get a display name for error messages (includes module:: prefix if qualified)
-    pub fn display_name(&self) -> String {
-        match self {
-            PredicateRef::Local(id) => id.name.clone(),
-            PredicateRef::Qualified { module, predicate } => {
-                format!("{}::{}", module.name, predicate.name)
-            }
-        }
-    }
 }
 
 /// Arguments that can be passed to statements

@@ -1,7 +1,7 @@
 pub mod custom;
 
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashSet,
     sync::LazyLock,
 };
 
@@ -93,7 +93,7 @@ pub fn zu_kyc_pod_request(gov_signer: &Value, pay_signer: &Value) -> Result<PodR
     )
     "#,
     );
-    Ok(parse_request(&input, &Params::default(), &HashMap::new())?)
+    Ok(parse_request(&input, &Params::default(), &[])?)
 }
 
 // ETHDoS

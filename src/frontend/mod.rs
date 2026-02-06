@@ -797,8 +797,6 @@ impl MainPodCompiler {
 
 #[cfg(test)]
 pub mod tests {
-    use std::collections::HashMap;
-
     use num::BigUint;
 
     use super::*;
@@ -1382,7 +1380,7 @@ pub mod tests {
             Equal(b, 5)
         )
         "#;
-        let module = load_module(input, "test", &params, &HashMap::new()).unwrap();
+        let module = load_module(input, "test", &params, vec![]).unwrap();
         let batch = module.batch.clone();
         let pred_test = batch.predicate_ref_by_name("Test").unwrap();
 
@@ -1431,7 +1429,7 @@ pub mod tests {
             c(6, 3)
         )
         "#;
-        let module = load_module(input, "test", &params, &HashMap::new()).unwrap();
+        let module = load_module(input, "test", &params, vec![]).unwrap();
         let batch = module.batch.clone();
         let pred_test = batch.predicate_ref_by_name("Test").unwrap();
 
@@ -1453,7 +1451,7 @@ pub mod tests {
             c(6, 3)
         )
         "#;
-        let module = load_module(input, "test", &params, &HashMap::new()).unwrap();
+        let module = load_module(input, "test", &params, vec![]).unwrap();
         let batch = module.batch.clone();
         let pred_test = batch.predicate_ref_by_name("Test").unwrap();
 
@@ -1492,7 +1490,7 @@ pub mod tests {
         "#;
 
         // Parse and batch the predicate (this handles splitting internally)
-        let module = load_module(input, "test", &params, &HashMap::new())?;
+        let module = load_module(input, "test", &params, vec![])?;
 
         // Verify it was split
         assert!(module.split_chains.contains_key("large_pred"));
