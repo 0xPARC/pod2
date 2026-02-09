@@ -185,7 +185,7 @@ mod tests {
             zu_kyc_pod_builder, zu_kyc_pod_request, zu_kyc_sign_dict_builders, MOCK_VD_SET,
         },
         frontend::{MainPodBuilder, Operation},
-        lang::parse,
+        lang::parse_request,
         middleware::{Params, Value},
     };
 
@@ -210,7 +210,7 @@ mod tests {
         assert!(request.exact_match_pod(&*kyc.pod).is_ok());
 
         // This request does not match the POD, because the POD does not contain a NotEqual statement.
-        let non_matching_request = parse(
+        let non_matching_request = parse_request(
             r#"
         REQUEST(
             NotEqual(4, 5)
@@ -219,8 +219,7 @@ mod tests {
             &params,
             &[],
         )
-        .unwrap()
-        .request;
+        .unwrap();
         assert!(non_matching_request.exact_match_pod(&*kyc.pod).is_err());
     }
 
@@ -240,7 +239,7 @@ mod tests {
 
         println!("{pod}");
 
-        let request = parse(
+        let request = parse_request(
             r#"
         REQUEST(
             SumOf(a, b, c)
@@ -252,7 +251,7 @@ mod tests {
         )
         .unwrap();
 
-        let bindings = request.request.exact_match_pod(&*pod.pod).unwrap();
+        let bindings = request.exact_match_pod(&*pod.pod).unwrap();
         assert_eq!(*bindings.get("a").unwrap(), 10.into());
         assert_eq!(*bindings.get("b").unwrap(), 9.into());
         assert_eq!(*bindings.get("c").unwrap(), 1.into());

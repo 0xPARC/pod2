@@ -26,12 +26,9 @@ arg_section = {
 public_arg_list = { identifier ~ ("," ~ identifier)* } 
 private_arg_list = { identifier ~ ("," ~ identifier)* }
 
-document = { SOI ~ (use_batch_statement | use_intro_statement | custom_predicate_def | request_def)* ~ EOI }
+document = { SOI ~ (use_module_statement | use_intro_statement | custom_predicate_def | request_def)* ~ EOI }
 
-use_batch_statement = { "use" ~ "batch" ~ use_predicate_list ~ "from" ~ batch_ref }
-use_predicate_list = { import_name ~ ("," ~ import_name)* }
-import_name = { identifier | "_" }
-batch_ref = { hash_hex }
+use_module_statement = { "use" ~ "module" ~ hash_hex ~ "as" ~ identifier }
 
 use_intro_statement = { "use" ~ "intro" ~ identifier ~ "(" ~ use_intro_arg_list? ~ ")" ~ "from" ~ intro_predicate_ref }
 use_intro_arg_list = { identifier ~ ("," ~ identifier)* }
@@ -55,7 +52,11 @@ statement_list = { statement+ }
 statement_arg = { literal_value | anchored_key | identifier }
 statement_arg_list = { statement_arg ~ ("," ~ statement_arg)* }
 
-statement = { identifier ~ "(" ~ statement_arg_list? ~ ")" }
+// Predicate reference: either qualified (module::predicate) or local (predicate)
+predicate_ref = { qualified_predicate_ref | identifier }
+qualified_predicate_ref = { identifier ~ "::" ~ identifier }
+
+statement = { predicate_ref ~ "(" ~ statement_arg_list? ~ ")" }
 
 // Anchored Key: Var["key_literal"] or Var.key_identifier
 anchored_key = {

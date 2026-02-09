@@ -50,8 +50,8 @@ pub enum ValidationError {
         span: Option<Span>,
     },
 
-    #[error("Batch not found: {id}")]
-    BatchNotFound { id: String, span: Option<Span> },
+    #[error("Module not found: {name}")]
+    ModuleNotFound { name: String, span: Option<Span> },
 
     #[error("Undefined predicate: {name}")]
     UndefinedPredicate { name: String, span: Option<Span> },
@@ -91,6 +91,18 @@ pub enum ValidationError {
 
     #[error("Wildcard '{name}' collides with a predicate name")]
     WildcardPredicateNameCollision { name: String },
+
+    #[error("Predicate definitions are not allowed in requests")]
+    PredicatesNotAllowedInRequest { span: Option<Span> },
+
+    #[error("REQUEST block is not allowed in modules")]
+    RequestNotAllowedInModule { span: Option<Span> },
+
+    #[error("Modules must contain at least one predicate definition")]
+    NoPredicatesInModule,
+
+    #[error("Requests must contain a REQUEST block")]
+    NoRequestBlock,
 }
 
 /// Lowering errors from frontend AST lowering to middleware

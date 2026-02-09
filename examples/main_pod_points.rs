@@ -16,7 +16,7 @@ use pod2::{
         primitives::ec::schnorr::SecretKey, signer::Signer,
     },
     frontend::{MainPodBuilder, Operation, SignedDictBuilder},
-    lang::parse,
+    lang::load_module,
     middleware::{MainPodProver, Params, VDSet},
 };
 
@@ -88,10 +88,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         game_pk = game_pk,
     );
     println!("# custom predicate batch:{}", input);
-    let batch = parse(&input, &params, &[])?
-        .first_batch()
-        .expect("Expected batch")
-        .clone();
+    let module = load_module(&input, "points_module", &params, vec![])?;
+    let batch = module.batch.clone();
     let points_pred = batch.predicate_ref_by_name("points").unwrap();
     let over_9000_pred = batch.predicate_ref_by_name("over_9000").unwrap();
 
