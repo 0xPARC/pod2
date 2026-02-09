@@ -69,7 +69,7 @@ fn load_module_inner(
     source: &str,
     name: &str,
     params: &Params,
-    available_modules: &HashMap<String, Arc<Module>>,
+    available_modules: &[Arc<Module>],
 ) -> Result<Module, LangError> {
     let pairs = parse_podlang(source)?;
     let document_pair = pairs
@@ -109,7 +109,7 @@ pub fn parse_request(
 fn parse_request_inner(
     source: &str,
     params: &Params,
-    available_modules: &HashMap<String, Arc<Module>>,
+    available_modules: &[Arc<Module>],
 ) -> Result<PodRequest, LangError> {
     let pairs = parse_podlang(source)?;
     let document_pair = pairs

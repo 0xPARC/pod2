@@ -349,8 +349,6 @@ fn format_pest_label<R: std::fmt::Debug>(error: &pest::error::Error<R>) -> Strin
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
-
     use super::*;
     use crate::lang::error::BatchingError;
 
