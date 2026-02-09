@@ -317,7 +317,7 @@ impl<'a> Lowerer<'a> {
         let predicate =
             resolve_predicate_ref(&stmt.predicate, symbols, &context).ok_or_else(|| {
                 LoweringError::PredicateNotFound {
-                    name: stmt.predicate.display_name(),
+                    name: format!("{}", stmt.predicate),
                 }
             })?;
 

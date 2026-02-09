@@ -817,10 +817,7 @@ impl Pod for MainPod {
 
 #[cfg(test)]
 pub mod tests {
-    use std::{
-        any::Any,
-        collections::{HashMap, HashSet},
-    };
+    use std::{any::Any, collections::HashSet};
 
     use num::{BigUint, One};
 
@@ -1178,7 +1175,7 @@ pub mod tests {
             "#,
             "test",
             &params,
-            &HashMap::new(),
+            vec![],
         )
         .unwrap();
         let batch = module.batch.clone();

@@ -28,7 +28,7 @@ private_arg_list = { identifier ~ ("," ~ identifier)* }
 
 document = { SOI ~ (use_module_statement | use_intro_statement | custom_predicate_def | request_def)* ~ EOI }
 
-use_module_statement = { "use" ~ "module" ~ identifier }
+use_module_statement = { "use" ~ "module" ~ hash_hex ~ "as" ~ identifier }
 
 use_intro_statement = { "use" ~ "intro" ~ identifier ~ "(" ~ use_intro_arg_list? ~ ")" ~ "from" ~ intro_predicate_ref }
 use_intro_arg_list = { identifier ~ ("," ~ identifier)* }

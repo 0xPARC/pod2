@@ -216,8 +216,6 @@ fn fmt_predicate_signature(
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
-
     use super::*;
     use crate::{
         backends::plonky2::primitives::ec::schnorr::SecretKey,
@@ -390,18 +388,17 @@ mod tests {
     /// Helper function for round-trip testing
     fn assert_round_trip(input: &str) {
         let params = Params::default();
-        let available_modules = HashMap::new();
 
         // Step 1: Parse the input
-        let module = load_module(input, "test", &params, &available_modules)
-            .expect("Initial parsing should succeed");
+        let module =
+            load_module(input, "test", &params, vec![]).expect("Initial parsing should succeed");
 
         // Step 2: Pretty-print the parsed batch
         let batch = &module.batch;
         let pretty_printed = batch.to_podlang_string();
 
         // Step 3: Parse the pretty-printed result
-        let reparsed_module = load_module(&pretty_printed, "test", &params, &available_modules)
+        let reparsed_module = load_module(&pretty_printed, "test", &params, vec![])
             .expect("Reparsing should succeed");
         let reparsed_batch = &reparsed_module.batch;
 
@@ -558,8 +555,7 @@ mod tests {
         "#;
 
         let params = Params::default();
-        let module =
-            load_module(input, "test", &params, &HashMap::new()).expect("Parsing should succeed");
+        let module = load_module(input, "test", &params, vec![]).expect("Parsing should succeed");
         let batch = &module.batch;
 
         let pretty_printed = batch.to_podlang_string();
@@ -567,7 +563,7 @@ mod tests {
         println!("Original input:\n{}", input);
         println!("\nPretty-printed output:\n{}", pretty_printed);
 
-        let reparsed = load_module(&pretty_printed, "test", &params, &HashMap::new())
+        let reparsed = load_module(&pretty_printed, "test", &params, vec![])
             .expect("Reparsing should succeed");
         let reparsed_batch = &reparsed.batch;
 
@@ -633,13 +629,13 @@ mod tests {
             );
 
             let params = Params::default();
-            let module = load_module(&input, "test", &params, &HashMap::new())
-                .expect("Should parse successfully");
+            let module =
+                load_module(&input, "test", &params, vec![]).expect("Should parse successfully");
             let batch = &module.batch;
 
             let pretty_printed = batch.to_podlang_string();
 
-            let reparsed_module = load_module(&pretty_printed, "test", &params, &HashMap::new())
+            let reparsed_module = load_module(&pretty_printed, "test", &params, vec![])
                 .expect("Should reparse successfully");
             let reparsed_batch = &reparsed_module.batch;
 

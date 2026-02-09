@@ -30,7 +30,7 @@ pub fn eth_dos_batch(params: &Params) -> Result<Arc<CustomPredicateBatch>> {
             eth_dos_ind(src, dst, distance)
         )
         "#;
-    let module = load_module(input, "eth_dos", params, &HashMap::new()).expect("lang parse");
+    let module = load_module(input, "eth_dos", params, vec![]).expect("lang parse");
     let batch = module.batch.clone();
     println!("a.0. {}", batch.predicates()[0]);
     println!("a.1. {}", batch.predicates()[1]);
@@ -40,22 +40,25 @@ pub fn eth_dos_batch(params: &Params) -> Result<Arc<CustomPredicateBatch>> {
 }
 
 pub fn eth_dos_request() -> Result<PodRequest> {
+    use hex::ToHex;
+
     let batch = eth_dos_batch(&Params::default())?;
     let eth_dos_module = Arc::new(Module::new(batch, HashMap::new()));
+    let module_hash = eth_dos_module.id().encode_hex::<String>();
 
-    let mut available_modules = HashMap::new();
-    available_modules.insert("eth_dos_mod".to_string(), eth_dos_module);
-
-    let input = r#"
-        use module eth_dos_mod
+    let input = format!(
+        r#"
+        use module 0x{} as eth_dos
         REQUEST(
-            eth_dos_mod::eth_dos(src, dst, distance)
+            eth_dos::eth_dos(src, dst, distance)
         )
-        "#;
+        "#,
+        module_hash
+    );
     Ok(parse_request(
-        input,
+        &input,
         &Params::default(),
-        &available_modules,
+        &[eth_dos_module],
     )?)
 }
 

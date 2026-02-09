@@ -364,10 +364,7 @@ fn build_statement_with_resolved_refs(
     let pred_or_wc =
         resolve_predicate_ref(&stmt.predicate, symbols, &context).ok_or_else(|| {
             BatchingError::Internal {
-                message: format!(
-                    "Unknown predicate reference: '{}'",
-                    stmt.predicate.display_name()
-                ),
+                message: format!("Unknown predicate reference: '{}'", stmt.predicate),
             }
         })?;
 
@@ -389,9 +386,10 @@ mod tests {
             frontend_ast::parse::parse_document,
             frontend_ast_split::split_predicate_if_needed,
             frontend_ast_validate::{validate, ParseMode, ValidatedAST},
+            load_module,
             parser::parse_podlang,
         },
-        middleware::{Predicate, PredicateOrWildcard},
+        middleware::{CustomPredicateRef, Predicate, PredicateOrWildcard},
     };
 
     /// Helper: parse and validate input, returning predicates and symbol table
@@ -598,5 +596,76 @@ mod tests {
         let chain_info = module.split_chains.get("large_pred").unwrap();
         assert_eq!(chain_info.chain_pieces.len(), 2);
         assert_eq!(chain_info.real_statement_count, 6);
+    }
+
+    #[test]
+    fn test_load_module_importing_two_modules() {
+        use hex::ToHex;
+
+        let params = Params::default();
+
+        // Module "checks": defines is_equal
+        let checks = Arc::new(
+            load_module(
+                r#"is_equal(X, Y) = AND(Equal(X["val"], Y["val"]))"#,
+                "checks",
+                &params,
+                vec![],
+            )
+            .unwrap(),
+        );
+
+        // Module "ordering": defines is_less
+        let ordering = Arc::new(
+            load_module(
+                r#"is_less(X, Y) = AND(Lt(X["val"], Y["val"]))"#,
+                "ordering",
+                &params,
+                vec![],
+            )
+            .unwrap(),
+        );
+
+        let checks_hash = checks.id().encode_hex::<String>();
+        let ordering_hash = ordering.id().encode_hex::<String>();
+
+        // Module "combined": imports both, uses predicates from each
+        let combined = load_module(
+            &format!(
+                r#"
+                use module 0x{} as checks
+                use module 0x{} as ordering
+
+                equal_and_ordered(A, B, C) = AND(
+                    checks::is_equal(A, B)
+                    ordering::is_less(B, C)
+                )
+            "#,
+                checks_hash, ordering_hash
+            ),
+            "combined",
+            &params,
+            vec![checks.clone(), ordering.clone()],
+        )
+        .unwrap();
+
+        assert_eq!(combined.batch.predicates().len(), 1);
+        let pred = &combined.batch.predicates()[0];
+        assert_eq!(pred.name, "equal_and_ordered");
+        assert_eq!(pred.statements.len(), 2);
+
+        // First statement references checks::is_equal (external Custom ref, not BatchSelf)
+        let checks_ref = CustomPredicateRef::new(checks.batch.clone(), 0);
+        assert_eq!(
+            *pred.statements[0].pred_or_wc(),
+            PredicateOrWildcard::Predicate(Predicate::Custom(checks_ref))
+        );
+
+        // Second statement references ordering::is_less (external Custom ref, not BatchSelf)
+        let ordering_ref = CustomPredicateRef::new(ordering.batch.clone(), 0);
+        assert_eq!(
+            *pred.statements[1].pred_or_wc(),
+            PredicateOrWildcard::Predicate(Predicate::Custom(ordering_ref))
+        );
     }
 }

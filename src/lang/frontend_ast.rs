@@ -24,10 +24,11 @@ pub enum DocumentItem {
     RequestDef(RequestDef),
 }
 
-/// Module import statement: `use module helpers`
+/// Module import statement: `use module 0xHASH as alias`
 #[derive(Debug, Clone, PartialEq)]
 pub struct UseModuleStatement {
-    pub name: Identifier,
+    pub hash: HashHex,
+    pub alias: Identifier,
     pub span: Option<Span>,
 }
 
@@ -105,24 +106,6 @@ impl PredicateRef {
         match self {
             PredicateRef::Local(id) => &id.name,
             PredicateRef::Qualified { predicate, .. } => &predicate.name,
-        }
-    }
-
-    /// Get the module name if qualified, None if local
-    pub fn module_name(&self) -> Option<&str> {
-        match self {
-            PredicateRef::Local(_) => None,
-            PredicateRef::Qualified { module, .. } => Some(&module.name),
-        }
-    }
-
-    /// Get a display name for error messages (includes module:: prefix if qualified)
-    pub fn display_name(&self) -> String {
-        match self {
-            PredicateRef::Local(id) => id.name.clone(),
-            PredicateRef::Qualified { module, predicate } => {
-                format!("{}::{}", module.name, predicate.name)
-            }
         }
     }
 }
@@ -292,7 +275,7 @@ impl fmt::Display for DocumentItem {
 
 impl fmt::Display for UseModuleStatement {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "use module {}", self.name)
+        write!(f, "use module {} as {}", self.hash, self.alias)
     }
 }
 
@@ -582,10 +565,12 @@ pub mod parse {
         let span = get_span(&pair);
         let mut inner = pair.into_inner();
 
-        let name = parse_identifier(inner.next().unwrap());
+        let hash = parse_hash_hex(inner.next().unwrap());
+        let alias = parse_identifier(inner.next().unwrap());
 
         UseModuleStatement {
-            name,
+            hash,
+            alias,
             span: Some(span),
         }
     }
@@ -1060,7 +1045,8 @@ mod tests {
             match item {
                 DocumentItem::UseModuleStatement(u) => {
                     u.span = None;
-                    u.name.span = None;
+                    u.hash.span = None;
+                    u.alias.span = None;
                 }
                 DocumentItem::UseIntroStatement(u) => {
                     u.span = None;
@@ -1190,7 +1176,7 @@ mod tests {
 
     #[test]
     fn test_use_module_statement() {
-        let input = r#"use module helpers"#;
+        let input = r#"use module 0x0000000000000000000000000000000000000000000000000000000000000000 as helpers"#;
         test_roundtrip(input);
     }
 
@@ -1244,7 +1230,7 @@ mod tests {
 
     #[test]
     fn test_complete_document() {
-        let input = r#"use module imported
+        let input = r#"use module 0x0000000000000000000000000000000000000000000000000000000000000000 as imported
 
 is_valid(User, private: Config) = AND (
     Equal(User["age"], Config["min_age"])
