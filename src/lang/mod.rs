@@ -59,7 +59,7 @@ pub fn load_module(
     source: &str,
     name: &str,
     params: &Params,
-    available_modules: Vec<Arc<Module>>,
+    available_modules: &[Arc<Module>],
 ) -> Result<Module, LangError> {
     load_module_inner(source, name, params, available_modules)
         .map_err(|e| e.with_source(source.to_string(), None))
@@ -181,7 +181,7 @@ mod tests {
         "#;
 
         let params = Params::default();
-        let module = load_module(input, "test_module", &params, vec![])?;
+        let module = load_module(input, "test_module", &params, &[])?;
 
         assert_eq!(module.batch.predicates().len(), 1);
 
@@ -256,7 +256,7 @@ mod tests {
         "#;
 
         let params = Params::default();
-        let module = load_module(input, "test_module", &params, vec![])?;
+        let module = load_module(input, "test_module", &params, &[])?;
 
         assert_eq!(module.batch.predicates().len(), 1);
 
@@ -302,7 +302,7 @@ mod tests {
         "#;
 
         let params = Params::default();
-        let module = Arc::new(load_module(module_input, "my_module", &params, vec![])?);
+        let module = Arc::new(load_module(module_input, "my_module", &params, &[])?);
 
         assert_eq!(module.batch.predicates().len(), 1);
 
@@ -351,7 +351,7 @@ mod tests {
         "#;
 
         let params = Params::default();
-        let module = Arc::new(load_module(module_input, "some_module", &params, vec![])?);
+        let module = Arc::new(load_module(module_input, "some_module", &params, &[])?);
 
         let module_hash = module.id().encode_hex::<String>();
 
@@ -606,7 +606,7 @@ mod tests {
             )
         "#;
 
-        let module = load_module(input, "ethdos", &params, vec![])?;
+        let module = load_module(input, "ethdos", &params, &[])?;
 
         assert_eq!(
             module.batch.predicates().len(),
@@ -876,7 +876,7 @@ mod tests {
         );
 
         // 3. Load as module
-        let module = load_module(&input, "test", &params, vec![extmod])?;
+        let module = load_module(&input, "test", &params, &[extmod])?;
 
         assert_eq!(
             module.batch.predicates().len(),
@@ -1055,7 +1055,7 @@ mod tests {
             )
         "#;
 
-        let result = load_module(input, "test", &params, vec![]);
+        let result = load_module(input, "test", &params, &[]);
 
         assert!(result.is_err());
 

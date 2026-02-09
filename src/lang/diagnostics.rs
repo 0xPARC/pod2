@@ -252,7 +252,7 @@ fn render_validation_error(
                 path,
                 &title,
                 span.as_ref(),
-                "no module with this name was provided",
+                "no module with this hash was provided",
             )
         }
 
@@ -356,23 +356,13 @@ mod tests {
 
     /// Load a module from source and extract the error, or panic.
     fn module_err(source: &str) -> LangError {
-        crate::lang::load_module(
-            source,
-            "test",
-            &crate::middleware::Params::default(),
-            &HashMap::new(),
-        )
-        .unwrap_err()
+        crate::lang::load_module(source, "test", &crate::middleware::Params::default(), &[])
+            .unwrap_err()
     }
 
     /// Parse a request from source and extract the error, or panic.
     fn request_err(source: &str) -> LangError {
-        crate::lang::parse_request(
-            source,
-            &crate::middleware::Params::default(),
-            &HashMap::new(),
-        )
-        .unwrap_err()
+        crate::lang::parse_request(source, &crate::middleware::Params::default(), &[]).unwrap_err()
     }
 
     #[test]

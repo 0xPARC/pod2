@@ -763,7 +763,7 @@ mod tests {
             "#,
             "test",
             &params,
-            vec![],
+            &[],
         )
         .expect("load module");
         let batch = &module.batch;
@@ -1492,7 +1492,7 @@ mod tests {
             "#,
             "test",
             &params,
-            vec![],
+            &[],
         )
         .expect("load module");
         let batch = &module.batch;
@@ -1621,7 +1621,7 @@ mod tests {
             "#,
             "test",
             &params,
-            vec![],
+            &[],
         )
         .expect("load module");
         let batch = &module.batch;

@@ -610,7 +610,7 @@ mod tests {
                 r#"is_equal(X, Y) = AND(Equal(X["val"], Y["val"]))"#,
                 "checks",
                 &params,
-                vec![],
+                &[],
             )
             .unwrap(),
         );
@@ -621,7 +621,7 @@ mod tests {
                 r#"is_less(X, Y) = AND(Lt(X["val"], Y["val"]))"#,
                 "ordering",
                 &params,
-                vec![],
+                &[],
             )
             .unwrap(),
         );
@@ -645,7 +645,7 @@ mod tests {
             ),
             "combined",
             &params,
-            vec![checks.clone(), ordering.clone()],
+            &[checks.clone(), ordering.clone()],
         )
         .unwrap();
 

@@ -1175,7 +1175,7 @@ pub mod tests {
             "#,
             "test",
             &params,
-            vec![],
+            &[],
         )
         .unwrap();
         let batch = module.batch.clone();

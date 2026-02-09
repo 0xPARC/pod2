@@ -391,15 +391,15 @@ mod tests {
 
         // Step 1: Parse the input
         let module =
-            load_module(input, "test", &params, vec![]).expect("Initial parsing should succeed");
+            load_module(input, "test", &params, &[]).expect("Initial parsing should succeed");
 
         // Step 2: Pretty-print the parsed batch
         let batch = &module.batch;
         let pretty_printed = batch.to_podlang_string();
 
         // Step 3: Parse the pretty-printed result
-        let reparsed_module = load_module(&pretty_printed, "test", &params, vec![])
-            .expect("Reparsing should succeed");
+        let reparsed_module =
+            load_module(&pretty_printed, "test", &params, &[]).expect("Reparsing should succeed");
         let reparsed_batch = &reparsed_module.batch;
 
         // Step 4: Verify the ASTs are equivalent
@@ -555,7 +555,7 @@ mod tests {
         "#;
 
         let params = Params::default();
-        let module = load_module(input, "test", &params, vec![]).expect("Parsing should succeed");
+        let module = load_module(input, "test", &params, &[]).expect("Parsing should succeed");
         let batch = &module.batch;
 
         let pretty_printed = batch.to_podlang_string();
@@ -563,8 +563,8 @@ mod tests {
         println!("Original input:\n{}", input);
         println!("\nPretty-printed output:\n{}", pretty_printed);
 
-        let reparsed = load_module(&pretty_printed, "test", &params, vec![])
-            .expect("Reparsing should succeed");
+        let reparsed =
+            load_module(&pretty_printed, "test", &params, &[]).expect("Reparsing should succeed");
         let reparsed_batch = &reparsed.batch;
 
         assert_eq!(batch.predicates(), reparsed_batch.predicates());
@@ -630,12 +630,12 @@ mod tests {
 
             let params = Params::default();
             let module =
-                load_module(&input, "test", &params, vec![]).expect("Should parse successfully");
+                load_module(&input, "test", &params, &[]).expect("Should parse successfully");
             let batch = &module.batch;
 
             let pretty_printed = batch.to_podlang_string();
 
-            let reparsed_module = load_module(&pretty_printed, "test", &params, vec![])
+            let reparsed_module = load_module(&pretty_printed, "test", &params, &[])
                 .expect("Should reparse successfully");
             let reparsed_batch = &reparsed_module.batch;
 
