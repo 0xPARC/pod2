@@ -9,6 +9,8 @@ use std::{
     sync::Arc,
 };
 
+use hex::ToHex;
+
 use crate::{
     lang::{frontend_ast::*, Module},
     middleware::{CustomPredicateBatch, Hash, NativePredicate},
@@ -124,7 +126,7 @@ pub enum ParseMode {
 /// Validate an AST document in the given mode
 pub fn validate(
     document: Document,
-    available_modules: &HashMap<String, Arc<Module>>,
+    available_modules: &HashMap<Hash, Arc<Module>>,
     mode: ParseMode,
 ) -> Result<ValidatedAST, ValidationError> {
     let validator = Validator::new(available_modules, mode);
@@ -132,7 +134,7 @@ pub fn validate(
 }
 
 struct Validator {
-    available_modules: HashMap<String, Arc<Module>>,
+    available_modules: HashMap<Hash, Arc<Module>>,
     symbols: SymbolTable,
     diagnostics: Vec<Diagnostic>,
     custom_predicate_count: usize,
@@ -140,7 +142,7 @@ struct Validator {
 }
 
 impl Validator {
-    fn new(available_modules: &HashMap<String, Arc<Module>>, mode: ParseMode) -> Self {
+    fn new(available_modules: &HashMap<Hash, Arc<Module>>, mode: ParseMode) -> Self {
         Self {
             available_modules: available_modules.clone(),
             symbols: SymbolTable {
@@ -230,20 +232,22 @@ impl Validator {
         &mut self,
         use_stmt: &UseModuleStatement,
     ) -> Result<(), ValidationError> {
-        let module_name = &use_stmt.name.name;
+        let alias = &use_stmt.alias.name;
+        let hash = &use_stmt.hash.hash;
 
-        // Check if the module is available
-        let module = self.available_modules.get(module_name).ok_or_else(|| {
-            ValidationError::ModuleNotFound {
-                name: module_name.clone(),
-                span: use_stmt.span,
-            }
-        })?;
+        // Check if the module is available by hash
+        let module =
+            self.available_modules
+                .get(hash)
+                .ok_or_else(|| ValidationError::ModuleNotFound {
+                    name: hash.encode_hex::<String>(),
+                    span: use_stmt.span,
+                })?;
 
-        // Store the module for later qualified name resolution
+        // Store the module keyed by alias for later qualified name resolution
         self.symbols
             .imported_modules
-            .insert(module_name.clone(), module.clone());
+            .insert(alias.clone(), module.clone());
 
         Ok(())
     }
@@ -605,7 +609,7 @@ mod tests {
 
     fn parse_and_validate_module(
         input: &str,
-        modules: &HashMap<String, Arc<Module>>,
+        modules: &HashMap<Hash, Arc<Module>>,
     ) -> Result<ValidatedAST, ValidationError> {
         let parsed = parse_podlang(input).expect("Failed to parse");
         let document = parse_document(parsed.into_iter().next().unwrap()).expect("Failed to parse");
@@ -614,7 +618,7 @@ mod tests {
 
     fn parse_and_validate_request(
         input: &str,
-        modules: &HashMap<String, Arc<Module>>,
+        modules: &HashMap<Hash, Arc<Module>>,
     ) -> Result<ValidatedAST, ValidationError> {
         let parsed = parse_podlang(input).expect("Failed to parse");
         let document = parse_document(parsed.into_iter().next().unwrap()).expect("Failed to parse");
@@ -734,19 +738,23 @@ mod tests {
 
         let batch = CustomPredicateBatch::new("TestBatch".to_string(), vec![pred]);
         let test_module = Arc::new(Module::new(batch, HashMap::new()));
+        let module_hash = test_module.id().encode_hex::<String>();
 
         let mut available_modules = HashMap::new();
-        available_modules.insert("testmod".to_string(), test_module);
+        available_modules.insert(test_module.id(), test_module);
 
         // Test that passing anchored key to custom predicate fails
-        let input = r#"
-            use module testmod
+        let input = format!(
+            r#"
+            use module 0x{} as testmod
 
             REQUEST(
                 testmod::my_pred(X["key"], Y)
             )
-        "#;
-        let result = parse_and_validate_request(input, &available_modules);
+        "#,
+            module_hash
+        );
+        let result = parse_and_validate_request(&input, &available_modules);
         assert!(matches!(
             result,
             Err(ValidationError::InvalidArgumentType { .. })
@@ -847,13 +855,14 @@ mod tests {
 
         let batch = CustomPredicateBatch::new("TestBatch".to_string(), vec![pred]);
         let test_module = Arc::new(Module::new(batch, HashMap::new()));
+        let module_hash = test_module.id().encode_hex::<String>();
 
         let mut available_modules = HashMap::new();
-        available_modules.insert("testmod".to_string(), test_module);
+        available_modules.insert(test_module.id(), test_module);
 
         let input = format!(
             r#"
-            use module testmod
+            use module 0x{} as testmod
             use intro intro_pred() from 0x{}
 
             REQUEST(
@@ -861,6 +870,7 @@ mod tests {
                 intro_pred()
             )
         "#,
+            module_hash,
             EMPTY_HASH.encode_hex::<String>()
         );
 

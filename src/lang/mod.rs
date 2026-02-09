@@ -67,7 +67,7 @@ pub fn load_module(
     let document = frontend_ast::parse::parse_document(document_pair)?;
     let available_modules_map = available_modules
         .iter()
-        .map(|m| (m.batch.name.clone(), m.clone()))
+        .map(|m| (m.id(), m.clone()))
         .collect();
     let validated = frontend_ast_validate::validate(
         document,
@@ -98,7 +98,7 @@ pub fn parse_request(
     let document = frontend_ast::parse::parse_document(document_pair)?;
     let available_modules_map = available_modules
         .iter()
-        .map(|m| (m.batch.name.clone(), m.clone()))
+        .map(|m| (m.id(), m.clone()))
         .collect();
     let validated = frontend_ast_validate::validate(
         document,
@@ -285,16 +285,21 @@ mod tests {
 
         assert_eq!(module.batch.predicates().len(), 1);
 
+        let module_hash = module.id().encode_hex::<String>();
+
         // Then, parse the request using the module
-        let request_input = r#"
-            use module my_module
+        let request_input = format!(
+            r#"
+            use module 0x{} as my_module
 
             REQUEST(
                 my_module::my_pred(Pod1, Pod2)
             )
-        "#;
+        "#,
+            module_hash
+        );
 
-        let request = parse_request(request_input, &params, std::slice::from_ref(&module))?;
+        let request = parse_request(&request_input, &params, std::slice::from_ref(&module))?;
         let request_templates = request.templates();
 
         assert!(!request_templates.is_empty());
@@ -327,9 +332,12 @@ mod tests {
         let params = Params::default();
         let module = Arc::new(load_module(module_input, "some_module", &params, vec![])?);
 
+        let module_hash = module.id().encode_hex::<String>();
+
         // Then, parse the request
-        let request_input = r#"
-            use module some_module
+        let request_input = format!(
+            r#"
+            use module 0x{} as some_module
 
             REQUEST(
                 some_module::some_pred(
@@ -339,9 +347,11 @@ mod tests {
                 )
                 Equal(AnotherPod["another_key"], Var1["some_field"])
             )
-        "#;
+        "#,
+            module_hash
+        );
 
-        let request = parse_request(request_input, &params, std::slice::from_ref(&module))?;
+        let request = parse_request(&request_input, &params, std::slice::from_ref(&module))?;
         let request_templates = request.templates();
 
         assert!(!request_templates.is_empty());
@@ -736,18 +746,22 @@ mod tests {
         )?;
         let batch = CustomPredicateBatch::new("my_module".to_string(), vec![imported_predicate]);
         let module = Arc::new(Module::new(batch.clone(), HashMap::new()));
+        let module_hash = module.id().encode_hex::<String>();
 
         // 2. Create the input string that uses the module
-        let input = r#"
-            use module my_module
+        let input = format!(
+            r#"
+            use module 0x{} as my_module
 
             REQUEST(
                 my_module::imported_equal(Pod1, Pod2)
             )
-        "#;
+        "#,
+            module_hash
+        );
 
         // 3. Parse the request
-        let request = parse_request(input, &params, std::slice::from_ref(&module))?;
+        let request = parse_request(&input, &params, std::slice::from_ref(&module))?;
         let request_templates = request.templates();
 
         assert_eq!(request_templates.len(), 1, "Expected one request template");
@@ -770,19 +784,23 @@ mod tests {
 
         let batch = CustomPredicateBatch::new("mymodule".to_string(), vec![pred1, pred2, pred3]);
         let mymodule = Arc::new(Module::new(batch.clone(), HashMap::new()));
+        let module_hash = mymodule.id().encode_hex::<String>();
 
         // 2. Create the input string that uses qualified predicate access
-        let input = r#"
-            use module mymodule
+        let input = format!(
+            r#"
+            use module 0x{} as mymodule
 
             REQUEST(
                 mymodule::p1(Pod1)
                 mymodule::p3(Pod2)
             )
-        "#;
+        "#,
+            module_hash
+        );
 
         // 3. Parse the request
-        let request = parse_request(input, &params, std::slice::from_ref(&mymodule))?;
+        let request = parse_request(&input, &params, std::slice::from_ref(&mymodule))?;
         let request_templates = request.templates();
 
         assert_eq!(request_templates.len(), 2, "Expected two request templates");
@@ -822,18 +840,22 @@ mod tests {
         )?;
         let batch = CustomPredicateBatch::new("extmod".to_string(), vec![imported_predicate]);
         let extmod = Arc::new(Module::new(batch.clone(), HashMap::new()));
+        let extmod_hash = extmod.id().encode_hex::<String>();
 
         // 2. Create the input string that defines a new predicate using the imported one
-        let input = r#"
-            use module extmod
+        let input = format!(
+            r#"
+            use module 0x{} as extmod
 
             wrapper_pred(X, Y) = AND(
                 extmod::imported_equal(X, Y)
             )
-        "#;
+        "#,
+            extmod_hash
+        );
 
         // 3. Load as module
-        let module = load_module(input, "test", &params, vec![extmod])?;
+        let module = load_module(&input, "test", &params, vec![extmod])?;
 
         assert_eq!(
             module.batch.predicates().len(),
@@ -972,22 +994,28 @@ mod tests {
     fn test_e2e_use_unknown_module() {
         let params = Params::default();
 
-        let input = r#"
-            use module unknown_module
+        // Use a hash that doesn't correspond to any loaded module
+        let fake_hash = EMPTY_HASH.encode_hex::<String>();
+        let input = format!(
+            r#"
+            use module 0x{} as unknown_module
 
             REQUEST(
                 Equal(A["x"], 1)
             )
-            "#;
+            "#,
+            fake_hash
+        );
 
-        let result = parse_request(input, &params, &[]);
+        let result = parse_request(&input, &params, &[]);
 
         assert!(result.is_err());
 
         match result.err().unwrap() {
             LangError::Validation(e) => match *e {
                 frontend_ast_validate::ValidationError::ModuleNotFound { name, .. } => {
-                    assert_eq!(name, "unknown_module");
+                    // The error now carries the hex-formatted hash
+                    assert_eq!(name, fake_hash);
                 }
                 _ => panic!("Expected ModuleNotFound error, but got {:?}", e),
             },

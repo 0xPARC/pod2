@@ -40,16 +40,26 @@ pub fn eth_dos_batch(params: &Params) -> Result<Arc<CustomPredicateBatch>> {
 }
 
 pub fn eth_dos_request() -> Result<PodRequest> {
+    use hex::ToHex;
+
     let batch = eth_dos_batch(&Params::default())?;
     let eth_dos_module = Arc::new(Module::new(batch, HashMap::new()));
+    let module_hash = eth_dos_module.id().encode_hex::<String>();
 
-    let input = r#"
-        use module eth_dos
+    let input = format!(
+        r#"
+        use module 0x{} as eth_dos
         REQUEST(
             eth_dos::eth_dos(src, dst, distance)
         )
-        "#;
-    Ok(parse_request(input, &Params::default(), &[eth_dos_module])?)
+        "#,
+        module_hash
+    );
+    Ok(parse_request(
+        &input,
+        &Params::default(),
+        &[eth_dos_module],
+    )?)
 }
 
 #[cfg(test)]

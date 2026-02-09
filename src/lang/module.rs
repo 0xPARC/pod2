@@ -600,6 +600,8 @@ mod tests {
 
     #[test]
     fn test_load_module_importing_two_modules() {
+        use hex::ToHex;
+
         let params = Params::default();
 
         // Module "checks": defines is_equal
@@ -624,17 +626,23 @@ mod tests {
             .unwrap(),
         );
 
+        let checks_hash = checks.id().encode_hex::<String>();
+        let ordering_hash = ordering.id().encode_hex::<String>();
+
         // Module "combined": imports both, uses predicates from each
         let combined = load_module(
-            r#"
-                use module checks
-                use module ordering
+            &format!(
+                r#"
+                use module 0x{} as checks
+                use module 0x{} as ordering
 
                 equal_and_ordered(A, B, C) = AND(
                     checks::is_equal(A, B)
                     ordering::is_less(B, C)
                 )
             "#,
+                checks_hash, ordering_hash
+            ),
             "combined",
             &params,
             vec![checks.clone(), ordering.clone()],
