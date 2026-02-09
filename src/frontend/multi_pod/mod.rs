@@ -192,6 +192,7 @@ pub struct SolvedMultiPod {
     input_pods: Vec<MainPod>,
     statements: Vec<Statement>,
     operations: Vec<Operation>,
+    output_public_indices: Vec<usize>,
     operations_wildcard_values: Vec<Vec<(usize, Value)>>,
     solution: MultiPodSolution,
     deps: DependencyGraph,
@@ -265,16 +266,12 @@ impl SolvedMultiPod {
         let mut added_statements_by_content: HashMap<Statement, Statement> = HashMap::new();
 
         for &stmt_idx in &statements_sorted {
-            let is_public = public_set.contains(&stmt_idx);
             let original_stmt = self.statements[stmt_idx].clone();
 
             // If this statement content was already built in this POD, reuse it instead
             // of replaying the operation. If any duplicate is public, reveal the
             // already-built statement.
-            if let Some(existing_stmt) = added_statements_by_content.get(&original_stmt) {
-                if is_public {
-                    builder.reveal(existing_stmt);
-                }
+            if let Some(_existing_stmt) = added_statements_by_content.get(&original_stmt) {
                 continue;
             }
 
@@ -293,9 +290,26 @@ impl SolvedMultiPod {
                 }
             }
 
-            let stmt = builder.op(is_public, wildcard_values, op)?;
+            let stmt = builder.op(false, wildcard_values, op)?;
 
             added_statements_by_content.insert(original_stmt, stmt);
+        }
+
+        // For the output pod, make statements public in the original order
+        if pod_idx == solution.pod_count - 1 {
+            for idx in &self.output_public_indices {
+                let stmt = added_statements_by_content
+                    .get(&self.statements[*idx])
+                    .expect("exists");
+                builder.reveal(stmt);
+            }
+        } else {
+            for idx in public_set {
+                let stmt = added_statements_by_content
+                    .get(&self.statements[*idx])
+                    .expect("exists");
+                builder.reveal(stmt);
+            }
         }
 
         // Step 4: Prove the POD
@@ -612,6 +626,7 @@ impl MultiPodBuilder {
             input_pods: self.input_pods,
             statements: self.statements,
             operations: self.operations,
+            output_public_indices: self.output_public_indices,
             operations_wildcard_values: self.operations_wildcard_values,
             solution,
             deps,
