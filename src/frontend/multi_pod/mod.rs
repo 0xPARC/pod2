@@ -192,6 +192,7 @@ pub struct SolvedMultiPod {
     input_pods: Vec<MainPod>,
     statements: Vec<Statement>,
     operations: Vec<Operation>,
+    output_public_indices: Vec<usize>,
     operations_wildcard_values: Vec<Vec<(usize, Value)>>,
     solution: MultiPodSolution,
     deps: DependencyGraph,
@@ -266,7 +267,6 @@ impl SolvedMultiPod {
         let mut added_statements: HashMap<usize, Statement> = HashMap::new();
 
         for &stmt_idx in &statements_sorted {
-            let is_public = public_set.contains(&stmt_idx);
             let mut op = self.operations[stmt_idx].clone();
             let wildcard_values = self.operations_wildcard_values[stmt_idx].clone();
 
@@ -286,9 +286,20 @@ impl SolvedMultiPod {
                 }
             }
 
-            let stmt = builder.op(is_public, wildcard_values, op)?;
+            let stmt = builder.op(false, wildcard_values, op)?;
 
             added_statements.insert(stmt_idx, stmt);
+        }
+
+        // For the output pod, make statements public in the original order
+        if pod_idx == solution.pod_count - 1 {
+            for idx in &self.output_public_indices {
+                builder.reveal(added_statements.get(idx).expect("exists"));
+            }
+        } else {
+            for idx in public_set {
+                builder.reveal(added_statements.get(idx).expect("exists"));
+            }
         }
 
         // Step 4: Prove the POD
@@ -603,6 +614,7 @@ impl MultiPodBuilder {
             input_pods: self.input_pods,
             statements: self.statements,
             operations: self.operations,
+            output_public_indices: self.output_public_indices,
             operations_wildcard_values: self.operations_wildcard_values,
             solution,
             deps,
