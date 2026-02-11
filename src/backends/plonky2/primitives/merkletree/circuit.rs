@@ -714,7 +714,7 @@ impl MerkleTreeStateTransitionProofTarget {
 
 #[cfg(test)]
 pub mod tests {
-    use std::collections::HashMap;
+    use std::collections::BTreeMap;
 
     use plonky2::plonk::{circuit_builder::CircuitBuilder, circuit_data::CircuitConfig};
 
@@ -820,7 +820,7 @@ pub mod tests {
 
     // test logic to be reused both by the existence & nonexistence tests
     fn test_merkleproof_verify_opt(max_depth: usize, existence: bool) -> Result<()> {
-        let mut kvs: HashMap<RawValue, RawValue> = HashMap::new();
+        let mut kvs: BTreeMap<RawValue, RawValue> = BTreeMap::new();
         for i in 0..10 {
             kvs.insert(
                 RawValue::from(hash_value(&RawValue::from(i))),
@@ -877,7 +877,7 @@ pub mod tests {
     }
 
     fn test_merkleproof_only_existence_verify_opt(max_depth: usize) -> Result<()> {
-        let mut kvs: HashMap<RawValue, RawValue> = HashMap::new();
+        let mut kvs: BTreeMap<RawValue, RawValue> = BTreeMap::new();
         for i in 0..10 {
             kvs.insert(
                 RawValue::from(hash_value(&RawValue::from(i))),
@@ -929,7 +929,7 @@ pub mod tests {
         //        /\
         //       5  13
 
-        let mut kvs = HashMap::new();
+        let mut kvs = BTreeMap::new();
         kvs.insert(RawValue::from(0), RawValue::from(1000));
         kvs.insert(RawValue::from(2), RawValue::from(1002));
         kvs.insert(RawValue::from(5), RawValue::from(1005));
@@ -993,7 +993,7 @@ pub mod tests {
 
     #[test]
     fn test_wrong_witness() -> Result<()> {
-        let mut kvs: HashMap<RawValue, RawValue> = HashMap::new();
+        let mut kvs: BTreeMap<RawValue, RawValue> = BTreeMap::new();
         for i in 0..10 {
             kvs.insert(RawValue::from(i), RawValue::from(i));
         }
@@ -1089,7 +1089,7 @@ pub mod tests {
     #[test]
     fn test_state_transition_gadget() -> Result<()> {
         let max_depth: usize = 32;
-        let mut kvs = HashMap::new();
+        let mut kvs = BTreeMap::new();
         for i in 0..8 {
             kvs.insert(RawValue::from(i), RawValue::from(1000 + i));
         }
@@ -1148,7 +1148,7 @@ pub mod tests {
         // the last level (max_depth-1)
 
         let max_depth: usize = 32;
-        let mut kvs = HashMap::new();
+        let mut kvs = BTreeMap::new();
         for i in 0..8 {
             kvs.insert(RawValue::from(i), RawValue::from(1000 + i));
         }
@@ -1212,7 +1212,7 @@ pub mod tests {
     #[test]
     fn test_state_transition_gadget_with_alteration() -> Result<()> {
         let max_depth: usize = 32;
-        let mut kvs = HashMap::new();
+        let mut kvs = BTreeMap::new();
         for i in 0..8 {
             kvs.insert(RawValue::from(i), RawValue::from(1000 + i));
         }
@@ -1274,7 +1274,7 @@ pub mod tests {
     #[test]
     fn test_state_transition_gadget_disabled() -> Result<()> {
         let max_depth: usize = 32;
-        let mut kvs = HashMap::new();
+        let mut kvs = BTreeMap::new();
         for i in 0..8 {
             kvs.insert(RawValue::from(i), RawValue::from(1000 + i));
         }

@@ -1,4 +1,4 @@
-use std::{collections::HashMap, fmt, iter, sync::Arc};
+use std::{collections::BTreeMap, fmt, iter, sync::Arc};
 
 use itertools::Itertools;
 use plonky2::field::types::Field;
@@ -439,7 +439,7 @@ enum CustomPredicateBatchData {
 // TODO: Rename Batch for Module everywhere in the code base
 impl CustomPredicateBatchData {
     fn new_full(predicates: Vec<CustomPredicate>) -> Self {
-        let kvs: HashMap<RawValue, RawValue> = predicates
+        let kvs: BTreeMap<RawValue, RawValue> = predicates
             .iter()
             .enumerate()
             .map(|(index, pred)| {

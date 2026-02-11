@@ -1,6 +1,6 @@
 pub mod custom;
 
-use std::{collections::HashSet, sync::LazyLock};
+use std::{collections::BTreeSet, sync::LazyLock};
 
 use custom::eth_dos_batch;
 use num::BigUint;
@@ -46,7 +46,7 @@ pub fn zu_kyc_pod_builder(
 ) -> Result<MainPodBuilder> {
     let now_minus_18y = ZU_KYC_NOW_MINUS_18Y;
     let now_minus_1y = ZU_KYC_NOW_MINUS_1Y;
-    let sanctions_values: HashSet<Value> = ZU_KYC_SANCTION_LIST
+    let sanctions_values: BTreeSet<Value> = ZU_KYC_SANCTION_LIST
         .iter()
         .map(|s| Value::from(*s))
         .collect();
@@ -71,7 +71,7 @@ pub fn zu_kyc_pod_builder(
 }
 
 pub fn zu_kyc_pod_request(gov_signer: &Value, pay_signer: &Value) -> Result<PodRequest> {
-    let sanctions_values: HashSet<Value> = ZU_KYC_SANCTION_LIST
+    let sanctions_values: BTreeSet<Value> = ZU_KYC_SANCTION_LIST
         .iter()
         .map(|s| Value::from(*s))
         .collect();
@@ -426,6 +426,6 @@ pub fn tickets_pod_full_flow(params: &Params, vd_set: &VDSet) -> Result<MainPodB
         &signed_dict,
         123,
         true,
-        &Set::new(HashSet::new()),
+        &Set::new(BTreeSet::new()),
     )
 }
