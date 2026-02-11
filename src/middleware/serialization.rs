@@ -4,10 +4,22 @@ use std::{
 };
 
 use plonky2::field::types::Field;
-use serde::{ser::SerializeSeq, Deserialize, Serialize, Serializer};
+use serde::{Deserialize, Serialize, Serializer};
 
 use super::{Key, Value};
 use crate::middleware::{F, HASH_SIZE, VALUE_SIZE};
+
+pub(super) fn field_array_to_string<const N: usize>(value: &[F; N]) -> String {
+    // `value` is little-endian in memory. We serialize it as a big-endian hex string
+    // for human readability.
+    value
+        .iter()
+        .rev()
+        .fold(String::with_capacity(N * 16), |mut s, limb| {
+            write!(s, "{:016x}", limb.0).unwrap();
+            s
+        })
+}
 
 fn serialize_field_tuple<S, const N: usize>(
     value: &[F; N],
@@ -16,16 +28,7 @@ fn serialize_field_tuple<S, const N: usize>(
 where
     S: serde::Serializer,
 {
-    // `value` is little-endian in memory. We serialize it as a big-endian hex string
-    // for human readability.
-    let s = value
-        .iter()
-        .rev()
-        .fold(String::with_capacity(N * 16), |mut s, limb| {
-            write!(s, "{:016x}", limb.0).unwrap();
-            s
-        });
-    serializer.serialize_str(&s)
+    serializer.serialize_str(&field_array_to_string(value))
 }
 
 fn deserialize_field_tuple<'de, D, const N: usize>(deserializer: D) -> Result<[F; N], D::Error>
@@ -131,17 +134,12 @@ where
 
 // Sets are serialized as sequences of elements, which are not ordered by
 // default.  We want to serialize them in a deterministic way, and we can
-// achieve this by sorting the elements. This takes advantage of the fact that
-// Value implements Ord.
+// achieve this by sorting the elements.
 pub fn ordered_set<S>(value: &HashSet<Value>, serializer: S) -> Result<S::Ok, S::Error>
 where
     S: Serializer,
 {
-    let mut set = serializer.serialize_seq(Some(value.len()))?;
     let mut sorted_values: Vec<&Value> = value.iter().collect();
     sorted_values.sort_by_key(|v| v.raw());
-    for v in sorted_values {
-        set.serialize_element(v)?;
-    }
-    set.end()
+    serializer.serialize_newtype_struct("pod2::Set", &sorted_values)
 }

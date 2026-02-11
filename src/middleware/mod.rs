@@ -19,6 +19,7 @@ mod error;
 mod operation;
 mod pod_deserialization;
 pub mod serialization;
+pub mod serializer;
 mod statement;
 use std::{any::Any, fmt};
 
