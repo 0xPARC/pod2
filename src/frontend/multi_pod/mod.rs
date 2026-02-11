@@ -508,9 +508,19 @@ impl MultiPodBuilder {
         //   struct MainPodBuilder<P: Borrow<MainPod> = MainPod>
         // Then MultiPodBuilder could use MainPodBuilder<&MainPod> to borrow instead of clone,
         // while existing code using MainPodBuilder (with the default) would be unaffected.
+        let builder_statements_len = self.builder.statements.len();
         let stmt = self
             .builder
             .op(false, wildcard_values.clone(), op.clone())?;
+        // HACK
+        if self.builder.statements.len() > builder_statements_len + 1 {
+            // Handle implicit contains
+            self.statements
+                .push(self.builder.statements[self.builder.statements.len() - 2].clone());
+            self.operations
+                .push(self.builder.operations[self.builder.operations.len() - 2].clone());
+            self.operations_wildcard_values.push(vec![]);
+        }
 
         self.statements.push(stmt.clone());
         self.operations.push(op);

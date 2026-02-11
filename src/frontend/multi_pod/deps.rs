@@ -91,7 +91,7 @@ impl DependencyGraph {
                         // Statement arguments should either be internal (created earlier)
                         // or from external PODs. If neither, something is wrong.
                         unreachable!(
-                            "Statement argument not found in internal statements or external PODs: {:?}",
+                            "Statement argument not found in internal statements or external PODs: {}",
                             dep_stmt
                         );
                     }
