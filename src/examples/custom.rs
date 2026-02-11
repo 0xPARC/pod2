@@ -30,7 +30,7 @@ pub fn eth_dos_batch(params: &Params) -> Result<Arc<CustomPredicateBatch>> {
             eth_dos_ind(src, dst, distance)
         )
         "#;
-    let module = load_module(input, "eth_dos", params, vec![]).expect("lang parse");
+    let module = load_module(input, "eth_dos", params, &[]).expect("lang parse");
     let batch = module.batch.clone();
     println!("a.0. {}", batch.predicates()[0]);
     println!("a.1. {}", batch.predicates()[1]);
