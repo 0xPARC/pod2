@@ -48,7 +48,7 @@
 //! [`MainPodBuilder`]: crate::frontend::MainPodBuilder
 
 use std::{
-    collections::{BTreeSet, HashMap},
+    collections::{BTreeMap, BTreeSet, HashMap},
     fmt,
 };
 
@@ -582,12 +582,15 @@ impl MultiPodBuilder {
 
         // Build statement content groups for deduplication.
         // Statements with identical content share a single slot in the POD.
-        // Group statement indices by their content.
-        let mut content_to_indices: HashMap<&Statement, Vec<usize>> = HashMap::new();
+        // Keep groups ordered by first occurrence index for deterministic solver input.
+        let mut first_idx_by_stmt: HashMap<&Statement, usize> = HashMap::new();
+        let mut groups_by_first_idx: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
         for (idx, stmt) in self.statements.iter().enumerate() {
-            content_to_indices.entry(stmt).or_default().push(idx);
+            let first_idx = *first_idx_by_stmt.entry(stmt).or_insert(idx);
+            groups_by_first_idx.entry(first_idx).or_default().push(idx);
         }
-        let statement_content_groups: Vec<Vec<usize>> = content_to_indices.into_values().collect();
+        let statement_content_groups: Vec<Vec<usize>> =
+            groups_by_first_idx.into_values().collect();
 
         // Run solver
         let input = solver::SolverInput {
