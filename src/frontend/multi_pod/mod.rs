@@ -589,8 +589,7 @@ impl MultiPodBuilder {
             let first_idx = *first_idx_by_stmt.entry(stmt).or_insert(idx);
             groups_by_first_idx.entry(first_idx).or_default().push(idx);
         }
-        let statement_content_groups: Vec<Vec<usize>> =
-            groups_by_first_idx.into_values().collect();
+        let statement_content_groups: Vec<Vec<usize>> = groups_by_first_idx.into_values().collect();
 
         // Run solver
         let input = solver::SolverInput {
