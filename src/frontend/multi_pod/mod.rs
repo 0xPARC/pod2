@@ -48,7 +48,7 @@
 //! [`MainPodBuilder`]: crate::frontend::MainPodBuilder
 
 use std::{
-    collections::{BTreeSet, HashMap},
+    collections::{BTreeMap, BTreeSet, HashMap},
     fmt,
 };
 
@@ -260,13 +260,24 @@ impl SolvedMultiPod {
         let public_set = &solution.pod_public_statements[pod_idx];
 
         // Track statements proved locally in this POD for argument remapping.
-        // When an operation references a statement proved earlier in this same POD,
-        // we need to use the Statement object that MainPodBuilder created (not the
-        // original from MultiPodBuilder) so that find_op_arg can locate it.
-        let mut added_statements: HashMap<usize, Statement> = HashMap::new();
+        // We index by statement content so duplicate statements can reuse a single
+        // built statement slot in MainPodBuilder.
+        let mut added_statements_by_content: HashMap<Statement, Statement> = HashMap::new();
 
         for &stmt_idx in &statements_sorted {
             let is_public = public_set.contains(&stmt_idx);
+            let original_stmt = self.statements[stmt_idx].clone();
+
+            // If this statement content was already built in this POD, reuse it instead
+            // of replaying the operation. If any duplicate is public, reveal the
+            // already-built statement.
+            if let Some(existing_stmt) = added_statements_by_content.get(&original_stmt) {
+                if is_public {
+                    builder.reveal(existing_stmt);
+                }
+                continue;
+            }
+
             let mut op = self.operations[stmt_idx].clone();
             let wildcard_values = self.operations_wildcard_values[stmt_idx].clone();
 
@@ -276,19 +287,15 @@ impl SolvedMultiPod {
             // the input POD's public statements via find_op_arg.
             for arg in &mut op.1 {
                 if let OperationArg::Statement(ref orig_stmt) = arg {
-                    // Find the original statement's index
-                    if let Some(orig_idx) = self.statements.iter().position(|s| s == orig_stmt) {
-                        // Get the remapped statement if it was proved locally in this POD
-                        if let Some(remapped_stmt) = added_statements.get(&orig_idx) {
-                            *arg = OperationArg::Statement(remapped_stmt.clone());
-                        }
+                    if let Some(remapped_stmt) = added_statements_by_content.get(orig_stmt) {
+                        *arg = OperationArg::Statement(remapped_stmt.clone());
                     }
                 }
             }
 
             let stmt = builder.op(is_public, wildcard_values, op)?;
 
-            added_statements.insert(stmt_idx, stmt);
+            added_statements_by_content.insert(original_stmt, stmt);
         }
 
         // Step 4: Prove the POD
@@ -575,12 +582,14 @@ impl MultiPodBuilder {
 
         // Build statement content groups for deduplication.
         // Statements with identical content share a single slot in the POD.
-        // Group statement indices by their content.
-        let mut content_to_indices: HashMap<&Statement, Vec<usize>> = HashMap::new();
+        // Keep groups ordered by first occurrence index for deterministic solver input.
+        let mut first_idx_by_stmt: HashMap<&Statement, usize> = HashMap::new();
+        let mut groups_by_first_idx: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
         for (idx, stmt) in self.statements.iter().enumerate() {
-            content_to_indices.entry(stmt).or_default().push(idx);
+            let first_idx = *first_idx_by_stmt.entry(stmt).or_insert(idx);
+            groups_by_first_idx.entry(first_idx).or_default().push(idx);
         }
-        let statement_content_groups: Vec<Vec<usize>> = content_to_indices.into_values().collect();
+        let statement_content_groups: Vec<Vec<usize>> = groups_by_first_idx.into_values().collect();
 
         // Run solver
         let input = solver::SolverInput {
@@ -711,6 +720,45 @@ mod tests {
         let result = solved.prove(&prover)?;
         assert_eq!(result.pods.len(), pod_count);
 
+        for (i, pod) in result.pods.iter().enumerate() {
+            pod.pod
+                .verify()
+                .unwrap_or_else(|_| panic!("POD {} verification failed", i));
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_duplicate_statement_content_reused_within_pod() -> Result<()> {
+        // This test verifies that duplicate statement content is reused within a POD.
+        // We run three operations, but each produces the same statement. This allows us to
+        // deuplicate the private statement, matching the solver's deduplication logic.
+        // Since there is only space for 2 private statements with these parameters, the
+        // test can only succeed if deduplication is working correctly.
+        // Public statements/reveals of private statements are not deduplicated, so we can
+        // have 3 of them.
+        let params = Params {
+            max_statements: 5,
+            max_public_statements: 3,
+            // Derived: max_priv_statements = 2
+            max_input_pods: 2,
+            max_input_pods_public_statements: 4,
+            ..Params::default()
+        };
+        let vd_set = &*MOCK_VD_SET;
+
+        let mut builder = MultiPodBuilder::new(&params, vd_set);
+        builder.pub_op(FrontendOp::eq(7, 7))?;
+        builder.pub_op(FrontendOp::eq(7, 7))?;
+        builder.pub_op(FrontendOp::eq(7, 7))?;
+
+        let solved = builder.solve()?;
+        let pod_count = solved.solution().pod_count;
+
+        let prover = MockProver {};
+        let result = solved.prove(&prover)?;
+        assert_eq!(result.pods.len(), pod_count);
         for (i, pod) in result.pods.iter().enumerate() {
             pod.pod
                 .verify()

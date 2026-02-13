@@ -5,6 +5,7 @@
 
 use std::collections::HashMap;
 
+use super::cost::AnchoredKeyId;
 use crate::{
     frontend::{Operation, OperationArg},
     middleware::{Hash, Statement},
@@ -87,9 +88,15 @@ impl DependencyGraph {
                     // Check if this is from an external POD
                     if let Some(&pod_hash) = external_pod_statements.get(dep_stmt) {
                         deps.push(StatementSource::External(pod_hash));
+                    } else if AnchoredKeyId::from_contains_statement(dep_stmt).is_some() {
+                        // Anchored-key Contains args may be implicit requirements that are
+                        // auto-materialized by MainPodBuilder. They are handled by anchored-key
+                        // resource accounting, not by statement dependency edges.
+                        continue;
                     } else {
                         // Statement arguments should either be internal (created earlier)
-                        // or from external PODs. If neither, something is wrong.
+                        // or from external PODs (except anchored-key implicit Contains).
+                        // If neither, something is wrong.
                         unreachable!(
                             "Statement argument not found in internal statements or external PODs: {:?}",
                             dep_stmt
@@ -109,8 +116,9 @@ impl DependencyGraph {
 mod tests {
     use super::*;
     use crate::{
+        dict,
         frontend::Operation as FrontendOp,
-        middleware::{NativeOperation, OperationAux, OperationType, Value, ValueRef},
+        middleware::{AnchoredKey, NativeOperation, OperationAux, OperationType, Value, ValueRef},
     };
 
     fn equal_stmt(n: i64) -> Statement {
@@ -174,5 +182,33 @@ mod tests {
         assert!(graph.statement_deps[0].is_empty());
         assert_eq!(graph.statement_deps[1], vec![StatementSource::Internal(0)]);
         assert_eq!(graph.statement_deps[2], vec![StatementSource::Internal(0)]);
+    }
+
+    #[test]
+    fn test_anchored_key_contains_arg_is_treated_as_implicit_requirement() {
+        // A literal Contains statement can be used as an anchored-key argument even when
+        // no explicit producer statement exists in internal/external statements, because
+        // MainPodBuilder auto-inserts Contains statements for anchored keys.
+        let dict = dict!({
+            "k" => 7_i64
+        });
+
+        let anchored_contains = Statement::Contains(
+            ValueRef::Literal(Value::from(dict.clone())),
+            ValueRef::Literal(Value::from("k")),
+            ValueRef::Literal(Value::from(7_i64)),
+        );
+        let ak = AnchoredKey::from((&dict, "k"));
+        let produced_statement = Statement::Equal(ValueRef::Key(ak.clone()), ValueRef::Key(ak));
+
+        // Use a typical frontend operation that consumes entry-like args.
+        // We're only testing the dependency graph, not the actual proof, so the operation
+        // just needs to have the right arguments to test what we're looking for.
+        let statements = vec![produced_statement];
+        let operations = vec![FrontendOp::eq(anchored_contains.clone(), anchored_contains)];
+
+        let graph = DependencyGraph::build(&statements, &operations, &HashMap::new());
+
+        assert!(graph.statement_deps[0].is_empty());
     }
 }
