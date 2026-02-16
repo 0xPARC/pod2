@@ -976,10 +976,8 @@ mod tests {
         let remaining: HashSet<usize> = [0, 1].into_iter().collect();
         let active_wildcards = HashSet::new();
 
-        let key0 =
-            statement_selection_key(0, &statements, &active_wildcards, &remaining, false);
-        let key1 =
-            statement_selection_key(1, &statements, &active_wildcards, &remaining, false);
+        let key0 = statement_selection_key(0, &statements, &active_wildcards, &remaining, false);
+        let key1 = statement_selection_key(1, &statements, &active_wildcards, &remaining, false);
 
         assert_eq!(key0.0, key1.0, "Primary heuristic score should tie");
         assert_eq!(key0.1, key1.1, "Secondary tie-breaker metrics should tie");
