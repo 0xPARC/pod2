@@ -15,7 +15,10 @@
 //! We use a greedy algorithm to order the statements in a predicate to minimize
 //! the number of live wildcards at split boundaries.
 
-use std::collections::{HashMap, HashSet};
+use std::{
+    cmp::Reverse,
+    collections::{HashMap, HashSet},
+};
 
 // SplittingError is now defined in error.rs
 pub use crate::lang::error::SplittingError;
@@ -253,6 +256,28 @@ fn compute_tie_breakers(
     (simplicity, closes_count, -(fanout as i32))
 }
 
+fn statement_selection_key(
+    idx: usize,
+    statements: &[StatementTmpl],
+    active_wildcards: &HashSet<String>,
+    remaining: &HashSet<usize>,
+    approaching_split: bool,
+) -> (i32, (usize, usize, i32), Reverse<usize>) {
+    let primary_score = score_statement(
+        &statements[idx],
+        active_wildcards,
+        statements,
+        remaining,
+        approaching_split,
+    );
+    let tie_breakers =
+        compute_tie_breakers(&statements[idx], active_wildcards, statements, remaining);
+
+    // Final deterministic tie-breaker: prefer smaller original indices.
+    // This avoids hash-iteration-dependent selection when scores are equal.
+    (primary_score, tie_breakers, Reverse(idx))
+}
+
 /// Find the best next statement to add based on scoring heuristic
 fn find_best_next_statement(
     statements: &[StatementTmpl],
@@ -268,16 +293,13 @@ fn find_best_next_statement(
     remaining
         .iter()
         .max_by_key(|&&idx| {
-            let primary_score = score_statement(
-                &statements[idx],
-                active_wildcards,
+            statement_selection_key(
+                idx,
                 statements,
+                active_wildcards,
                 remaining,
                 approaching_split,
-            );
-            let tie_breakers =
-                compute_tie_breakers(&statements[idx], active_wildcards, statements, remaining);
-            (primary_score, tie_breakers)
+            )
         })
         .copied()
         .unwrap()
@@ -362,10 +384,14 @@ fn generate_refactor_suggestion(
         return None;
     }
 
+    // Normalize wildcard order so diagnostics are deterministic.
+    let mut sorted_crossing_wildcards = crossing_wildcards.to_vec();
+    sorted_crossing_wildcards.sort();
+
     // Analyze the span of each crossing wildcard
     let mut wildcard_spans: Vec<(String, usize, usize, usize)> = Vec::new();
 
-    for wildcard in crossing_wildcards {
+    for wildcard in &sorted_crossing_wildcards {
         let mut first_use = None;
         let mut last_use = None;
 
@@ -401,9 +427,9 @@ fn generate_refactor_suggestion(
     }
 
     // If multiple wildcards cross the boundary, suggest grouping
-    if crossing_wildcards.len() > 1 {
+    if sorted_crossing_wildcards.len() > 1 {
         return Some(RefactorSuggestion::GroupWildcardUsages {
-            wildcards: crossing_wildcards.to_vec(),
+            wildcards: sorted_crossing_wildcards,
         });
     }
 
@@ -459,11 +485,12 @@ fn split_into_chain(
         // Check: Can we fit promoted wildcards in public args?
         // Need to account for possible overlap between incoming_public and live_at_boundary
         let incoming_set: HashSet<_> = incoming_public.iter().cloned().collect();
-        let new_promotions: Vec<_> = live_at_boundary
+        let mut new_promotions: Vec<_> = live_at_boundary
             .iter()
             .filter(|w| !incoming_set.contains(*w))
             .cloned()
             .collect();
+        new_promotions.sort();
         let total_public = incoming_public.len() + new_promotions.len();
         if total_public > Params::max_statement_args() {
             let context = crate::lang::error::SplitContext {
@@ -931,6 +958,38 @@ mod tests {
             second_pred_public_count, unique_count,
             "Public args should not contain duplicates"
         );
+    }
+
+    #[test]
+    fn test_statement_selection_prefers_lower_index_on_tie() {
+        // Two structurally symmetric statements produce identical heuristic scores.
+        // Determinism comes from the final index-based tie breaker.
+        let input = r#"
+            tie_break(A, B) = AND (
+                Equal(A["x"], B["x"])
+                Equal(A["y"], B["y"])
+            )
+        "#;
+
+        let pred = parse_predicate(input);
+        let statements = pred.statements;
+        let remaining: HashSet<usize> = [0, 1].into_iter().collect();
+        let active_wildcards = HashSet::new();
+
+        let key0 =
+            statement_selection_key(0, &statements, &active_wildcards, &remaining, false);
+        let key1 =
+            statement_selection_key(1, &statements, &active_wildcards, &remaining, false);
+
+        assert_eq!(key0.0, key1.0, "Primary heuristic score should tie");
+        assert_eq!(key0.1, key1.1, "Secondary tie-breaker metrics should tie");
+        assert!(
+            key0 > key1,
+            "Lower original index should win deterministic final tie-breaker"
+        );
+
+        let selected = find_best_next_statement(&statements, &remaining, &active_wildcards, 0);
+        assert_eq!(selected, 0);
     }
 
     #[test]
