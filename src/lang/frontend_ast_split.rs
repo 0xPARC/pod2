@@ -1144,6 +1144,99 @@ mod tests {
         );
     }
 
+    // --- Regression tests for known bugs ---
+
+    /// Bug: the greedy ordering algorithm scores statements using public args the same as
+    /// private wildcards. Statements that only touch public args look "cheap" and get pulled
+    /// into the first bucket early, wasting slots and forcing private wildcards to cross the
+    /// split boundary unnecessarily.
+    ///
+    /// With 4 public args and two "cheap" statements (public-args-only) picked early,
+    /// the greedy produces 4 incoming public + 2 crossing private = 6 > max(5), causing
+    /// an error even though a valid ordering exists with only 1 crossing wildcard.
+    ///
+    /// Mirrors the real-world UnlockObject predicate failure.
+    #[test]
+    fn test_split_succeeds_with_four_public_args_and_public_only_statements() {
+        // 4 public args, 7 statements.
+        // W1 is used in stmts 0, 1, 4. W2 is used in stmts 1, 2, 3.
+        // Stmts 5 and 6 only reference public args ("cheap" statements).
+        //
+        // Optimal split: bucket0={0,1,2,3}, bucket1={4,5,6}
+        //   → only W1 crosses (used in 0,1 and 4), total = 4 public + 1 crossing = 5 ✓
+        //
+        // Greedy (buggy) picks stmts 5,6 early into bucket0, scattering W1 and W2
+        // across the boundary → 4 + 2 = 6 > 5 ✗
+        let input = r#"
+            pred(A, B, C, D, private: W1, W2) = AND(
+                Equal(W1["x"], A["v"])
+                Equal(W2["y"], W1["x"])
+                Equal(W2["z"], B["v"])
+                Equal(C["r"], W2["y"])
+                Equal(D["s"], W1["x"])
+                Equal(A["out"], C["out"])
+                Equal(B["out"], D["out"])
+            )
+        "#;
+
+        let pred = parse_predicate(input);
+        let params = Params::default();
+
+        let result = split_predicate_if_needed(pred, &params);
+        assert!(
+            result.is_ok(),
+            "Should find a valid split with ≤1 crossing wildcard, got: {:?}",
+            result.err()
+        );
+    }
+
+    /// Bug: when splitting a predicate, continuation predicates include ALL original public
+    /// args in their public_args_in, even those not used in any of their statements.
+    ///
+    /// An unused public arg in a continuation causes the proof builder to treat it as
+    /// unconstrained (defaulting to 0), while the parent predicate passes the real value,
+    /// causing a mismatch and proof failure.
+    #[test]
+    fn test_continuation_excludes_public_args_unused_after_split() {
+        // Public arg A is only used in stmt0 (first segment).
+        // Public arg B is only used in stmts 4-5 (second segment).
+        // The continuation predicate (_1) should include B but not A.
+        let input = r#"
+            pred(A, B, private: T) = AND(
+                Equal(T["x"], A["val"])
+                Equal(T["y"], 1)
+                Equal(T["z"], 2)
+                Equal(T["w"], 3)
+                Equal(B["r"], T["x"])
+                Equal(B["s"], T["y"])
+            )
+        "#;
+
+        let pred = parse_predicate(input);
+        let params = Params::default();
+
+        let result = split_predicate_if_needed(pred, &params).unwrap();
+        // chain[0] is the continuation (_1 suffix), chain[1] is the original
+        let continuation = result
+            .predicates
+            .iter()
+            .find(|p| p.name.name == "pred_1")
+            .expect("Expected a pred_1 continuation predicate");
+
+        let cont_public: Vec<&str> = continuation
+            .args
+            .public_args
+            .iter()
+            .map(|id| id.name.as_str())
+            .collect();
+
+        assert!(
+            !cont_public.contains(&"A"),
+            "Continuation should drop unused public arg 'A', got: {:?}",
+            cont_public
+        );
+    }
+
     #[test]
     fn test_refactor_suggestion_group_wildcards() {
         // Test the "group wildcard usages" suggestion formatting
