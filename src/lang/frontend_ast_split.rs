@@ -17,7 +17,7 @@
 
 use std::{
     cmp::Reverse,
-    collections::{HashMap, HashSet},
+    collections::HashSet,
 };
 
 // SplittingError is now defined in error.rs
@@ -33,8 +33,8 @@ pub struct ChainLink {
     pub public_args_in: Vec<String>,
     /// Private arguments used only in this link
     pub private_args: Vec<String>,
-    /// Public arguments promoted to pass to next link (empty if last link)
-    pub public_args_out: Vec<String>,
+    /// Private wildcards promoted to public for the next link (empty if last link)
+    pub promoted_wildcards: Vec<String>,
 }
 
 /// Information about a single piece of a split predicate chain
@@ -69,13 +69,6 @@ pub struct SplitResult {
     pub predicates: Vec<CustomPredicateDef>,
     /// Split chain info, if splitting occurred (None for non-split)
     pub chain_info: Option<SplitChainInfo>,
-}
-
-/// Wildcard usage information
-#[derive(Debug, Clone)]
-struct WildcardUsage {
-    /// Indices of statements using this wildcard
-    used_in_statements: HashSet<usize>,
 }
 
 /// Early validation: Check if predicate is fundamentally splittable
@@ -121,26 +114,6 @@ pub fn split_predicate_if_needed(
     })
 }
 
-fn analyze_wildcards(statements: &[StatementTmpl]) -> HashMap<String, WildcardUsage> {
-    let mut usage: HashMap<String, WildcardUsage> = HashMap::new();
-
-    for (idx, stmt) in statements.iter().enumerate() {
-        let wildcards = collect_wildcards_from_statement(stmt);
-
-        for wildcard in wildcards {
-            usage
-                .entry(wildcard.clone())
-                .or_insert_with(|| WildcardUsage {
-                    used_in_statements: HashSet::new(),
-                })
-                .used_in_statements
-                .insert(idx);
-        }
-    }
-
-    usage
-}
-
 /// Collect all wildcard names from a statement
 fn collect_wildcards_from_statement(stmt: &StatementTmpl) -> HashSet<String> {
     let mut wildcards = HashSet::new();
@@ -172,7 +145,6 @@ struct OrderingResult {
 
 fn order_constraints_optimally(
     statements: Vec<StatementTmpl>,
-    _usage: &HashMap<String, WildcardUsage>,
     public_args: &HashSet<String>,
 ) -> OrderingResult {
     let n = statements.len();
@@ -234,6 +206,7 @@ fn compute_tie_breakers(
     active_wildcards: &HashSet<String>,
     statements: &[StatementTmpl],
     remaining: &HashSet<usize>,
+    needed_later: &HashSet<String>,
     public_args: &HashSet<String>,
 ) -> (usize, usize, i32) {
     let all_wildcards = collect_wildcards_from_statement(stmt);
@@ -246,14 +219,8 @@ fn compute_tie_breakers(
     // Metric 1: Simplicity - prefer statements with fewer private wildcards
     let simplicity = usize::MAX - stmt_wildcards.len();
 
-    // Metric 2: Public closure - prefer statements that close active private wildcards
+    // Metric 2: Closure - prefer statements that close active private wildcards
     // (wildcards that won't be needed by any remaining statements)
-    let needed_later: HashSet<String> = remaining
-        .iter()
-        .flat_map(|&i| collect_wildcards_from_statement(&statements[i]))
-        .filter(|w| !public_args.contains(w))
-        .collect();
-
     let closes_count = stmt_wildcards
         .intersection(active_wildcards)
         .filter(|w| !needed_later.contains(*w))
@@ -283,16 +250,30 @@ fn statement_selection_key(
     approaching_split: bool,
     public_args: &HashSet<String>,
 ) -> (i32, (usize, usize, i32), Reverse<usize>) {
+    // Pre-compute needed_later once and share between primary score and tie-breakers.
+    // These are all private wildcards referenced by any remaining statement (including
+    // the current candidate, since `remaining` contains it at this point).
+    let needed_later: HashSet<String> = remaining
+        .iter()
+        .flat_map(|&i| collect_wildcards_from_statement(&statements[i]))
+        .filter(|w| !public_args.contains(w))
+        .collect();
+
     let primary_score = score_statement(
+        &statements[idx],
+        active_wildcards,
+        approaching_split,
+        public_args,
+        &needed_later,
+    );
+    let tie_breakers = compute_tie_breakers(
         &statements[idx],
         active_wildcards,
         statements,
         remaining,
-        approaching_split,
+        &needed_later,
         public_args,
     );
-    let tie_breakers =
-        compute_tie_breakers(&statements[idx], active_wildcards, statements, remaining, public_args);
 
     // Final deterministic tie-breaker: prefer smaller original indices.
     // This avoids hash-iteration-dependent selection when scores are equal.
@@ -328,14 +309,14 @@ fn find_best_next_statement(
         .unwrap()
 }
 
-/// Score a statement based on how well it minimizes liveness
+/// Score a statement based on how well it minimizes private-wildcard liveness at boundaries.
+/// `needed_later` is the set of private wildcards used by any remaining statement.
 fn score_statement(
     stmt: &StatementTmpl,
     active_wildcards: &HashSet<String>,
-    statements: &[StatementTmpl],
-    remaining: &HashSet<usize>,
     approaching_split: bool,
     public_args: &HashSet<String>,
+    needed_later: &HashSet<String>,
 ) -> i32 {
     let all_wildcards = collect_wildcards_from_statement(stmt);
 
@@ -349,16 +330,9 @@ fn score_statement(
     // Statements that touch only public args ("cheap" statements) waste a bucket slot
     // that could be used to cluster private wildcards. Strongly defer them while any
     // private-wildcard statements remain, so they fill leftover space at the end.
+    // `needed_later` is non-empty iff some remaining statement has a private wildcard.
     if stmt_wildcards.is_empty() {
-        let has_private_remaining = remaining.iter().any(|&i| {
-            collect_wildcards_from_statement(&statements[i])
-                .iter()
-                .any(|w| !public_args.contains(w))
-        });
-        if has_private_remaining {
-            return i32::MIN / 2;
-        }
-        return 0;
+        return if needed_later.is_empty() { 0 } else { i32::MIN / 2 };
     }
 
     // How many active private wildcards does this reuse?
@@ -367,30 +341,23 @@ fn score_statement(
     // How many new private wildcards does this introduce?
     let new_wildcard_count = stmt_wildcards.difference(active_wildcards).count();
 
-    // After adding this statement, what private wildcards would be active?
+    // Which of the projected-active wildcards are still needed after this statement?
     let mut projected_active = active_wildcards.clone();
-    projected_active.extend(stmt_wildcards.clone());
-
-    // Which private wildcards are still needed by remaining statements?
-    let needed_later: HashSet<String> = remaining
-        .iter()
-        .flat_map(|&i| collect_wildcards_from_statement(&statements[i]))
-        .filter(|w| !public_args.contains(w))
-        .collect();
-
-    // Wildcards we can close = active now but not needed later
+    projected_active.extend(stmt_wildcards);
     projected_active.retain(|w| needed_later.contains(w));
     let still_active_count = projected_active.len();
 
-    // Base score calculation
-    // - Prefer statements that reuse active wildcards (don't introduce new liveness)
-    // - Penalize introducing new wildcards (increases liveness)
-    // - Penalize keeping many wildcards active (higher liveness)
+    // Base score:
+    //   +3 per reused wildcard  — rewards clustering (wildcard already open, no new cost)
+    //   -4 per new wildcard     — penalises opening new live ranges
+    //   -2 per still-live       — penalises carrying many wildcards toward the boundary
     let base_score = (reuse_count * 3) as i32
         - (new_wildcard_count * 4) as i32
         - (still_active_count * 2) as i32;
 
-    // Look-ahead bonus: when approaching split, heavily favor closing wildcards
+    // When close to a split boundary, strongly reward statements that close wildcards
+    // (active.len() + new - still_active = number of wildcards resolved by this statement).
+    // Weight 10 >> max base-score magnitude to make closing the dominant factor.
     if approaching_split {
         let closes_count = active_wildcards.len() + new_wildcard_count - still_active_count;
         base_score + (closes_count * 10) as i32
@@ -422,8 +389,6 @@ fn calculate_live_wildcards(
 fn generate_refactor_suggestion(
     crossing_wildcards: &[String],
     ordered_statements: &[StatementTmpl],
-    _pos: usize,
-    _end: usize,
 ) -> Option<crate::lang::error::RefactorSuggestion> {
     use crate::lang::error::RefactorSuggestion;
 
@@ -501,10 +466,9 @@ fn split_into_chain(
 
     let public_args_set: HashSet<String> = original_public_args.iter().cloned().collect();
 
-    let usage = analyze_wildcards(&pred.statements);
     let real_statement_count = pred.statements.len();
 
-    let ordering_result = order_constraints_optimally(pred.statements, &usage, &public_args_set);
+    let ordering_result = order_constraints_optimally(pred.statements, &public_args_set);
     let ordered_statements = ordering_result.statements;
     let reorder_map = ordering_result.reorder_map;
 
@@ -551,7 +515,7 @@ fn split_into_chain(
             };
 
             let suggestion =
-                generate_refactor_suggestion(&new_promotions, &ordered_statements, pos, end);
+                generate_refactor_suggestion(&new_promotions, &ordered_statements);
 
             return Err(SplittingError::TooManyPublicArgsAtSplit {
                 predicate: original_name.clone(),
@@ -589,26 +553,19 @@ fn split_into_chain(
             });
         }
 
-        // Only newly promoted private wildcards need to be passed to the next link.
-        // Public args are already in scope at every boundary and must not be re-listed.
-        let mut public_args_out: Vec<String> = new_promotions.clone();
-
         chain_links.push(ChainLink {
             statements: ordered_statements[pos..end].to_vec(),
             public_args_in: incoming_public.clone(),
             private_args,
-            public_args_out: public_args_out.clone(),
+            // new_promotions are already sorted and already filtered to exclude incoming_public
+            promoted_wildcards: new_promotions.clone(),
         });
 
         pos = end;
 
-        // Next link's incoming public args = current incoming + newly promoted live wildcards
-        // Only add wildcards that aren't already in incoming_public to avoid duplicates
-        for wildcard in public_args_out {
-            if !incoming_set.contains(&wildcard) {
-                incoming_public.push(wildcard);
-            }
-        }
+        // Extend incoming_public for the next link with the newly promoted wildcards.
+        // new_promotions is already filtered to exclude incoming_set, so no dedup needed.
+        incoming_public.extend(new_promotions);
     }
 
     // Build SplitChainInfo from chain_links before generating predicates
@@ -640,7 +597,7 @@ fn split_into_chain(
     let mut chain_predicates =
         generate_chain_predicates(&original_name, chain_links, conjunction, params)?;
 
-    validate_chain(&chain_predicates, params)?;
+    validate_chain(&chain_predicates, params);
 
     // Reverse so continuations come before callers in declaration order.
     // This ensures that when batched, continuations are in earlier batches
@@ -683,7 +640,7 @@ fn generate_chain_predicates(
             };
 
             // Create arguments for chain call: use next link's public_args_in
-            // which is the deduplicated union of current public_args_in and public_args_out
+            // which is current public_args_in extended with current promoted_wildcards
             let next_link = &chain_links[i + 1];
             let chain_call_args: Vec<StatementTmplArg> = next_link
                 .public_args_in
@@ -715,10 +672,12 @@ fn generate_chain_predicates(
             })
             .collect();
 
-        // Build private args (private + promoted for next)
+        // Build private args: segment-local private wildcards, plus any wildcards being
+        // promoted to public for the next link (they must be declared here so the solver
+        // can bind them before passing them as public args to the continuation).
         let mut private_arg_names = link.private_args.clone();
         if !is_last {
-            private_arg_names.extend(link.public_args_out.clone());
+            private_arg_names.extend(link.promoted_wildcards.iter().cloned());
         }
 
         let private_args = if private_arg_names.is_empty() {
@@ -748,25 +707,34 @@ fn generate_chain_predicates(
     Ok(predicates)
 }
 
-/// Phase 5: Validate the generated chain
-///
-/// Note: We no longer check chain length against max_custom_batch_size since
-/// chains can now span multiple batches thanks to multi-batch support.
-fn validate_chain(chain: &[CustomPredicateDef], params: &Params) -> Result<(), SplittingError> {
+/// Sanity-check the generated chain. All three constraints are enforced as proper errors
+/// earlier in `split_into_chain`, so violations here indicate a bug in the algorithm.
+fn validate_chain(chain: &[CustomPredicateDef], params: &Params) {
     for pred in chain {
-        // Each predicate should have ≤ max_statements
-        assert!(pred.statements.len() <= Params::max_custom_predicate_arity());
-
-        // Public args should fit
-        assert!(pred.args.public_args.len() <= Params::max_statement_args());
-
-        // Total args should fit
+        assert!(
+            pred.statements.len() <= Params::max_custom_predicate_arity(),
+            "chain link '{}' has {} statements, exceeds max {}",
+            pred.name.name,
+            pred.statements.len(),
+            Params::max_custom_predicate_arity(),
+        );
+        assert!(
+            pred.args.public_args.len() <= Params::max_statement_args(),
+            "chain link '{}' has {} public args, exceeds max {}",
+            pred.name.name,
+            pred.args.public_args.len(),
+            Params::max_statement_args(),
+        );
         let total =
             pred.args.public_args.len() + pred.args.private_args.as_ref().map_or(0, |v| v.len());
-        assert!(total <= params.max_custom_predicate_wildcards);
+        assert!(
+            total <= params.max_custom_predicate_wildcards,
+            "chain link '{}' has {} total args, exceeds max {}",
+            pred.name.name,
+            total,
+            params.max_custom_predicate_wildcards,
+        );
     }
-
-    Ok(())
 }
 
 #[cfg(test)]
