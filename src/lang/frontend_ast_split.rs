@@ -251,10 +251,11 @@ fn statement_selection_key(
     public_args: &HashSet<String>,
 ) -> (i32, (usize, usize, i32), Reverse<usize>) {
     // Pre-compute needed_later once and share between primary score and tie-breakers.
-    // These are all private wildcards referenced by any remaining statement (including
-    // the current candidate, since `remaining` contains it at this point).
+    // Exclude the candidate itself: we want to know what the *other* remaining statements
+    // need, so that wildcards used only by this candidate correctly appear as closeable.
     let needed_later: HashSet<String> = remaining
         .iter()
+        .filter(|&&i| i != idx)
         .flat_map(|&i| collect_wildcards_from_statement(&statements[i]))
         .filter(|w| !public_args.contains(w))
         .collect();
@@ -1165,7 +1166,7 @@ mod tests {
         assert!(error_msg.contains("3 crossing wildcards"));
         assert!(error_msg.contains("= 6 total"));
         assert!(error_msg.contains("exceeds max of 5"));
-        assert!(error_msg.contains("Statements 0-4"));
+        assert!(error_msg.contains("Statements 0-3"));
         assert!(error_msg.contains("Incoming public args: A, B, C"));
         assert!(error_msg.contains("Wildcards crossing this boundary: T1, T2, T3"));
         assert!(error_msg.contains("Suggestion:"));
