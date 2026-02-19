@@ -15,10 +15,7 @@
 //! We use a greedy algorithm to order the statements in a predicate to minimize
 //! the number of live wildcards at split boundaries.
 
-use std::{
-    cmp::Reverse,
-    collections::HashSet,
-};
+use std::{cmp::Reverse, collections::HashSet};
 
 // SplittingError is now defined in error.rs
 pub use crate::lang::error::SplittingError;
@@ -181,8 +178,11 @@ fn order_constraints_optimally(
         // Only track private wildcards in the active set — public args are always
         // available at every boundary so their liveness is irrelevant to split cost.
         let stmt_wildcards = collect_wildcards_from_statement(stmt);
-        active_wildcards
-            .extend(stmt_wildcards.into_iter().filter(|w| !public_args.contains(w)));
+        active_wildcards.extend(
+            stmt_wildcards
+                .into_iter()
+                .filter(|w| !public_args.contains(w)),
+        );
 
         // Remove private wildcards no longer needed by remaining statements
         let needed_later: HashSet<_> = remaining
@@ -332,7 +332,11 @@ fn score_statement(
     // private-wildcard statements remain, so they fill leftover space at the end.
     // `needed_later` is non-empty iff some remaining statement has a private wildcard.
     if stmt_wildcards.is_empty() {
-        return if needed_later.is_empty() { 0 } else { i32::MIN / 2 };
+        return if needed_later.is_empty() {
+            0
+        } else {
+            i32::MIN / 2
+        };
     }
 
     // How many active private wildcards does this reuse?
@@ -514,8 +518,7 @@ fn split_into_chain(
                 total_public,
             };
 
-            let suggestion =
-                generate_refactor_suggestion(&new_promotions, &ordered_statements);
+            let suggestion = generate_refactor_suggestion(&new_promotions, &ordered_statements);
 
             return Err(SplittingError::TooManyPublicArgsAtSplit {
                 predicate: original_name.clone(),
@@ -566,6 +569,49 @@ fn split_into_chain(
         // Extend incoming_public for the next link with the newly promoted wildcards.
         // new_promotions is already filtered to exclude incoming_set, so no dedup needed.
         incoming_public.extend(new_promotions);
+    }
+
+    // Backward pass: prune each continuation's public args to the minimal set needed.
+    //
+    // The forward pass accumulates incoming_public monotonically, so a continuation may
+    // inherit original public args that none of its statements (or downstream continuations)
+    // ever reference.  A continuation must declare every public arg it receives, and the
+    // proof system constrains each declared arg - an arg that goes unused has no constraints
+    // and will not match the value the caller passes.
+    //
+    // Propagating from the last link backward ensures each continuation declares exactly the
+    // args it uses directly, plus any args its successor still needs. Link 0 (the original
+    // predicate) is left untouched - its public-arg signature is user-declared.
+    {
+        let num_links = chain_links.len();
+        if num_links > 1 {
+            // Collect wildcards referenced by each link's statements once.
+            let link_wildcards: Vec<HashSet<String>> = chain_links
+                .iter()
+                .map(|link| {
+                    link.statements
+                        .iter()
+                        .flat_map(collect_wildcards_from_statement)
+                        .collect()
+                })
+                .collect();
+
+            let last = num_links - 1;
+
+            // Seed: last link retains only args it directly references.
+            chain_links[last]
+                .public_args_in
+                .retain(|a| link_wildcards[last].contains(a));
+
+            // Propagate backward through intermediate continuation links (skip link 0).
+            for i in (1..last).rev() {
+                let needed_downstream: HashSet<String> =
+                    chain_links[i + 1].public_args_in.iter().cloned().collect();
+                chain_links[i]
+                    .public_args_in
+                    .retain(|a| link_wildcards[i].contains(a) || needed_downstream.contains(a));
+            }
+        }
     }
 
     // Build SplitChainInfo from chain_links before generating predicates
@@ -996,8 +1042,22 @@ mod tests {
 
         // A and B are the public args of tie_break(A, B)
         let public_args: HashSet<String> = ["A".to_string(), "B".to_string()].into_iter().collect();
-        let key0 = statement_selection_key(0, &statements, &active_wildcards, &remaining, false, &public_args);
-        let key1 = statement_selection_key(1, &statements, &active_wildcards, &remaining, false, &public_args);
+        let key0 = statement_selection_key(
+            0,
+            &statements,
+            &active_wildcards,
+            &remaining,
+            false,
+            &public_args,
+        );
+        let key1 = statement_selection_key(
+            1,
+            &statements,
+            &active_wildcards,
+            &remaining,
+            false,
+            &public_args,
+        );
 
         assert_eq!(key0.0, key1.0, "Primary heuristic score should tie");
         assert_eq!(key0.1, key1.1, "Secondary tie-breaker metrics should tie");
@@ -1006,7 +1066,8 @@ mod tests {
             "Lower original index should win deterministic final tie-breaker"
         );
 
-        let selected = find_best_next_statement(&statements, &remaining, &active_wildcards, 0, &public_args);
+        let selected =
+            find_best_next_statement(&statements, &remaining, &active_wildcards, 0, &public_args);
         assert_eq!(selected, 0);
     }
 
