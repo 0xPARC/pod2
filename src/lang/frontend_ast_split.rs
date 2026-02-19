@@ -173,6 +173,7 @@ struct OrderingResult {
 fn order_constraints_optimally(
     statements: Vec<StatementTmpl>,
     _usage: &HashMap<String, WildcardUsage>,
+    public_args: &HashSet<String>,
 ) -> OrderingResult {
     let n = statements.len();
 
@@ -190,8 +191,13 @@ fn order_constraints_optimally(
     let mut active_wildcards: HashSet<String> = HashSet::new();
 
     while !remaining.is_empty() {
-        let best_idx =
-            find_best_next_statement(&statements, &remaining, &active_wildcards, ordered.len());
+        let best_idx = find_best_next_statement(
+            &statements,
+            &remaining,
+            &active_wildcards,
+            ordered.len(),
+            public_args,
+        );
 
         remaining.remove(&best_idx);
         let stmt = &statements[best_idx];
@@ -200,14 +206,17 @@ fn order_constraints_optimally(
         reorder_map[best_idx] = ordered.len();
         ordered.push(stmt.clone());
 
-        // Update active wildcards
+        // Only track private wildcards in the active set — public args are always
+        // available at every boundary so their liveness is irrelevant to split cost.
         let stmt_wildcards = collect_wildcards_from_statement(stmt);
-        active_wildcards.extend(stmt_wildcards);
+        active_wildcards
+            .extend(stmt_wildcards.into_iter().filter(|w| !public_args.contains(w)));
 
-        // Remove wildcards no longer needed by remaining statements
+        // Remove private wildcards no longer needed by remaining statements
         let needed_later: HashSet<_> = remaining
             .iter()
             .flat_map(|&i| collect_wildcards_from_statement(&statements[i]))
+            .filter(|w| !public_args.contains(w))
             .collect();
         active_wildcards.retain(|w| needed_later.contains(w));
     }
@@ -225,17 +234,24 @@ fn compute_tie_breakers(
     active_wildcards: &HashSet<String>,
     statements: &[StatementTmpl],
     remaining: &HashSet<usize>,
+    public_args: &HashSet<String>,
 ) -> (usize, usize, i32) {
-    let stmt_wildcards = collect_wildcards_from_statement(stmt);
+    let all_wildcards = collect_wildcards_from_statement(stmt);
+    // Only consider private wildcards for tie-breaking metrics
+    let stmt_wildcards: HashSet<_> = all_wildcards
+        .into_iter()
+        .filter(|w| !public_args.contains(w))
+        .collect();
 
-    // Metric 1: Simplicity - prefer statements with fewer wildcards
+    // Metric 1: Simplicity - prefer statements with fewer private wildcards
     let simplicity = usize::MAX - stmt_wildcards.len();
 
-    // Metric 2: Public closure - prefer statements that close active wildcards
+    // Metric 2: Public closure - prefer statements that close active private wildcards
     // (wildcards that won't be needed by any remaining statements)
     let needed_later: HashSet<String> = remaining
         .iter()
         .flat_map(|&i| collect_wildcards_from_statement(&statements[i]))
+        .filter(|w| !public_args.contains(w))
         .collect();
 
     let closes_count = stmt_wildcards
@@ -244,11 +260,14 @@ fn compute_tie_breakers(
         .count();
 
     // Metric 3: Fanout - prefer statements with lower future usage
-    // (number of remaining statements that use any wildcard from this statement)
+    // (number of remaining statements sharing private wildcards with this statement)
     let fanout = remaining
         .iter()
         .filter(|&&i| {
-            let other_wildcards = collect_wildcards_from_statement(&statements[i]);
+            let other_wildcards: HashSet<_> = collect_wildcards_from_statement(&statements[i])
+                .into_iter()
+                .filter(|w| !public_args.contains(w))
+                .collect();
             !stmt_wildcards.is_disjoint(&other_wildcards)
         })
         .count();
@@ -262,6 +281,7 @@ fn statement_selection_key(
     active_wildcards: &HashSet<String>,
     remaining: &HashSet<usize>,
     approaching_split: bool,
+    public_args: &HashSet<String>,
 ) -> (i32, (usize, usize, i32), Reverse<usize>) {
     let primary_score = score_statement(
         &statements[idx],
@@ -269,9 +289,10 @@ fn statement_selection_key(
         statements,
         remaining,
         approaching_split,
+        public_args,
     );
     let tie_breakers =
-        compute_tie_breakers(&statements[idx], active_wildcards, statements, remaining);
+        compute_tie_breakers(&statements[idx], active_wildcards, statements, remaining, public_args);
 
     // Final deterministic tie-breaker: prefer smaller original indices.
     // This avoids hash-iteration-dependent selection when scores are equal.
@@ -284,6 +305,7 @@ fn find_best_next_statement(
     remaining: &HashSet<usize>,
     active_wildcards: &HashSet<String>,
     ordered_count: usize,
+    public_args: &HashSet<String>,
 ) -> usize {
     // Calculate distance to next split point
     let bucket_size = Params::max_custom_predicate_arity() - 1; // Reserve slot for chain call
@@ -299,6 +321,7 @@ fn find_best_next_statement(
                 active_wildcards,
                 remaining,
                 approaching_split,
+                public_args,
             )
         })
         .copied()
@@ -312,23 +335,47 @@ fn score_statement(
     statements: &[StatementTmpl],
     remaining: &HashSet<usize>,
     approaching_split: bool,
+    public_args: &HashSet<String>,
 ) -> i32 {
-    let stmt_wildcards = collect_wildcards_from_statement(stmt);
+    let all_wildcards = collect_wildcards_from_statement(stmt);
 
-    // How many active wildcards does this reuse?
+    // Only score based on private wildcards. Public args are always available at every
+    // split boundary — they never consume a promotion slot, so their liveness is free.
+    let stmt_wildcards: HashSet<_> = all_wildcards
+        .into_iter()
+        .filter(|w| !public_args.contains(w))
+        .collect();
+
+    // Statements that touch only public args ("cheap" statements) waste a bucket slot
+    // that could be used to cluster private wildcards. Strongly defer them while any
+    // private-wildcard statements remain, so they fill leftover space at the end.
+    if stmt_wildcards.is_empty() {
+        let has_private_remaining = remaining.iter().any(|&i| {
+            collect_wildcards_from_statement(&statements[i])
+                .iter()
+                .any(|w| !public_args.contains(w))
+        });
+        if has_private_remaining {
+            return i32::MIN / 2;
+        }
+        return 0;
+    }
+
+    // How many active private wildcards does this reuse?
     let reuse_count = stmt_wildcards.intersection(active_wildcards).count();
 
-    // How many new wildcards does this introduce?
+    // How many new private wildcards does this introduce?
     let new_wildcard_count = stmt_wildcards.difference(active_wildcards).count();
 
-    // After adding this statement, what would be active?
+    // After adding this statement, what private wildcards would be active?
     let mut projected_active = active_wildcards.clone();
     projected_active.extend(stmt_wildcards.clone());
 
-    // Which wildcards are still needed by other remaining statements?
+    // Which private wildcards are still needed by remaining statements?
     let needed_later: HashSet<String> = remaining
         .iter()
         .flat_map(|&i| collect_wildcards_from_statement(&statements[i]))
+        .filter(|w| !public_args.contains(w))
         .collect();
 
     // Wildcards we can close = active now but not needed later
@@ -445,19 +492,21 @@ fn split_into_chain(
     let original_name = pred.name.name.clone();
     let conjunction = pred.conjunction_type;
 
-    let usage = analyze_wildcards(&pred.statements);
-    let real_statement_count = pred.statements.len();
-
-    let ordering_result = order_constraints_optimally(pred.statements, &usage);
-    let ordered_statements = ordering_result.statements;
-    let reorder_map = ordering_result.reorder_map;
-
     let original_public_args: Vec<String> = pred
         .args
         .public_args
         .iter()
         .map(|id| id.name.clone())
         .collect();
+
+    let public_args_set: HashSet<String> = original_public_args.iter().cloned().collect();
+
+    let usage = analyze_wildcards(&pred.statements);
+    let real_statement_count = pred.statements.len();
+
+    let ordering_result = order_constraints_optimally(pred.statements, &usage, &public_args_set);
+    let ordered_statements = ordering_result.statements;
+    let reorder_map = ordering_result.reorder_map;
 
     let mut chain_links = Vec::new();
     let mut pos = 0;
@@ -540,8 +589,9 @@ fn split_into_chain(
             });
         }
 
-        let mut public_args_out: Vec<String> = live_at_boundary.iter().cloned().collect();
-        public_args_out.sort(); // Deterministic ordering
+        // Only newly promoted private wildcards need to be passed to the next link.
+        // Public args are already in scope at every boundary and must not be re-listed.
+        let mut public_args_out: Vec<String> = new_promotions.clone();
 
         chain_links.push(ChainLink {
             statements: ordered_statements[pos..end].to_vec(),
@@ -976,8 +1026,10 @@ mod tests {
         let remaining: HashSet<usize> = [0, 1].into_iter().collect();
         let active_wildcards = HashSet::new();
 
-        let key0 = statement_selection_key(0, &statements, &active_wildcards, &remaining, false);
-        let key1 = statement_selection_key(1, &statements, &active_wildcards, &remaining, false);
+        // A and B are the public args of tie_break(A, B)
+        let public_args: HashSet<String> = ["A".to_string(), "B".to_string()].into_iter().collect();
+        let key0 = statement_selection_key(0, &statements, &active_wildcards, &remaining, false, &public_args);
+        let key1 = statement_selection_key(1, &statements, &active_wildcards, &remaining, false, &public_args);
 
         assert_eq!(key0.0, key1.0, "Primary heuristic score should tie");
         assert_eq!(key0.1, key1.1, "Secondary tie-breaker metrics should tie");
@@ -986,7 +1038,7 @@ mod tests {
             "Lower original index should win deterministic final tie-breaker"
         );
 
-        let selected = find_best_next_statement(&statements, &remaining, &active_wildcards, 0);
+        let selected = find_best_next_statement(&statements, &remaining, &active_wildcards, 0, &public_args);
         assert_eq!(selected, 0);
     }
 
