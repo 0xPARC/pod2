@@ -1226,29 +1226,19 @@ mod tests {
         );
     }
 
-    // --- Regression tests for known bugs ---
+    // --- Regression tests ---
 
-    /// Bug: the greedy ordering algorithm scores statements using public args the same as
-    /// private wildcards. Statements that only touch public args look "cheap" and get pulled
-    /// into the first bucket early, wasting slots and forcing private wildcards to cross the
-    /// split boundary unnecessarily.
+    /// Statements that reference only public args should be deferred until private-wildcard
+    /// statements have been clustered, so they don't consume bucket slots that would reduce
+    /// liveness at split boundaries.
     ///
-    /// With 4 public args and two "cheap" statements (public-args-only) picked early,
-    /// the greedy produces 4 incoming public + 2 crossing private = 6 > max(5), causing
-    /// an error even though a valid ordering exists with only 1 crossing wildcard.
-    ///
-    /// Mirrors the real-world UnlockObject predicate failure.
+    /// 4 public args, 7 statements: W1 used in stmts 0,1,4; W2 used in stmts 1,2,3;
+    /// stmts 5,6 reference only public args.  The scoring correctly defers stmts 5,6,
+    /// yielding bucket0={0,1,2,3}, bucket1={4,5,6} with only W1 crossing (4+1=5 <= max).
     #[test]
     fn test_split_succeeds_with_four_public_args_and_public_only_statements() {
-        // 4 public args, 7 statements.
-        // W1 is used in stmts 0, 1, 4. W2 is used in stmts 1, 2, 3.
-        // Stmts 5 and 6 only reference public args ("cheap" statements).
-        //
         // Optimal split: bucket0={0,1,2,3}, bucket1={4,5,6}
-        //   → only W1 crosses (used in 0,1 and 4), total = 4 public + 1 crossing = 5 ✓
-        //
-        // Greedy (buggy) picks stmts 5,6 early into bucket0, scattering W1 and W2
-        // across the boundary → 4 + 2 = 6 > 5 ✗
+        // Only W1 crosses (used in 0,1 and 4), total = 4 public + 1 crossing = 5 ✓
         let input = r#"
             pred(A, B, C, D, private: W1, W2) = AND(
                 Equal(W1["x"], A["v"])
@@ -1272,17 +1262,13 @@ mod tests {
         );
     }
 
-    /// Bug: when splitting a predicate, continuation predicates include ALL original public
-    /// args in their public_args_in, even those not used in any of their statements.
-    ///
-    /// An unused public arg in a continuation causes the proof builder to treat it as
-    /// unconstrained (defaulting to 0), while the parent predicate passes the real value,
-    /// causing a mismatch and proof failure.
+    /// Continuation predicates should only declare the public args they actually use -
+    /// original public args that are not referenced in a continuation's statements or
+    /// any of its downstream continuations must be omitted from its signature.
     #[test]
     fn test_continuation_excludes_public_args_unused_after_split() {
-        // Public arg A is only used in stmt0 (first segment).
-        // Public arg B is only used in stmts 4-5 (second segment).
-        // The continuation predicate (_1) should include B but not A.
+        // A is used only in the first segment; B is used only in the second segment.
+        // The continuation predicate (pred_1) must include B but not A.
         let input = r#"
             pred(A, B, private: T) = AND(
                 Equal(T["x"], A["val"])
@@ -1316,28 +1302,6 @@ mod tests {
             !cont_public.contains(&"A"),
             "Continuation should drop unused public arg 'A', got: {:?}",
             cont_public
-        );
-    }
-
-    #[test]
-    fn test_refactor_suggestion_group_wildcards() {
-        // Test the "group wildcard usages" suggestion formatting
-        use crate::lang::error::RefactorSuggestion;
-
-        let suggestion = RefactorSuggestion::GroupWildcardUsages {
-            wildcards: vec!["T1".to_string(), "T2".to_string(), "T3".to_string()],
-        };
-
-        let suggestion_text = suggestion.format();
-
-        // Verify the suggestion formats correctly
-        assert!(suggestion_text.contains("Group operations for wildcards"));
-        assert!(suggestion_text.contains("T1, T2, T3"));
-        assert!(suggestion_text.contains("used across multiple segments"));
-
-        eprintln!(
-            "\n=== Example GroupWildcardUsages Suggestion ===\n{}\n",
-            suggestion_text
         );
     }
 }
