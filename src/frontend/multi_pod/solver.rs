@@ -20,9 +20,14 @@
 //! - **Constraint 7 (Batch Cardinality)**: Limit distinct custom predicate batches per POD.
 //! - **Constraint 7b (Anchored Keys)**: Track auto-inserted Contains for anchored key references.
 //! - **Constraint 8a (Internal Inputs)**: Track which earlier PODs are used as inputs.
-//! - **Constraint 8b (External Inputs)**: Track which external PODs are used as inputs.
-//! - **Constraint 8c (Input Limit)**: Total inputs (internal + external) ≤ max_input_pods.
+//! - **Constraint 8b (External Dep Inputs)**: Track when external dependencies are sourced from
+//!   earlier PODs instead of direct external inputs.
+//! - **Constraint 8c (External Forward Inputs)**: Track inputs required when forwarding external
+//!   premises publicly across PODs.
+//! - **Constraint 8d (Input Limit)**: Total inputs (internal + external) ≤ max_input_pods.
 //! - **Constraint 9 (Symmetry Breaking)**: PODs are used in order (0, 1, 2, ...) with no gaps.
+//! - **Constraint 10 (External Public Availability)**: External premises can be made public only
+//!   when available in that POD.
 //!
 //! # Solution Approach
 //!
@@ -33,7 +38,10 @@
 // MILP constraint building uses explicit index loops for clarity
 #![allow(clippy::needless_range_loop)]
 
-use std::{collections::BTreeSet, time::Instant};
+use std::{
+    collections::{BTreeSet, HashMap},
+    time::Instant,
+};
 
 use good_lp::{
     constraint, default_solver, variable, Expression, ProblemVariables, ResolutionError, Solution,
@@ -45,7 +53,7 @@ use super::Result;
 use crate::{
     frontend::multi_pod::{
         cost::{AnchoredKeyId, CustomBatchId, StatementCost},
-        deps::{DependencyGraph, StatementSource},
+        deps::{DependencyGraph, ExternalDependency, StatementSource},
     },
     middleware::{Hash, Params},
 };
@@ -94,6 +102,7 @@ struct SolveDebugContext {
 struct ModelSizeEstimate {
     vars_prove: usize,
     vars_public: usize,
+    vars_public_external: usize,
     vars_pod_used: usize,
     vars_batch_used: usize,
     vars_anchored_key_used: usize,
@@ -106,14 +115,18 @@ struct ModelSizeEstimate {
     c2b_output_privacy: usize,
     c3_public_implies_proved: usize,
     c4_pod_existence: usize,
-    c5_dependencies: usize,
+    c5_internal_dependencies: usize,
+    c5_external_dependencies: usize,
     c6_pre_content_group: usize,
     c6_resource_limits: usize,
     c7_batch_cardinality: usize,
     c7b_anchored_key_tracking: usize,
     c8a_internal_inputs: usize,
-    c8b_external_inputs: usize,
-    c8c_input_limit: usize,
+    c8b_external_dep_inputs: usize,
+    c8c_external_forward_inputs: usize,
+    c8d_input_limit: usize,
+    c10_external_public_availability: usize,
+    c10b_external_public_implies_pod_used: usize,
     c9_symmetry_breaking: usize,
     constraints_total: usize,
 }
@@ -124,6 +137,7 @@ impl ModelSizeEstimate {
         target_pods: usize,
         all_batches_len: usize,
         external_pods_len: usize,
+        external_premises_len: usize,
         debug_ctx: &SolveDebugContext,
     ) -> Self {
         let n = input.num_statements;
@@ -133,6 +147,7 @@ impl ModelSizeEstimate {
 
         let vars_prove = n * target_pods;
         let vars_public = n * target_pods;
+        let vars_public_external = external_premises_len * target_pods;
         let vars_pod_used = target_pods;
         let vars_batch_used = all_batches_len * target_pods;
         let vars_anchored_key_used = num_anchored_keys * target_pods;
@@ -141,6 +156,7 @@ impl ModelSizeEstimate {
         let vars_content_group_used = num_groups * target_pods;
         let vars_total = vars_prove
             + vars_public
+            + vars_public_external
             + vars_pod_used
             + vars_batch_used
             + vars_anchored_key_used
@@ -153,7 +169,8 @@ impl ModelSizeEstimate {
         let c2b_output_privacy = n.saturating_sub(c2_output_public);
         let c3_public_implies_proved = n * target_pods;
         let c4_pod_existence = n * target_pods;
-        let c5_dependencies = debug_ctx.dep_stats.internal_edges * target_pods;
+        let c5_internal_dependencies = debug_ctx.dep_stats.internal_edges * target_pods;
+        let c5_external_dependencies = debug_ctx.dep_stats.external_edges * target_pods;
         let c6_pre_content_group = (n * target_pods) + (num_groups * target_pods);
         let c6_resource_limits = 7 * target_pods;
         let c7_batch_cardinality =
@@ -161,27 +178,35 @@ impl ModelSizeEstimate {
         let c7b_anchored_key_tracking =
             (debug_ctx.anchored_key_memberships * target_pods) + (num_anchored_keys * target_pods);
         let c8a_internal_inputs = debug_ctx.dep_stats.internal_edges * triangular_k;
-        let c8b_external_inputs = debug_ctx.dep_stats.external_edges * target_pods;
-        let c8c_input_limit = target_pods;
+        let c8b_external_dep_inputs = debug_ctx.dep_stats.external_edges * triangular_k;
+        let c8c_external_forward_inputs = external_premises_len * triangular_k;
+        let c8d_input_limit = target_pods;
+        let c10_external_public_availability = external_premises_len * target_pods;
+        let c10b_external_public_implies_pod_used = external_premises_len * target_pods;
         let c9_symmetry_breaking = target_pods.saturating_sub(1);
         let constraints_total = c1_coverage
             + c2_output_public
             + c2b_output_privacy
             + c3_public_implies_proved
             + c4_pod_existence
-            + c5_dependencies
+            + c5_internal_dependencies
+            + c5_external_dependencies
             + c6_pre_content_group
             + c6_resource_limits
             + c7_batch_cardinality
             + c7b_anchored_key_tracking
             + c8a_internal_inputs
-            + c8b_external_inputs
-            + c8c_input_limit
+            + c8b_external_dep_inputs
+            + c8c_external_forward_inputs
+            + c8d_input_limit
+            + c10_external_public_availability
+            + c10b_external_public_implies_pod_used
             + c9_symmetry_breaking;
 
         Self {
             vars_prove,
             vars_public,
+            vars_public_external,
             vars_pod_used,
             vars_batch_used,
             vars_anchored_key_used,
@@ -194,14 +219,18 @@ impl ModelSizeEstimate {
             c2b_output_privacy,
             c3_public_implies_proved,
             c4_pod_existence,
-            c5_dependencies,
+            c5_internal_dependencies,
+            c5_external_dependencies,
             c6_pre_content_group,
             c6_resource_limits,
             c7_batch_cardinality,
             c7b_anchored_key_tracking,
             c8a_internal_inputs,
-            c8b_external_inputs,
-            c8c_input_limit,
+            c8b_external_dep_inputs,
+            c8c_external_forward_inputs,
+            c8d_input_limit,
+            c10_external_public_availability,
+            c10b_external_public_implies_pod_used,
             c9_symmetry_breaking,
             constraints_total,
         }
@@ -250,6 +279,24 @@ pub struct MultiPodSolution {
 
     /// For each POD, which statement indices are public in it.
     pub pod_public_statements: Vec<BTreeSet<usize>>,
+
+    /// For each POD, which earlier internal PODs are used as inputs.
+    pub pod_internal_inputs: Vec<BTreeSet<usize>>,
+
+    /// External input POD hashes referenced by the solution.
+    /// `pod_external_inputs[*]` stores indices into this vector.
+    pub external_pod_hashes: Vec<Hash>,
+
+    /// For each POD, which external input PODs are used as inputs.
+    /// Indices are into `external_pod_hashes`.
+    pub pod_external_inputs: Vec<BTreeSet<usize>>,
+
+    /// Unique external premises referenced by statement dependencies.
+    pub external_premises: Vec<ExternalDependency>,
+
+    /// For each POD, which external premises are exposed as public statements.
+    /// Indices are into `external_premises`.
+    pub pod_public_external_premises: Vec<BTreeSet<usize>>,
 }
 
 /// Input to the MILP solver.
@@ -347,19 +394,25 @@ pub fn solve(input: &SolverInput) -> Result<MultiPodSolution> {
         .unique()
         .collect();
 
-    // Collect all unique external POD hashes referenced by dependencies.
-    let external_pods: Vec<Hash> = input
-        .deps
-        .statement_deps
-        .iter()
-        .flat_map(|deps| deps.iter())
-        .filter_map(|dep| match dep {
-            StatementSource::External(h) => Some(*h),
-            StatementSource::Internal(_) => None,
-        })
-        .collect::<BTreeSet<_>>()
-        .into_iter()
-        .collect();
+    // Collect all unique external POD hashes and external premises referenced by dependencies.
+    let mut external_pods: Vec<Hash> = Vec::new();
+    let mut external_pod_to_idx: HashMap<Hash, usize> = HashMap::new();
+    let mut external_premises: Vec<ExternalDependency> = Vec::new();
+    let mut external_premise_to_idx: HashMap<ExternalDependency, usize> = HashMap::new();
+    for deps in &input.deps.statement_deps {
+        for dep in deps {
+            if let StatementSource::External(ext) = dep {
+                if !external_pod_to_idx.contains_key(&ext.pod_hash) {
+                    external_pod_to_idx.insert(ext.pod_hash, external_pods.len());
+                    external_pods.push(ext.pod_hash);
+                }
+                if !external_premise_to_idx.contains_key(ext) {
+                    external_premise_to_idx.insert(ext.clone(), external_premises.len());
+                    external_premises.push(ext.clone());
+                }
+            }
+        }
+    }
 
     let dep_stats = dependency_stats(input.deps);
     let batch_memberships: usize = input.costs.iter().map(|c| c.custom_batch_ids.len()).sum();
@@ -410,7 +463,7 @@ pub fn solve(input: &SolverInput) -> Result<MultiPodSolution> {
         log::debug!(
             "MILP summary: statements={} output_public={} content_groups={} anchored_keys={} \
              batches={} deps_internal_edges={} deps_external_edges={} external_input_pods={} \
-             search_min_pods={} max_pods={}",
+             external_premises={} search_min_pods={} max_pods={}",
             n,
             num_output_public,
             input.statement_content_groups.len(),
@@ -419,6 +472,7 @@ pub fn solve(input: &SolverInput) -> Result<MultiPodSolution> {
             dep_stats.internal_edges,
             dep_stats.external_edges,
             external_pods.len(),
+            external_premises.len(),
             min_pods,
             input.max_pods
         );
@@ -454,9 +508,14 @@ pub fn solve(input: &SolverInput) -> Result<MultiPodSolution> {
     // Start with min_pods and increment until we find a feasible solution
     for target_pods in min_pods..=input.max_pods {
         log::debug!("Trying to solve with {} PODs", target_pods);
-        if let Some(solution) =
-            try_solve_with_pods(input, target_pods, &all_batches, &external_pods, &debug_ctx)?
-        {
+        if let Some(solution) = try_solve_with_pods(
+            input,
+            target_pods,
+            &all_batches,
+            &external_pods,
+            &external_premises,
+            &debug_ctx,
+        )? {
             return Ok(solution);
         }
         // Infeasible with target_pods, try more
@@ -481,6 +540,7 @@ fn try_solve_with_pods(
     target_pods: usize,
     all_batches: &[CustomBatchId],
     external_pods: &[Hash],
+    external_premises: &[ExternalDependency],
     debug_ctx: &SolveDebugContext,
 ) -> Result<Option<MultiPodSolution>> {
     let attempt_started_at = Instant::now();
@@ -549,11 +609,26 @@ fn try_solve_with_pods(
         })
         .collect();
 
+    // public_external[u][p] - external premise u is exposed publicly in POD p
+    let public_external: Vec<Vec<Variable>> = (0..external_premises.len())
+        .map(|_| {
+            (0..target_pods)
+                .map(|_| vars.add(variable().binary()))
+                .collect()
+        })
+        .collect();
+
     // Map from external POD hash to index in uses_external
-    let external_to_idx: std::collections::HashMap<Hash, usize> = external_pods
+    let external_to_idx: HashMap<Hash, usize> = external_pods
         .iter()
         .enumerate()
         .map(|(i, h)| (*h, i))
+        .collect();
+
+    let external_premise_to_idx: HashMap<ExternalDependency, usize> = external_premises
+        .iter()
+        .enumerate()
+        .map(|(i, ext)| (ext.clone(), i))
         .collect();
 
     // content_group_used[g][p] - content group g has at least one statement proved in POD p
@@ -574,17 +649,19 @@ fn try_solve_with_pods(
             target_pods,
             all_batches.len(),
             external_pods.len(),
+            external_premises.len(),
             debug_ctx,
         );
         log::debug!(
             "MILP(k={}) model estimate vars_total={} [prove={} public={} pod_used={} \
-             batch_used={} anchored_key_used={} uses_input={} uses_external={} \
-             content_group_used={}]",
+             public_external={} batch_used={} anchored_key_used={} uses_input={} \
+             uses_external={} content_group_used={}]",
             target_pods,
             estimate.vars_total,
             estimate.vars_prove,
             estimate.vars_public,
             estimate.vars_pod_used,
+            estimate.vars_public_external,
             estimate.vars_batch_used,
             estimate.vars_anchored_key_used,
             estimate.vars_uses_input,
@@ -593,7 +670,8 @@ fn try_solve_with_pods(
         );
         log::debug!(
             "MILP(k={}) model estimate constraints_total={} [c1={} c2={} c2b={} c3={} c4={} \
-             c5={} c6_pre={} c6_limits={} c7={} c7b={} c8a={} c8b={} c8c={} c9={}]",
+             c5i={} c5e={} c6_pre={} c6_limits={} c7={} c7b={} c8a={} c8b={} c8c={} \
+             c8d={} c9={} c10={} c10b={}]",
             target_pods,
             estimate.constraints_total,
             estimate.c1_coverage,
@@ -601,15 +679,19 @@ fn try_solve_with_pods(
             estimate.c2b_output_privacy,
             estimate.c3_public_implies_proved,
             estimate.c4_pod_existence,
-            estimate.c5_dependencies,
+            estimate.c5_internal_dependencies,
+            estimate.c5_external_dependencies,
             estimate.c6_pre_content_group,
             estimate.c6_resource_limits,
             estimate.c7_batch_cardinality,
             estimate.c7b_anchored_key_tracking,
             estimate.c8a_internal_inputs,
-            estimate.c8b_external_inputs,
-            estimate.c8c_input_limit,
-            estimate.c9_symmetry_breaking
+            estimate.c8b_external_dep_inputs,
+            estimate.c8c_external_forward_inputs,
+            estimate.c8d_input_limit,
+            estimate.c9_symmetry_breaking,
+            estimate.c10_external_public_availability,
+            estimate.c10b_external_public_implies_pod_used
         );
     }
 
@@ -655,29 +737,61 @@ fn try_solve_with_pods(
         }
     }
 
-    // Constraint 5: Dependencies (works with Constraint 8 to enforce input POD tracking)
+    // Constraint 5: Dependency availability.
     //
-    // If s depends on d (internal), and s is proved in p, then either:
-    // - d is proved in p (local availability), OR
-    // - d is public in some earlier POD p' < p (cross-POD availability)
+    // Internal dependency (s depends on d):
+    //   prove[s][p] <= prove[d][p] + sum_{pp < p} public[d][pp]
     //
-    // This constraint ensures dependencies are AVAILABLE. It does NOT track which
-    // earlier PODs are actually used as inputs - that's handled by Constraint 8.
-    // Together:
-    // - Constraint 5 ensures the dependency CAN be satisfied
-    // - Constraint 8 ensures that when we use a statement from earlier POD pp,
-    //   we count pp as an input to pod p (for max_input_pods enforcement)
+    // External dependency (s depends on external premise u from external POD e):
+    //   prove[s][p] <= uses_external[p][e] + sum_{pp < p} public_external[u][pp]
+    //
+    // This captures the intended non-sticky semantics for external premises:
+    // a consumer POD can use the external POD directly, OR consume an earlier POD
+    // that made the external premise public.
     for s in 0..n {
         for dep in &input.deps.statement_deps[s] {
-            if let StatementSource::Internal(d) = dep {
-                for p in 0..target_pods {
-                    // prove[s][p] <= prove[d][p] + sum_{p' < p} public[d][p']
-                    let mut rhs: Expression = prove[*d][p].into();
-                    for pp in 0..p {
-                        rhs += public[*d][pp];
+            match dep {
+                StatementSource::Internal(d) => {
+                    for p in 0..target_pods {
+                        let mut rhs: Expression = prove[*d][p].into();
+                        for pp in 0..p {
+                            rhs += public[*d][pp];
+                        }
+                        model.add_constraint(constraint!(prove[s][p] <= rhs));
                     }
-                    model.add_constraint(constraint!(prove[s][p] <= rhs));
                 }
+                StatementSource::External(ext) => {
+                    if let (Some(&e), Some(&u)) = (
+                        external_to_idx.get(&ext.pod_hash),
+                        external_premise_to_idx.get(ext),
+                    ) {
+                        for p in 0..target_pods {
+                            let mut rhs: Expression = uses_external[p][e].into();
+                            for pp in 0..p {
+                                rhs += public_external[u][pp];
+                            }
+                            model.add_constraint(constraint!(prove[s][p] <= rhs));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Constraint 10: External-public availability and pod usage.
+    //
+    // An external premise can be made public in POD p iff it is available there:
+    // either directly from its source external input POD, or from an earlier POD
+    // that already exposed it publicly.
+    for (u, ext) in external_premises.iter().enumerate() {
+        if let Some(&e) = external_to_idx.get(&ext.pod_hash) {
+            for p in 0..target_pods {
+                let mut rhs: Expression = uses_external[p][e].into();
+                for pp in 0..p {
+                    rhs += public_external[u][pp];
+                }
+                model.add_constraint(constraint!(public_external[u][p] <= rhs));
+                model.add_constraint(constraint!(public_external[u][p] <= pod_used[p]));
             }
         }
     }
@@ -713,10 +827,14 @@ fn try_solve_with_pods(
                 <= (input.params.max_priv_statements() as f64) * pod_used[p]
         ));
 
-        // 6b: Public statement count
-        let pub_sum: Expression = (0..n).map(|s| public[s][p]).sum();
+        // 6b: Public statement count (internal public statements + forwarded external premises)
+        let pub_sum_internal: Expression = (0..n).map(|s| public[s][p]).sum();
+        let pub_sum_external: Expression = (0..external_premises.len())
+            .map(|u| public_external[u][p])
+            .sum();
         model.add_constraint(constraint!(
-            pub_sum <= (input.params.max_public_statements as f64) * pod_used[p]
+            pub_sum_internal + pub_sum_external
+                <= (input.params.max_public_statements as f64) * pod_used[p]
         ));
 
         // 6c: Merkle proofs
@@ -828,14 +946,9 @@ fn try_solve_with_pods(
         }
     }
 
-    // Constraint 8a: Internal input POD tracking using uses_input
-    // uses_input[p][pp] >= prove[s][p] + public[d][pp] - prove[d][p] - 1
-    // for each dependency (s depends on d)
-    //
-    // If s is proved in p and d is public in pp, we need pp as input UNLESS d is also
-    // proved locally in p. Subtracting prove[d][p] ensures that when d is re-proved
-    // locally (prove[d][p] = 1), the constraint becomes uses_input >= 0, which is
-    // always satisfied without forcing the input relationship.
+    // Constraint 8a: Internal input POD tracking using uses_input.
+    // If s is proved in p and depends on internal d exposed by pp, then pp must be counted
+    // as an input unless d is also proved locally in p.
     for s in 0..n {
         for dep in &input.deps.statement_deps[s] {
             if let StatementSource::Internal(d) = dep {
@@ -850,22 +963,50 @@ fn try_solve_with_pods(
         }
     }
 
-    // Constraint 8b: External input POD tracking using uses_external
-    // If statement s is proved in POD p and s depends on external POD e, then uses_external[p][e] = 1
+    // Constraint 8b: External dependency input tracking via earlier PODs.
+    // If s is proved in p, and external premise u is provided by earlier POD pp
+    // (i.e., public_external[u][pp] = 1), then pp must be counted as an input unless
+    // p uses the source external POD directly.
     for s in 0..n {
         for dep in &input.deps.statement_deps[s] {
-            if let StatementSource::External(h) = dep {
-                if let Some(&e) = external_to_idx.get(h) {
-                    for p in 0..target_pods {
-                        // If s is proved in p, then uses_external[p][e] = 1
-                        model.add_constraint(constraint!(uses_external[p][e] >= prove[s][p]));
+            if let StatementSource::External(ext) = dep {
+                if let (Some(&e), Some(&u)) = (
+                    external_to_idx.get(&ext.pod_hash),
+                    external_premise_to_idx.get(ext),
+                ) {
+                    for p in 1..target_pods {
+                        for pp in 0..p {
+                            model.add_constraint(constraint!(
+                                uses_input[p][pp]
+                                    >= prove[s][p] + public_external[u][pp]
+                                        - uses_external[p][e]
+                                        - 1.0
+                            ));
+                        }
                     }
                 }
             }
         }
     }
 
-    // Constraint 8c: Total input PODs (internal + external) must not exceed max_input_pods
+    // Constraint 8c: Forwarding an external premise as public also consumes an internal input
+    // unless the forwarding POD uses the source external POD directly.
+    for (u, ext) in external_premises.iter().enumerate() {
+        if let Some(&e) = external_to_idx.get(&ext.pod_hash) {
+            for p in 1..target_pods {
+                for pp in 0..p {
+                    model.add_constraint(constraint!(
+                        uses_input[p][pp]
+                            >= public_external[u][p] + public_external[u][pp]
+                                - uses_external[p][e]
+                                - 1.0
+                    ));
+                }
+            }
+        }
+    }
+
+    // Constraint 8d: Total input PODs (internal + external) must not exceed max_input_pods
     // For each POD p, the total number of inputs is:
     // - Internal inputs: PODs pp < p that provide public statements used by p
     // - External inputs: User-provided PODs referenced by statements in p
@@ -930,6 +1071,9 @@ fn try_solve_with_pods(
     let mut statement_to_pods: Vec<Vec<usize>> = vec![vec![]; n];
     let mut pod_statements: Vec<Vec<usize>> = vec![vec![]; pod_count];
     let mut pod_public_statements: Vec<BTreeSet<usize>> = vec![BTreeSet::new(); pod_count];
+    let mut pod_internal_inputs: Vec<BTreeSet<usize>> = vec![BTreeSet::new(); pod_count];
+    let mut pod_external_inputs: Vec<BTreeSet<usize>> = vec![BTreeSet::new(); pod_count];
+    let mut pod_public_external_premises: Vec<BTreeSet<usize>> = vec![BTreeSet::new(); pod_count];
 
     for s in 0..n {
         for p in 0..pod_count {
@@ -943,17 +1087,47 @@ fn try_solve_with_pods(
         }
     }
 
+    for p in 0..pod_count {
+        for pp in 0..p {
+            if solution.value(uses_input[p][pp]) > SOLVER_BINARY_THRESHOLD {
+                pod_internal_inputs[p].insert(pp);
+            }
+        }
+        for e in 0..external_pods.len() {
+            if solution.value(uses_external[p][e]) > SOLVER_BINARY_THRESHOLD {
+                pod_external_inputs[p].insert(e);
+            }
+        }
+    }
+
+    for u in 0..external_premises.len() {
+        for p in 0..pod_count {
+            if solution.value(public_external[u][p]) > SOLVER_BINARY_THRESHOLD {
+                pod_public_external_premises[p].insert(u);
+            }
+        }
+    }
+
     Ok(Some(MultiPodSolution {
         pod_count,
         statement_to_pods,
         pod_statements,
         pod_public_statements,
+        pod_internal_inputs,
+        external_pod_hashes: external_pods.to_vec(),
+        pod_external_inputs,
+        external_premises: external_premises.to_vec(),
+        pod_public_external_premises,
     }))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{
+        frontend::multi_pod::deps::ExternalDependency,
+        middleware::{Statement, Value, ValueRef},
+    };
 
     #[test]
     fn test_no_public_statements_error() {
@@ -982,5 +1156,68 @@ mod tests {
             .unwrap_err()
             .to_string()
             .contains("No public statements requested"));
+    }
+
+    #[test]
+    fn test_external_dependency_can_be_forwarded_to_reduce_input_pressure() {
+        // Build a minimal synthetic case:
+        // - s0 depends on external premise E
+        // - s1 (output) depends on s0 and E
+        // - max_input_pods = 1 and max_priv_statements = 1 forces two PODs:
+        //   POD0 proves s0 and must make both s0 and E public,
+        //   POD1 consumes only POD0 as input (no direct external input).
+        let params = Params {
+            max_statements: 3,
+            max_public_statements: 2,
+            max_input_pods: 1,
+            ..Params::default()
+        };
+
+        let ext_stmt = Statement::Equal(
+            ValueRef::Literal(Value::from(42_i64)),
+            ValueRef::Literal(Value::from(42_i64)),
+        );
+        let external_dep = ExternalDependency {
+            pod_hash: Hash::default(),
+            statement: ext_stmt,
+        };
+
+        let deps = DependencyGraph {
+            statement_deps: vec![
+                vec![StatementSource::External(external_dep.clone())],
+                vec![
+                    StatementSource::Internal(0),
+                    StatementSource::External(external_dep),
+                ],
+            ],
+        };
+
+        let costs = vec![StatementCost::default(), StatementCost::default()];
+        let statement_content_groups = vec![vec![0], vec![1]];
+        let output_public = vec![1];
+
+        let input = SolverInput {
+            num_statements: 2,
+            costs: &costs,
+            deps: &deps,
+            output_public_indices: &output_public,
+            params: &params,
+            max_pods: 4,
+            all_anchored_keys: &[],
+            anchored_key_producers: &[],
+            statement_content_groups: &statement_content_groups,
+        };
+
+        let solution = solve(&input).expect("solver should find a feasible forwarding layout");
+
+        assert_eq!(solution.pod_count, 2);
+        assert_eq!(solution.external_premises.len(), 1);
+
+        // POD1 should consume POD0 as its only input and avoid direct external input.
+        assert!(solution.pod_internal_inputs[1].contains(&0));
+        assert!(solution.pod_external_inputs[1].is_empty());
+
+        // POD0 should expose the external premise publicly so POD1 can consume it via POD0.
+        assert!(solution.pod_public_external_premises[0].contains(&0));
     }
 }

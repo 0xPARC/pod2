@@ -11,13 +11,22 @@ use crate::{
     middleware::{Hash, Statement},
 };
 
+/// Reference to a statement sourced from an external input POD.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct ExternalDependency {
+    /// Hash of the external POD containing `statement` in its public set.
+    pub pod_hash: Hash,
+    /// The statement value itself.
+    pub statement: Statement,
+}
+
 /// Represents a source of a statement dependency.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum StatementSource {
     /// Statement created within this builder at the given index.
     Internal(usize),
-    /// Statement from an external input POD (identified by POD hash).
-    External(Hash),
+    /// Statement from an external input POD.
+    External(ExternalDependency),
 }
 
 /// Dependency graph for all statements in a builder.
@@ -87,7 +96,10 @@ impl DependencyGraph {
 
                     // Check if this is from an external POD
                     if let Some(&pod_hash) = external_pod_statements.get(dep_stmt) {
-                        deps.push(StatementSource::External(pod_hash));
+                        deps.push(StatementSource::External(ExternalDependency {
+                            pod_hash,
+                            statement: dep_stmt.clone(),
+                        }));
                     } else if AnchoredKeyId::from_contains_statement(dep_stmt).is_some() {
                         // Anchored-key Contains args may be implicit requirements that are
                         // auto-materialized by MainPodBuilder. They are handled by anchored-key
