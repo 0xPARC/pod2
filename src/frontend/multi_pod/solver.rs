@@ -402,8 +402,10 @@ pub fn solve(input: &SolverInput) -> Result<MultiPodSolution> {
     for deps in &input.deps.statement_deps {
         for dep in deps {
             if let StatementSource::External(ext) = dep {
-                if !external_pod_to_idx.contains_key(&ext.pod_hash) {
-                    external_pod_to_idx.insert(ext.pod_hash, external_pods.len());
+                if let std::collections::hash_map::Entry::Vacant(e) =
+                    external_pod_to_idx.entry(ext.pod_hash)
+                {
+                    e.insert(external_pods.len());
                     external_pods.push(ext.pod_hash);
                 }
                 if !external_premise_to_idx.contains_key(ext) {
