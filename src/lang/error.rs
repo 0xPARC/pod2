@@ -287,7 +287,8 @@ fn format_public_args_at_split_error(
 
     msg.push_str(&format!(
         "  Statements {}-{} in this segment\n",
-        context.statement_range.0, context.statement_range.1
+        context.statement_range.0,
+        context.statement_range.1 - 1
     ));
 
     if !context.incoming_public.is_empty() {

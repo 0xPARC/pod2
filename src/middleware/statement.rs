@@ -77,14 +77,14 @@ impl NativePredicate {
             | NativePredicate::MaxOf
             | NativePredicate::HashOf
             | NativePredicate::SetInsert
-            | NativePredicate::SetDelete => 3,
+            | NativePredicate::SetDelete
+            | NativePredicate::DictDelete
+            | NativePredicate::ContainerDelete => 3,
             NativePredicate::DictInsert
             | NativePredicate::DictUpdate
-            | NativePredicate::DictDelete
             | NativePredicate::ArrayUpdate
             | NativePredicate::ContainerInsert
-            | NativePredicate::ContainerUpdate
-            | NativePredicate::ContainerDelete => 4,
+            | NativePredicate::ContainerUpdate => 4,
         }
     }
 }
