@@ -33,11 +33,11 @@
 // MILP constraint building uses explicit index loops for clarity
 #![allow(clippy::needless_range_loop)]
 
-use std::collections::BTreeSet;
+use std::{collections::BTreeSet, time::Instant};
 
 use good_lp::{
-    constraint, default_solver, variable, Expression, ProblemVariables, Solution, SolverModel,
-    Variable,
+    constraint, default_solver, variable, Expression, ProblemVariables, ResolutionError, Solution,
+    SolverModel, Variable,
 };
 use itertools::Itertools;
 
@@ -47,13 +47,193 @@ use crate::{
         cost::{AnchoredKeyId, CustomBatchId, StatementCost},
         deps::{DependencyGraph, StatementSource},
     },
-    middleware::Params,
+    middleware::{Hash, Params},
 };
 
 /// Threshold for interpreting MILP solver's floating-point results as binary.
 /// The solver returns continuous values in [0, 1] for binary variables;
 /// values > 0.5 are interpreted as "true" (1), otherwise "false" (0).
 const SOLVER_BINARY_THRESHOLD: f64 = 0.5;
+
+#[derive(Clone, Copy, Debug, Default)]
+struct ResourceTotals {
+    merkle_proofs: usize,
+    merkle_state_transitions: usize,
+    custom_pred_verifications: usize,
+    signed_by: usize,
+    public_key_of: usize,
+}
+
+impl ResourceTotals {
+    fn from_costs(costs: &[StatementCost]) -> Self {
+        costs.iter().fold(Self::default(), |mut totals, c| {
+            totals.merkle_proofs += c.merkle_proofs;
+            totals.merkle_state_transitions += c.merkle_state_transitions;
+            totals.custom_pred_verifications += c.custom_pred_verifications;
+            totals.signed_by += c.signed_by;
+            totals.public_key_of += c.public_key_of;
+            totals
+        })
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct DependencyStats {
+    internal_edges: usize,
+    external_edges: usize,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct SolveDebugContext {
+    dep_stats: DependencyStats,
+    batch_memberships: usize,
+    anchored_key_memberships: usize,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct ModelSizeEstimate {
+    vars_prove: usize,
+    vars_public: usize,
+    vars_pod_used: usize,
+    vars_batch_used: usize,
+    vars_anchored_key_used: usize,
+    vars_uses_input: usize,
+    vars_uses_external: usize,
+    vars_content_group_used: usize,
+    vars_total: usize,
+    c1_coverage: usize,
+    c2_output_public: usize,
+    c2b_output_privacy: usize,
+    c3_public_implies_proved: usize,
+    c4_pod_existence: usize,
+    c5_dependencies: usize,
+    c6_pre_content_group: usize,
+    c6_resource_limits: usize,
+    c7_batch_cardinality: usize,
+    c7b_anchored_key_tracking: usize,
+    c8a_internal_inputs: usize,
+    c8b_external_inputs: usize,
+    c8c_input_limit: usize,
+    c9_symmetry_breaking: usize,
+    constraints_total: usize,
+}
+
+impl ModelSizeEstimate {
+    fn for_target_pods(
+        input: &SolverInput,
+        target_pods: usize,
+        all_batches_len: usize,
+        external_pods_len: usize,
+        debug_ctx: &SolveDebugContext,
+    ) -> Self {
+        let n = input.num_statements;
+        let num_groups = input.statement_content_groups.len();
+        let num_anchored_keys = input.all_anchored_keys.len();
+        let triangular_k = target_pods * target_pods.saturating_sub(1) / 2;
+
+        let vars_prove = n * target_pods;
+        let vars_public = n * target_pods;
+        let vars_pod_used = target_pods;
+        let vars_batch_used = all_batches_len * target_pods;
+        let vars_anchored_key_used = num_anchored_keys * target_pods;
+        let vars_uses_input = triangular_k;
+        let vars_uses_external = external_pods_len * target_pods;
+        let vars_content_group_used = num_groups * target_pods;
+        let vars_total = vars_prove
+            + vars_public
+            + vars_pod_used
+            + vars_batch_used
+            + vars_anchored_key_used
+            + vars_uses_input
+            + vars_uses_external
+            + vars_content_group_used;
+
+        let c1_coverage = n;
+        let c2_output_public = input.output_public_indices.len();
+        let c2b_output_privacy = n.saturating_sub(c2_output_public);
+        let c3_public_implies_proved = n * target_pods;
+        let c4_pod_existence = n * target_pods;
+        let c5_dependencies = debug_ctx.dep_stats.internal_edges * target_pods;
+        let c6_pre_content_group = (n * target_pods) + (num_groups * target_pods);
+        let c6_resource_limits = 7 * target_pods;
+        let c7_batch_cardinality =
+            (debug_ctx.batch_memberships * target_pods) + (all_batches_len * target_pods);
+        let c7b_anchored_key_tracking =
+            (debug_ctx.anchored_key_memberships * target_pods) + (num_anchored_keys * target_pods);
+        let c8a_internal_inputs = debug_ctx.dep_stats.internal_edges * triangular_k;
+        let c8b_external_inputs = debug_ctx.dep_stats.external_edges * target_pods;
+        let c8c_input_limit = target_pods;
+        let c9_symmetry_breaking = target_pods.saturating_sub(1);
+        let constraints_total = c1_coverage
+            + c2_output_public
+            + c2b_output_privacy
+            + c3_public_implies_proved
+            + c4_pod_existence
+            + c5_dependencies
+            + c6_pre_content_group
+            + c6_resource_limits
+            + c7_batch_cardinality
+            + c7b_anchored_key_tracking
+            + c8a_internal_inputs
+            + c8b_external_inputs
+            + c8c_input_limit
+            + c9_symmetry_breaking;
+
+        Self {
+            vars_prove,
+            vars_public,
+            vars_pod_used,
+            vars_batch_used,
+            vars_anchored_key_used,
+            vars_uses_input,
+            vars_uses_external,
+            vars_content_group_used,
+            vars_total,
+            c1_coverage,
+            c2_output_public,
+            c2b_output_privacy,
+            c3_public_implies_proved,
+            c4_pod_existence,
+            c5_dependencies,
+            c6_pre_content_group,
+            c6_resource_limits,
+            c7_batch_cardinality,
+            c7b_anchored_key_tracking,
+            c8a_internal_inputs,
+            c8b_external_inputs,
+            c8c_input_limit,
+            c9_symmetry_breaking,
+            constraints_total,
+        }
+    }
+}
+
+fn dependency_stats(deps: &DependencyGraph) -> DependencyStats {
+    let mut stats = DependencyStats::default();
+    for dep_list in &deps.statement_deps {
+        for dep in dep_list {
+            match dep {
+                StatementSource::Internal(_) => stats.internal_edges += 1,
+                StatementSource::External(_) => stats.external_edges += 1,
+            }
+        }
+    }
+    stats
+}
+
+fn lower_bound_from_total(total: usize, per_pod_limit: usize) -> Option<usize> {
+    if total == 0 {
+        Some(0)
+    } else if per_pod_limit == 0 {
+        None
+    } else {
+        Some(total.div_ceil(per_pod_limit))
+    }
+}
+
+fn format_lower_bound(lb: Option<usize>) -> String {
+    lb.map_or_else(|| "inf".to_string(), |v| v.to_string())
+}
 
 /// Solution from the MILP solver.
 #[derive(Clone, Debug)]
@@ -167,10 +347,116 @@ pub fn solve(input: &SolverInput) -> Result<MultiPodSolution> {
         .unique()
         .collect();
 
+    // Collect all unique external POD hashes referenced by dependencies.
+    let external_pods: Vec<Hash> = input
+        .deps
+        .statement_deps
+        .iter()
+        .flat_map(|deps| deps.iter())
+        .filter_map(|dep| match dep {
+            StatementSource::External(h) => Some(*h),
+            StatementSource::Internal(_) => None,
+        })
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect();
+
+    let dep_stats = dependency_stats(input.deps);
+    let batch_memberships: usize = input.costs.iter().map(|c| c.custom_batch_ids.len()).sum();
+    let anchored_key_memberships: usize = input.costs.iter().map(|c| c.anchored_keys.len()).sum();
+    let debug_ctx = SolveDebugContext {
+        dep_stats,
+        batch_memberships,
+        anchored_key_memberships,
+    };
+
+    if log::log_enabled!(log::Level::Debug) {
+        let resource_totals = ResourceTotals::from_costs(input.costs);
+        let lb_statement_groups =
+            lower_bound_from_total(input.statement_content_groups.len(), max_stmts_per_pod);
+        let lb_merkle = lower_bound_from_total(
+            resource_totals.merkle_proofs,
+            input.params.max_merkle_proofs_containers,
+        );
+        let lb_merkle_transitions = lower_bound_from_total(
+            resource_totals.merkle_state_transitions,
+            input
+                .params
+                .max_merkle_tree_state_transition_proofs_containers,
+        );
+        let lb_custom_pred_verifications = lower_bound_from_total(
+            resource_totals.custom_pred_verifications,
+            input.params.max_custom_predicate_verifications,
+        );
+        let lb_signed_by =
+            lower_bound_from_total(resource_totals.signed_by, input.params.max_signed_by);
+        let lb_public_key_of = lower_bound_from_total(
+            resource_totals.public_key_of,
+            input.params.max_public_key_of,
+        );
+        let lower_bound_candidates = [
+            ("statements_raw", Some(min_pods_by_statements)),
+            ("merkle_proofs", lb_merkle),
+            ("merkle_state_transitions", lb_merkle_transitions),
+            ("custom_pred_verifications", lb_custom_pred_verifications),
+            ("signed_by", lb_signed_by),
+            ("public_key_of", lb_public_key_of),
+        ];
+        let dominant_lb = lower_bound_candidates
+            .iter()
+            .max_by_key(|(_, lb)| lb.unwrap_or(usize::MAX))
+            .expect("non-empty lower-bound candidate list");
+
+        log::debug!(
+            "MILP summary: statements={} output_public={} content_groups={} anchored_keys={} \
+             batches={} deps_internal_edges={} deps_external_edges={} external_input_pods={} \
+             search_min_pods={} max_pods={}",
+            n,
+            num_output_public,
+            input.statement_content_groups.len(),
+            input.all_anchored_keys.len(),
+            all_batches.len(),
+            dep_stats.internal_edges,
+            dep_stats.external_edges,
+            external_pods.len(),
+            min_pods,
+            input.max_pods
+        );
+        log::debug!(
+            "MILP resource totals: merkle_proofs={} merkle_state_transitions={} \
+             custom_pred_verifications={} signed_by={} public_key_of={} \
+             batch_memberships={} anchored_key_memberships={}",
+            resource_totals.merkle_proofs,
+            resource_totals.merkle_state_transitions,
+            resource_totals.custom_pred_verifications,
+            resource_totals.signed_by,
+            resource_totals.public_key_of,
+            batch_memberships,
+            anchored_key_memberships
+        );
+        log::debug!(
+            "MILP lower bounds (pods): statements_raw={} statements_dedup={} merkle_proofs={} \
+             merkle_state_transitions={} custom_pred_verifications={} signed_by={} \
+             public_key_of={} dominant={}({})",
+            min_pods_by_statements,
+            format_lower_bound(lb_statement_groups),
+            format_lower_bound(lb_merkle),
+            format_lower_bound(lb_merkle_transitions),
+            format_lower_bound(lb_custom_pred_verifications),
+            format_lower_bound(lb_signed_by),
+            format_lower_bound(lb_public_key_of),
+            dominant_lb.0,
+            format_lower_bound(dominant_lb.1)
+        );
+    }
+
     // Incremental approach: try solving with increasing POD counts
     // Start with min_pods and increment until we find a feasible solution
     for target_pods in min_pods..=input.max_pods {
-        if let Some(solution) = try_solve_with_pods(input, target_pods, &all_batches)? {
+        log::debug!("Trying to solve with {} PODs", target_pods);
+        if let Some(solution) =
+            try_solve_with_pods(input, target_pods, &all_batches, &external_pods, &debug_ctx)?
+        {
             return Ok(solution);
         }
         // Infeasible with target_pods, try more
@@ -194,7 +480,11 @@ fn try_solve_with_pods(
     input: &SolverInput,
     target_pods: usize,
     all_batches: &[CustomBatchId],
+    external_pods: &[Hash],
+    debug_ctx: &SolveDebugContext,
 ) -> Result<Option<MultiPodSolution>> {
+    let attempt_started_at = Instant::now();
+
     // Create variables
     let mut vars = ProblemVariables::new();
     let n = input.num_statements;
@@ -250,22 +540,6 @@ fn try_solve_with_pods(
         .map(|p| (0..p).map(|_| vars.add(variable().binary())).collect())
         .collect();
 
-    // Collect all external POD hashes that statements depend on.
-    // These are user-provided input PODs referenced by statements.
-    use crate::middleware::Hash;
-    let external_pods: Vec<Hash> = input
-        .deps
-        .statement_deps
-        .iter()
-        .flat_map(|deps| deps.iter())
-        .filter_map(|dep| match dep {
-            StatementSource::External(h) => Some(*h),
-            StatementSource::Internal(_) => None,
-        })
-        .collect::<BTreeSet<_>>()
-        .into_iter()
-        .collect();
-
     // uses_external[p][e] - POD p uses external POD e as an input
     let uses_external: Vec<Vec<Variable>> = (0..target_pods)
         .map(|_| {
@@ -293,6 +567,51 @@ fn try_solve_with_pods(
                 .collect()
         })
         .collect();
+
+    if log::log_enabled!(log::Level::Debug) {
+        let estimate = ModelSizeEstimate::for_target_pods(
+            input,
+            target_pods,
+            all_batches.len(),
+            external_pods.len(),
+            debug_ctx,
+        );
+        log::debug!(
+            "MILP(k={}) model estimate vars_total={} [prove={} public={} pod_used={} \
+             batch_used={} anchored_key_used={} uses_input={} uses_external={} \
+             content_group_used={}]",
+            target_pods,
+            estimate.vars_total,
+            estimate.vars_prove,
+            estimate.vars_public,
+            estimate.vars_pod_used,
+            estimate.vars_batch_used,
+            estimate.vars_anchored_key_used,
+            estimate.vars_uses_input,
+            estimate.vars_uses_external,
+            estimate.vars_content_group_used
+        );
+        log::debug!(
+            "MILP(k={}) model estimate constraints_total={} [c1={} c2={} c2b={} c3={} c4={} \
+             c5={} c6_pre={} c6_limits={} c7={} c7b={} c8a={} c8b={} c8c={} c9={}]",
+            target_pods,
+            estimate.constraints_total,
+            estimate.c1_coverage,
+            estimate.c2_output_public,
+            estimate.c2b_output_privacy,
+            estimate.c3_public_implies_proved,
+            estimate.c4_pod_existence,
+            estimate.c5_dependencies,
+            estimate.c6_pre_content_group,
+            estimate.c6_resource_limits,
+            estimate.c7_batch_cardinality,
+            estimate.c7b_anchored_key_tracking,
+            estimate.c8a_internal_inputs,
+            estimate.c8b_external_inputs,
+            estimate.c8c_input_limit,
+            estimate.c9_symmetry_breaking
+        );
+    }
 
     // No optimization objective needed - we use an incremental approach that tries
     // min_pods first and increments until feasible. Combined with symmetry breaking
@@ -569,10 +888,32 @@ fn try_solve_with_pods(
     }
 
     // Solve
+    let solve_started_at = Instant::now();
     let solution = match model.solve() {
-        Ok(sol) => sol,
-        Err(_) => {
-            // Infeasible with this number of PODs, try more
+        Ok(sol) => {
+            log::debug!(
+                "MILP(k={}) result=feasible solve_ms={} total_ms={}",
+                target_pods,
+                solve_started_at.elapsed().as_millis(),
+                attempt_started_at.elapsed().as_millis()
+            );
+            sol
+        }
+        Err(err) => {
+            let status = match err {
+                ResolutionError::Infeasible => "infeasible",
+                ResolutionError::Unbounded => "unbounded",
+                ResolutionError::Other(_) | ResolutionError::Str(_) => "error",
+            };
+            log::debug!(
+                "MILP(k={}) result={} solve_ms={} total_ms={} detail={}",
+                target_pods,
+                status,
+                solve_started_at.elapsed().as_millis(),
+                attempt_started_at.elapsed().as_millis(),
+                err
+            );
+            // Infeasible or solver error with this number of PODs, try more
             return Ok(None);
         }
     };
