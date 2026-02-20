@@ -295,7 +295,8 @@ impl SolvedMultiPod {
             added_statements_by_content.insert(original_stmt, stmt);
         }
 
-        // For the output pod, make statements public in the original order
+        // For the output pod, make statements public in the original order.
+        // Intermediate pods use the solver-selected public set.
         if pod_idx == solution.pod_count - 1 {
             for idx in &self.output_public_indices {
                 let stmt = added_statements_by_content
@@ -312,6 +313,13 @@ impl SolvedMultiPod {
             }
         }
 
+        // Forward external premises only when the solver selected them as public
+        // for this POD. These do not require local proving in this POD.
+        for ext_premise_idx in &solution.pod_public_external_premises[pod_idx] {
+            let ext_premise = &solution.external_premises[*ext_premise_idx];
+            builder.reveal(&ext_premise.statement);
+        }
+
         // Step 4: Prove the POD
         let pod = builder.prove(prover)?;
 
@@ -323,36 +331,17 @@ impl SolvedMultiPod {
     /// Returns (internal_pod_indices, external_pod_indices).
     fn compute_pod_inputs(&self, pod_idx: usize) -> (BTreeSet<usize>, BTreeSet<usize>) {
         let solution = &self.solution;
-        let statements_in_pod = &solution.pod_statements[pod_idx];
-
-        let mut internal_pods: BTreeSet<usize> = BTreeSet::new();
+        let internal_pods = solution.pod_internal_inputs[pod_idx].clone();
         let mut external_pods: BTreeSet<usize> = BTreeSet::new();
 
-        for &stmt_idx in statements_in_pod {
-            for dep in &self.deps.statement_deps[stmt_idx] {
-                match dep {
-                    StatementSource::Internal(dep_idx) => {
-                        // Check if dependency is in an earlier POD (not local)
-                        if !statements_in_pod.contains(dep_idx) {
-                            let earlier_pod_idx = (0..pod_idx)
-                                .find(|earlier_pod_idx| {
-                                    solution.pod_public_statements[*earlier_pod_idx]
-                                        .contains(dep_idx)
-                                })
-                                .expect("internal pod with dependency statement");
-                            internal_pods.insert(earlier_pod_idx);
-                        }
-                    }
-                    StatementSource::External(pod_hash) => {
-                        let idx = self
-                            .input_pods
-                            .iter()
-                            .position(|p| p.statements_hash() == *pod_hash)
-                            .expect("external pod with dependency statement");
-                        external_pods.insert(idx);
-                    }
-                }
-            }
+        for external_idx in &solution.pod_external_inputs[pod_idx] {
+            let pod_hash = solution.external_pod_hashes[*external_idx];
+            let idx = self
+                .input_pods
+                .iter()
+                .position(|p| p.statements_hash() == pod_hash)
+                .expect("external pod hash from solver solution");
+            external_pods.insert(idx);
         }
 
         assert!(internal_pods.len() + external_pods.len() <= self.params.max_input_pods);
@@ -1196,16 +1185,16 @@ mod tests {
 
     #[test]
     fn test_external_pods_counted_in_input_limit() -> Result<()> {
-        // Verifies that external input PODs are counted toward max_input_pods.
+        // Verifies that external input PODs are counted toward max_input_pods while
+        // still allowing the solver to route external premises through intermediate PODs.
         //
         // Setup:
         // - max_input_pods = 2
         // - 3 external PODs (A, B, C), each with a public statement
         // - 3 public operations, each copying from a different external POD
         //
-        // Since all 3 must be public in POD 0 (the output POD), and POD 0 would need
-        // all 3 external PODs as inputs (3 > max_input_pods), this is infeasible.
-        // The solver should correctly detect and report this.
+        // A direct 1-POD layout would need 3 external inputs in the output POD (infeasible),
+        // so the solver should split the work and keep each generated POD within input limits.
 
         let params = Params {
             max_statements: 10,
@@ -1256,26 +1245,24 @@ mod tests {
         multi_builder.add_pod(ext_pod_b)?;
         multi_builder.add_pod(ext_pod_c)?;
 
-        // Add public operations that each depend on a different external POD
-        // All 3 must be public in POD 0, requiring 3 external inputs > max_input_pods
+        // Add public operations that each depend on a different external POD.
         multi_builder.pub_op(FrontendOp::copy(stmt_a))?;
         multi_builder.pub_op(FrontendOp::copy(stmt_b))?;
         multi_builder.pub_op(FrontendOp::copy(stmt_c))?;
 
-        // Solver should correctly detect infeasibility and return an error
-        let result = multi_builder.solve();
+        // Solver should find a feasible multi-POD layout that respects input limits.
+        let solved = multi_builder.solve()?;
         assert!(
-            result.is_err(),
-            "Expected solver to report infeasibility, but got: {:?}",
-            result
+            solved.solution().pod_count >= 2,
+            "Expected at least 2 PODs to satisfy max_input_pods=2 with 3 external sources"
         );
 
-        let err_msg = result.unwrap_err().to_string();
-        assert!(
-            err_msg.contains("No feasible solution"),
-            "Expected 'No feasible solution' error, got: {}",
-            err_msg
-        );
+        let result = solved.prove(&prover)?;
+        for (i, pod) in result.pods.iter().enumerate() {
+            pod.pod
+                .verify()
+                .unwrap_or_else(|_| panic!("POD {} verification failed", i));
+        }
 
         Ok(())
     }
