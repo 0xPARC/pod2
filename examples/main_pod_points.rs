@@ -71,7 +71,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Declare the custom predicate
     let input = format!(
         r#"
-        points(player, level, points, private: points_dict) = AND(
+        has_points(player, level, points, private: points_dict) = AND(
             SignedBy(points_dict, PublicKey({game_pk}))
             Contains(points_dict, "player", player)
             Contains(points_dict, "level", level)
@@ -79,8 +79,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         )
 
         over_9000(player, private: points_lvl_1, points_lvl_2, points_total) = AND(
-            points(player, 1, points_lvl_1)
-            points(player, 2, points_lvl_2)
+            has_points(player, 1, points_lvl_1)
+            has_points(player, 2, points_lvl_2)
             SumOf(points_total, points_lvl_1, points_lvl_2)
             Gt(points_total, 9000)
         )
@@ -90,10 +90,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("# custom predicate batch:{}", input);
     let module = load_module(&input, "points_module", &params, &[])?;
     let batch = module.batch.clone();
-    let points_pred = batch.predicate_ref_by_name("points").unwrap();
+    let points_pred = batch.predicate_ref_by_name("has_points").unwrap();
     let over_9000_pred = batch.predicate_ref_by_name("over_9000").unwrap();
 
-    // Build a pod to prove the statement `points("Alice", 1, 3512)`
+    // Build a pod to prove the statement `has_points("Alice", 1, 3512)`
     let mut builder = MainPodBuilder::new(&params, vd_set);
     let st_signed_by = builder.priv_op(Operation::dict_signed_by(&pod_points_lvl_1))?;
     let st_player = builder.priv_op(Operation::dict_contains(
@@ -120,7 +120,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("# pod_alice_lvl_1_points\n:{}", pod_alice_lvl_1_points);
     pod_alice_lvl_1_points.pod.verify().unwrap();
 
-    // Build a pod to prove the statement `points("Alice", 2, 5771)`
+    // Build a pod to prove the statement `has_points("Alice", 2, 5771)`
     let mut builder = MainPodBuilder::new(&params, vd_set);
     let st_signed_by = builder.priv_op(Operation::dict_signed_by(&pod_points_lvl_2))?;
     let st_player = builder.priv_op(Operation::dict_contains(
