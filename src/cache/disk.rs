@@ -49,13 +49,26 @@ pub fn get<T: Serialize + DeserializeOwned, P: Serialize>(
 
     // Store the params.json if it doesn't exist for better debuggability
     let params_path = cache_dir.join("params.json");
-    if !params_path.try_exists()? {
-        // First write the file to .tmp and then rename to avoid a corrupted file if we crash in
-        // the middle of the write.
-        let params_path_tmp = cache_dir.join("params.json.tmp");
-        let mut file = File::create(&params_path_tmp)?;
-        file.write_all(params_json.as_bytes())?;
-        rename(params_path_tmp, params_path)?;
+    loop {
+        if !params_path.try_exists()? {
+            // First write the file to .tmp and then rename to avoid having a corrupted file if we
+            // crash in the middle of the write.
+            let params_path_tmp = cache_dir.join("params.json.tmp");
+            let mut file = File::create(&params_path_tmp)?;
+            match file.try_lock() {
+                Ok(_) => (),
+                Err(TryLockError::WouldBlock) => {
+                    // Lock not acquired.  Another process is storing the params, let's
+                    // try again in 100 ms.
+                    thread::sleep(time::Duration::from_millis(100));
+                    continue;
+                }
+                Err(TryLockError::Error(err)) => return Err(Box::new(err)),
+            }
+            file.write_all(params_json.as_bytes())?;
+            rename(params_path_tmp, params_path)?;
+        }
+        break;
     }
 
     let cache_path = cache_dir.join(format!("{}.cbor", name));
