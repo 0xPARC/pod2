@@ -14,6 +14,8 @@ use serde::{Deserialize, Serialize};
 use crate::middleware::{Hash, RawValue, EMPTY_HASH, EMPTY_VALUE, F};
 
 pub mod circuit;
+// pub mod storage;
+pub mod database;
 pub use circuit::*;
 pub mod error;
 pub use error::{TreeError, TreeResult};
