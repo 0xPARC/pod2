@@ -15,7 +15,8 @@ use crate::middleware::{Hash, RawValue, EMPTY_HASH, EMPTY_VALUE, F};
 
 pub mod circuit;
 // pub mod storage;
-pub mod database;
+// pub mod database;
+pub mod new_mt;
 pub use circuit::*;
 pub mod error;
 pub use error::{TreeError, TreeResult};
