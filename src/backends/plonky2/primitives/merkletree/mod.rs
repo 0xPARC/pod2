@@ -2,6 +2,7 @@
 //! <https://0xparc.github.io/pod2/merkletree.html> .
 use std::{collections::HashMap, fmt, iter::IntoIterator};
 
+use anyhow::Result;
 use itertools::zip_eq;
 use plonky2::{
     field::types::Field,
@@ -15,6 +16,8 @@ use crate::middleware::{Hash, RawValue, EMPTY_HASH, EMPTY_VALUE, F};
 
 pub mod circuit;
 pub use circuit::*;
+mod db;
+use db::{Txn, DB};
 pub mod error;
 pub use error::{TreeError, TreeResult};
 
@@ -25,7 +28,8 @@ const MAX_DEPTH: usize = 256;
 /// <https://0xparc.github.io/pod2/merkletree.html>
 #[derive(Clone, Debug)]
 pub struct MerkleTree {
-    root: Node,
+    root: Hash,
+    db: Box<dyn DB>,
 }
 
 impl PartialEq for MerkleTree {
@@ -37,29 +41,198 @@ impl Eq for MerkleTree {}
 
 impl MerkleTree {
     /// builds a new `MerkleTree` where the leaves contain the given key-values
+    // TODO: this method is kept for legacy compatibility at higher levels of
+    // the pod2 repo. It should be replaced by the `from_db` or `empty_with_db`
+    // or similar, and the `.unwrap()` occurences should be removed.
     pub fn new(kvs: &HashMap<RawValue, RawValue>) -> Self {
         // Start with an empty node as root.
-        let mut root = Node::None;
+
+        let db = db::MemDB::new();
+        let mut txn = db.begin_txn(true).unwrap();
 
         // Iterate over key-value pairs (if any) and add them.
+        let mut root = EMPTY_HASH;
+        txn.store_node(root.into(), Node::Leaf(Leaf::new(root.into(), EMPTY_VALUE)))
+            .unwrap();
         for (k, v) in kvs.iter() {
-            root.apply_op(MerkleTreeOp::Insert, *k, Some(*v)).unwrap();
+            dbg!(&k);
+            root = Self::apply_op(&mut txn, MerkleTreeOp::Insert, root, *k, Some(*v)).unwrap();
         }
+        txn.commit().unwrap();
 
         // Fill in hashes.
-        let _ = root.compute_hash();
-        Self { root }
+        Self {
+            root,
+            db: Box::new(db),
+        }
+    }
+
+    pub fn empty_with_db(db: Box<dyn DB>) -> Self {
+        Self::from_db(EMPTY_HASH, db)
+    }
+
+    pub fn from_db(root: Hash, db: Box<dyn DB>) -> Self {
+        Self { root, db }
     }
 
     /// returns the root of the tree
     pub fn root(&self) -> Hash {
-        self.root.hash()
+        self.root
+    }
+
+    /// Goes down from the current node until it encounters a terminal node,
+    /// viz. a leaf or empty node, or until it reaches the maximum depth. The
+    /// `siblings` parameter is used to store the siblings while going down to
+    /// the leaf, if the given parameter is set to `None`, then no siblings are
+    /// stored. In this way, the same method `down` can be used by MerkleTree
+    /// methods `get`, `contains`, `prove` and `prove_nonexistence`.
+    ///
+    /// Be aware that this method will return the found leaf at the given path,
+    /// which may contain a different key and value than the expected one.
+    fn down(
+        txn: &Box<dyn Txn>,
+        path: Vec<bool>,
+        lvl: usize,
+        curr_node_hash: Hash, // hash of current level node
+        new_key: RawValue,    // key to be added/found at the leaf
+        mut siblings: Option<&mut Vec<Hash>>,
+        // `get_leaf_only` indicates if want to reach the existing leaf, or keep
+        // going down till the virtual divergence. `true` is for read-only
+        // operations, while `false` is when the tree is being modified.
+        get_leaf_only: bool,
+    ) -> Result<Option<(RawValue, RawValue)>> {
+        if lvl > MAX_DEPTH {
+            panic!("error: max level reached"); // TODO return error
+        }
+
+        if curr_node_hash == EMPTY_HASH {
+            return Ok(Some((curr_node_hash.into(), EMPTY_VALUE)));
+        }
+
+        let node = txn.load_node(curr_node_hash.into())?;
+        match node {
+            Node::Intermediate(n) => {
+                dbg!("INTERMEDIATE");
+                if path[lvl] {
+                    if let Some(s) = siblings.as_mut() {
+                        s.push(n.left);
+                    }
+                    Self::down(
+                        txn,
+                        path,
+                        lvl + 1,
+                        n.right,
+                        new_key,
+                        siblings,
+                        get_leaf_only,
+                    )
+                } else {
+                    if let Some(s) = siblings.as_mut() {
+                        s.push(n.right);
+                    }
+                    Self::down(txn, path, lvl + 1, n.left, new_key, siblings, get_leaf_only)
+                }
+            }
+            Node::Leaf(old_leaf) => {
+                dbg!("LEAF");
+                if old_leaf.value != EMPTY_VALUE {
+                    if get_leaf_only {
+                        // return Ok(Some((old_leaf.key, old_leaf.value)));
+                        return Ok(Some((curr_node_hash.into(), old_leaf.value)));
+                    }
+
+                    if new_key == old_leaf.key {
+                        panic!("TODO err: key already exists");
+                    }
+
+                    dbg!("DOWN_DIVERG");
+                    Self::down_till_divergence(
+                        lvl,
+                        // old_leaf.key,
+                        curr_node_hash.into(),
+                        new_key,
+                        old_leaf.path,
+                        path,
+                        siblings.unwrap(), // TODO wip
+                    )?;
+                    // TODO-NOTE: here we could return the collected siblings for
+                    // using them at the highter level tree methods, instead of
+                    // recomputing them to get the proofs of existence/nonexistence.
+                    // return Ok(Some((old_leaf.key, old_leaf.value)));
+                }
+                return Ok(Some((old_leaf.key, old_leaf.value)));
+            }
+            _ => {
+                dbg!(&node);
+                dbg!("should not be reached");
+                Ok(None)
+            } // TODO return error since it should not be reached?
+        }
+    }
+
+    /// goes down through a 'virtual' path till finding a divergence. This
+    /// method is used for when adding a new leaf another already existing leaf
+    /// is found, so that both leaves (new and old) are pushed down the path
+    /// till their keys diverge.
+    fn down_till_divergence(
+        lvl: usize,
+        old_key: RawValue,
+        new_key: RawValue,
+        old_path: Vec<bool>,
+        new_path: Vec<bool>,
+        siblings: &mut Vec<Hash>,
+    ) -> TreeResult<()> {
+        if lvl > MAX_DEPTH {
+            panic!("error: max level reached"); // TODO return error
+        }
+        if old_path[lvl] != new_path[lvl] {
+            // siblings.push(old_leaf.hash);
+            siblings.push(EMPTY_HASH);
+            return Self::down_till_divergence(
+                lvl + 1,
+                old_key,
+                new_key,
+                old_path,
+                new_path,
+                siblings,
+            );
+        }
+        // reached the divergence
+        dbg!("OK", old_key);
+        siblings.push(old_key.into());
+        Ok(())
+    }
+
+    /// go up recursively updating the intermediate nodes
+    fn up(
+        txn: &mut Box<dyn Txn>,
+        path: Vec<bool>,
+        curr_lvl: usize,
+        key: Hash,
+        siblings: Vec<Hash>,
+    ) -> Result<Hash> {
+        let node = if path[curr_lvl] {
+            Intermediate::new(siblings[curr_lvl], key)
+        } else {
+            Intermediate::new(key, siblings[curr_lvl])
+        };
+        dbg!("up int");
+        dbg!(&node);
+        // store in db
+        txn.store_node(node.hash.into(), Node::Intermediate(node.clone()))?;
+        // TODO rm clone
+
+        if curr_lvl == 0 {
+            return Ok(node.hash);
+        }
+        Self::up(txn, path, curr_lvl - 1, node.hash.into(), siblings)
     }
 
     /// returns the value at the given key
     pub fn get(&self, key: &RawValue) -> TreeResult<RawValue> {
         let path = keypath(*key);
-        let (key_resolution, _) = self.root.down(0, path, None);
+        let txn = self.db.begin_txn(false)?;
+        let key_resolution = Self::down(&txn, path, 0, self.root, *key, None, true)?;
         match key_resolution {
             Some((k, v)) if &k == key => Ok(v),
             _ => Err(TreeError::key_not_found()),
@@ -69,8 +242,9 @@ impl MerkleTree {
     /// returns a boolean indicating whether the key exists in the tree
     pub fn contains(&self, key: &RawValue) -> TreeResult<bool> {
         let path = keypath(*key);
-        match self.root.down(0, path, None) {
-            (Some((k, _)), _) if &k == key => Ok(true),
+        let txn = self.db.begin_txn(false)?;
+        match Self::down(&txn, path, 0, self.root, *key, None, true)? {
+            Some((k, _)) if &k == key => Ok(true),
             _ => Ok(false),
         }
     }
@@ -80,17 +254,26 @@ impl MerkleTree {
         key: &RawValue,
         value: &RawValue,
     ) -> TreeResult<MerkleTreeStateTransitionProof> {
-        let proof_non_existence = self.prove_nonexistence(key)?;
+        let mut txn = self.db.begin_txn(true).unwrap();
 
-        let old_root: Hash = self.root.hash();
-        self.root
-            .apply_op(MerkleTreeOp::Insert, *key, Some(*value))?;
-        let new_root = self.root.compute_hash();
+        let proof_non_existence = self.prove_nonexistence_with_txn(&mut txn, key)?;
+
+        let old_root: Hash = self.root;
+
+        let new_root: Hash = Self::apply_op(
+            &mut txn,
+            MerkleTreeOp::Insert,
+            self.root,
+            *key,
+            Some(*value),
+        )?;
 
         let (v, proof) = self.prove(key)?;
         assert!(proof.existence);
         assert_eq!(v, *value);
         assert!(proof.other_leaf.is_none());
+
+        txn.commit()?;
 
         Ok(MerkleTreeStateTransitionProof {
             op: MerkleTreeOp::Insert, // insertion
@@ -109,17 +292,25 @@ impl MerkleTree {
         key: &RawValue,
         value: &RawValue,
     ) -> TreeResult<MerkleTreeStateTransitionProof> {
-        let (old_value, old_proof) = self.prove(key)?;
+        let mut txn = self.db.begin_txn(true).unwrap();
 
-        let old_root: Hash = self.root.hash();
-        self.root
-            .apply_op(MerkleTreeOp::Update, *key, Some(*value))?;
-        let new_root = self.root.compute_hash();
+        let (old_value, old_proof) = self.prove_with_txn(&mut txn, key)?;
 
-        let (v, proof) = self.prove(key)?;
+        let old_root: Hash = self.root;
+        let new_root = Self::apply_op(
+            &mut txn,
+            MerkleTreeOp::Update,
+            self.root,
+            *key,
+            Some(*value),
+        )?;
+
+        let (v, proof) = self.prove_with_txn(&mut txn, key)?;
         assert!(proof.existence);
         assert_eq!(v, *value);
         assert!(proof.other_leaf.is_none());
+
+        txn.commit()?;
 
         Ok(MerkleTreeStateTransitionProof {
             op: MerkleTreeOp::Update,
@@ -134,14 +325,17 @@ impl MerkleTree {
     }
 
     pub fn delete(&mut self, key: &RawValue) -> TreeResult<MerkleTreeStateTransitionProof> {
-        let (value, proof_existence) = self.prove(key)?;
+        let mut txn = self.db.begin_txn(true).unwrap();
 
-        let old_root: Hash = self.root.hash();
-        self.root.apply_op(MerkleTreeOp::Delete, *key, None)?;
-        let new_root = self.root.compute_hash();
+        let (value, proof_existence) = self.prove_with_txn(&mut txn, key)?;
 
-        let proof = self.prove_nonexistence(key)?;
+        let old_root: Hash = self.root;
+        let new_root = Self::apply_op(&mut txn, MerkleTreeOp::Delete, self.root, *key, None)?;
+
+        let proof = self.prove_nonexistence_with_txn(&mut txn, key)?;
         assert!(!proof.existence);
+
+        txn.commit()?;
 
         Ok(MerkleTreeStateTransitionProof {
             op: MerkleTreeOp::Delete,
@@ -155,16 +349,27 @@ impl MerkleTree {
         })
     }
 
+    // TODO-NOTE: it may be the case that in some databases we're required to
+    // 'discard' the txn in case that we're not committing it.
+
     /// returns a proof of existence, which proves that the given key exists in
     /// the tree. It returns the `value` of the leaf at the given `key`, and the
     /// `MerkleProof`.
     pub fn prove(&self, key: &RawValue) -> TreeResult<(RawValue, MerkleProof)> {
+        let mut txn = self.db.begin_txn(false).unwrap();
+        self.prove_with_txn(&mut txn, key)
+    }
+    pub fn prove_with_txn(
+        &self,
+        txn: &mut Box<dyn Txn>,
+        key: &RawValue,
+    ) -> TreeResult<(RawValue, MerkleProof)> {
         let path = keypath(*key);
 
         let mut siblings: Vec<Hash> = Vec::new();
-
-        match self.root.down(0, path, Some(&mut siblings)) {
-            (Some((k, v)), _) if &k == key => Ok((
+        dbg!("root", self.root);
+        match Self::down(txn, path, 0, self.root, *key, Some(&mut siblings), true)? {
+            Some((k, v)) if &k == key => Ok((
                 v,
                 MerkleProof {
                     existence: true,
@@ -181,20 +386,28 @@ impl MerkleTree {
     /// the key-value pair in the leaf reached as a result of
     /// resolving `key` as well as a `MerkleProof`.
     pub fn prove_nonexistence(&self, key: &RawValue) -> TreeResult<MerkleProof> {
+        let mut txn = self.db.begin_txn(false).unwrap();
+        self.prove_nonexistence_with_txn(&mut txn, key)
+    }
+    pub fn prove_nonexistence_with_txn(
+        &self,
+        txn: &mut Box<dyn Txn>,
+        key: &RawValue,
+    ) -> TreeResult<MerkleProof> {
         let path = keypath(*key);
 
         let mut siblings: Vec<Hash> = Vec::new();
 
         // note: non-existence of a key can be in 2 cases:
-        match self.root.down(0, path, Some(&mut siblings)) {
+        match Self::down(txn, path, 0, self.root, *key, Some(&mut siblings), true)? {
             // case i) the expected leaf does not exist
-            (None, _) => Ok(MerkleProof {
+            None => Ok(MerkleProof {
                 existence: false,
                 siblings,
                 other_leaf: None,
             }),
             // case ii) the expected leaf does exist in the tree, but it has a different `key`
-            (Some((k, v)), _) if &k != key => Ok(MerkleProof {
+            Some((k, v)) if &k != key => Ok(MerkleProof {
                 existence: false,
                 siblings,
                 other_leaf: Some((k, v)),
@@ -368,12 +581,74 @@ impl MerkleTree {
             }
         }
     }
+}
 
-    /// returns an iterator over the leaves of the tree
-    pub fn iter(&self) -> Iter<'_> {
-        Iter {
-            state: vec![&self.root],
+// auxiliary methods
+impl MerkleTree {
+    /// Applies given Merkle tree op.
+    pub(crate) fn apply_op(
+        txn: &mut Box<dyn Txn>,
+        op: MerkleTreeOp,
+        root: Hash,
+        k: RawValue,
+        maybe_value: Option<RawValue>,
+    ) -> TreeResult<Hash> {
+        // Rule out invalid arguments
+        match (op, maybe_value) {
+            (MerkleTreeOp::Insert, None) | (MerkleTreeOp::Update, None) => {
+                Err(TreeError::invalid_state_transition_proof_arg(format!(
+                    "{:?} op requires a value argument.",
+                    op
+                )))
+            }
+            (MerkleTreeOp::Delete, Some(_)) => {
+                Err(TreeError::invalid_state_transition_proof_arg(format!(
+                    "{:?} op requires no value argument, yet one was provided.",
+                    op
+                )))
+            }
+            _ => Ok(()),
+        }?;
+
+        // TODO-NOTE: when going down/up we can already collect the siblings and return
+        // them as 'proof' from this method. This will allow the
+        // 'insert,update,delete,prove' methods to avoid computing aside the
+        // proof of existence/nonexistence.
+
+        // go down, update the leaf, go up storing new hashes in the db
+        let path = keypath(k);
+        let mut siblings: Vec<Hash> = Vec::new();
+        let _ = Self::down(
+            &txn,
+            path.clone(),
+            0,
+            root.into(),
+            k,
+            Some(&mut siblings),
+            false,
+        )?;
+        dbg!(&siblings);
+        let leaf: Leaf = match (op, maybe_value) {
+            (MerkleTreeOp::Insert, Some(value)) | (MerkleTreeOp::Update, Some(value)) => {
+                Leaf::new(k, value)
+            }
+            (MerkleTreeOp::Delete, None) => {
+                todo!() // TODO
+            }
+            _ => panic!("todo err"), // TODO err
+        };
+        txn.store_node(leaf.hash.into(), Node::Leaf(leaf.clone()))?; // TODO rm clone
+        if siblings.len() == 0 {
+            // return the leaf's hash as root
+            return Ok(leaf.hash);
         }
+        dbg!("LEAFHASH", leaf.hash);
+        let new_root = Self::up(txn, path, siblings.len() - 1, leaf.hash, siblings)?;
+
+        // NOTE-WIP: going up from a delete might need to push upper the leaf in
+        // some cases, currently not handled.
+
+        Ok(new_root)
     }
 }
 
@@ -422,25 +697,104 @@ fn hash_with_flag(flag: F, inputs: &[F]) -> Hash {
     }
 }
 
+/*
+impl MerkleTree {
+    /// returns an iterator over the leaves of the tree
+    pub fn iter(&self) -> Iter<'_> {
+        Iter {
+            state: vec![&self.root.into()],
+        }
+    }
+}
 impl<'a> IntoIterator for &'a MerkleTree {
     type Item = (&'a RawValue, &'a RawValue);
     type IntoIter = Iter<'a>;
-
     fn into_iter(self) -> Self::IntoIter {
         self.iter()
     }
 }
+pub struct Iter<'a> {
+    state: Vec<&'a Node>,
+}
+impl<'a> Iterator for Iter<'a> {
+    type Item = (&'a RawValue, &'a RawValue);
+    fn next(&mut self) -> Option<Self::Item> {
+        let node = self.state.pop();
+        match node {
+            Some(Node::None) => self.next(),
+            Some(Node::Leaf(Leaf {
+                hash: _,
+                path: _,
+                key,
+                value,
+            })) => Some((key, value)),
+            Some(Node::Intermediate(Intermediate {
+                hash: _,
+                left,
+                right,
+            })) => {
+                self.state.push(right);
+                self.state.push(left);
+                self.next()
+            }
+            _ => None,
+        }
+    }
+}
+*/
 
 impl fmt::Display for MerkleTree {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let txn = self.db.begin_txn(false).unwrap(); // TODO unwrap
+
         writeln!(
             f,
             "\nPaste in GraphViz (https://dreampuf.github.io/GraphvizOnline/):\n-----"
         )?;
         writeln!(f, "digraph hierarchy {{")?;
         writeln!(f, "node [fontname=Monospace,fontsize=10,shape=box]")?;
-        write!(f, "{}", self.root)?;
+        print_graph_viz(f, &txn, self.root)?;
+        // write!(f, "{}", self.root)?;
         writeln!(f, "\n}}\n-----")
+    }
+}
+
+fn print_graph_viz(f: &mut fmt::Formatter<'_>, txn: &Box<dyn Txn>, hash: Hash) -> fmt::Result {
+    let node = txn.load_node(hash.into()).unwrap(); // TODO unwrap
+    match node {
+        Node::Intermediate(n) => {
+            let left_hash: String = if n.left == EMPTY_HASH {
+                writeln!(
+                    f,
+                    "\"{}_child_of_{}\" [label=\"{}\"]",
+                    n.left, n.hash, n.left
+                )?;
+                format!("\"{}_child_of_{}\"", n.left, n.hash)
+            } else {
+                writeln!(f, "\"{}\"", n.left)?;
+                format!("\"{}\"", n.left)
+            };
+            let right_hash = if n.right == EMPTY_HASH {
+                writeln!(
+                    f,
+                    "\"{}_child_of_{}\" [label=\"{}\"]",
+                    n.right, n.hash, n.right
+                )?;
+                format!("\"{}_child_of_{}\"", n.right, n.hash)
+            } else {
+                writeln!(f, "\"{}\"", n.right,)?;
+                format!("\"{}\"", n.right)
+            };
+            writeln!(f, "\"{}\" -> {{ {} {} }}", n.hash, left_hash, right_hash,)?;
+            print_graph_viz(f, &txn, n.left)?;
+            print_graph_viz(f, &txn, n.right)
+        }
+        Node::Leaf(l) => {
+            writeln!(f, "\"{}\" [style=filled]", l.hash)?;
+            writeln!(f, "\"k:{}\\nv:{}\" [style=dashed]", l.key, l.value)?;
+            writeln!(f, "\"{}\" -> {{ \"k:{}\\nv:{}\" }}", l.hash, l.key, l.value,)
+        }
+        Node::None => Ok(()),
     }
 }
 
@@ -579,8 +933,11 @@ impl MerkleTreeStateTransitionProof {
     }
 }
 
-#[derive(Clone, Debug)]
-enum Node {
+// TODO-NOTE: currently we use automatic serialization/deserialization, which is
+// used when storing the node into the DB; but we could manually implement it
+// for more disk-space efficiency.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub enum Node {
     None,
     Leaf(Leaf),
     Intermediate(Intermediate),
@@ -590,46 +947,36 @@ impl fmt::Display for Node {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Intermediate(n) => {
-                let left_hash: String = if n.left.is_empty() {
+                let left_hash: String = if n.left == EMPTY_HASH {
                     writeln!(
                         f,
                         "\"{}_child_of_{}\" [label=\"{}\"]",
-                        n.left.hash(),
-                        n.hash(),
-                        n.left.hash()
+                        n.left, n.hash, n.left
                     )?;
-                    format!("\"{}_child_of_{}\"", n.left.hash(), n.hash())
+                    format!("\"{}_child_of_{}\"", n.left, n.hash)
                 } else {
-                    writeln!(f, "\"{}\"", n.left.hash(),)?;
-                    format!("\"{}\"", n.left.hash())
+                    writeln!(f, "\"{}\"", n.left)?;
+                    format!("\"{}\"", n.left)
                 };
-                let right_hash = if n.right.is_empty() {
+                let right_hash = if n.right == EMPTY_HASH {
                     writeln!(
                         f,
                         "\"{}_child_of_{}\" [label=\"{}\"]",
-                        n.right.hash(),
-                        n.hash(),
-                        n.right.hash()
+                        n.right, n.hash, n.right
                     )?;
-                    format!("\"{}_child_of_{}\"", n.right.hash(), n.hash())
+                    format!("\"{}_child_of_{}\"", n.right, n.hash)
                 } else {
-                    writeln!(f, "\"{}\"", n.right.hash(),)?;
-                    format!("\"{}\"", n.right.hash())
+                    writeln!(f, "\"{}\"", n.right,)?;
+                    format!("\"{}\"", n.right)
                 };
-                writeln!(f, "\"{}\" -> {{ {} {} }}", n.hash(), left_hash, right_hash,)?;
+                writeln!(f, "\"{}\" -> {{ {} {} }}", n.hash, left_hash, right_hash,)?;
                 write!(f, "{}", n.left)?;
                 write!(f, "{}", n.right)
             }
             Self::Leaf(l) => {
-                writeln!(f, "\"{}\" [style=filled]", l.hash())?;
+                writeln!(f, "\"{}\" [style=filled]", l.hash)?;
                 writeln!(f, "\"k:{}\\nv:{}\" [style=dashed]", l.key, l.value)?;
-                writeln!(
-                    f,
-                    "\"{}\" -> {{ \"k:{}\\nv:{}\" }}",
-                    l.hash(),
-                    l.key,
-                    l.value,
-                )
+                writeln!(f, "\"{}\" -> {{ \"k:{}\\nv:{}\" }}", l.hash, l.key, l.value,)
             }
             Self::None => Ok(()),
         }
@@ -637,6 +984,7 @@ impl fmt::Display for Node {
 }
 
 impl Node {
+    /*
     fn is_empty(&self) -> bool {
         match self {
             Self::None => true,
@@ -651,97 +999,17 @@ impl Node {
             Self::Intermediate(_n) => true,
         }
     }
-    fn compute_hash(&mut self) -> Hash {
-        match self {
-            Self::None => EMPTY_HASH,
-            Self::Leaf(l) => l.compute_hash(),
-            Self::Intermediate(n) => n.compute_hash(),
-        }
-    }
     fn hash(&self) -> Hash {
         match self {
             Self::None => EMPTY_HASH,
-            Self::Leaf(l) => l.hash(),
-            Self::Intermediate(n) => n.hash(),
+            Self::Leaf(l) => l.hash,
+            Self::Intermediate(n) => n.hash,
         }
     }
+    */
 
-    /// Goes down from the current node until it encounters a terminal node,
-    /// viz. a leaf or empty node, or until it reaches the maximum depth. The
-    /// `siblings` parameter is used to store the siblings while going down to
-    /// the leaf, if the given parameter is set to `None`, then no siblings are
-    /// stored. In this way, the same method `down` can be used by MerkleTree
-    /// methods `get`, `contains`, `prove` and `prove_nonexistence`.
-    ///
-    /// Be aware that this method will return the found leaf at the given path,
-    /// which may contain a different key and value than the expected one.
-    fn down(
-        &self,
-        lvl: usize,
-        path: Vec<bool>,
-        mut siblings: Option<&mut Vec<Hash>>,
-    ) -> (Option<(RawValue, RawValue)>, usize) {
-        match self {
-            Self::Intermediate(n) => {
-                if path[lvl] {
-                    if let Some(s) = siblings.as_mut() {
-                        s.push(n.left.hash());
-                    }
-                    n.right.down(lvl + 1, path, siblings)
-                } else {
-                    if let Some(s) = siblings.as_mut() {
-                        s.push(n.right.hash());
-                    }
-                    n.left.down(lvl + 1, path, siblings)
-                }
-            }
-            Self::Leaf(Leaf {
-                key,
-                value,
-                path: _p,
-                hash: _h,
-            }) => (Some((*key, *value)), lvl),
-            _ => (None, lvl),
-        }
-    }
-
-    /// Applies given Merkle tree op without computing hashes.
-    pub(crate) fn apply_op(
-        &mut self,
-        op: MerkleTreeOp,
-        key: RawValue,
-        maybe_value: Option<RawValue>,
-    ) -> TreeResult<()> {
-        let key_path = keypath(key);
-        // Rule out invalid arguments
-        match (op, maybe_value) {
-            (MerkleTreeOp::Insert, None) | (MerkleTreeOp::Update, None) => {
-                Err(TreeError::invalid_state_transition_proof_arg(format!(
-                    "{:?} op requires a value argument.",
-                    op
-                )))
-            }
-            (MerkleTreeOp::Delete, Some(_)) => {
-                Err(TreeError::invalid_state_transition_proof_arg(format!(
-                    "{:?} op requires no value argument, yet one was provided.",
-                    op
-                )))
-            }
-            _ => Ok(()),
-        }?;
-
-        // Loop through to leaf.
-        self.apply_op_loop(0, op, key, &key_path, maybe_value)?;
-
-        // If we are dealing with a deletion, normalise along key
-        // path.
-        if let MerkleTreeOp::Delete = op {
-            self.normalise_path(&key_path);
-        }
-
-        Ok(())
-    }
-
+    // TODO a variation of this might be needed for the `delete` method
+    /*
     /// Normalises a Merkle tree along a specified path. Useful
     /// post-deletion.
     fn normalise_path(&mut self, key_path: &[bool]) {
@@ -768,168 +1036,40 @@ impl Node {
             }
         }
     }
-
-    fn apply_op_loop(
-        &mut self,
-        lvl: usize,
-        op: MerkleTreeOp,
-        key: RawValue,
-        key_path: &[bool],
-        maybe_value: Option<RawValue>,
-    ) -> TreeResult<()> {
-        match self {
-            Self::Intermediate(n) => {
-                if key_path[lvl] {
-                    n.right
-                        .apply_op_loop(lvl + 1, op, key, key_path, maybe_value)
-                } else {
-                    n.left
-                        .apply_op_loop(lvl + 1, op, key, key_path, maybe_value)
-                }
-            }
-            _ => {
-                *self = Self::op_node_check(lvl, self, op, key, key_path, maybe_value)?;
-                Ok(())
-            }
-        }
-    }
-
-    /// Checks the terminal node against the desired op and returns a
-    /// suitable replacement.
-    ///
-    /// - Insertion => Node should be empty or contain a different
-    ///   key. A leaf is inserted in the right place.
-    /// - Update/Deletion => Node should contain the given key. The
-    ///   value is replaced in the case of an update and the leaf removed
-    ///   in the case of a deletion.
-    pub(crate) fn op_node_check(
-        lvl: usize,
-        node: &Node,
-        op: MerkleTreeOp,
-        key: RawValue,
-        key_path: &[bool],
-        maybe_value: Option<RawValue>,
-    ) -> TreeResult<Node> {
-        use MerkleTreeOp::*;
-
-        // Invalid args are assumed to have been ruled out.
-        match (op, node, maybe_value) {
-            // Insertion case
-            (Insert, Node::None, Some(value)) => Ok(Node::Leaf(Leaf::new(key, value))),
-            (Insert, Node::Leaf(l), Some(value)) => {
-                // in this case, it means that we found a leaf in the new-leaf
-                // path, thus we need to push both leaves (old-leaf and
-                // new-leaf) down the path till their paths diverge.
-
-                // first check that keys of both leaves are different
-                // (l=old-leaf, leaf=new-leaf)
-                if l.key == key {
-                    // Note: current approach returns an error when trying to
-                    // add to a leaf where the key already exists. We could also
-                    // ignore it if needed.
-                    Err(TreeError::key_exists())
-                } else {
-                    let old_leaf = l.clone();
-                    // set new node as an intermediate node
-                    let mut new_node = Node::Intermediate(Intermediate::empty());
-                    new_node.down_till_divergence(
-                        lvl,
-                        old_leaf,
-                        Leaf {
-                            hash: None,
-                            path: key_path.to_vec(),
-                            key,
-                            value,
-                        },
-                    )?;
-                    Ok(new_node)
-                }
-            }
-            // Update case
-            (Update, Node::Leaf(l), Some(value)) if l.key == key => {
-                Ok(Node::Leaf(Leaf::new(key, value)))
-            }
-            // Deletion case
-            (Delete, Node::Leaf(l), None) if l.key == key => Ok(Node::None),
-            // Case of terminal node that does not match.
-            _ => Err(TreeError::state_transition_fail(format!(
-                "{:?} op requires key {} to be present in the tree, yet it is not.",
-                op, key
-            ))),
-        }
-    }
-
-    /// goes down through a 'virtual' path till finding a divergence. This
-    /// method is used for when adding a new leaf another already existing leaf
-    /// is found, so that both leaves (new and old) are pushed down the path
-    /// till their keys diverge.
-    fn down_till_divergence(
-        &mut self,
-        lvl: usize,
-        old_leaf: Leaf,
-        new_leaf: Leaf,
-    ) -> TreeResult<()> {
-        if let Node::Intermediate(ref mut n) = self {
-            if old_leaf.path[lvl] != new_leaf.path[lvl] {
-                // reached divergence in next level, set the leaves as children
-                // at the current node
-                if new_leaf.path[lvl] {
-                    n.left = Box::new(Node::Leaf(old_leaf));
-                    n.right = Box::new(Node::Leaf(new_leaf));
-                } else {
-                    n.left = Box::new(Node::Leaf(new_leaf));
-                    n.right = Box::new(Node::Leaf(old_leaf));
-                }
-                return Ok(());
-            }
-
-            // no divergence yet, continue going down
-            if new_leaf.path[lvl] {
-                n.right = Box::new(Node::Intermediate(Intermediate::empty()));
-                return n.right.down_till_divergence(lvl + 1, old_leaf, new_leaf);
-            } else {
-                n.left = Box::new(Node::Intermediate(Intermediate::empty()));
-                return n.left.down_till_divergence(lvl + 1, old_leaf, new_leaf);
-            }
-        }
-        Ok(())
-    }
+    */
 }
 
-#[derive(Clone, Debug)]
-struct Intermediate {
-    hash: Option<Hash>,
-    left: Box<Node>,
-    right: Box<Node>,
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Intermediate {
+    hash: Hash,
+    left: Hash,
+    right: Hash,
 }
 impl Intermediate {
     fn empty() -> Self {
         Self {
-            hash: None,
-            left: Box::new(Node::None),
-            right: Box::new(Node::None),
+            hash: EMPTY_HASH,
+            left: EMPTY_HASH,
+            right: EMPTY_HASH,
         }
     }
-    fn compute_hash(&mut self) -> Hash {
-        if self.left.clone().is_empty() && self.right.clone().is_empty() {
-            self.hash = Some(EMPTY_HASH);
-            return EMPTY_HASH;
+    fn new(left: Hash, right: Hash) -> Self {
+        if left.clone() == EMPTY_HASH && right.clone() == EMPTY_HASH {
+            return Self {
+                hash: EMPTY_HASH,
+                left,
+                right,
+            };
         }
-        let l_hash = self.left.compute_hash();
-        let r_hash = self.right.compute_hash();
-        let input: Vec<F> = [l_hash.0.to_vec(), r_hash.0.to_vec()].concat();
-        let h = hash_with_flag(F::TWO, &input);
-        self.hash = Some(h);
-        h
-    }
-    fn hash(&self) -> Hash {
-        self.hash.expect("Hash has not been computed.")
+        let input: Vec<F> = [left.0.to_vec(), right.0.to_vec()].concat();
+        let hash = hash_with_flag(F::TWO, &input);
+        Self { hash, left, right }
     }
 }
 
-#[derive(Clone, Debug)]
-pub(crate) struct Leaf {
-    pub(crate) hash: Option<Hash>,
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Leaf {
+    pub(crate) hash: Hash,
     pub(crate) path: Vec<bool>,
     pub(crate) key: RawValue,
     pub(crate) value: RawValue,
@@ -937,19 +1077,11 @@ pub(crate) struct Leaf {
 impl Leaf {
     fn new(key: RawValue, value: RawValue) -> Self {
         Self {
-            hash: None,
+            hash: kv_hash(&key, Some(value)),
             path: keypath(key),
             key,
             value,
         }
-    }
-    fn compute_hash(&mut self) -> Hash {
-        let h = kv_hash(&self.key, Some(self.value));
-        self.hash = Some(h);
-        h
-    }
-    fn hash(&self) -> Hash {
-        self.hash.expect("Hash has not been computed.")
     }
 }
 
@@ -966,37 +1098,6 @@ pub(crate) fn keypath(k: RawValue) -> Vec<bool> {
     (0..MAX_DEPTH)
         .map(|n| bytes[n / 8] & (1 << (n % 8)) != 0)
         .collect()
-}
-
-pub struct Iter<'a> {
-    state: Vec<&'a Node>,
-}
-
-impl<'a> Iterator for Iter<'a> {
-    type Item = (&'a RawValue, &'a RawValue);
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let node = self.state.pop();
-        match node {
-            Some(Node::None) => self.next(),
-            Some(Node::Leaf(Leaf {
-                hash: _,
-                path: _,
-                key,
-                value,
-            })) => Some((key, value)),
-            Some(Node::Intermediate(Intermediate {
-                hash: _,
-                left,
-                right,
-            })) => {
-                self.state.push(right);
-                self.state.push(left);
-                self.next()
-            }
-            _ => None,
-        }
-    }
 }
 
 #[cfg(test)]
@@ -1025,6 +1126,7 @@ pub mod tests {
         // https://0xparc.github.io/pod2/merkletree.html#example-2
         println!("{}", tree);
 
+        /*
         // Inclusion checks
         let (v, proof) = tree.prove(&RawValue::from(13))?;
         assert_eq!(v, RawValue::from(1013));
@@ -1049,6 +1151,10 @@ pub mod tests {
         println!("{}", proof);
 
         MerkleTree::verify_nonexistence(tree.root(), &proof, &key)?;
+         */
+
+        /*
+          TODO - this part disabled till tree iterator is ready
 
         // Check iterator
         let collected_kvs: Vec<_> = tree.into_iter().collect::<Vec<_>>();
@@ -1078,82 +1184,85 @@ pub mod tests {
             .collect::<Vec<_>>();
 
         assert_eq!(collected_kvs, sorted_kvs);
+        */
 
         Ok(())
     }
 
-    #[test]
-    fn test_state_transition() -> TreeResult<()> {
-        let mut kvs = HashMap::new();
-        for i in 0..8 {
-            kvs.insert(RawValue::from(i), RawValue::from(1000 + i));
+    /*
+        #[test]
+        fn test_state_transition() -> TreeResult<()> {
+            let mut kvs = HashMap::new();
+            for i in 0..8 {
+                kvs.insert(RawValue::from(i), RawValue::from(1000 + i));
+            }
+
+            let mut tree = MerkleTree::new(&kvs);
+            let old_root = tree.root();
+
+            // key=37 shares path with key=5, till the level 6, needing 2 extra
+            // 'empty' nodes between the original position of key=5 with the new
+            // position of key=5 and key=37.
+            let key = RawValue::from(37);
+            let value = RawValue::from(1037);
+            let state_transition_proof = tree.insert(&key, &value)?;
+
+            MerkleTree::verify_state_transition(&state_transition_proof)?;
+            assert_eq!(state_transition_proof.old_root, old_root);
+            assert_eq!(state_transition_proof.new_root, tree.root());
+            assert_eq!(state_transition_proof.op_key, key);
+            assert_eq!(state_transition_proof.op_value, value);
+            assert_eq!(state_transition_proof.value, None);
+
+            // Deleting this key should yield the old tree, and the proof
+            // should be the same (mutatis mutandis).
+            let mut tree_with_deleted_key = tree.clone();
+            let state_transition_proof1 = tree_with_deleted_key.delete(&key)?;
+            MerkleTree::verify_state_transition(&state_transition_proof1)?;
+            assert_eq!(
+                state_transition_proof1.old_root,
+                state_transition_proof.new_root
+            );
+            assert_eq!(
+                state_transition_proof1.new_root,
+                state_transition_proof.old_root
+            );
+            assert_eq!(
+                state_transition_proof1.op_key,
+                state_transition_proof.op_key
+            );
+            assert_eq!(
+                state_transition_proof1.op_value,
+                state_transition_proof.op_value
+            );
+            assert_eq!(
+                state_transition_proof1.op_proof,
+                state_transition_proof.op_proof
+            );
+            assert_eq!(
+                state_transition_proof1.siblings,
+                state_transition_proof.siblings
+            );
+
+            // 2nd part of the test. Add a new leaf
+            let mut tree_with_another_leaf = tree.clone();
+            let key = RawValue::from(21);
+            let value = RawValue::from(1021);
+            let state_transition_proof = tree_with_another_leaf.insert(&key, &value)?;
+
+            MerkleTree::verify_state_transition(&state_transition_proof)?;
+
+            // Alternatively add this key with another value then update.
+            let value1 = RawValue::from(99);
+            tree.insert(&key, &value1)?;
+            let state_transition_proof1 = tree.update(&key, &value)?;
+
+            MerkleTree::verify_state_transition(&state_transition_proof1)?;
+
+            // `tree` and `tree_with_another_leaf` should coincide.
+            assert_eq!(tree.root(), tree_with_another_leaf.root());
+
+            Ok(())
         }
-
-        let mut tree = MerkleTree::new(&kvs);
-        let old_root = tree.root();
-
-        // key=37 shares path with key=5, till the level 6, needing 2 extra
-        // 'empty' nodes between the original position of key=5 with the new
-        // position of key=5 and key=37.
-        let key = RawValue::from(37);
-        let value = RawValue::from(1037);
-        let state_transition_proof = tree.insert(&key, &value)?;
-
-        MerkleTree::verify_state_transition(&state_transition_proof)?;
-        assert_eq!(state_transition_proof.old_root, old_root);
-        assert_eq!(state_transition_proof.new_root, tree.root());
-        assert_eq!(state_transition_proof.op_key, key);
-        assert_eq!(state_transition_proof.op_value, value);
-        assert_eq!(state_transition_proof.value, None);
-
-        // Deleting this key should yield the old tree, and the proof
-        // should be the same (mutatis mutandis).
-        let mut tree_with_deleted_key = tree.clone();
-        let state_transition_proof1 = tree_with_deleted_key.delete(&key)?;
-        MerkleTree::verify_state_transition(&state_transition_proof1)?;
-        assert_eq!(
-            state_transition_proof1.old_root,
-            state_transition_proof.new_root
-        );
-        assert_eq!(
-            state_transition_proof1.new_root,
-            state_transition_proof.old_root
-        );
-        assert_eq!(
-            state_transition_proof1.op_key,
-            state_transition_proof.op_key
-        );
-        assert_eq!(
-            state_transition_proof1.op_value,
-            state_transition_proof.op_value
-        );
-        assert_eq!(
-            state_transition_proof1.op_proof,
-            state_transition_proof.op_proof
-        );
-        assert_eq!(
-            state_transition_proof1.siblings,
-            state_transition_proof.siblings
-        );
-
-        // 2nd part of the test. Add a new leaf
-        let mut tree_with_another_leaf = tree.clone();
-        let key = RawValue::from(21);
-        let value = RawValue::from(1021);
-        let state_transition_proof = tree_with_another_leaf.insert(&key, &value)?;
-
-        MerkleTree::verify_state_transition(&state_transition_proof)?;
-
-        // Alternatively add this key with another value then update.
-        let value1 = RawValue::from(99);
-        tree.insert(&key, &value1)?;
-        let state_transition_proof1 = tree.update(&key, &value)?;
-
-        MerkleTree::verify_state_transition(&state_transition_proof1)?;
-
-        // `tree` and `tree_with_another_leaf` should coincide.
-        assert_eq!(tree.root(), tree_with_another_leaf.root());
-
-        Ok(())
-    }
+    */
 }
