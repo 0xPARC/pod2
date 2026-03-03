@@ -144,9 +144,6 @@ impl MerkleTree {
                 }
             }
             Node::Leaf(old_leaf) => {
-                dbg!(old_leaf.hash);
-                dbg!(old_leaf.key);
-                dbg!(old_leaf.value);
                 // old_leaf.value is curr_node_hash's value (curr_value)
                 if old_leaf.value != EMPTY_VALUE {
                     if get_leaf_only {
@@ -157,12 +154,12 @@ impl MerkleTree {
                     // TODO note. at op DELETE, here will find the key to match,
                     // then it shoulud delete
                     if new_key == old_leaf.key {
-                        if op != MerkleTreeOp::Delete {
+                        // if op != MerkleTreeOp::Delete || op != MerkleTreeOp::Update {
+                        if op == MerkleTreeOp::Insert {
                             // not in delete, keys should be equal
                             panic!("TODO return err: key already exists"); // TODO
                         }
-                        // we're at the op Delete case
-                        dbg!("DELETE CASE (down)");
+                        // we're at the operation Update/Delete case
                         return Ok(Some((old_leaf.key, old_leaf.value)));
                     }
 
@@ -189,8 +186,9 @@ impl MerkleTree {
             _ => {
                 dbg!(&node);
                 dbg!("SHOULD NOT BE REACHED");
+                // TODO return error since it should not be reached?
                 Ok(None)
-            } // TODO return error since it should not be reached?
+            }
         }
     }
 
@@ -235,16 +233,21 @@ impl MerkleTree {
         siblings: Vec<Hash>,
         op: MerkleTreeOp,
     ) -> Result<Hash> {
+        dbg!(curr_lvl);
         if op == MerkleTreeOp::Delete {
-            dbg!("DELETE (up)");
-            if curr_lvl == 0 {
-                return Ok(key);
-            }
             // in operation Delete, go up till the first non-zero sibling and
             // pair the given key with that sibling
+            println!("s {}: {}", curr_lvl, siblings[curr_lvl]);
             if siblings[curr_lvl] == EMPTY_HASH {
+                if curr_lvl == 0 {
+                    return Ok(key);
+                }
                 return Self::up(txn, path, curr_lvl - 1, key, siblings, op);
+                // return Self::up(txn, path, curr_lvl - 1, siblings[curr_lvl], siblings, op);
             }
+            // if curr_lvl == 0 {
+            //     return Ok(key);
+            // }
         }
 
         let node = if path[curr_lvl] {
@@ -700,19 +703,14 @@ impl MerkleTree {
             op,
         )?;
 
-        // println!("siblings:");
-        // siblings.iter().for_each(|s| println!("{}", s));
+        println!("siblings:");
+        siblings.iter().for_each(|s| println!("{}", s));
 
-        dbg!("DBG");
-        dbg!(op, maybe_value);
         let leaf: Leaf = match (op, maybe_value) {
             (MerkleTreeOp::Insert, Some(value)) | (MerkleTreeOp::Update, Some(value)) => {
                 Leaf::new(k, value)
             }
-            (MerkleTreeOp::Delete, None) => {
-                // todo!() // TODO
-                Leaf::new(EMPTY_VALUE, EMPTY_VALUE)
-            }
+            (MerkleTreeOp::Delete, None) => Leaf::new(EMPTY_VALUE, EMPTY_VALUE),
             _ => panic!("todo err"), // TODO err
         };
         txn.store_node(leaf.hash.into(), Node::Leaf(leaf.clone()))?; // TODO rm clone
@@ -720,10 +718,42 @@ impl MerkleTree {
             // return the leaf's hash as root
             return Ok(leaf.hash);
         }
-        let new_root = Self::up(txn, path, siblings.len() - 1, leaf.hash, siblings, op)?;
 
-        // NOTE-WIP: going up from a delete might need to push upper the leaf in
-        // some cases, currently not handled.
+        let new_root = if op == MerkleTreeOp::Delete {
+            if siblings.len() == 1 {
+                // we're at the root-1 level
+                let node = if path[0] {
+                    Intermediate::new(siblings[0], EMPTY_HASH)
+                } else {
+                    Intermediate::new(EMPTY_HASH, siblings[0])
+                };
+                // store in db
+                txn.store_node(node.hash.into(), Node::Intermediate(node.clone()))?;
+                // TODO rm clone
+                return Ok(node.hash);
+            }
+            // println!("KEYY {}", siblings[siblings.len() - 1]);
+            let l = siblings.len() - 1;
+            let remaining_key = siblings[l].clone();
+            // if remaining_key == EMPTY_HASH {
+            //     return Ok(EMPTY_HASH);
+            // }
+            siblings[l] = EMPTY_HASH;
+            println!("siblings:");
+            siblings.iter().for_each(|s| println!("{}", s));
+            Self::up(
+                txn,
+                path,
+                siblings.len() - 1,
+                remaining_key,
+                // siblings.len() - 2,
+                // siblings[siblings.len() - 1], // leaf sibling as leaf
+                siblings,
+                op,
+            )?
+        } else {
+            Self::up(txn, path, siblings.len() - 1, leaf.hash, siblings, op)?
+        };
 
         Ok(new_root)
     }
@@ -1159,7 +1189,12 @@ pub struct Leaf {
 impl Leaf {
     fn new(key: RawValue, value: RawValue) -> Self {
         Self {
-            hash: kv_hash(&key, Some(value)),
+            hash: if key == EMPTY_VALUE && value == EMPTY_VALUE {
+                // empty node, don't hash {0,0} and just use 0 as it's hash
+                EMPTY_HASH
+            } else {
+                kv_hash(&key, Some(value))
+            },
             path: keypath(key),
             key,
             value,
@@ -1189,34 +1224,6 @@ pub mod tests {
     use itertools::Itertools;
 
     use super::*;
-
-    #[test]
-    fn test_tmp_merkletree() -> TreeResult<()> {
-        let kvs = HashMap::new();
-        let mut tree = MerkleTree::new(&kvs);
-
-        let mut txn = tree.db.begin_txn(true).unwrap();
-
-        let (key, value) = (RawValue::from(2), RawValue::from(1002));
-        tree.root =
-            MerkleTree::apply_op(&mut txn, MerkleTreeOp::Insert, tree.root, key, Some(value))?;
-
-        let (key, value) = (RawValue::from(6), RawValue::from(1006));
-        tree.root =
-            MerkleTree::apply_op(&mut txn, MerkleTreeOp::Insert, tree.root, key, Some(value))?;
-
-        // let (key, value) = (RawValue::from(3), RawValue::from(1003));
-        // tree.root =
-        //     MerkleTree::apply_op(&mut txn, MerkleTreeOp::Insert, tree.root, key, Some(value))?;
-
-        tree.root = MerkleTree::apply_op(&mut txn, MerkleTreeOp::Delete, tree.root, key, None)?;
-
-        txn.commit()?;
-
-        println!("{}", tree);
-
-        Ok(())
-    }
 
     #[test]
     fn test_merkletree() -> TreeResult<()> {
@@ -1298,6 +1305,42 @@ pub mod tests {
     }
 
     #[test]
+    fn test_delete_to_empty() -> TreeResult<()> {
+        let mut tree = MerkleTree::new(&HashMap::new());
+
+        let (key, value) = (RawValue::from(2), RawValue::from(1002));
+        let _ = tree.insert(&key, &value)?;
+
+        let (key, value) = (RawValue::from(6), RawValue::from(1006));
+        let _ = tree.insert(&key, &value)?;
+
+        let (key, value) = (RawValue::from(3), RawValue::from(1003));
+        let _ = tree.insert(&key, &value)?;
+
+        let (key, value) = (RawValue::from(7), RawValue::from(1007));
+        let _ = tree.insert(&key, &value)?;
+
+        println!("FULL TREE");
+        println!("{}", tree);
+        let _ = tree.delete(&RawValue::from(3))?;
+        println!("AFTER rm:3");
+        println!("{}", tree);
+        let _ = tree.delete(&RawValue::from(7))?;
+        println!("AFTER rm:4");
+        println!("{}", tree);
+        let _ = tree.delete(&RawValue::from(6))?;
+        println!("AFTER rm:6");
+        println!("{}", tree);
+        let _ = tree.delete(&RawValue::from(2))?;
+        println!("AFTER rm:2");
+        println!("{}", tree);
+
+        assert_eq!(tree.root, EMPTY_HASH);
+
+        Ok(())
+    }
+
+    #[test]
     fn test_state_transition() -> TreeResult<()> {
         let mut kvs = HashMap::new();
         for i in 0..8 {
@@ -1325,6 +1368,9 @@ pub mod tests {
         // should be the same (mutatis mutandis).
         let mut tree_with_deleted_key = tree.clone();
         let state_transition_proof1 = tree_with_deleted_key.delete(&key)?;
+        println!("{}", tree);
+        println!("{}", tree_with_deleted_key);
+
         MerkleTree::verify_state_transition(&state_transition_proof1)?;
         assert_eq!(
             state_transition_proof1.old_root,
