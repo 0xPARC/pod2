@@ -55,7 +55,6 @@ impl MerkleTree {
         txn.store_node(root.into(), Node::Leaf(Leaf::new(root.into(), EMPTY_VALUE)))
             .unwrap();
         for (k, v) in kvs.iter() {
-            dbg!(&k);
             root = Self::apply_op(&mut txn, MerkleTreeOp::Insert, root, *k, Some(*v)).unwrap();
         }
         txn.commit().unwrap();
@@ -106,13 +105,13 @@ impl MerkleTree {
         }
 
         if curr_node_hash == EMPTY_HASH {
-            return Ok(Some((curr_node_hash.into(), EMPTY_VALUE)));
+            // return Ok(Some((curr_node_hash.into(), EMPTY_VALUE))); // TODO rm
+            return Ok(None);
         }
 
         let node = txn.load_node(curr_node_hash.into())?;
         match node {
             Node::Intermediate(n) => {
-                dbg!("INTERMEDIATE");
                 if path[lvl] {
                     if let Some(s) = siblings.as_mut() {
                         s.push(n.left);
@@ -134,18 +133,24 @@ impl MerkleTree {
                 }
             }
             Node::Leaf(old_leaf) => {
-                dbg!("LEAF");
+                dbg!(old_leaf.hash);
+                dbg!(old_leaf.key);
+                dbg!(old_leaf.value);
+                // old_leaf.value is curr_node_hash's value (curr_value)
                 if old_leaf.value != EMPTY_VALUE {
                     if get_leaf_only {
-                        // return Ok(Some((old_leaf.key, old_leaf.value)));
-                        return Ok(Some((curr_node_hash.into(), old_leaf.value)));
+                        return Ok(Some((old_leaf.key, old_leaf.value)));
+                        // return Ok(Some((curr_node_hash.into(), old_leaf.value)));
                     }
 
                     if new_key == old_leaf.key {
-                        panic!("TODO err: key already exists");
+                        panic!("TODO return err: key already exists");
                     }
 
-                    dbg!("DOWN_DIVERG");
+                    // dbg rm // TODO rm since this should be always true
+                    if old_leaf.hash != curr_node_hash.into() {
+                        panic!("AGH");
+                    }
                     Self::down_till_divergence(
                         lvl,
                         // old_leaf.key,
@@ -164,7 +169,7 @@ impl MerkleTree {
             }
             _ => {
                 dbg!(&node);
-                dbg!("should not be reached");
+                dbg!("SHOULD NOT BE REACHED");
                 Ok(None)
             } // TODO return error since it should not be reached?
         }
@@ -185,7 +190,7 @@ impl MerkleTree {
         if lvl > MAX_DEPTH {
             panic!("error: max level reached"); // TODO return error
         }
-        if old_path[lvl] != new_path[lvl] {
+        if old_path[lvl] == new_path[lvl] {
             // siblings.push(old_leaf.hash);
             siblings.push(EMPTY_HASH);
             return Self::down_till_divergence(
@@ -198,7 +203,6 @@ impl MerkleTree {
             );
         }
         // reached the divergence
-        dbg!("OK", old_key);
         siblings.push(old_key.into());
         Ok(())
     }
@@ -216,8 +220,6 @@ impl MerkleTree {
         } else {
             Intermediate::new(key, siblings[curr_lvl])
         };
-        dbg!("up int");
-        dbg!(&node);
         // store in db
         txn.store_node(node.hash.into(), Node::Intermediate(node.clone()))?;
         // TODO rm clone
@@ -260,7 +262,7 @@ impl MerkleTree {
 
         let old_root: Hash = self.root;
 
-        let new_root: Hash = Self::apply_op(
+        self.root = Self::apply_op(
             &mut txn,
             MerkleTreeOp::Insert,
             self.root,
@@ -268,7 +270,7 @@ impl MerkleTree {
             Some(*value),
         )?;
 
-        let (v, proof) = self.prove(key)?;
+        let (v, proof) = self.prove_with_txn(&mut txn, key)?;
         assert!(proof.existence);
         assert_eq!(v, *value);
         assert!(proof.other_leaf.is_none());
@@ -279,7 +281,7 @@ impl MerkleTree {
             op: MerkleTreeOp::Insert, // insertion
             old_root,
             op_proof: proof_non_existence,
-            new_root,
+            new_root: self.root,
             op_key: *key,
             op_value: *value,
             value: None,
@@ -297,7 +299,7 @@ impl MerkleTree {
         let (old_value, old_proof) = self.prove_with_txn(&mut txn, key)?;
 
         let old_root: Hash = self.root;
-        let new_root = Self::apply_op(
+        self.root = Self::apply_op(
             &mut txn,
             MerkleTreeOp::Update,
             self.root,
@@ -316,7 +318,7 @@ impl MerkleTree {
             op: MerkleTreeOp::Update,
             old_root,
             op_proof: old_proof,
-            new_root,
+            new_root: self.root,
             op_key: *key,
             op_value: *value,
             value: Some(old_value),
@@ -330,7 +332,7 @@ impl MerkleTree {
         let (value, proof_existence) = self.prove_with_txn(&mut txn, key)?;
 
         let old_root: Hash = self.root;
-        let new_root = Self::apply_op(&mut txn, MerkleTreeOp::Delete, self.root, *key, None)?;
+        self.root = Self::apply_op(&mut txn, MerkleTreeOp::Delete, self.root, *key, None)?;
 
         let proof = self.prove_nonexistence_with_txn(&mut txn, key)?;
         assert!(!proof.existence);
@@ -341,7 +343,7 @@ impl MerkleTree {
             op: MerkleTreeOp::Delete,
             old_root,
             op_proof: proof,
-            new_root,
+            new_root: self.root,
             op_key: *key,
             op_value: value,
             value: None,
@@ -367,7 +369,6 @@ impl MerkleTree {
         let path = keypath(*key);
 
         let mut siblings: Vec<Hash> = Vec::new();
-        dbg!("root", self.root);
         match Self::down(txn, path, 0, self.root, *key, Some(&mut siblings), true)? {
             Some((k, v)) if &k == key => Ok((
                 v,
@@ -377,6 +378,7 @@ impl MerkleTree {
                     other_leaf: None,
                 },
             )),
+            Some((k, v)) if &k != key => panic!("{} - {}", k, key),
             _ => Err(TreeError::key_not_found()),
         }
     }
@@ -621,13 +623,16 @@ impl MerkleTree {
         let _ = Self::down(
             &txn,
             path.clone(),
-            0,
+            0, // from lvl 0
             root.into(),
             k,
             Some(&mut siblings),
             false,
         )?;
-        dbg!(&siblings);
+
+        // println!("siblings:");
+        // siblings.iter().for_each(|s| println!("{}", s));
+
         let leaf: Leaf = match (op, maybe_value) {
             (MerkleTreeOp::Insert, Some(value)) | (MerkleTreeOp::Update, Some(value)) => {
                 Leaf::new(k, value)
@@ -642,7 +647,6 @@ impl MerkleTree {
             // return the leaf's hash as root
             return Ok(leaf.hash);
         }
-        dbg!("LEAFHASH", leaf.hash);
         let new_root = Self::up(txn, path, siblings.len() - 1, leaf.hash, siblings)?;
 
         // NOTE-WIP: going up from a delete might need to push upper the leaf in
@@ -760,6 +764,10 @@ impl fmt::Display for MerkleTree {
 }
 
 fn print_graph_viz(f: &mut fmt::Formatter<'_>, txn: &Box<dyn Txn>, hash: Hash) -> fmt::Result {
+    if hash == EMPTY_HASH {
+        return Ok(());
+    }
+
     let node = txn.load_node(hash.into()).unwrap(); // TODO unwrap
     match node {
         Node::Intermediate(n) => {
@@ -1109,6 +1117,32 @@ pub mod tests {
     use super::*;
 
     #[test]
+    fn test_tmp_merkletree() -> TreeResult<()> {
+        let kvs = HashMap::new();
+        let mut tree = MerkleTree::new(&kvs);
+
+        let mut txn = tree.db.begin_txn(true).unwrap();
+
+        let (key, value) = (RawValue::from(2), RawValue::from(1002));
+        tree.root =
+            MerkleTree::apply_op(&mut txn, MerkleTreeOp::Insert, tree.root, key, Some(value))?;
+
+        let (key, value) = (RawValue::from(6), RawValue::from(1006));
+        tree.root =
+            MerkleTree::apply_op(&mut txn, MerkleTreeOp::Insert, tree.root, key, Some(value))?;
+
+        let (key, value) = (RawValue::from(3), RawValue::from(1003));
+        tree.root =
+            MerkleTree::apply_op(&mut txn, MerkleTreeOp::Insert, tree.root, key, Some(value))?;
+
+        txn.commit()?;
+
+        println!("{}", tree);
+
+        Ok(())
+    }
+
+    #[test]
     fn test_merkletree() -> TreeResult<()> {
         let mut kvs = HashMap::new();
         for i in 0..8 {
@@ -1126,7 +1160,6 @@ pub mod tests {
         // https://0xparc.github.io/pod2/merkletree.html#example-2
         println!("{}", tree);
 
-        /*
         // Inclusion checks
         let (v, proof) = tree.prove(&RawValue::from(13))?;
         assert_eq!(v, RawValue::from(1013));
@@ -1151,7 +1184,6 @@ pub mod tests {
         println!("{}", proof);
 
         MerkleTree::verify_nonexistence(tree.root(), &proof, &key)?;
-         */
 
         /*
           TODO - this part disabled till tree iterator is ready
@@ -1189,80 +1221,78 @@ pub mod tests {
         Ok(())
     }
 
-    /*
-        #[test]
-        fn test_state_transition() -> TreeResult<()> {
-            let mut kvs = HashMap::new();
-            for i in 0..8 {
-                kvs.insert(RawValue::from(i), RawValue::from(1000 + i));
-            }
-
-            let mut tree = MerkleTree::new(&kvs);
-            let old_root = tree.root();
-
-            // key=37 shares path with key=5, till the level 6, needing 2 extra
-            // 'empty' nodes between the original position of key=5 with the new
-            // position of key=5 and key=37.
-            let key = RawValue::from(37);
-            let value = RawValue::from(1037);
-            let state_transition_proof = tree.insert(&key, &value)?;
-
-            MerkleTree::verify_state_transition(&state_transition_proof)?;
-            assert_eq!(state_transition_proof.old_root, old_root);
-            assert_eq!(state_transition_proof.new_root, tree.root());
-            assert_eq!(state_transition_proof.op_key, key);
-            assert_eq!(state_transition_proof.op_value, value);
-            assert_eq!(state_transition_proof.value, None);
-
-            // Deleting this key should yield the old tree, and the proof
-            // should be the same (mutatis mutandis).
-            let mut tree_with_deleted_key = tree.clone();
-            let state_transition_proof1 = tree_with_deleted_key.delete(&key)?;
-            MerkleTree::verify_state_transition(&state_transition_proof1)?;
-            assert_eq!(
-                state_transition_proof1.old_root,
-                state_transition_proof.new_root
-            );
-            assert_eq!(
-                state_transition_proof1.new_root,
-                state_transition_proof.old_root
-            );
-            assert_eq!(
-                state_transition_proof1.op_key,
-                state_transition_proof.op_key
-            );
-            assert_eq!(
-                state_transition_proof1.op_value,
-                state_transition_proof.op_value
-            );
-            assert_eq!(
-                state_transition_proof1.op_proof,
-                state_transition_proof.op_proof
-            );
-            assert_eq!(
-                state_transition_proof1.siblings,
-                state_transition_proof.siblings
-            );
-
-            // 2nd part of the test. Add a new leaf
-            let mut tree_with_another_leaf = tree.clone();
-            let key = RawValue::from(21);
-            let value = RawValue::from(1021);
-            let state_transition_proof = tree_with_another_leaf.insert(&key, &value)?;
-
-            MerkleTree::verify_state_transition(&state_transition_proof)?;
-
-            // Alternatively add this key with another value then update.
-            let value1 = RawValue::from(99);
-            tree.insert(&key, &value1)?;
-            let state_transition_proof1 = tree.update(&key, &value)?;
-
-            MerkleTree::verify_state_transition(&state_transition_proof1)?;
-
-            // `tree` and `tree_with_another_leaf` should coincide.
-            assert_eq!(tree.root(), tree_with_another_leaf.root());
-
-            Ok(())
+    #[test]
+    fn test_state_transition() -> TreeResult<()> {
+        let mut kvs = HashMap::new();
+        for i in 0..8 {
+            kvs.insert(RawValue::from(i), RawValue::from(1000 + i));
         }
-    */
+
+        let mut tree = MerkleTree::new(&kvs);
+        let old_root = tree.root();
+
+        // key=37 shares path with key=5, till the level 6, needing 2 extra
+        // 'empty' nodes between the original position of key=5 with the new
+        // position of key=5 and key=37.
+        let key = RawValue::from(37);
+        let value = RawValue::from(1037);
+        let state_transition_proof = tree.insert(&key, &value)?;
+
+        MerkleTree::verify_state_transition(&state_transition_proof)?;
+        assert_eq!(state_transition_proof.old_root, old_root);
+        assert_eq!(state_transition_proof.new_root, tree.root());
+        assert_eq!(state_transition_proof.op_key, key);
+        assert_eq!(state_transition_proof.op_value, value);
+        assert_eq!(state_transition_proof.value, None);
+
+        // Deleting this key should yield the old tree, and the proof
+        // should be the same (mutatis mutandis).
+        let mut tree_with_deleted_key = tree.clone();
+        let state_transition_proof1 = tree_with_deleted_key.delete(&key)?;
+        MerkleTree::verify_state_transition(&state_transition_proof1)?;
+        assert_eq!(
+            state_transition_proof1.old_root,
+            state_transition_proof.new_root
+        );
+        assert_eq!(
+            state_transition_proof1.new_root,
+            state_transition_proof.old_root
+        );
+        assert_eq!(
+            state_transition_proof1.op_key,
+            state_transition_proof.op_key
+        );
+        assert_eq!(
+            state_transition_proof1.op_value,
+            state_transition_proof.op_value
+        );
+        assert_eq!(
+            state_transition_proof1.op_proof,
+            state_transition_proof.op_proof
+        );
+        assert_eq!(
+            state_transition_proof1.siblings,
+            state_transition_proof.siblings
+        );
+
+        // 2nd part of the test. Add a new leaf
+        let mut tree_with_another_leaf = tree.clone();
+        let key = RawValue::from(21);
+        let value = RawValue::from(1021);
+        let state_transition_proof = tree_with_another_leaf.insert(&key, &value)?;
+
+        MerkleTree::verify_state_transition(&state_transition_proof)?;
+
+        // Alternatively add this key with another value then update.
+        let value1 = RawValue::from(99);
+        tree.insert(&key, &value1)?;
+        let state_transition_proof1 = tree.update(&key, &value)?;
+
+        MerkleTree::verify_state_transition(&state_transition_proof1)?;
+
+        // `tree` and `tree_with_another_leaf` should coincide.
+        assert_eq!(tree.root(), tree_with_another_leaf.root());
+
+        Ok(())
+    }
 }
