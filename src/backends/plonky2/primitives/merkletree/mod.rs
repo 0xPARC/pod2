@@ -99,6 +99,7 @@ impl MerkleTree {
         // going down till the virtual divergence. `true` is for read-only
         // operations, while `false` is when the tree is being modified.
         get_leaf_only: bool,
+        op: MerkleTreeOp,
     ) -> Result<Option<(RawValue, RawValue)>> {
         if lvl > MAX_DEPTH {
             panic!("error: max level reached"); // TODO return error
@@ -124,12 +125,22 @@ impl MerkleTree {
                         new_key,
                         siblings,
                         get_leaf_only,
+                        op,
                     )
                 } else {
                     if let Some(s) = siblings.as_mut() {
                         s.push(n.right);
                     }
-                    Self::down(txn, path, lvl + 1, n.left, new_key, siblings, get_leaf_only)
+                    Self::down(
+                        txn,
+                        path,
+                        lvl + 1,
+                        n.left,
+                        new_key,
+                        siblings,
+                        get_leaf_only,
+                        op,
+                    )
                 }
             }
             Node::Leaf(old_leaf) => {
@@ -143,8 +154,16 @@ impl MerkleTree {
                         // return Ok(Some((curr_node_hash.into(), old_leaf.value)));
                     }
 
+                    // TODO note. at op DELETE, here will find the key to match,
+                    // then it shoulud delete
                     if new_key == old_leaf.key {
-                        panic!("TODO return err: key already exists");
+                        if op != MerkleTreeOp::Delete {
+                            // not in delete, keys should be equal
+                            panic!("TODO return err: key already exists"); // TODO
+                        }
+                        // we're at the op Delete case
+                        dbg!("DELETE CASE (down)");
+                        return Ok(Some((old_leaf.key, old_leaf.value)));
                     }
 
                     // dbg rm // TODO rm since this should be always true
@@ -214,7 +233,20 @@ impl MerkleTree {
         curr_lvl: usize,
         key: Hash,
         siblings: Vec<Hash>,
+        op: MerkleTreeOp,
     ) -> Result<Hash> {
+        if op == MerkleTreeOp::Delete {
+            dbg!("DELETE (up)");
+            if curr_lvl == 0 {
+                return Ok(key);
+            }
+            // in operation Delete, go up till the first non-zero sibling and
+            // pair the given key with that sibling
+            if siblings[curr_lvl] == EMPTY_HASH {
+                return Self::up(txn, path, curr_lvl - 1, key, siblings, op);
+            }
+        }
+
         let node = if path[curr_lvl] {
             Intermediate::new(siblings[curr_lvl], key)
         } else {
@@ -227,14 +259,23 @@ impl MerkleTree {
         if curr_lvl == 0 {
             return Ok(node.hash);
         }
-        Self::up(txn, path, curr_lvl - 1, node.hash.into(), siblings)
+        Self::up(txn, path, curr_lvl - 1, node.hash.into(), siblings, op)
     }
 
     /// returns the value at the given key
     pub fn get(&self, key: &RawValue) -> TreeResult<RawValue> {
         let path = keypath(*key);
         let txn = self.db.begin_txn(false)?;
-        let key_resolution = Self::down(&txn, path, 0, self.root, *key, None, true)?;
+        let key_resolution = Self::down(
+            &txn,
+            path,
+            0,
+            self.root,
+            *key,
+            None,
+            true,
+            MerkleTreeOp::ReadOnly,
+        )?;
         match key_resolution {
             Some((k, v)) if &k == key => Ok(v),
             _ => Err(TreeError::key_not_found()),
@@ -245,7 +286,16 @@ impl MerkleTree {
     pub fn contains(&self, key: &RawValue) -> TreeResult<bool> {
         let path = keypath(*key);
         let txn = self.db.begin_txn(false)?;
-        match Self::down(&txn, path, 0, self.root, *key, None, true)? {
+        match Self::down(
+            &txn,
+            path,
+            0,
+            self.root,
+            *key,
+            None,
+            true,
+            MerkleTreeOp::ReadOnly,
+        )? {
             Some((k, _)) if &k == key => Ok(true),
             _ => Ok(false),
         }
@@ -369,7 +419,16 @@ impl MerkleTree {
         let path = keypath(*key);
 
         let mut siblings: Vec<Hash> = Vec::new();
-        match Self::down(txn, path, 0, self.root, *key, Some(&mut siblings), true)? {
+        match Self::down(
+            txn,
+            path,
+            0,
+            self.root,
+            *key,
+            Some(&mut siblings),
+            true,
+            MerkleTreeOp::ReadOnly,
+        )? {
             Some((k, v)) if &k == key => Ok((
                 v,
                 MerkleProof {
@@ -401,7 +460,16 @@ impl MerkleTree {
         let mut siblings: Vec<Hash> = Vec::new();
 
         // note: non-existence of a key can be in 2 cases:
-        match Self::down(txn, path, 0, self.root, *key, Some(&mut siblings), true)? {
+        match Self::down(
+            txn,
+            path,
+            0,
+            self.root,
+            *key,
+            Some(&mut siblings),
+            true,
+            MerkleTreeOp::ReadOnly,
+        )? {
             // case i) the expected leaf does not exist
             None => Ok(MerkleProof {
                 existence: false,
@@ -581,6 +649,7 @@ impl MerkleTree {
                 }
                 Ok(())
             }
+            _ => return Err(TreeError::invalid_proof("proof.op".to_string())),
         }
     }
 }
@@ -628,17 +697,21 @@ impl MerkleTree {
             k,
             Some(&mut siblings),
             false,
+            op,
         )?;
 
         // println!("siblings:");
         // siblings.iter().for_each(|s| println!("{}", s));
 
+        dbg!("DBG");
+        dbg!(op, maybe_value);
         let leaf: Leaf = match (op, maybe_value) {
             (MerkleTreeOp::Insert, Some(value)) | (MerkleTreeOp::Update, Some(value)) => {
                 Leaf::new(k, value)
             }
             (MerkleTreeOp::Delete, None) => {
-                todo!() // TODO
+                // todo!() // TODO
+                Leaf::new(EMPTY_VALUE, EMPTY_VALUE)
             }
             _ => panic!("todo err"), // TODO err
         };
@@ -647,7 +720,7 @@ impl MerkleTree {
             // return the leaf's hash as root
             return Ok(leaf.hash);
         }
-        let new_root = Self::up(txn, path, siblings.len() - 1, leaf.hash, siblings)?;
+        let new_root = Self::up(txn, path, siblings.len() - 1, leaf.hash, siblings, op)?;
 
         // NOTE-WIP: going up from a delete might need to push upper the leaf in
         // some cases, currently not handled.
@@ -894,6 +967,7 @@ pub enum MerkleTreeOp {
     Insert = 0,
     Update,
     Delete,
+    ReadOnly,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -1131,9 +1205,11 @@ pub mod tests {
         tree.root =
             MerkleTree::apply_op(&mut txn, MerkleTreeOp::Insert, tree.root, key, Some(value))?;
 
-        let (key, value) = (RawValue::from(3), RawValue::from(1003));
-        tree.root =
-            MerkleTree::apply_op(&mut txn, MerkleTreeOp::Insert, tree.root, key, Some(value))?;
+        // let (key, value) = (RawValue::from(3), RawValue::from(1003));
+        // tree.root =
+        //     MerkleTree::apply_op(&mut txn, MerkleTreeOp::Insert, tree.root, key, Some(value))?;
+
+        tree.root = MerkleTree::apply_op(&mut txn, MerkleTreeOp::Delete, tree.root, key, None)?;
 
         txn.commit()?;
 
