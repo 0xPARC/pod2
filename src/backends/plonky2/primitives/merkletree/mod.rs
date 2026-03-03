@@ -100,13 +100,12 @@ impl MerkleTree {
         // operations, while `false` is when the tree is being modified.
         get_leaf_only: bool,
         op: MerkleTreeOp,
-    ) -> Result<Option<(RawValue, RawValue)>> {
+    ) -> TreeResult<Option<(RawValue, RawValue)>> {
         if lvl > MAX_DEPTH {
-            panic!("error: max level reached"); // TODO return error
+            return Err(TreeError::max_depth());
         }
 
         if curr_node_hash == EMPTY_HASH {
-            // return Ok(Some((curr_node_hash.into(), EMPTY_VALUE))); // TODO rm
             return Ok(None);
         }
 
@@ -148,28 +147,20 @@ impl MerkleTree {
                 if old_leaf.value != EMPTY_VALUE {
                     if get_leaf_only {
                         return Ok(Some((old_leaf.key, old_leaf.value)));
-                        // return Ok(Some((curr_node_hash.into(), old_leaf.value)));
                     }
 
-                    // TODO note. at op DELETE, here will find the key to match,
-                    // then it shoulud delete
                     if new_key == old_leaf.key {
-                        // if op != MerkleTreeOp::Delete || op != MerkleTreeOp::Update {
+                        // if op != MerkleTreeOp::Delete || op != MerkleTreeOp::Update { // TODO rm
                         if op == MerkleTreeOp::Insert {
-                            // not in delete, keys should be equal
-                            panic!("TODO return err: key already exists"); // TODO
+                            // in Insert, key should not exist
+                            return Err(TreeError::key_exists());
                         }
                         // we're at the operation Update/Delete case
                         return Ok(Some((old_leaf.key, old_leaf.value)));
                     }
 
-                    // dbg rm // TODO rm since this should be always true
-                    if old_leaf.hash != curr_node_hash.into() {
-                        panic!("AGH");
-                    }
                     Self::down_till_divergence(
                         lvl,
-                        // old_leaf.key,
                         curr_node_hash.into(),
                         new_key,
                         old_leaf.path,
@@ -180,14 +171,11 @@ impl MerkleTree {
                     // using them at the highter level tree methods, instead of
                     // recomputing them to get the proofs of existence/nonexistence.
                     // return Ok(Some((old_leaf.key, old_leaf.value)));
+                    // TODO-NOTE 2: updated it so that the input siblings get
+                    // updated along this method. Leaving this comment for
+                    // keep thinking on this, to be removed tomorrow.
                 }
                 return Ok(Some((old_leaf.key, old_leaf.value)));
-            }
-            _ => {
-                dbg!(&node);
-                dbg!("SHOULD NOT BE REACHED");
-                // TODO return error since it should not be reached?
-                Ok(None)
             }
         }
     }
@@ -205,10 +193,9 @@ impl MerkleTree {
         siblings: &mut Vec<Hash>,
     ) -> TreeResult<()> {
         if lvl > MAX_DEPTH {
-            panic!("error: max level reached"); // TODO return error
+            return Err(TreeError::max_depth());
         }
         if old_path[lvl] == new_path[lvl] {
-            // siblings.push(old_leaf.hash);
             siblings.push(EMPTY_HASH);
             return Self::down_till_divergence(
                 lvl + 1,
@@ -233,21 +220,15 @@ impl MerkleTree {
         siblings: Vec<Hash>,
         op: MerkleTreeOp,
     ) -> Result<Hash> {
-        dbg!(curr_lvl);
         if op == MerkleTreeOp::Delete {
             // in operation Delete, go up till the first non-zero sibling and
             // pair the given key with that sibling
-            println!("s {}: {}", curr_lvl, siblings[curr_lvl]);
             if siblings[curr_lvl] == EMPTY_HASH {
                 if curr_lvl == 0 {
                     return Ok(key);
                 }
                 return Self::up(txn, path, curr_lvl - 1, key, siblings, op);
-                // return Self::up(txn, path, curr_lvl - 1, siblings[curr_lvl], siblings, op);
             }
-            // if curr_lvl == 0 {
-            //     return Ok(key);
-            // }
         }
 
         let node = if path[curr_lvl] {
@@ -440,7 +421,7 @@ impl MerkleTree {
                     other_leaf: None,
                 },
             )),
-            Some((k, v)) if &k != key => panic!("{} - {}", k, key),
+            // Some((k, v)) if &k != key => panic!("{} - {}", k, key), // TODO rm
             _ => Err(TreeError::key_not_found()),
         }
     }
@@ -703,15 +684,17 @@ impl MerkleTree {
             op,
         )?;
 
-        println!("siblings:");
-        siblings.iter().for_each(|s| println!("{}", s));
-
         let leaf: Leaf = match (op, maybe_value) {
             (MerkleTreeOp::Insert, Some(value)) | (MerkleTreeOp::Update, Some(value)) => {
                 Leaf::new(k, value)
             }
             (MerkleTreeOp::Delete, None) => Leaf::new(EMPTY_VALUE, EMPTY_VALUE),
-            _ => panic!("todo err"), // TODO err
+            _ => {
+                return Err(TreeError::invalid_state_transition_proof_arg(format!(
+                    "{:?} op has invalid value type: {:?}",
+                    op, maybe_value
+                )))
+            }
         };
         txn.store_node(leaf.hash.into(), Node::Leaf(leaf.clone()))?; // TODO rm clone
         if siblings.len() == 0 {
@@ -735,22 +718,8 @@ impl MerkleTree {
             // println!("KEYY {}", siblings[siblings.len() - 1]);
             let l = siblings.len() - 1;
             let remaining_key = siblings[l].clone();
-            // if remaining_key == EMPTY_HASH {
-            //     return Ok(EMPTY_HASH);
-            // }
             siblings[l] = EMPTY_HASH;
-            println!("siblings:");
-            siblings.iter().for_each(|s| println!("{}", s));
-            Self::up(
-                txn,
-                path,
-                siblings.len() - 1,
-                remaining_key,
-                // siblings.len() - 2,
-                // siblings[siblings.len() - 1], // leaf sibling as leaf
-                siblings,
-                op,
-            )?
+            Self::up(txn, path, siblings.len() - 1, remaining_key, siblings, op)?
         } else {
             Self::up(txn, path, siblings.len() - 1, leaf.hash, siblings, op)?
         };
@@ -905,7 +874,6 @@ fn print_graph_viz(f: &mut fmt::Formatter<'_>, txn: &Box<dyn Txn>, hash: Hash) -
             writeln!(f, "\"k:{}\\nv:{}\" [style=dashed]", l.key, l.value)?;
             writeln!(f, "\"{}\" -> {{ \"k:{}\\nv:{}\" }}", l.hash, l.key, l.value,)
         }
-        Node::None => Ok(()),
     }
 }
 
@@ -1050,7 +1018,6 @@ impl MerkleTreeStateTransitionProof {
 // for more disk-space efficiency.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum Node {
-    None,
     Leaf(Leaf),
     Intermediate(Intermediate),
 }
@@ -1090,65 +1057,8 @@ impl fmt::Display for Node {
                 writeln!(f, "\"k:{}\\nv:{}\" [style=dashed]", l.key, l.value)?;
                 writeln!(f, "\"{}\" -> {{ \"k:{}\\nv:{}\" }}", l.hash, l.key, l.value,)
             }
-            Self::None => Ok(()),
         }
     }
-}
-
-impl Node {
-    /*
-    fn is_empty(&self) -> bool {
-        match self {
-            Self::None => true,
-            Self::Leaf(_l) => false,
-            Self::Intermediate(_n) => false,
-        }
-    }
-    fn is_intermediate(&self) -> bool {
-        match self {
-            Self::None => false,
-            Self::Leaf(_l) => false,
-            Self::Intermediate(_n) => true,
-        }
-    }
-    fn hash(&self) -> Hash {
-        match self {
-            Self::None => EMPTY_HASH,
-            Self::Leaf(l) => l.hash,
-            Self::Intermediate(n) => n.hash,
-        }
-    }
-    */
-
-    // TODO a variation of this might be needed for the `delete` method
-    /*
-    /// Normalises a Merkle tree along a specified path. Useful
-    /// post-deletion.
-    fn normalise_path(&mut self, key_path: &[bool]) {
-        match self {
-            Self::Leaf(_) | Self::None => (),
-            Self::Intermediate(Intermediate {
-                hash: _h,
-                left,
-                right,
-            }) => {
-                if key_path[0] {
-                    right.normalise_path(&key_path[1..]);
-                } else {
-                    left.normalise_path(&key_path[1..]);
-                }
-
-                // If we have a branch with children (NIL, X) or (X,
-                // NIL) where X is not a branch, then replace with X.
-                if left.is_empty() && !right.is_intermediate() {
-                    *self = *right.clone();
-                } else if right.is_empty() && !left.is_intermediate() {
-                    *self = *left.clone();
-                }
-            }
-        }
-    }
-    */
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -1158,13 +1068,6 @@ pub struct Intermediate {
     right: Hash,
 }
 impl Intermediate {
-    fn empty() -> Self {
-        Self {
-            hash: EMPTY_HASH,
-            left: EMPTY_HASH,
-            right: EMPTY_HASH,
-        }
-    }
     fn new(left: Hash, right: Hash) -> Self {
         if left.clone() == EMPTY_HASH && right.clone() == EMPTY_HASH {
             return Self {
@@ -1320,21 +1223,15 @@ pub mod tests {
         let (key, value) = (RawValue::from(7), RawValue::from(1007));
         let _ = tree.insert(&key, &value)?;
 
-        println!("FULL TREE");
-        println!("{}", tree);
         let _ = tree.delete(&RawValue::from(3))?;
-        println!("AFTER rm:3");
-        println!("{}", tree);
         let _ = tree.delete(&RawValue::from(7))?;
-        println!("AFTER rm:4");
-        println!("{}", tree);
         let _ = tree.delete(&RawValue::from(6))?;
-        println!("AFTER rm:6");
-        println!("{}", tree);
-        let _ = tree.delete(&RawValue::from(2))?;
-        println!("AFTER rm:2");
-        println!("{}", tree);
+        assert_eq!(
+            tree.root,
+            Leaf::new(RawValue::from(2), RawValue::from(1002)).hash
+        );
 
+        let _ = tree.delete(&RawValue::from(2))?;
         assert_eq!(tree.root, EMPTY_HASH);
 
         Ok(())
@@ -1368,9 +1265,6 @@ pub mod tests {
         // should be the same (mutatis mutandis).
         let mut tree_with_deleted_key = tree.clone();
         let state_transition_proof1 = tree_with_deleted_key.delete(&key)?;
-        println!("{}", tree);
-        println!("{}", tree_with_deleted_key);
-
         MerkleTree::verify_state_transition(&state_transition_proof1)?;
         assert_eq!(
             state_transition_proof1.old_root,
