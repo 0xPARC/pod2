@@ -476,6 +476,9 @@ impl Value {
     pub fn raw(&self) -> RawValue {
         self.raw
     }
+    pub fn take_typed(self) -> TypedValue {
+        Arc::unwrap_or_clone(self.typed)
+    }
     /// Determines Merkle existence proof for `key` in `self` (if applicable).
     pub(crate) fn prove_existence<'a>(
         &'a self,
@@ -817,7 +820,7 @@ impl Default for Params {
             max_operation_args: 5,
             max_custom_predicates: 8,
             max_custom_predicate_verifications: 8,
-            max_custom_predicate_wildcards: 8,
+            max_custom_predicate_wildcards: 9,
             max_merkle_proofs_containers: 20,
             max_merkle_tree_state_transition_proofs_containers: 6,
             max_depth_mt_containers: 32,
