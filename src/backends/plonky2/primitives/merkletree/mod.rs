@@ -773,51 +773,61 @@ fn hash_with_flag(flag: F, inputs: &[F]) -> Hash {
     }
 }
 
-/*
 impl MerkleTree {
     /// returns an iterator over the leaves of the tree
     pub fn iter(&self) -> Iter<'_> {
         Iter {
-            state: vec![&self.root.into()],
+            state: if self.root == EMPTY_HASH {
+                vec![]
+            } else {
+                vec![self.root]
+            },
+            db: self.db.as_ref(),
         }
     }
 }
 impl<'a> IntoIterator for &'a MerkleTree {
-    type Item = (&'a RawValue, &'a RawValue);
+    type Item = (RawValue, RawValue);
     type IntoIter = Iter<'a>;
     fn into_iter(self) -> Self::IntoIter {
         self.iter()
     }
 }
 pub struct Iter<'a> {
-    state: Vec<&'a Node>,
+    state: Vec<Hash>,
+    db: &'a dyn DB,
 }
 impl<'a> Iterator for Iter<'a> {
-    type Item = (&'a RawValue, &'a RawValue);
+    type Item = (RawValue, RawValue);
     fn next(&mut self) -> Option<Self::Item> {
-        let node = self.state.pop();
+        let node_hash = self.state.pop()?;
+
+        // Inspect node
+        let txn = self.db.begin_txn(false).ok()?;
+        let node = txn.load_node(node_hash.into()).ok()?;
+
         match node {
-            Some(Node::None) => self.next(),
-            Some(Node::Leaf(Leaf {
+            Node::Leaf(Leaf {
                 hash: _,
                 path: _,
                 key,
                 value,
-            })) => Some((key, value)),
-            Some(Node::Intermediate(Intermediate {
+            }) => Some((key, value)),
+            Node::Intermediate(Intermediate {
                 hash: _,
                 left,
                 right,
-            })) => {
-                self.state.push(right);
-                self.state.push(left);
+            }) => {
+                [right, left].into_iter().for_each(|h| {
+                    if h != EMPTY_HASH {
+                        self.state.push(h)
+                    }
+                });
                 self.next()
             }
-            _ => None,
         }
     }
 }
-*/
 
 impl fmt::Display for MerkleTree {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -1171,9 +1181,6 @@ pub mod tests {
 
         MerkleTree::verify_nonexistence(tree.root(), &proof, &key)?;
 
-        /*
-          TODO - this part disabled till tree iterator is ready
-
         // Check iterator
         let collected_kvs: Vec<_> = tree.into_iter().collect::<Vec<_>>();
 
@@ -1197,12 +1204,11 @@ pub mod tests {
         };
 
         let sorted_kvs = kvs
-            .iter()
-            .sorted_by(|(k1, _), (k2, _)| cmp(**k1, **k2))
+            .into_iter()
+            .sorted_by(|(k1, _), (k2, _)| cmp(*k1, *k2))
             .collect::<Vec<_>>();
 
         assert_eq!(collected_kvs, sorted_kvs);
-        */
 
         Ok(())
     }
