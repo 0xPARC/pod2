@@ -1075,10 +1075,15 @@ pub mod tests {
             ],
             OperationAux::None,
         ))?;
+        println!("{}", new_dict.mt);
 
         let mut new_old_dict = new_dict.clone();
         new_old_dict.delete(&Key::from("d"))?;
 
+        println!("{}", new_old_dict.mt);
+        println!("{}", dict.mt);
+        dbg!(new_old_dict.commitment(), dict.commitment());
+        assert_eq!(new_old_dict.commitment(), dict.commitment());
         assert_eq!(new_old_dict, dict);
 
         builder.pub_op(Operation(

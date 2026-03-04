@@ -21,7 +21,7 @@ use crate::{
 pub struct Dictionary {
     #[serde(skip)]
     #[schemars(skip)]
-    mt: MerkleTree,
+    pub mt: MerkleTree,
     #[serde(serialize_with = "ordered_map")]
     kvs: HashMap<Key, Value>,
 }
