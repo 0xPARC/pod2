@@ -89,9 +89,8 @@ impl MerkleTree {
     /// Be aware that this method will return the found leaf at the given path,
     /// which may contain a different key and value than the expected one.
     fn down(
-        txn: &Box<dyn Txn>,
-        path: Vec<bool>,
-        lvl: usize,
+        txn: &dyn Txn,
+        path_from_lvl: (Vec<bool>, usize),
         curr_node_hash: Hash, // hash of current level node
         new_key: RawValue,    // key to be added/found at the leaf
         mut siblings: Option<&mut Vec<Hash>>,
@@ -101,6 +100,8 @@ impl MerkleTree {
         get_leaf_only: bool,
         op: MerkleTreeOp,
     ) -> TreeResult<Option<(RawValue, RawValue)>> {
+        let (path, lvl) = path_from_lvl;
+
         if lvl > MAX_DEPTH {
             return Err(TreeError::max_depth());
         }
@@ -118,8 +119,7 @@ impl MerkleTree {
                     }
                     Self::down(
                         txn,
-                        path,
-                        lvl + 1,
+                        (path, lvl + 1),
                         n.right,
                         new_key,
                         siblings,
@@ -132,8 +132,7 @@ impl MerkleTree {
                     }
                     Self::down(
                         txn,
-                        path,
-                        lvl + 1,
+                        (path, lvl + 1),
                         n.left,
                         new_key,
                         siblings,
@@ -162,7 +161,6 @@ impl MerkleTree {
                     Self::down_till_divergence(
                         lvl,
                         curr_node_hash.into(),
-                        new_key,
                         old_leaf.path,
                         path,
                         siblings.unwrap(), // TODO wip
@@ -175,7 +173,7 @@ impl MerkleTree {
                     // updated along this method. Leaving this comment for
                     // keep thinking on this, to be removed tomorrow.
                 }
-                return Ok(Some((old_leaf.key, old_leaf.value)));
+                Ok(Some((old_leaf.key, old_leaf.value)))
             }
         }
     }
@@ -187,7 +185,6 @@ impl MerkleTree {
     fn down_till_divergence(
         lvl: usize,
         old_key: RawValue,
-        new_key: RawValue,
         old_path: Vec<bool>,
         new_path: Vec<bool>,
         siblings: &mut Vec<Hash>,
@@ -197,14 +194,7 @@ impl MerkleTree {
         }
         if old_path[lvl] == new_path[lvl] {
             siblings.push(EMPTY_HASH);
-            return Self::down_till_divergence(
-                lvl + 1,
-                old_key,
-                new_key,
-                old_path,
-                new_path,
-                siblings,
-            );
+            return Self::down_till_divergence(lvl + 1, old_key, old_path, new_path, siblings);
         }
         // reached the divergence
         siblings.push(old_key.into());
@@ -243,7 +233,7 @@ impl MerkleTree {
         if curr_lvl == 0 {
             return Ok(node.hash);
         }
-        Self::up(txn, path, curr_lvl - 1, node.hash.into(), siblings, op)
+        Self::up(txn, path, curr_lvl - 1, node.hash, siblings, op)
     }
 
     /// returns the value at the given key
@@ -251,9 +241,8 @@ impl MerkleTree {
         let path = keypath(*key);
         let txn = self.db.begin_txn(false)?;
         let key_resolution = Self::down(
-            &txn,
-            path,
-            0,
+            txn.as_ref(),
+            (path, 0),
             self.root,
             *key,
             None,
@@ -271,9 +260,8 @@ impl MerkleTree {
         let path = keypath(*key);
         let txn = self.db.begin_txn(false)?;
         match Self::down(
-            &txn,
-            path,
-            0,
+            txn.as_ref(),
+            (path, 0),
             self.root,
             *key,
             None,
@@ -404,9 +392,8 @@ impl MerkleTree {
 
         let mut siblings: Vec<Hash> = Vec::new();
         match Self::down(
-            txn,
-            path,
-            0,
+            txn.as_ref(),
+            (path, 0),
             self.root,
             *key,
             Some(&mut siblings),
@@ -445,9 +432,8 @@ impl MerkleTree {
 
         // note: non-existence of a key can be in 2 cases:
         match Self::down(
-            txn,
-            path,
-            0,
+            txn.as_ref(),
+            (path, 0),
             self.root,
             *key,
             Some(&mut siblings),
@@ -633,7 +619,7 @@ impl MerkleTree {
                 }
                 Ok(())
             }
-            _ => return Err(TreeError::invalid_proof("proof.op".to_string())),
+            _ => Err(TreeError::invalid_proof("proof.op".to_string())),
         }
     }
 }
@@ -674,10 +660,9 @@ impl MerkleTree {
         let path = keypath(k);
         let mut siblings: Vec<Hash> = Vec::new();
         let _ = Self::down(
-            &txn,
-            path.clone(),
-            0, // from lvl 0
-            root.into(),
+            txn.as_ref(),
+            (path.clone(), 0), // from lvl 0
+            root,
             k,
             Some(&mut siblings),
             false,
@@ -697,7 +682,7 @@ impl MerkleTree {
             }
         };
         txn.store_node(leaf.hash.into(), Node::Leaf(leaf.clone()))?; // TODO rm clone
-        if siblings.len() == 0 {
+        if siblings.is_empty() {
             // return the leaf's hash as root
             return Ok(leaf.hash);
         }
@@ -717,7 +702,7 @@ impl MerkleTree {
             }
             // println!("KEYY {}", siblings[siblings.len() - 1]);
             let l = siblings.len() - 1;
-            let remaining_key = siblings[l].clone();
+            let remaining_key = siblings[l];
             siblings[l] = EMPTY_HASH;
             Self::up(txn, path, siblings.len() - 1, remaining_key, siblings, op)?
         } else {
@@ -839,13 +824,13 @@ impl fmt::Display for MerkleTree {
         )?;
         writeln!(f, "digraph hierarchy {{")?;
         writeln!(f, "node [fontname=Monospace,fontsize=10,shape=box]")?;
-        print_graph_viz(f, &txn, self.root)?;
+        print_graph_viz(f, txn.as_ref(), self.root)?;
         // write!(f, "{}", self.root)?;
         writeln!(f, "\n}}\n-----")
     }
 }
 
-fn print_graph_viz(f: &mut fmt::Formatter<'_>, txn: &Box<dyn Txn>, hash: Hash) -> fmt::Result {
+fn print_graph_viz(f: &mut fmt::Formatter<'_>, txn: &dyn Txn, hash: Hash) -> fmt::Result {
     if hash == EMPTY_HASH {
         return Ok(());
     }
@@ -876,8 +861,8 @@ fn print_graph_viz(f: &mut fmt::Formatter<'_>, txn: &Box<dyn Txn>, hash: Hash) -
                 format!("\"{}\"", n.right)
             };
             writeln!(f, "\"{}\" -> {{ {} {} }}", n.hash, left_hash, right_hash,)?;
-            print_graph_viz(f, &txn, n.left)?;
-            print_graph_viz(f, &txn, n.right)
+            print_graph_viz(f, txn, n.left)?;
+            print_graph_viz(f, txn, n.right)
         }
         Node::Leaf(l) => {
             writeln!(f, "\"{}\" [style=filled]", l.hash)?;
@@ -1079,7 +1064,7 @@ pub struct Intermediate {
 }
 impl Intermediate {
     fn new(left: Hash, right: Hash) -> Self {
-        if left.clone() == EMPTY_HASH && right.clone() == EMPTY_HASH {
+        if left == EMPTY_HASH && right == EMPTY_HASH {
             return Self {
                 hash: EMPTY_HASH,
                 left,
