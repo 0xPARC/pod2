@@ -14,17 +14,20 @@ use crate::{
     middleware::{RawValue, EMPTY_VALUE},
 };
 
+// pub mod rocks;
+// pub mod heed;
+
 pub trait DB: Debug + DynClone + Sync + Send {
-    fn begin_txn(&self, write: bool) -> Result<Box<dyn Txn>>;
+    fn begin_txn<'a>(&self, write: bool) -> Result<Box<dyn Txn + 'a>>;
 }
 dyn_clone::clone_trait_object!(DB);
 
-pub trait Txn: Debug + Sync + Send {
+/// Txn implements an atomic transaction for the DB.
+/// `Drop` is used to discard the db's transactions when not used.
+pub trait Txn: Debug + Send + Drop {
     fn load_node(&self, hash: RawValue) -> Result<Node>;
     fn store_node(&mut self, hash: RawValue, node: Node) -> Result<()>;
     fn commit(self: Box<Self>) -> Result<()>;
-    // TODO-NOTE: it may be the case that in some databases we're required to
-    // 'discard' the txn in case that we're not committing it.
 }
 
 #[derive(Clone, Debug, Default)]
@@ -39,7 +42,7 @@ impl MemDB {
 }
 
 impl DB for MemDB {
-    fn begin_txn(&self, write: bool) -> Result<Box<dyn Txn>> {
+    fn begin_txn<'a>(&self, write: bool) -> Result<Box<dyn Txn + 'a>> {
         Ok(Box::new(MemTxn {
             db: Arc::clone(&self.inner),
             write,
@@ -88,4 +91,15 @@ impl Txn for MemTxn {
     fn commit(self: Box<Self>) -> Result<()> {
         Ok(())
     }
+}
+impl Drop for MemTxn {
+    fn drop(&mut self) {}
+}
+
+// NOTE: this will be replaced by `.to_bytes` & `from_bytes` optimized methods at `Node`
+fn encode_node(node: &Node) -> Result<Vec<u8>> {
+    serde_json::to_vec(node).map_err(|e| anyhow!("failed to serialize node: {e}"))
+}
+fn decode_node(bytes: &[u8]) -> Result<Node> {
+    serde_json::from_slice(bytes).map_err(|e| anyhow!("failed to deserialize node: {e}"))
 }
