@@ -23,7 +23,8 @@ pub trait Txn: Debug + Sync + Send {
     fn load_node(&self, hash: RawValue) -> Result<Node>;
     fn store_node(&mut self, hash: RawValue, node: Node) -> Result<()>;
     fn commit(self: Box<Self>) -> Result<()>;
-    // TODO discard() txn? maybe some db library requires it
+    // TODO-NOTE: it may be the case that in some databases we're required to
+    // 'discard' the txn in case that we're not committing it.
 }
 
 #[derive(Clone, Debug, Default)]
