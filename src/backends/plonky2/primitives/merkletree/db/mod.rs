@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 //! Module that implements the key-value DB used at the MerkleTree module.
 
 use std::{
@@ -15,7 +16,6 @@ use crate::{
 };
 
 pub mod rocks;
-// pub mod heed;
 
 pub trait DB: Debug + DynClone + Sync + Send {
     fn begin_txn<'a>(&'a self, write: bool) -> Result<Box<dyn Txn + 'a>>;
@@ -24,9 +24,9 @@ dyn_clone::clone_trait_object!(DB);
 
 /// Txn implements an atomic transaction for the DB.
 /// `Drop` is used to discard the db's transactions when not used.
-pub trait Txn: Debug + Send + Drop {
+pub trait Txn: Debug + Send {
     fn load_node(&self, hash: RawValue) -> Result<Node>;
-    fn store_node(&mut self, hash: RawValue, node: Node) -> Result<()>;
+    fn store_node(&mut self, node: Node) -> Result<()>;
     fn commit(&mut self) -> Result<()>;
 }
 
@@ -75,8 +75,7 @@ impl Txn for MemTxn {
         bail!("MemTxn error: node not found: {}", hash);
     }
 
-    // TODO remove `hash` from input
-    fn store_node(&mut self, hash: RawValue, node: Node) -> Result<()> {
+    fn store_node(&mut self, node: Node) -> Result<()> {
         if !self.write {
             bail!("MemTxn error: cannot write in read-only transaction");
         }
@@ -85,16 +84,13 @@ impl Txn for MemTxn {
             .db
             .lock()
             .map_err(|e| anyhow!("failed to acquire memdb lock for write: {}", e))?;
-        db.insert(hash, node);
+        db.insert(node.hash().into(), node);
         Ok(())
     }
 
     fn commit(&mut self) -> Result<()> {
         Ok(())
     }
-}
-impl Drop for MemTxn {
-    fn drop(&mut self) {}
 }
 
 // NOTE: this will be replaced by `.to_bytes` & `from_bytes` optimized methods at `Node`
@@ -125,7 +121,7 @@ pub mod tests {
     fn test_db_opt(db: Box<dyn DB>) -> Result<()> {
         let mut txn = db.begin_txn(true)?;
         let node = Leaf::new(1.into(), 1.into());
-        txn.store_node(node.hash.into(), Node::Leaf(node.clone()))?;
+        txn.store_node(Node::Leaf(node.clone()))?;
 
         txn.commit()?;
 

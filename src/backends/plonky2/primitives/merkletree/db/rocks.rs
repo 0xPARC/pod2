@@ -68,12 +68,15 @@ impl Txn for RocksTxn<'_> {
         }
     }
 
-    fn store_node(&mut self, hash: RawValue, node: Node) -> Result<()> {
+    fn store_node(&mut self, node: Node) -> Result<()> {
         if !self.write {
             bail!("RocksTxn error: cannot write in read-only transaction");
         }
         self.txn
-            .put(hash.to_bytes(), super::encode_node(&node)?)
+            .put(
+                RawValue::from(node.hash()).to_bytes(),
+                super::encode_node(&node)?,
+            )
             .map_err(|e| anyhow!("rocksdb transaction put failed: {e}"))?;
         Ok(())
     }

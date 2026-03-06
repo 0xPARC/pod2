@@ -55,7 +55,7 @@ impl MerkleTree {
 
             // Iterate over key-value pairs (if any) and add them.
             let mut root = EMPTY_HASH;
-            txn.store_node(root.into(), Node::Leaf(Leaf::new(root.into(), EMPTY_VALUE)))
+            txn.store_node(Node::Leaf(Leaf::new(root.into(), EMPTY_VALUE)))
                 .unwrap();
             for (k, v) in kvs.iter() {
                 root =
@@ -66,7 +66,7 @@ impl MerkleTree {
         };
 
         // Fill in hashes.
-        Self { root, db: db }
+        Self { root, db }
     }
 
     pub fn empty_with_db(db: Box<dyn DB>) -> Self {
@@ -236,7 +236,7 @@ impl MerkleTree {
         let node_hash = node.hash; // variable to avoid cloning `node` later
 
         // store in db
-        txn.store_node(node_hash.into(), Node::Intermediate(node))?;
+        txn.store_node(Node::Intermediate(node))?;
 
         if curr_lvl == 0 {
             return Ok(node_hash);
@@ -681,7 +681,7 @@ impl MerkleTree {
             }
         };
         let leaf_hash = leaf.hash; // variable to avoid cloning `leaf` later
-        txn.store_node(leaf_hash.into(), Node::Leaf(leaf))?;
+        txn.store_node(Node::Leaf(leaf))?;
         if siblings.is_empty() {
             // return the leaf's hash as root
             return Ok(leaf_hash);
@@ -698,7 +698,7 @@ impl MerkleTree {
                 let node_hash = node.hash; // variable to avoid cloning `node` later
 
                 // store in db
-                txn.store_node(node_hash.into(), Node::Intermediate(node))?;
+                txn.store_node(Node::Intermediate(node))?;
                 return Ok(node_hash);
             }
             let l = siblings.len() - 1;
@@ -1027,6 +1027,23 @@ impl MerkleTreeStateTransitionProof {
 pub enum Node {
     Leaf(Leaf),
     Intermediate(Intermediate),
+}
+impl Node {
+    pub fn hash(&self) -> Hash {
+        match self {
+            Node::Leaf(Leaf {
+                hash,
+                path: _,
+                key: _,
+                value: _,
+            }) => *hash,
+            Node::Intermediate(Intermediate {
+                hash,
+                left: _,
+                right: _,
+            }) => *hash,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
