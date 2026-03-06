@@ -23,13 +23,13 @@ pub trait DB: Debug + DynClone + Sync + Send {
 dyn_clone::clone_trait_object!(DB);
 
 /// Txn implements an atomic transaction for the DB.
-/// `Drop` is used to discard the db's transactions when not used.
 pub trait Txn: Debug + Send {
     fn load_node(&self, hash: RawValue) -> Result<Node>;
     fn store_node(&mut self, node: Node) -> Result<()>;
     fn commit(&mut self) -> Result<()>;
 }
 
+/// MemDB implements the DB trait in a in-memory HashMap.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct MemDB {
     inner: Arc<Mutex<HashMap<RawValue, Node>>>,
@@ -50,7 +50,6 @@ impl DB for MemDB {
     }
 }
 
-// WIP: for now the MemTxn is fake and directly writes to the MemDB.
 #[derive(Debug)]
 struct MemTxn {
     db: Arc<Mutex<HashMap<RawValue, Node>>>,
@@ -93,7 +92,7 @@ impl Txn for MemTxn {
     }
 }
 
-// NOTE: this will be replaced by `.to_bytes` & `from_bytes` optimized methods at `Node`
+// NOTE: this can be replaced by `.to_bytes` & `from_bytes` optimized methods at `Node`
 fn encode_node(node: &Node) -> Result<Vec<u8>> {
     serde_json::to_vec(node).map_err(|e| anyhow!("failed to serialize node: {e}"))
 }

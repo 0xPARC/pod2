@@ -48,9 +48,7 @@ good_lp = { version = "1.8", default-features = false, features = [
   "scip_bundled",
 ] }
 annotate-snippets = "0.11"
-# keyvalue databases (for merkletree))
-heed = "0.22.0"
-rocksdb = "0.24.0"
+rocksdb = "0.24.0" # keyvalue database (for merkletree)
 
 # Uncomment for debugging with https://github.com/ed255/plonky2/ at branch `feat/debug`.  The repo directory needs to be checked out next to the pod2 repo directory.
 # [patch."https://github.com/0xPARC/plonky2"]

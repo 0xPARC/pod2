@@ -1,4 +1,4 @@
-use std::{fmt, mem::ManuallyDrop, path::Path, sync::Arc};
+use std::{fmt, path::Path, sync::Arc};
 
 use anyhow::{anyhow, bail, Result};
 use rocksdb::{Options, Transaction, TransactionDB, TransactionDBOptions};
@@ -31,23 +31,17 @@ impl fmt::Debug for RocksDB {
 
 impl DB for RocksDB {
     fn begin_txn<'a>(&'a self, write: bool) -> Result<Box<dyn Txn + 'a>> {
-        // let txn = self.0.transaction();
-        let txn = ManuallyDrop::new(self.0.transaction_opt(
-            &rocksdb::WriteOptions::default(),
-            &rocksdb::TransactionOptions::default(),
-        ));
+        let txn = self.0.transaction();
         Ok(Box::new(RocksTxn::<'a> {
-            txn,
+            txn: Some(txn),
             write,
-            committed: false,
         }))
     }
 }
 
 struct RocksTxn<'a> {
-    txn: ManuallyDrop<Transaction<'a, TransactionDB>>,
+    txn: Option<Transaction<'a, TransactionDB>>,
     write: bool,
-    committed: bool,
 }
 
 impl fmt::Debug for RocksTxn<'_> {
@@ -61,8 +55,12 @@ impl Txn for RocksTxn<'_> {
         if hash == EMPTY_VALUE {
             return Ok(Node::Leaf(Leaf::new(hash, EMPTY_VALUE)));
         }
+        let txn = self
+            .txn
+            .as_ref()
+            .ok_or_else(|| anyhow!("rocksdb: transaction is closed"))?;
 
-        match self.txn.get(hash.to_bytes())? {
+        match txn.get(hash.to_bytes())? {
             Some(bytes) => super::decode_node(&bytes),
             None => Err(anyhow!("rocksdb: node not found")),
         }
@@ -72,33 +70,36 @@ impl Txn for RocksTxn<'_> {
         if !self.write {
             bail!("RocksTxn error: cannot write in read-only transaction");
         }
-        self.txn
-            .put(
-                RawValue::from(node.hash()).to_bytes(),
-                super::encode_node(&node)?,
-            )
-            .map_err(|e| anyhow!("rocksdb transaction put failed: {e}"))?;
+        let txn = self
+            .txn
+            .as_ref()
+            .ok_or_else(|| anyhow!("rocksdb: transaction is closed"))?;
+        txn.put(
+            RawValue::from(node.hash()).to_bytes(),
+            super::encode_node(&node)?,
+        )
+        .map_err(|e| anyhow!("rocksdb transaction put failed: {e}"))?;
         Ok(())
     }
 
     fn commit(&mut self) -> Result<()> {
         if !self.write {
-            self.committed = true;
+            self.txn.take(); // take the value, leaving `None` in its place
             return Ok(());
         }
-        unsafe {
-            let txn = ManuallyDrop::take(&mut self.txn);
-            txn.commit()
-                .map_err(|e| anyhow!("rocksdb transaction commit failed: {e}"))?;
-            self.committed = true;
-            Ok(())
-        }
+        let txn = self
+            .txn
+            .take()
+            .ok_or_else(|| anyhow!("rocksdb: txn is closed"))?;
+        txn.commit()
+            .map_err(|e| anyhow!("rocksdb: txn commit: {e}"))?;
+        Ok(())
     }
 }
 impl<'a> Drop for RocksTxn<'a> {
     fn drop(&mut self) {
-        if !self.committed {
-            self.txn.rollback().unwrap() // TODO unwrap
+        if let Some(txn) = self.txn.take() {
+            let _ = txn.rollback();
         }
     }
 }
