@@ -704,7 +704,7 @@ impl MerkleTreeStateTransitionProofTarget {
             pw.set_hash_target(self.siblings[i], HashOut::from_vec(sibling.0.to_vec()))?;
         }
         let div_lvl = if new_siblings.is_empty() {
-            // don't substract since it would underflow, use MAX_DEPTH
+            // don't subtract since it would underflow, use MAX_DEPTH
             MAX_DEPTH as u64
         } else {
             (new_siblings.len() - 1) as u64

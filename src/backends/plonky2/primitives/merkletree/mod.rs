@@ -43,7 +43,7 @@ impl MerkleTree {
     /// builds a new `MerkleTree` where the leaves contain the given key-values
     // NOTE: this method is kept for legacy compatibility at higher levels of the pod2 repo. It
     // should be replaced by the `new_with_b` or `from_db` or `empty_with_db` or similar, and the
-    // `.unwrap()` occurences should be removed.
+    // `.unwrap()` occurrences should be removed.
     pub fn new(kvs: &HashMap<RawValue, RawValue>) -> Self {
         let db = db::MemDB::new();
         Self::new_with_db(Box::new(db), kvs)
@@ -1315,7 +1315,7 @@ pub mod tests {
 
         assert_eq!(tree.root, tree2.root);
 
-        // update the other leafs
+        // update the other leaves
         let state_transition_proof = tree.update(&1.into(), &0.into())?;
         MerkleTree::verify_state_transition(&state_transition_proof)?;
         let state_transition_proof = tree.update(&9.into(), &0.into())?;
@@ -1418,19 +1418,19 @@ pub mod tests {
     }
 
     #[test]
-    fn test_delete_from_two_leafs() -> TreeResult<()> {
+    fn test_delete_from_two_leaves() -> TreeResult<()> {
         let db = Box::new(db::MemDB::new());
-        test_delete_from_two_leafs_opt(db)?;
+        test_delete_from_two_leaves_opt(db)?;
 
         let db = Box::new(db::rocks::RocksDB::open(
             tempfile::TempDir::new().unwrap().path(),
         )?);
-        test_delete_from_two_leafs_opt(db)?;
+        test_delete_from_two_leaves_opt(db)?;
 
         Ok(())
     }
-    fn test_delete_from_two_leafs_opt(db: Box<dyn DB>) -> TreeResult<()> {
-        // tree with two leafs whose keys diverge at the first bit, so that when
+    fn test_delete_from_two_leaves_opt(db: Box<dyn DB>) -> TreeResult<()> {
+        // tree with two leaves whose keys diverge at the first bit, so that when
         // deleting one key leads to a tree with a single Leaf as a root
         let mut kvs = HashMap::new();
         kvs.insert(RawValue::from(0), RawValue::from(1000));
@@ -1440,7 +1440,7 @@ pub mod tests {
         tree.delete(&RawValue::from(1))?;
 
         // the expected_tree has a single leaf, which should match the tree that
-        // started from two leafs and got one removed
+        // started from two leaves and got one removed
         let expected = [(RawValue::from(0), RawValue::from(1000))]
             .into_iter()
             .collect::<HashMap<_, _>>();
