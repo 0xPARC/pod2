@@ -27,7 +27,7 @@ dyn_clone::clone_trait_object!(DB);
 pub trait Txn: Debug + Send + Drop {
     fn load_node(&self, hash: RawValue) -> Result<Node>;
     fn store_node(&mut self, hash: RawValue, node: Node) -> Result<()>;
-    fn commit(self: Box<Self>) -> Result<()>;
+    fn commit(&mut self) -> Result<()>;
 }
 
 #[derive(Clone, Debug, Default)]
@@ -75,6 +75,7 @@ impl Txn for MemTxn {
         bail!("MemTxn error: node not found: {}", hash);
     }
 
+    // TODO remove `hash` from input
     fn store_node(&mut self, hash: RawValue, node: Node) -> Result<()> {
         if !self.write {
             bail!("MemTxn error: cannot write in read-only transaction");
@@ -88,7 +89,7 @@ impl Txn for MemTxn {
         Ok(())
     }
 
-    fn commit(self: Box<Self>) -> Result<()> {
+    fn commit(&mut self) -> Result<()> {
         Ok(())
     }
 }
@@ -102,4 +103,43 @@ fn encode_node(node: &Node) -> Result<Vec<u8>> {
 }
 fn decode_node(bytes: &[u8]) -> Result<Node> {
     serde_json::from_slice(bytes).map_err(|e| anyhow!("failed to deserialize node: {e}"))
+}
+
+#[cfg(test)]
+pub mod tests {
+
+    use super::*;
+
+    #[test]
+    fn test_db() -> Result<()> {
+        let db = Box::new(MemDB::new());
+        test_db_opt(db)?;
+
+        let path = "/tmp/rocksdb";
+        let db = Box::new(rocks::RocksDB::open(path)?);
+        test_db_opt(db)?;
+
+        Ok(())
+    }
+
+    fn test_db_opt(db: Box<dyn DB>) -> Result<()> {
+        let mut txn = db.begin_txn(true)?;
+        let node = Leaf::new(1.into(), 1.into());
+        txn.store_node(node.hash.into(), Node::Leaf(node.clone()))?;
+
+        txn.commit()?;
+
+        let txn = db.begin_txn(false)?;
+        let obtained_node = txn.load_node(node.hash.into())?;
+        let leaf = match obtained_node {
+            Node::Leaf(l) => l,
+            _ => panic!("expected a leaf"),
+        };
+        assert_eq!(leaf.hash, node.hash);
+
+        // next transaction will be dropped when the test function ends
+        let _txn = db.begin_txn(false)?;
+
+        Ok(())
+    }
 }

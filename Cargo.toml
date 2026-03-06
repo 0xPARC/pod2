@@ -60,6 +60,7 @@ rocksdb = "0.24.0"
 pretty_assertions = "1.4.1"
 # Used only for testing JSON Schema generation and validation.
 jsonschema = "0.30.0"
+tempfile = "3"
 
 [build-dependencies]
 vergen-gitcl = { version = "1.0.0", features = ["build"] }

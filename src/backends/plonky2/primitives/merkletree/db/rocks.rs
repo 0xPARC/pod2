@@ -1,6 +1,6 @@
 use std::{fmt, mem::ManuallyDrop, path::Path, sync::Arc};
 
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, bail, Result};
 use rocksdb::{Options, Transaction, TransactionDB, TransactionDBOptions};
 
 use super::{Txn, DB};
@@ -36,13 +36,18 @@ impl DB for RocksDB {
             &rocksdb::WriteOptions::default(),
             &rocksdb::TransactionOptions::default(),
         ));
-        Ok(Box::new(RocksTxn::<'a> { txn, write }))
+        Ok(Box::new(RocksTxn::<'a> {
+            txn,
+            write,
+            committed: false,
+        }))
     }
 }
 
 struct RocksTxn<'a> {
     txn: ManuallyDrop<Transaction<'a, TransactionDB>>,
     write: bool,
+    committed: bool,
 }
 
 impl fmt::Debug for RocksTxn<'_> {
@@ -65,7 +70,7 @@ impl Txn for RocksTxn<'_> {
 
     fn store_node(&mut self, hash: RawValue, node: Node) -> Result<()> {
         if !self.write {
-            anyhow!("RocksTxn error: cannot write in read-only transaction");
+            bail!("RocksTxn error: cannot write in read-only transaction");
         }
         self.txn
             .put(hash.to_bytes(), super::encode_node(&node)?)
@@ -73,20 +78,24 @@ impl Txn for RocksTxn<'_> {
         Ok(())
     }
 
-    fn commit(self: Box<Self>) -> Result<()> {
+    fn commit(&mut self) -> Result<()> {
         if !self.write {
+            self.committed = true;
             return Ok(());
         }
-        let mut mismo = self;
         unsafe {
-            let txn = ManuallyDrop::take(&mut mismo.txn);
+            let txn = ManuallyDrop::take(&mut self.txn);
             txn.commit()
-                .map_err(|e| anyhow!("rocksdb transaction commit failed: {e}"))
+                .map_err(|e| anyhow!("rocksdb transaction commit failed: {e}"))?;
+            self.committed = true;
+            Ok(())
         }
     }
 }
 impl<'a> Drop for RocksTxn<'a> {
     fn drop(&mut self) {
-        self.txn.rollback().unwrap() // TODO unwrap
+        if !self.committed {
+            self.txn.rollback().unwrap() // TODO unwrap
+        }
     }
 }
