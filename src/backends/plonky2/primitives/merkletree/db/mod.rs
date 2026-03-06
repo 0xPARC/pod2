@@ -14,11 +14,11 @@ use crate::{
     middleware::{RawValue, EMPTY_VALUE},
 };
 
-// pub mod rocks;
+pub mod rocks;
 // pub mod heed;
 
 pub trait DB: Debug + DynClone + Sync + Send {
-    fn begin_txn<'a>(&self, write: bool) -> Result<Box<dyn Txn + 'a>>;
+    fn begin_txn<'a>(&'a self, write: bool) -> Result<Box<dyn Txn + 'a>>;
 }
 dyn_clone::clone_trait_object!(DB);
 
@@ -42,7 +42,7 @@ impl MemDB {
 }
 
 impl DB for MemDB {
-    fn begin_txn<'a>(&self, write: bool) -> Result<Box<dyn Txn + 'a>> {
+    fn begin_txn<'a>(&'a self, write: bool) -> Result<Box<dyn Txn + 'a>> {
         Ok(Box::new(MemTxn {
             db: Arc::clone(&self.inner),
             write,

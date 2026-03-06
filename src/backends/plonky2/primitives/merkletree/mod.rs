@@ -48,16 +48,21 @@ impl MerkleTree {
         // Start with an empty node as root.
 
         let db = db::MemDB::new();
-        let mut txn = db.begin_txn(true).unwrap();
 
-        // Iterate over key-value pairs (if any) and add them.
-        let mut root = EMPTY_HASH;
-        txn.store_node(root.into(), Node::Leaf(Leaf::new(root.into(), EMPTY_VALUE)))
-            .unwrap();
-        for (k, v) in kvs.iter() {
-            root = Self::apply_op(&mut txn, MerkleTreeOp::Insert, root, *k, Some(*v)).unwrap();
-        }
-        txn.commit().unwrap();
+        let root = {
+            let mut txn = db.begin_txn(true).unwrap();
+
+            // Iterate over key-value pairs (if any) and add them.
+            let mut root = EMPTY_HASH;
+            txn.store_node(root.into(), Node::Leaf(Leaf::new(root.into(), EMPTY_VALUE)))
+                .unwrap();
+            for (k, v) in kvs.iter() {
+                root =
+                    Self::apply_op(txn.as_mut(), MerkleTreeOp::Insert, root, *k, Some(*v)).unwrap();
+            }
+            txn.commit().unwrap();
+            root
+        };
 
         // Fill in hashes.
         Self {
@@ -194,7 +199,7 @@ impl MerkleTree {
 
     /// go up recursively updating the intermediate nodes
     fn up(
-        txn: &mut Box<dyn Txn>,
+        txn: &mut dyn Txn,
         path: Vec<bool>,
         curr_lvl: usize,
         key: Hash,
@@ -285,19 +290,19 @@ impl MerkleTree {
     ) -> TreeResult<MerkleTreeStateTransitionProof> {
         let mut txn = self.db.begin_txn(true).unwrap();
 
-        let proof_non_existence = self.prove_nonexistence_with_txn(&mut txn, key)?;
+        let proof_non_existence = self.prove_nonexistence_with_txn(txn.as_mut(), key)?;
 
         let old_root: Hash = self.root;
 
         self.root = Self::apply_op(
-            &mut txn,
+            txn.as_mut(),
             MerkleTreeOp::Insert,
             self.root,
             *key,
             Some(*value),
         )?;
 
-        let (v, proof) = self.prove_with_txn(&mut txn, key)?;
+        let (v, proof) = self.prove_with_txn(txn.as_mut(), key)?;
         assert!(proof.existence);
         assert_eq!(v, *value);
         assert!(proof.other_leaf.is_none());
@@ -323,18 +328,18 @@ impl MerkleTree {
     ) -> TreeResult<MerkleTreeStateTransitionProof> {
         let mut txn = self.db.begin_txn(true).unwrap();
 
-        let (old_value, old_proof) = self.prove_with_txn(&mut txn, key)?;
+        let (old_value, old_proof) = self.prove_with_txn(txn.as_mut(), key)?;
 
         let old_root: Hash = self.root;
         self.root = Self::apply_op(
-            &mut txn,
+            txn.as_mut(),
             MerkleTreeOp::Update,
             self.root,
             *key,
             Some(*value),
         )?;
 
-        let (v, proof) = self.prove_with_txn(&mut txn, key)?;
+        let (v, proof) = self.prove_with_txn(txn.as_mut(), key)?;
         assert!(proof.existence);
         assert_eq!(v, *value);
         assert!(proof.other_leaf.is_none());
@@ -356,12 +361,12 @@ impl MerkleTree {
     pub fn delete(&mut self, key: &RawValue) -> TreeResult<MerkleTreeStateTransitionProof> {
         let mut txn = self.db.begin_txn(true).unwrap();
 
-        let (value, proof_existence) = self.prove_with_txn(&mut txn, key)?;
+        let (value, proof_existence) = self.prove_with_txn(txn.as_mut(), key)?;
 
         let old_root: Hash = self.root;
-        self.root = Self::apply_op(&mut txn, MerkleTreeOp::Delete, self.root, *key, None)?;
+        self.root = Self::apply_op(txn.as_mut(), MerkleTreeOp::Delete, self.root, *key, None)?;
 
-        let proof = self.prove_nonexistence_with_txn(&mut txn, key)?;
+        let proof = self.prove_nonexistence_with_txn(txn.as_mut(), key)?;
         assert!(!proof.existence);
 
         txn.commit()?;
@@ -383,18 +388,18 @@ impl MerkleTree {
     /// `MerkleProof`.
     pub fn prove(&self, key: &RawValue) -> TreeResult<(RawValue, MerkleProof)> {
         let mut txn = self.db.begin_txn(false).unwrap();
-        self.prove_with_txn(&mut txn, key)
+        self.prove_with_txn(txn.as_mut(), key)
     }
     pub fn prove_with_txn(
         &self,
-        txn: &mut Box<dyn Txn>,
+        txn: &mut dyn Txn,
         key: &RawValue,
     ) -> TreeResult<(RawValue, MerkleProof)> {
         let path = keypath(*key);
 
         let mut siblings: Vec<Hash> = Vec::new();
         match Self::down(
-            txn.as_ref(),
+            txn,
             (path, 0),
             self.root,
             *key,
@@ -420,11 +425,11 @@ impl MerkleTree {
     /// resolving `key` as well as a `MerkleProof`.
     pub fn prove_nonexistence(&self, key: &RawValue) -> TreeResult<MerkleProof> {
         let mut txn = self.db.begin_txn(false).unwrap();
-        self.prove_nonexistence_with_txn(&mut txn, key)
+        self.prove_nonexistence_with_txn(txn.as_mut(), key)
     }
     pub fn prove_nonexistence_with_txn(
         &self,
-        txn: &mut Box<dyn Txn>,
+        txn: &mut dyn Txn,
         key: &RawValue,
     ) -> TreeResult<MerkleProof> {
         let path = keypath(*key);
@@ -433,7 +438,7 @@ impl MerkleTree {
 
         // note: non-existence of a key can be in 2 cases:
         match Self::down(
-            txn.as_ref(),
+            txn,
             (path, 0),
             self.root,
             *key,
@@ -629,7 +634,7 @@ impl MerkleTree {
 impl MerkleTree {
     /// Applies given Merkle tree op.
     pub(crate) fn apply_op(
-        txn: &mut Box<dyn Txn>,
+        txn: &mut dyn Txn,
         op: MerkleTreeOp,
         root: Hash,
         k: RawValue,
@@ -656,7 +661,7 @@ impl MerkleTree {
         let path = keypath(k);
         let mut siblings: Vec<Hash> = Vec::new();
         let _ = Self::down(
-            txn.as_ref(),
+            txn,
             (path.clone(), 0), // from lvl 0
             root,
             k,

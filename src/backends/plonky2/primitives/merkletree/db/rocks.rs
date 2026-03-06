@@ -1,4 +1,4 @@
-use std::{fmt, path::Path, sync::Arc};
+use std::{fmt, mem::ManuallyDrop, path::Path, sync::Arc};
 
 use anyhow::{anyhow, Result};
 use rocksdb::{Options, Transaction, TransactionDB, TransactionDBOptions};
@@ -30,18 +30,18 @@ impl fmt::Debug for RocksDB {
 }
 
 impl DB for RocksDB {
-    fn begin_txn<'a>(&self, write: bool) -> Result<Box<dyn Txn + 'a>> {
+    fn begin_txn<'a>(&'a self, write: bool) -> Result<Box<dyn Txn + 'a>> {
         // let txn = self.0.transaction();
-        let txn = self.0.transaction_opt::<'a>(
+        let txn = ManuallyDrop::new(self.0.transaction_opt(
             &rocksdb::WriteOptions::default(),
             &rocksdb::TransactionOptions::default(),
-        );
+        ));
         Ok(Box::new(RocksTxn::<'a> { txn, write }))
     }
 }
 
 struct RocksTxn<'a> {
-    txn: Transaction<'a, TransactionDB>,
+    txn: ManuallyDrop<Transaction<'a, TransactionDB>>,
     write: bool,
 }
 
@@ -77,10 +77,12 @@ impl Txn for RocksTxn<'_> {
         if !self.write {
             return Ok(());
         }
-        self.txn
-            .commit()
-            .map_err(|e| anyhow!("rocksdb transaction commit failed: {e}"))?;
-        Ok(())
+        let mut mismo = self;
+        unsafe {
+            let txn = ManuallyDrop::take(&mut mismo.txn);
+            txn.commit()
+                .map_err(|e| anyhow!("rocksdb transaction commit failed: {e}"))
+        }
     }
 }
 impl<'a> Drop for RocksTxn<'a> {
