@@ -41,31 +41,24 @@ impl Eq for MerkleTree {}
 
 impl MerkleTree {
     /// builds a new `MerkleTree` where the leaves contain the given key-values
-    // NOTE: this method is kept for legacy compatibility at higher levels of the pod2 repo. It
-    // should be replaced by the `new_with_b` or `from_db` or `empty_with_db` or similar, and the
-    // `.unwrap()` occurrences should be removed.
     pub fn new(kvs: &HashMap<RawValue, RawValue>) -> Self {
         let db = db::MemDB::new();
-        Self::new_with_db(Box::new(db), kvs)
+        Self::new_with_db(Box::new(db), kvs).unwrap()
     }
-    pub fn new_with_db(db: Box<dyn DB>, kvs: &HashMap<RawValue, RawValue>) -> Self {
+    pub fn new_with_db(db: Box<dyn DB>, kvs: &HashMap<RawValue, RawValue>) -> Result<Self> {
         // Start with an empty node as root.
         let (root, db) = {
             let mut db = db;
 
             // Iterate over key-value pairs (if any) and add them.
             let mut root = EMPTY_HASH;
-            db.store_node(Node::Leaf(Leaf::new(root.into(), EMPTY_VALUE)))
-                .unwrap();
             for (k, v) in kvs.iter() {
-                root =
-                    Self::apply_op(db.as_mut(), MerkleTreeOp::Insert, root, *k, Some(*v)).unwrap();
+                root = Self::apply_op(db.as_mut(), MerkleTreeOp::Insert, root, *k, Some(*v))?;
             }
             (root, db)
         };
 
-        // Fill in hashes.
-        Self { root, db }
+        Ok(Self { root, db })
     }
 
     pub fn empty_with_db(db: Box<dyn DB>) -> Self {
@@ -633,7 +626,15 @@ impl MerkleTree {
             (MerkleTreeOp::Insert, Some(value)) | (MerkleTreeOp::Update, Some(value)) => {
                 Leaf::new(k, value)
             }
-            (MerkleTreeOp::Delete, None) => Leaf::new(EMPTY_VALUE, EMPTY_VALUE),
+            (MerkleTreeOp::Delete, None) => {
+                // return a leaf whose hash is 'empty', to indicate that there is no leaf
+                Leaf {
+                    hash: EMPTY_HASH,
+                    path: vec![],
+                    key: EMPTY_VALUE,
+                    value: EMPTY_VALUE,
+                }
+            }
             _ => {
                 return Err(TreeError::invalid_state_transition_proof_arg(format!(
                     "{:?} op has invalid value type: {:?}",
@@ -1046,13 +1047,7 @@ pub struct Leaf {
 impl Leaf {
     fn new(key: RawValue, value: RawValue) -> Self {
         Self {
-            hash: if key == EMPTY_VALUE && value == EMPTY_VALUE {
-                // empty node, don't hash {empty, empty} and just use empty as
-                // it's hash
-                EMPTY_HASH
-            } else {
-                kv_hash(&key, Some(value))
-            },
+            hash: kv_hash(&key, Some(value)),
             path: keypath(key),
             key,
             value,
@@ -1088,10 +1083,13 @@ pub mod tests {
         let db = Box::new(db::MemDB::new());
         test_merkletree_opt(db)?;
 
-        let db = Box::new(db::rocks::RocksDB::open(
-            tempfile::TempDir::new().unwrap().path(),
-        )?);
-        test_merkletree_opt(db)?;
+        #[cfg(feature = "db_rocksdb")]
+        {
+            let db = Box::new(db::rocks::RocksDB::open(
+                tempfile::TempDir::new().unwrap().path(),
+            )?);
+            test_merkletree_opt(db)?;
+        }
 
         Ok(())
     }
@@ -1107,7 +1105,7 @@ pub mod tests {
         let value = RawValue::from(1013);
         kvs.insert(key, value);
 
-        let tree = MerkleTree::new_with_db(db, &kvs);
+        let tree = MerkleTree::new_with_db(db, &kvs)?;
         // when printing the tree, it should print the same tree as in
         // https://0xparc.github.io/pod2/merkletree.html#example-2
         println!("{}", tree);
@@ -1174,15 +1172,18 @@ pub mod tests {
         let db = Box::new(db::MemDB::new());
         test_delete_to_empty_opt(db)?;
 
-        let db = Box::new(db::rocks::RocksDB::open(
-            tempfile::TempDir::new().unwrap().path(),
-        )?);
-        test_delete_to_empty_opt(db)?;
+        #[cfg(feature = "db_rocksdb")]
+        {
+            let db = Box::new(db::rocks::RocksDB::open(
+                tempfile::TempDir::new().unwrap().path(),
+            )?);
+            test_delete_to_empty_opt(db)?;
+        }
 
         Ok(())
     }
     fn test_delete_to_empty_opt(db: Box<dyn DB>) -> TreeResult<()> {
-        let mut tree = MerkleTree::new_with_db(db, &HashMap::new());
+        let mut tree = MerkleTree::new_with_db(db, &HashMap::new())?;
 
         let (key, value) = (RawValue::from(2), RawValue::from(1002));
         let _ = tree.insert(&key, &value)?;
@@ -1215,10 +1216,13 @@ pub mod tests {
         let db = Box::new(db::MemDB::new());
         test_prove_verify_opt(db)?;
 
-        let db = Box::new(db::rocks::RocksDB::open(
-            tempfile::TempDir::new().unwrap().path(),
-        )?);
-        test_prove_verify_opt(db)?;
+        #[cfg(feature = "db_rocksdb")]
+        {
+            let db = Box::new(db::rocks::RocksDB::open(
+                tempfile::TempDir::new().unwrap().path(),
+            )?);
+            test_prove_verify_opt(db)?;
+        }
 
         Ok(())
     }
@@ -1230,7 +1234,7 @@ pub mod tests {
         ]
         .into_iter()
         .collect();
-        let tree = MerkleTree::new_with_db(db, &kvs);
+        let tree = MerkleTree::new_with_db(db, &kvs)?;
 
         let (key, value) = (175.into(), 0.into());
         let (v, proof) = tree.prove(&key)?;
@@ -1255,10 +1259,13 @@ pub mod tests {
         let db = Box::new(db::MemDB::new());
         test_update_leaf_opt(db)?;
 
-        let db = Box::new(db::rocks::RocksDB::open(
-            tempfile::TempDir::new().unwrap().path(),
-        )?);
-        test_update_leaf_opt(db)?;
+        #[cfg(feature = "db_rocksdb")]
+        {
+            let db = Box::new(db::rocks::RocksDB::open(
+                tempfile::TempDir::new().unwrap().path(),
+            )?);
+            test_update_leaf_opt(db)?;
+        }
 
         Ok(())
     }
@@ -1271,7 +1278,7 @@ pub mod tests {
         ]
         .into_iter()
         .collect();
-        let mut tree = MerkleTree::new_with_db(db.clone(), &kvs);
+        let mut tree = MerkleTree::new_with_db(db.clone(), &kvs)?;
         let state_transition_proof = tree.update(&7.into(), &0.into())?;
         MerkleTree::verify_state_transition(&state_transition_proof)?;
 
@@ -1283,7 +1290,7 @@ pub mod tests {
         ]
         .into_iter()
         .collect();
-        let tree2 = MerkleTree::new_with_db(db, &kvs);
+        let tree2 = MerkleTree::new_with_db(db, &kvs)?;
 
         assert_eq!(tree.root, tree2.root);
 
@@ -1301,10 +1308,13 @@ pub mod tests {
         let db = Box::new(db::MemDB::new());
         test_update_delete_leaf_opt(db)?;
 
-        let db = Box::new(db::rocks::RocksDB::open(
-            tempfile::TempDir::new().unwrap().path(),
-        )?);
-        test_update_delete_leaf_opt(db)?;
+        #[cfg(feature = "db_rocksdb")]
+        {
+            let db = Box::new(db::rocks::RocksDB::open(
+                tempfile::TempDir::new().unwrap().path(),
+            )?);
+            test_update_delete_leaf_opt(db)?;
+        }
 
         Ok(())
     }
@@ -1312,7 +1322,7 @@ pub mod tests {
         let kvs: HashMap<RawValue, RawValue> = (0..10)
             .map(|i| (i.into(), i.into()))
             .collect::<HashMap<_, _>>();
-        let mut mt = MerkleTree::new_with_db(db, &kvs);
+        let mut mt = MerkleTree::new_with_db(db, &kvs)?;
 
         // insert
         (11..20)
@@ -1342,10 +1352,13 @@ pub mod tests {
         let db = Box::new(db::MemDB::new());
         test_delete_leaf_opt(db)?;
 
-        let db = Box::new(db::rocks::RocksDB::open(
-            tempfile::TempDir::new().unwrap().path(),
-        )?);
-        test_delete_leaf_opt(db)?;
+        #[cfg(feature = "db_rocksdb")]
+        {
+            let db = Box::new(db::rocks::RocksDB::open(
+                tempfile::TempDir::new().unwrap().path(),
+            )?);
+            test_delete_leaf_opt(db)?;
+        }
 
         Ok(())
     }
@@ -1353,7 +1366,7 @@ pub mod tests {
         let kvs = [(1.into(), 1.into()), (9.into(), 9.into())]
             .into_iter()
             .collect();
-        let tree = MerkleTree::new_with_db(db.clone(), &kvs);
+        let tree = MerkleTree::new_with_db(db.clone(), &kvs)?;
         let expected_root = tree.root;
 
         let kvs = [
@@ -1364,7 +1377,7 @@ pub mod tests {
         ]
         .into_iter()
         .collect();
-        let mut tree = MerkleTree::new_with_db(db.clone(), &kvs);
+        let mut tree = MerkleTree::new_with_db(db.clone(), &kvs)?;
         let state_transition_proof = tree.delete(&15.into())?;
         MerkleTree::verify_state_transition(&state_transition_proof)?;
 
@@ -1375,7 +1388,7 @@ pub mod tests {
         ]
         .into_iter()
         .collect();
-        let tree2 = MerkleTree::new_with_db(db, &kvs);
+        let tree2 = MerkleTree::new_with_db(db, &kvs)?;
 
         assert_eq!(tree.root, tree2.root);
 
@@ -1394,10 +1407,13 @@ pub mod tests {
         let db = Box::new(db::MemDB::new());
         test_delete_from_two_leaves_opt(db)?;
 
-        let db = Box::new(db::rocks::RocksDB::open(
-            tempfile::TempDir::new().unwrap().path(),
-        )?);
-        test_delete_from_two_leaves_opt(db)?;
+        #[cfg(feature = "db_rocksdb")]
+        {
+            let db = Box::new(db::rocks::RocksDB::open(
+                tempfile::TempDir::new().unwrap().path(),
+            )?);
+            test_delete_from_two_leaves_opt(db)?;
+        }
 
         Ok(())
     }
@@ -1408,7 +1424,7 @@ pub mod tests {
         kvs.insert(RawValue::from(0), RawValue::from(1000));
         kvs.insert(RawValue::from(1), RawValue::from(1001));
 
-        let mut tree = MerkleTree::new_with_db(db.clone(), &kvs);
+        let mut tree = MerkleTree::new_with_db(db.clone(), &kvs)?;
         tree.delete(&RawValue::from(1))?;
 
         // the expected_tree has a single leaf, which should match the tree that
@@ -1416,7 +1432,7 @@ pub mod tests {
         let expected = [(RawValue::from(0), RawValue::from(1000))]
             .into_iter()
             .collect::<HashMap<_, _>>();
-        let expected_tree = MerkleTree::new_with_db(db, &expected);
+        let expected_tree = MerkleTree::new_with_db(db, &expected)?;
 
         assert_eq!(tree.root(), expected_tree.root());
         Ok(())
@@ -1427,10 +1443,13 @@ pub mod tests {
         let db = Box::new(db::MemDB::new());
         test_state_transition_opt(db)?;
 
-        let db = Box::new(db::rocks::RocksDB::open(
-            tempfile::TempDir::new().unwrap().path(),
-        )?);
-        test_state_transition_opt(db)?;
+        #[cfg(feature = "db_rocksdb")]
+        {
+            let db = Box::new(db::rocks::RocksDB::open(
+                tempfile::TempDir::new().unwrap().path(),
+            )?);
+            test_state_transition_opt(db)?;
+        }
 
         Ok(())
     }
@@ -1440,7 +1459,7 @@ pub mod tests {
             kvs.insert(RawValue::from(i), RawValue::from(1000 + i));
         }
 
-        let mut tree = MerkleTree::new_with_db(db, &kvs);
+        let mut tree = MerkleTree::new_with_db(db, &kvs)?;
         let old_root = tree.root();
 
         // key=37 shares path with key=5, till the level 6, needing 2 extra

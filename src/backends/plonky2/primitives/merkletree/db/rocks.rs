@@ -12,6 +12,7 @@ use crate::{
 #[derive(Clone)]
 pub struct RocksDB(Arc<TransactionDB>);
 
+#[allow(dead_code)]
 impl RocksDB {
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
         let mut options = Options::default();

@@ -1,4 +1,3 @@
-#![allow(dead_code)]
 //! Module that implements the key-value DB used at the MerkleTree module.
 
 use std::{
@@ -15,6 +14,7 @@ use crate::{
     middleware::{RawValue, EMPTY_VALUE},
 };
 
+#[cfg(feature = "db_rocksdb")]
 pub mod rocks;
 
 pub trait DB: Debug + DynClone + Sync + Send {
@@ -46,7 +46,7 @@ impl DB for MemDB {
             return Ok(node.clone());
         }
 
-        if hash == RawValue::default() {
+        if hash == EMPTY_VALUE {
             return Ok(Node::Leaf(Leaf::new(hash, EMPTY_VALUE)));
         }
 
@@ -64,9 +64,11 @@ impl DB for MemDB {
 }
 
 // NOTE: this can be replaced by `.to_bytes` & `from_bytes` optimized methods at `Node`
+#[allow(dead_code)]
 fn encode_node(node: &Node) -> Result<Vec<u8>> {
     serde_json::to_vec(node).map_err(|e| anyhow!("failed to serialize node: {e}"))
 }
+#[allow(dead_code)]
 fn decode_node(bytes: &[u8]) -> Result<Node> {
     serde_json::from_slice(bytes).map_err(|e| anyhow!("failed to deserialize node: {e}"))
 }
@@ -81,9 +83,12 @@ pub mod tests {
         let mut db = MemDB::new();
         test_db_opt(&mut db)?;
 
-        let path = "/tmp/rocksdb";
-        let mut db = rocks::RocksDB::open(path)?;
-        test_db_opt(&mut db)?;
+        #[cfg(feature = "db_rocksdb")]
+        {
+            let path = "/tmp/rocksdb";
+            let mut db = rocks::RocksDB::open(path)?;
+            test_db_opt(&mut db)?;
+        }
 
         Ok(())
     }

@@ -48,7 +48,7 @@ good_lp = { version = "1.8", default-features = false, features = [
   "scip_bundled",
 ] }
 annotate-snippets = "0.11"
-rocksdb = "0.24.0" # keyvalue database (for merkletree)
+rocksdb = { version = "0.24.0", optional = true } # keyvalue database for merkletree
 
 # Uncomment for debugging with https://github.com/ed255/plonky2/ at branch `feat/debug`.  The repo directory needs to be checked out next to the pod2 repo directory.
 # [patch."https://github.com/0xPARC/plonky2"]
@@ -64,7 +64,7 @@ tempfile = "3"
 vergen-gitcl = { version = "1.0.0", features = ["build"] }
 
 [features]
-default = ["backend_plonky2", "zk", "mem_cache"]
+default = ["backend_plonky2", "zk", "mem_cache", "db_rocksdb"]
 backend_plonky2 = ["plonky2"]
 zk = []
 metrics = []
@@ -72,6 +72,7 @@ time = []
 examples = []
 disk_cache = ["directories", "minicbor-serde"]
 mem_cache = []
+db_rocksdb = ["rocksdb"]
 
 # Uncomment in order to enable debug information in the release builds.  This allows getting panic backtraces with a performance similar to regular release.
 # [profile.release]
