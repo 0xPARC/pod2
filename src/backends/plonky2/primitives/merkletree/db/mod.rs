@@ -18,16 +18,10 @@ use crate::{
 pub mod rocks;
 
 pub trait DB: Debug + DynClone + Sync + Send {
-    fn begin_txn<'a>(&'a self, write: bool) -> Result<Box<dyn Txn + 'a>>;
-}
-dyn_clone::clone_trait_object!(DB);
-
-/// Txn implements an atomic transaction for the DB.
-pub trait Txn: Debug + Send {
     fn load_node(&self, hash: RawValue) -> Result<Node>;
     fn store_node(&mut self, node: Node) -> Result<()>;
-    fn commit(&mut self) -> Result<()>;
 }
+dyn_clone::clone_trait_object!(DB);
 
 /// MemDB implements the DB trait in a in-memory HashMap.
 #[derive(Clone, Debug, Default)]
@@ -42,24 +36,9 @@ impl MemDB {
 }
 
 impl DB for MemDB {
-    fn begin_txn<'a>(&'a self, write: bool) -> Result<Box<dyn Txn + 'a>> {
-        Ok(Box::new(MemTxn {
-            db: Arc::clone(&self.inner),
-            write,
-        }))
-    }
-}
-
-#[derive(Debug)]
-struct MemTxn {
-    db: Arc<Mutex<HashMap<RawValue, Node>>>,
-    write: bool,
-}
-
-impl Txn for MemTxn {
     fn load_node(&self, hash: RawValue) -> Result<Node> {
         let db = self
-            .db
+            .inner
             .lock()
             .map_err(|e| anyhow!("failed to acquire memdb lock for read: {}", e))?;
 
@@ -71,23 +50,15 @@ impl Txn for MemTxn {
             return Ok(Node::Leaf(Leaf::new(hash, EMPTY_VALUE)));
         }
 
-        bail!("MemTxn error: node not found: {}", hash);
+        bail!("MemDB error: node not found: {}", hash);
     }
 
     fn store_node(&mut self, node: Node) -> Result<()> {
-        if !self.write {
-            bail!("MemTxn error: cannot write in read-only transaction");
-        }
-
         let mut db = self
-            .db
+            .inner
             .lock()
             .map_err(|e| anyhow!("failed to acquire memdb lock for write: {}", e))?;
         db.insert(node.hash().into(), node);
-        Ok(())
-    }
-
-    fn commit(&mut self) -> Result<()> {
         Ok(())
     }
 }
@@ -107,33 +78,26 @@ pub mod tests {
 
     #[test]
     fn test_db() -> Result<()> {
-        let db = Box::new(MemDB::new());
-        test_db_opt(db)?;
+        let mut db = MemDB::new();
+        test_db_opt(&mut db)?;
 
         let path = "/tmp/rocksdb";
-        let db = Box::new(rocks::RocksDB::open(path)?);
-        test_db_opt(db)?;
+        let mut db = rocks::RocksDB::open(path)?;
+        test_db_opt(&mut db)?;
 
         Ok(())
     }
 
-    fn test_db_opt(db: Box<dyn DB>) -> Result<()> {
-        let mut txn = db.begin_txn(true)?;
+    fn test_db_opt(db: &mut dyn DB) -> Result<()> {
         let node = Leaf::new(1.into(), 1.into());
-        txn.store_node(Node::Leaf(node.clone()))?;
+        db.store_node(Node::Leaf(node.clone()))?;
 
-        txn.commit()?;
-
-        let txn = db.begin_txn(false)?;
-        let obtained_node = txn.load_node(node.hash.into())?;
+        let obtained_node = db.load_node(node.hash.into())?;
         let leaf = match obtained_node {
             Node::Leaf(l) => l,
             _ => panic!("expected a leaf"),
         };
         assert_eq!(leaf.hash, node.hash);
-
-        // next transaction will be dropped when the test function ends
-        let _txn = db.begin_txn(false)?;
 
         Ok(())
     }

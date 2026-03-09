@@ -17,7 +17,7 @@ use crate::middleware::{Hash, RawValue, EMPTY_HASH, EMPTY_VALUE, F};
 pub mod circuit;
 pub use circuit::*;
 mod db;
-use db::{Txn, DB};
+use db::DB;
 pub mod error;
 pub use error::{TreeError, TreeResult};
 
@@ -50,19 +50,18 @@ impl MerkleTree {
     }
     pub fn new_with_db(db: Box<dyn DB>, kvs: &HashMap<RawValue, RawValue>) -> Self {
         // Start with an empty node as root.
-        let root = {
-            let mut txn = db.begin_txn(true).unwrap();
+        let (root, db) = {
+            let mut db = db;
 
             // Iterate over key-value pairs (if any) and add them.
             let mut root = EMPTY_HASH;
-            txn.store_node(Node::Leaf(Leaf::new(root.into(), EMPTY_VALUE)))
+            db.store_node(Node::Leaf(Leaf::new(root.into(), EMPTY_VALUE)))
                 .unwrap();
             for (k, v) in kvs.iter() {
                 root =
-                    Self::apply_op(txn.as_mut(), MerkleTreeOp::Insert, root, *k, Some(*v)).unwrap();
+                    Self::apply_op(db.as_mut(), MerkleTreeOp::Insert, root, *k, Some(*v)).unwrap();
             }
-            txn.commit().unwrap();
-            root
+            (root, db)
         };
 
         // Fill in hashes.
@@ -94,7 +93,7 @@ impl MerkleTree {
     /// while it does not return explicitly a `siblings` variable, the input
     /// `siblings` is modified adding there the siblings found along the path.
     fn down(
-        txn: &dyn Txn,
+        db: &dyn DB,
         path_and_lvl: (Vec<bool>, usize), // path and lvl
         curr_node_hash: Hash,             // hash of current level node
         new_key: RawValue,                // key to be added/found at the leaf
@@ -111,19 +110,19 @@ impl MerkleTree {
             return Ok(None);
         }
 
-        let node = txn.load_node(curr_node_hash.into())?;
+        let node = db.load_node(curr_node_hash.into())?;
         match node {
             Node::Intermediate(n) => {
                 if path[lvl] {
                     if let Some(s) = siblings.as_mut() {
                         s.push(n.left);
                     }
-                    Self::down(txn, (path, lvl + 1), n.right, new_key, siblings, op)
+                    Self::down(db, (path, lvl + 1), n.right, new_key, siblings, op)
                 } else {
                     if let Some(s) = siblings.as_mut() {
                         s.push(n.right);
                     }
-                    Self::down(txn, (path, lvl + 1), n.left, new_key, siblings, op)
+                    Self::down(db, (path, lvl + 1), n.left, new_key, siblings, op)
                 }
             }
             Node::Leaf(old_leaf) => {
@@ -177,7 +176,7 @@ impl MerkleTree {
 
     /// go up recursively updating the intermediate nodes
     fn up(
-        txn: &mut dyn Txn,
+        db: &mut dyn DB,
         path: Vec<bool>,
         curr_lvl: usize,
         key: Hash,
@@ -189,7 +188,7 @@ impl MerkleTree {
         first_zeroes: bool,
     ) -> Result<Hash> {
         // recall, in the delete case, the `key` is the `remaining_key`
-        let key_node = txn.load_node(key.into())?;
+        let key_node = db.load_node(key.into())?;
         if op == MerkleTreeOp::Delete
             && first_zeroes
             && matches!(key_node, Node::Leaf(..))
@@ -205,7 +204,7 @@ impl MerkleTree {
             if curr_lvl == 0 {
                 return Ok(key);
             }
-            return Self::up(txn, path, curr_lvl - 1, key, siblings, op, true);
+            return Self::up(db, path, curr_lvl - 1, key, siblings, op, true);
         }
 
         let node = if path[curr_lvl] {
@@ -216,20 +215,19 @@ impl MerkleTree {
         let node_hash = node.hash; // variable to avoid cloning `node` later
 
         // store in db
-        txn.store_node(Node::Intermediate(node))?;
+        db.store_node(Node::Intermediate(node))?;
 
         if curr_lvl == 0 {
             return Ok(node_hash);
         }
-        Self::up(txn, path, curr_lvl - 1, node_hash, siblings, op, false)
+        Self::up(db, path, curr_lvl - 1, node_hash, siblings, op, false)
     }
 
     /// returns the value at the given key
     pub fn get(&self, key: &RawValue) -> TreeResult<RawValue> {
         let path = keypath(*key);
-        let txn = self.db.begin_txn(false)?;
         let key_resolution = Self::down(
-            txn.as_ref(),
+            self.db.as_ref(),
             (path, 0),
             self.root,
             *key,
@@ -245,9 +243,8 @@ impl MerkleTree {
     /// returns a boolean indicating whether the key exists in the tree
     pub fn contains(&self, key: &RawValue) -> TreeResult<bool> {
         let path = keypath(*key);
-        let txn = self.db.begin_txn(false)?;
         match Self::down(
-            txn.as_ref(),
+            self.db.as_ref(),
             (path, 0),
             self.root,
             *key,
@@ -264,26 +261,22 @@ impl MerkleTree {
         key: &RawValue,
         value: &RawValue,
     ) -> TreeResult<MerkleTreeStateTransitionProof> {
-        let mut txn = self.db.begin_txn(true).unwrap();
-
-        let proof_non_existence = self.prove_nonexistence_with_txn(txn.as_mut(), key)?;
+        let proof_non_existence = self.prove_nonexistence(key)?;
 
         let old_root: Hash = self.root;
 
         self.root = Self::apply_op(
-            txn.as_mut(),
+            self.db.as_mut(),
             MerkleTreeOp::Insert,
             self.root,
             *key,
             Some(*value),
         )?;
 
-        let (v, proof) = self.prove_with_txn(txn.as_mut(), key)?;
+        let (v, proof) = self.prove(key)?;
         assert!(proof.existence);
         assert_eq!(v, *value);
         assert!(proof.other_leaf.is_none());
-
-        txn.commit()?;
 
         Ok(MerkleTreeStateTransitionProof {
             op: MerkleTreeOp::Insert, // insertion
@@ -302,25 +295,21 @@ impl MerkleTree {
         key: &RawValue,
         value: &RawValue,
     ) -> TreeResult<MerkleTreeStateTransitionProof> {
-        let mut txn = self.db.begin_txn(true)?;
-
-        let (old_value, old_proof) = self.prove_with_txn(txn.as_mut(), key)?;
+        let (old_value, old_proof) = self.prove(key)?;
 
         let old_root: Hash = self.root;
         self.root = Self::apply_op(
-            txn.as_mut(),
+            self.db.as_mut(),
             MerkleTreeOp::Update,
             self.root,
             *key,
             Some(*value),
         )?;
 
-        let (v, proof) = self.prove_with_txn(txn.as_mut(), key)?;
+        let (v, proof) = self.prove(key)?;
         assert!(proof.existence);
         assert_eq!(v, *value);
         assert!(proof.other_leaf.is_none());
-
-        txn.commit()?;
 
         Ok(MerkleTreeStateTransitionProof {
             op: MerkleTreeOp::Update,
@@ -335,17 +324,19 @@ impl MerkleTree {
     }
 
     pub fn delete(&mut self, key: &RawValue) -> TreeResult<MerkleTreeStateTransitionProof> {
-        let mut txn = self.db.begin_txn(true)?;
-
-        let (value, proof_existence) = self.prove_with_txn(txn.as_mut(), key)?;
+        let (value, proof_existence) = self.prove(key)?;
 
         let old_root: Hash = self.root;
-        self.root = Self::apply_op(txn.as_mut(), MerkleTreeOp::Delete, self.root, *key, None)?;
+        self.root = Self::apply_op(
+            self.db.as_mut(),
+            MerkleTreeOp::Delete,
+            self.root,
+            *key,
+            None,
+        )?;
 
-        let proof = self.prove_nonexistence_with_txn(txn.as_mut(), key)?;
+        let proof = self.prove_nonexistence(key)?;
         assert!(!proof.existence);
-
-        txn.commit()?;
 
         Ok(MerkleTreeStateTransitionProof {
             op: MerkleTreeOp::Delete,
@@ -363,19 +354,11 @@ impl MerkleTree {
     /// the tree. It returns the `value` of the leaf at the given `key`, and the
     /// `MerkleProof`.
     pub fn prove(&self, key: &RawValue) -> TreeResult<(RawValue, MerkleProof)> {
-        let mut txn = self.db.begin_txn(false)?;
-        self.prove_with_txn(txn.as_mut(), key)
-    }
-    pub fn prove_with_txn(
-        &self,
-        txn: &mut dyn Txn,
-        key: &RawValue,
-    ) -> TreeResult<(RawValue, MerkleProof)> {
         let path = keypath(*key);
 
         let mut siblings: Vec<Hash> = Vec::new();
         match Self::down(
-            txn,
+            self.db.as_ref(),
             (path, 0),
             self.root,
             *key,
@@ -399,21 +382,13 @@ impl MerkleTree {
     /// the key-value pair in the leaf reached as a result of
     /// resolving `key` as well as a `MerkleProof`.
     pub fn prove_nonexistence(&self, key: &RawValue) -> TreeResult<MerkleProof> {
-        let mut txn = self.db.begin_txn(false)?;
-        self.prove_nonexistence_with_txn(txn.as_mut(), key)
-    }
-    pub fn prove_nonexistence_with_txn(
-        &self,
-        txn: &mut dyn Txn,
-        key: &RawValue,
-    ) -> TreeResult<MerkleProof> {
         let path = keypath(*key);
 
         let mut siblings: Vec<Hash> = Vec::new();
 
         // note: non-existence of a key can be in 2 cases:
         match Self::down(
-            txn,
+            self.db.as_ref(),
             (path, 0),
             self.root,
             *key,
@@ -613,7 +588,7 @@ impl MerkleTree {
 impl MerkleTree {
     /// Applies given Merkle tree op.
     pub(crate) fn apply_op(
-        txn: &mut dyn Txn,
+        db: &mut dyn DB,
         op: MerkleTreeOp,
         root: Hash,
         k: RawValue,
@@ -646,7 +621,7 @@ impl MerkleTree {
         let path = keypath(k);
         let mut siblings: Vec<Hash> = Vec::new();
         let _ = Self::down(
-            txn,
+            db,
             (path.clone(), 0), // from lvl 0
             root,
             k,
@@ -667,7 +642,7 @@ impl MerkleTree {
             }
         };
         let leaf_hash = leaf.hash; // variable to avoid cloning `leaf` later
-        txn.store_node(Node::Leaf(leaf))?;
+        db.store_node(Node::Leaf(leaf))?;
         if siblings.is_empty() {
             // return the leaf's hash as root
             return Ok(leaf_hash);
@@ -678,7 +653,7 @@ impl MerkleTree {
                 // we're at the root-1 level, there is only a sibling, and we're
                 // removing the current leaf.
                 // If the sibling is a Leaf, the sibling (leaf) is now the new root
-                let sibling_node = txn.load_node(siblings[0].into())?;
+                let sibling_node = db.load_node(siblings[0].into())?;
                 if matches!(sibling_node, Node::Leaf(..)) {
                     return Ok(siblings[0]);
                 }
@@ -693,7 +668,7 @@ impl MerkleTree {
                 let node_hash = node.hash; // variable to avoid cloning `node` later
 
                 // store in db
-                txn.store_node(Node::Intermediate(node))?;
+                db.store_node(Node::Intermediate(node))?;
                 return Ok(node_hash);
             }
             // use the last sibling as the key that we will push up from
@@ -704,7 +679,7 @@ impl MerkleTree {
             let mut path = path.clone();
             path[siblings.len() - 1] = !path[siblings.len() - 1];
             Self::up(
-                txn,
+                db,
                 path,
                 siblings.len() - 1,
                 remaining_key,
@@ -713,7 +688,7 @@ impl MerkleTree {
                 true,
             )?
         } else {
-            Self::up(txn, path, siblings.len() - 1, leaf_hash, siblings, op, true)?
+            Self::up(db, path, siblings.len() - 1, leaf_hash, siblings, op, true)?
         };
 
         Ok(new_root)
@@ -795,8 +770,7 @@ impl<'a> Iterator for Iter<'a> {
         let node_hash = self.state.pop()?;
 
         // Inspect node
-        let txn = self.db.begin_txn(false).ok()?;
-        let node = txn.load_node(node_hash.into()).ok()?;
+        let node = self.db.load_node(node_hash.into()).ok()?;
 
         match node {
             Node::Leaf(Leaf {
@@ -823,25 +797,23 @@ impl<'a> Iterator for Iter<'a> {
 
 impl fmt::Display for MerkleTree {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let txn = self.db.begin_txn(false).map_err(|_| fmt::Error)?;
-
         writeln!(
             f,
             "\nPaste in GraphViz (https://dreampuf.github.io/GraphvizOnline/):\n-----"
         )?;
         writeln!(f, "digraph hierarchy {{")?;
         writeln!(f, "node [fontname=Monospace,fontsize=10,shape=box]")?;
-        print_graph_viz(f, txn.as_ref(), self.root)?;
+        print_graph_viz(f, self.db.as_ref(), self.root)?;
         writeln!(f, "\n}}\n-----")
     }
 }
 
-fn print_graph_viz(f: &mut fmt::Formatter<'_>, txn: &dyn Txn, hash: Hash) -> fmt::Result {
+fn print_graph_viz(f: &mut fmt::Formatter<'_>, db: &dyn DB, hash: Hash) -> fmt::Result {
     if hash == EMPTY_HASH {
         return Ok(());
     }
 
-    let node = txn.load_node(hash.into()).map_err(|_| fmt::Error)?;
+    let node = db.load_node(hash.into()).map_err(|_| fmt::Error)?;
     match node {
         Node::Intermediate(n) => {
             let left_hash: String = if n.left == EMPTY_HASH {
@@ -867,8 +839,8 @@ fn print_graph_viz(f: &mut fmt::Formatter<'_>, txn: &dyn Txn, hash: Hash) -> fmt
                 format!("\"{}\"", n.right)
             };
             writeln!(f, "\"{}\" -> {{ {} {} }}", n.hash, left_hash, right_hash,)?;
-            print_graph_viz(f, txn, n.left)?;
-            print_graph_viz(f, txn, n.right)
+            print_graph_viz(f, db, n.left)?;
+            print_graph_viz(f, db, n.right)
         }
         Node::Leaf(l) => {
             writeln!(f, "\"{}\" [style=filled]", l.hash)?;
