@@ -627,8 +627,7 @@ impl MerkleTree {
                 Node::Leaf(Leaf::new(k, value))
             }
             (MerkleTreeOp::Delete, None) => {
-                // return an intermediate node whose hash is 'empty', to
-                // indicate that there is no leaf
+                // return a node whose hash is 'empty', to indicate that there is no leaf
                 Node::Intermediate(Intermediate {
                     hash: EMPTY_HASH,
                     left: EMPTY_HASH,
@@ -642,10 +641,10 @@ impl MerkleTree {
                 )))
             }
         };
-        let node_hash = node.hash(); // variable to avoid cloning `node` later
+        let node_hash = node.hash(); // variable to avoid cloning `leaf` later
         db.store_node(node)?;
         if siblings.is_empty() {
-            // return the node's hash as root
+            // return the leaf's hash as root
             return Ok(node_hash);
         }
 
@@ -774,17 +773,8 @@ impl<'a> Iterator for Iter<'a> {
         let node = self.db.load_node(node_hash.into()).ok()?;
 
         match node {
-            Node::Leaf(Leaf {
-                hash: _,
-                path: _,
-                key,
-                value,
-            }) => Some((key, value)),
-            Node::Intermediate(Intermediate {
-                hash: _,
-                left,
-                right,
-            }) => {
+            Node::Leaf(Leaf { key, value, .. }) => Some((key, value)),
+            Node::Intermediate(Intermediate { left, right, .. }) => {
                 [right, left].into_iter().for_each(|h| {
                     if h != EMPTY_HASH {
                         self.state.push(h)
@@ -1001,17 +991,8 @@ pub enum Node {
 impl Node {
     pub fn hash(&self) -> Hash {
         match self {
-            Node::Leaf(Leaf {
-                hash,
-                path: _,
-                key: _,
-                value: _,
-            }) => *hash,
-            Node::Intermediate(Intermediate {
-                hash,
-                left: _,
-                right: _,
-            }) => *hash,
+            Node::Leaf(Leaf { hash, .. }) => *hash,
+            Node::Intermediate(Intermediate { hash, .. }) => *hash,
         }
     }
 }
