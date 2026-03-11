@@ -622,18 +622,18 @@ impl MerkleTree {
             op,
         )?;
 
-        let leaf: Leaf = match (op, maybe_value) {
+        let node: Node = match (op, maybe_value) {
             (MerkleTreeOp::Insert, Some(value)) | (MerkleTreeOp::Update, Some(value)) => {
-                Leaf::new(k, value)
+                Node::Leaf(Leaf::new(k, value))
             }
             (MerkleTreeOp::Delete, None) => {
-                // return a leaf whose hash is 'empty', to indicate that there is no leaf
-                Leaf {
+                // return an intermediate node whose hash is 'empty', to
+                // indicate that there is no leaf
+                Node::Intermediate(Intermediate {
                     hash: EMPTY_HASH,
-                    path: vec![],
-                    key: EMPTY_VALUE,
-                    value: EMPTY_VALUE,
-                }
+                    left: EMPTY_HASH,
+                    right: EMPTY_HASH,
+                })
             }
             _ => {
                 return Err(TreeError::invalid_state_transition_proof_arg(format!(
@@ -642,11 +642,11 @@ impl MerkleTree {
                 )))
             }
         };
-        let leaf_hash = leaf.hash; // variable to avoid cloning `leaf` later
-        db.store_node(Node::Leaf(leaf))?;
+        let node_hash = node.hash(); // variable to avoid cloning `node` later
+        db.store_node(node)?;
         if siblings.is_empty() {
-            // return the leaf's hash as root
-            return Ok(leaf_hash);
+            // return the node's hash as root
+            return Ok(node_hash);
         }
 
         let new_root = if op == MerkleTreeOp::Delete {
@@ -689,7 +689,7 @@ impl MerkleTree {
                 true,
             )?
         } else {
-            Self::up(db, path, siblings.len() - 1, leaf_hash, siblings, op, true)?
+            Self::up(db, path, siblings.len() - 1, node_hash, siblings, op, true)?
         };
 
         Ok(new_root)
