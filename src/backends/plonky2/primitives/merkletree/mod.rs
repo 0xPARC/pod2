@@ -16,10 +16,14 @@ use crate::middleware::{Hash, RawValue, EMPTY_HASH, EMPTY_VALUE, F};
 
 pub mod circuit;
 pub use circuit::*;
-mod db;
-use db::DB;
+pub mod db;
+pub use db::DB;
 pub mod error;
 pub use error::{TreeError, TreeResult};
+
+// TODO: Replace all `&RawValue` for `RawValue`.  This type is very small and `Copy` so there's
+// no benefit in passing a reference instead of a copy.  Moreover, most of the times the value is
+// being copied in methods that receive the reference: see all `*key` and `*value` in the code.
 
 /// Theoretical max depth of a merkle tree.  This limits appears because we store keys of 256 bits.
 const MAX_DEPTH: usize = 256;
@@ -1026,7 +1030,7 @@ pub struct Leaf {
     pub(crate) value: RawValue,
 }
 impl Leaf {
-    fn new(key: RawValue, value: RawValue) -> Self {
+    pub fn new(key: RawValue, value: RawValue) -> Self {
         Self {
             hash: kv_hash(&key, Some(value)),
             path: keypath(key),

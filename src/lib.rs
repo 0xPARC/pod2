@@ -6,12 +6,13 @@
 
 pub mod backends;
 pub mod cache;
-pub mod frontend;
-pub mod lang;
+// pub mod frontend; // TODO
+// pub mod lang; // TODO
 pub mod middleware;
 
-#[cfg(any(test, feature = "examples"))]
-pub mod examples;
+// TODO
+// #[cfg(any(test, feature = "examples"))]
+// pub mod examples;
 
 #[cfg(feature = "time")]
 pub mod time_macros {
