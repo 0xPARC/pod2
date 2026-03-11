@@ -622,18 +622,17 @@ impl MerkleTree {
             op,
         )?;
 
-        let leaf: Leaf = match (op, maybe_value) {
+        let node: Node = match (op, maybe_value) {
             (MerkleTreeOp::Insert, Some(value)) | (MerkleTreeOp::Update, Some(value)) => {
-                Leaf::new(k, value)
+                Node::Leaf(Leaf::new(k, value))
             }
             (MerkleTreeOp::Delete, None) => {
-                // return a leaf whose hash is 'empty', to indicate that there is no leaf
-                Leaf {
+                // return a node whose hash is 'empty', to indicate that there is no leaf
+                Node::Intermediate(Intermediate {
                     hash: EMPTY_HASH,
-                    path: vec![],
-                    key: EMPTY_VALUE,
-                    value: EMPTY_VALUE,
-                }
+                    left: EMPTY_HASH,
+                    right: EMPTY_HASH,
+                })
             }
             _ => {
                 return Err(TreeError::invalid_state_transition_proof_arg(format!(
@@ -642,11 +641,11 @@ impl MerkleTree {
                 )))
             }
         };
-        let leaf_hash = leaf.hash; // variable to avoid cloning `leaf` later
-        db.store_node(Node::Leaf(leaf))?;
+        let node_hash = node.hash(); // variable to avoid cloning `leaf` later
+        db.store_node(node)?;
         if siblings.is_empty() {
             // return the leaf's hash as root
-            return Ok(leaf_hash);
+            return Ok(node_hash);
         }
 
         let new_root = if op == MerkleTreeOp::Delete {
@@ -689,7 +688,7 @@ impl MerkleTree {
                 true,
             )?
         } else {
-            Self::up(db, path, siblings.len() - 1, leaf_hash, siblings, op, true)?
+            Self::up(db, path, siblings.len() - 1, node_hash, siblings, op, true)?
         };
 
         Ok(new_root)
@@ -774,17 +773,8 @@ impl<'a> Iterator for Iter<'a> {
         let node = self.db.load_node(node_hash.into()).ok()?;
 
         match node {
-            Node::Leaf(Leaf {
-                hash: _,
-                path: _,
-                key,
-                value,
-            }) => Some((key, value)),
-            Node::Intermediate(Intermediate {
-                hash: _,
-                left,
-                right,
-            }) => {
+            Node::Leaf(Leaf { key, value, .. }) => Some((key, value)),
+            Node::Intermediate(Intermediate { left, right, .. }) => {
                 [right, left].into_iter().for_each(|h| {
                     if h != EMPTY_HASH {
                         self.state.push(h)
@@ -1001,17 +991,8 @@ pub enum Node {
 impl Node {
     pub fn hash(&self) -> Hash {
         match self {
-            Node::Leaf(Leaf {
-                hash,
-                path: _,
-                key: _,
-                value: _,
-            }) => *hash,
-            Node::Intermediate(Intermediate {
-                hash,
-                left: _,
-                right: _,
-            }) => *hash,
+            Node::Leaf(Leaf { hash, .. }) => *hash,
+            Node::Intermediate(Intermediate { hash, .. }) => *hash,
         }
     }
 }
