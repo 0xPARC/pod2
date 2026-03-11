@@ -3,6 +3,7 @@
 
 use std::sync::Arc;
 
+use anyhow::anyhow;
 use hex::ToHex;
 use itertools::Itertools;
 use strum_macros::FromRepr;
@@ -75,6 +76,79 @@ pub enum TypedValue {
     String(String),
     #[serde(untagged)]
     Bool(bool),
+}
+
+#[derive(FromRepr)]
+#[repr(u8)]
+pub enum ValueType {
+    Raw = 0,
+    Int = 1,
+    Bool = 2,
+    String = 3,
+    Set = 4,
+    Dictionary = 5,
+    Array = 6,
+    PublicKey = 7,
+    SecretKey = 8,
+    Predicate = 9,
+}
+
+impl TypedValue {
+    pub fn value_type(&self) -> u8 {
+        use ValueType::*;
+        (match self {
+            Self::Raw(..) => Raw,
+            Self::Int(..) => Int,
+            Self::Bool(..) => Bool,
+            Self::String(..) => String,
+            Self::Set(..) => Set,
+            Self::Dictionary(..) => Dictionary,
+            Self::Array(..) => Array,
+            Self::PublicKey(..) => PublicKey,
+            Self::SecretKey(..) => SecretKey,
+            Self::Predicate(..) => Predicate,
+        }) as u8
+    }
+
+    pub fn to_bytes(&self) -> anyhow::Result<Vec<u8>> {
+        let mut bytes = Vec::new();
+        bytes.push(self.value_type());
+        use TypedValue::*;
+        match self {
+            Raw(v) => serde_json::to_writer(&mut bytes, v),
+            Int(v) => serde_json::to_writer(&mut bytes, v),
+            Bool(v) => serde_json::to_writer(&mut bytes, v),
+            String(v) => serde_json::to_writer(&mut bytes, v),
+            Set(v) => serde_json::to_writer(&mut bytes, &v.commitment()),
+            Dictionary(v) => serde_json::to_writer(&mut bytes, &v.commitment()),
+            Array(v) => serde_json::to_writer(&mut bytes, &v.commitment()),
+            PublicKey(v) => serde_json::to_writer(&mut bytes, v),
+            SecretKey(v) => serde_json::to_writer(&mut bytes, v),
+            Predicate(v) => serde_json::to_writer(&mut bytes, v),
+        }?;
+        Ok(bytes)
+    }
+
+    pub fn from_bytes(bytes: &[u8]) -> anyhow::Result<Self> {
+        let value_type = bytes[0];
+        let bytes = &bytes[1..];
+        use TypedValue::*;
+        let value = match ValueType::from_repr(value_type)
+            .ok_or_else(|| anyhow!("invalid value_type {value_type}"))?
+        {
+            ValueType::Raw => Raw(serde_json::from_slice(bytes)?),
+            ValueType::Int => Int(serde_json::from_slice(bytes)?),
+            ValueType::Bool => Bool(serde_json::from_slice(bytes)?),
+            ValueType::String => String(serde_json::from_slice(bytes)?),
+            ValueType::Set => Set(serde_json::from_slice(bytes)?),
+            ValueType::Dictionary => Dictionary(serde_json::from_slice(bytes)?),
+            ValueType::Array => Array(serde_json::from_slice(bytes)?),
+            ValueType::PublicKey => PublicKey(serde_json::from_slice(bytes)?),
+            ValueType::SecretKey => SecretKey(serde_json::from_slice(bytes)?),
+            ValueType::Predicate => Predicate(serde_json::from_slice(bytes)?),
+        };
+        Ok(value)
+    }
 }
 
 impl From<&str> for TypedValue {
@@ -227,33 +301,52 @@ impl fmt::Display for TypedValue {
             TypedValue::Bool(b) => write!(f, "{}", b),
             TypedValue::Array(a) => {
                 write!(f, "[")?;
-                for (i, v) in a.array().iter().enumerate() {
+                for (i, r) in a.iter().enumerate() {
                     if i > 0 {
                         write!(f, ", ")?;
                     }
-                    write!(f, "{}", v)?;
+                    if i == 8 {
+                        write!(f, "…")?;
+                        break;
+                    }
+                    match r {
+                        Ok((index, value)) => write!(f, "{}: {}", index, value)?,
+                        Err(e) => write!(f, "{e}")?,
+                    }
                 }
                 write!(f, "]")
             }
             TypedValue::Dictionary(d) => {
                 write!(f, "{{ ")?;
-                let kvs: Vec<_> = d.kvs().iter().sorted_by_key(|(k, _)| k.name()).collect();
-                for (i, (k, v)) in kvs.iter().enumerate() {
+                for (i, r) in d.iter().enumerate() {
                     if i > 0 {
                         write!(f, ", ")?;
                     }
-                    write!(f, "{}: {}", k, v)?;
+                    if i == 8 {
+                        write!(f, "…")?;
+                        break;
+                    }
+                    match r {
+                        Ok((key, value)) => write!(f, "{}: {}", key, value)?,
+                        Err(e) => write!(f, "{e}")?,
+                    }
                 }
                 write!(f, " }}")
             }
             TypedValue::Set(s) => {
                 write!(f, "#[")?;
-                let values: Vec<_> = s.set().iter().sorted_by_key(|k| k.raw()).collect();
-                for (i, v) in values.iter().enumerate() {
+                for (i, r) in s.iter().enumerate() {
                     if i > 0 {
                         write!(f, ", ")?;
                     }
-                    write!(f, "{}", v)?;
+                    if i == 8 {
+                        write!(f, "…")?;
+                        break;
+                    }
+                    match r {
+                        Ok(value) => write!(f, "{}", value)?,
+                        Err(e) => write!(f, "{e}")?,
+                    }
                 }
                 write!(f, "]")
             }
@@ -476,6 +569,7 @@ impl Value {
     pub fn raw(&self) -> RawValue {
         self.raw
     }
+    /*
     /// Determines Merkle existence proof for `key` in `self` (if applicable).
     pub(crate) fn prove_existence<'a>(
         &'a self,
@@ -564,6 +658,7 @@ impl Value {
             ))),
         }
     }
+    */
 }
 
 // A Value can be created from any type Into<TypedValue> type: bool, string-like, i64, ...
