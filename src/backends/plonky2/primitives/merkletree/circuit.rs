@@ -32,7 +32,7 @@ use crate::{
         circuits::common::{CircuitBuilderPod, ValueTarget},
         error::{Error, Result},
         primitives::merkletree::{
-            MerkleClaimAndProof, MerkleTreeOp, MerkleTreeStateTransitionProof, TreeError,
+            MerkleClaimAndProof, MerkleTreeOp, MerkleTreeStateTransitionProof, TreeError, MAX_DEPTH,
         },
     },
     measure_gates_begin, measure_gates_end,
@@ -703,10 +703,13 @@ impl MerkleTreeStateTransitionProofTarget {
         {
             pw.set_hash_target(self.siblings[i], HashOut::from_vec(sibling.0.to_vec()))?;
         }
-        pw.set_target(
-            self.divergence_level,
-            F::from_canonical_u64((new_siblings.len() - 1) as u64),
-        )?;
+        let div_lvl = if new_siblings.is_empty() {
+            // don't subtract since it would underflow, use MAX_DEPTH
+            MAX_DEPTH as u64
+        } else {
+            (new_siblings.len() - 1) as u64
+        };
+        pw.set_target(self.divergence_level, F::from_canonical_u64(div_lvl))?;
 
         Ok(())
     }

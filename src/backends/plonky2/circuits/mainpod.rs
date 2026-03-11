@@ -2276,9 +2276,9 @@ mod tests {
         ]
         .into_iter()
         .for_each(|(op, st)| {
-            let check = std::panic::catch_unwind(|| {
+            let check = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 operation_verify(st, op, prev_statements.to_vec(), Aux::default())
-            });
+            }));
             match check {
                 Err(e) => {
                     let err_string = e.downcast_ref::<String>().unwrap();
@@ -2689,9 +2689,9 @@ mod tests {
                 );
                 let prev_statements = [Statement::None.into()];
 
-                let check = std::panic::catch_unwind(|| {
+                let check = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                     operation_verify(st, op, prev_statements.to_vec(), Aux::default())
-                });
+                }));
                 match check {
                     Err(e) => {
                         let err_string = e.downcast_ref::<String>().unwrap();
