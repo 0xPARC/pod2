@@ -260,6 +260,13 @@ impl Validator {
         let args = &use_stmt.args;
         let intro_predicate_ref = &use_stmt.intro_hash;
 
+        if NativePredicate::from_str(intro_name).is_ok() {
+            return Err(ValidationError::ShadowsNativePredicate {
+                name: intro_name.clone(),
+                span: use_stmt.span,
+            });
+        }
+
         if self.symbols.predicates.contains_key(intro_name) {
             return Err(ValidationError::DuplicateImport {
                 name: intro_name.clone(),
@@ -288,6 +295,13 @@ impl Validator {
         pred_def: &CustomPredicateDef,
     ) -> Result<(), ValidationError> {
         let name = &pred_def.name.name;
+
+        if NativePredicate::from_str(name).is_ok() {
+            return Err(ValidationError::ShadowsNativePredicate {
+                name: name.clone(),
+                span: pred_def.name.span,
+            });
+        }
 
         if self.symbols.predicates.contains_key(name) {
             let first_span = self.symbols.predicates[name].source_span;
@@ -559,7 +573,9 @@ impl Validator {
                             }
                         }
                     }
-                    StatementTmplArg::Literal(_) => {}
+                    StatementTmplArg::Literal(lit) => {
+                        self.validate_literal_value(lit)?;
+                    }
                 }
             }
         } else {
@@ -588,11 +604,93 @@ impl Validator {
                             }
                         }
                     }
-                    StatementTmplArg::Literal(_) => {}
+                    StatementTmplArg::Literal(lit) => {
+                        self.validate_literal_value(lit)?;
+                    }
                 }
             }
         }
 
+        Ok(())
+    }
+
+    /// Recursively validate a literal value, checking any predicate literals inside containers.
+    fn validate_literal_value(&self, lit: &LiteralValue) -> Result<(), ValidationError> {
+        match lit {
+            LiteralValue::PredicateLiteral(pred_ref) => {
+                self.validate_predicate_literal_ref(pred_ref)
+            }
+            LiteralValue::Array(a) => {
+                for elem in &a.elements {
+                    self.validate_literal_value(elem)?;
+                }
+                Ok(())
+            }
+            LiteralValue::Set(s) => {
+                for elem in &s.elements {
+                    self.validate_literal_value(elem)?;
+                }
+                Ok(())
+            }
+            LiteralValue::Dict(d) => {
+                for pair in &d.pairs {
+                    self.validate_literal_value(&pair.value)?;
+                }
+                Ok(())
+            }
+            // Scalar literals need no validation
+            _ => Ok(()),
+        }
+    }
+
+    /// Validate a predicate reference used as a literal value in argument position.
+    /// Ensures the referenced module and predicate exist.
+    fn validate_predicate_literal_ref(
+        &self,
+        pred_ref: &PredicateRef,
+    ) -> Result<(), ValidationError> {
+        match pred_ref {
+            PredicateRef::Qualified { module, predicate } => {
+                let module_name = &module.name;
+                if let Some(imported_module) = self.symbols.imported_modules.get(module_name) {
+                    if !imported_module
+                        .predicate_index
+                        .contains_key(&predicate.name)
+                    {
+                        return Err(ValidationError::UndefinedPredicate {
+                            name: format!("{}::{}", module_name, predicate.name),
+                            span: predicate.span,
+                        });
+                    }
+                } else {
+                    return Err(ValidationError::ModuleNotFound {
+                        name: module_name.clone(),
+                        span: module.span,
+                    });
+                }
+            }
+            PredicateRef::Local(id) => {
+                // Local predicate references as values: check native or symbol table
+                if NativePredicate::from_str(&id.name).is_err()
+                    && !self.symbols.predicates.contains_key(&id.name)
+                {
+                    return Err(ValidationError::UndefinedPredicate {
+                        name: id.name.clone(),
+                        span: id.span,
+                    });
+                }
+                // Same-module custom predicates can't be used as literals because their
+                // hash depends on the batch Merkle root, creating circularity.
+                if let Some(info) = self.symbols.predicates.get(&id.name) {
+                    if matches!(info.kind, PredicateKind::Custom { .. }) {
+                        return Err(ValidationError::SameModulePredicateLiteral {
+                            name: id.name.clone(),
+                            span: id.span,
+                        });
+                    }
+                }
+            }
+        }
         Ok(())
     }
 }
@@ -892,5 +990,50 @@ mod tests {
         )"#;
         let result = parse_and_validate_request(input, &HashMap::new());
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_same_module_predicate_literal_rejected() {
+        // ::other_pred refers to a predicate defined in the same module.
+        // Its hash depends on the batch Merkle root, creating circularity.
+        let input = r#"
+            other_pred(X) = AND(Equal(X["x"], 1))
+            checker(A) = AND(
+                Equal(A.pred_id, ::other_pred)
+            )
+        "#;
+        let result = parse_and_validate_module(input, &HashMap::new());
+        assert!(
+            matches!(result, Err(ValidationError::SameModulePredicateLiteral { ref name, .. }) if name == "other_pred"),
+            "Expected SameModulePredicateLiteral error, got: {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_shadows_native_predicate_custom_def() {
+        let input = r#"
+            Equal(X) = AND(Equal(X["x"], 1))
+        "#;
+        let result = parse_and_validate_module(input, &HashMap::new());
+        assert!(
+            matches!(result, Err(ValidationError::ShadowsNativePredicate { ref name, .. }) if name == "Equal"),
+        );
+    }
+
+    #[test]
+    fn test_shadows_native_predicate_intro() {
+        let input = format!(
+            r#"
+            use intro Equal(X) from 0x{}
+
+            REQUEST(Equal(A))
+        "#,
+            EMPTY_HASH.encode_hex::<String>()
+        );
+        let result = parse_and_validate_request(&input, &HashMap::new());
+        assert!(
+            matches!(result, Err(ValidationError::ShadowsNativePredicate { ref name, .. }) if name == "Equal"),
+        );
     }
 }
