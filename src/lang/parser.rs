@@ -137,6 +137,8 @@ mod tests {
         assert_inner(&Rule::anchored_key, "someVar[\"key\"]");
         assert_inner(&Rule::literal_value, "true");
         assert_inner(&Rule::literal_value, "PublicKey(abc)");
+        assert_inner(&Rule::literal_value, "foo::bar");
+        assert_inner(&Rule::literal_value, "::Equal");
     }
 
     #[test]
@@ -189,6 +191,7 @@ mod tests {
         assert_parses(Rule::literal_array, "[]");
         assert_parses(Rule::literal_array, "[1, \"two\", true]");
         assert_parses(Rule::literal_array, "[ [1], #[2] ]");
+        assert_parses(Rule::literal_array, "[foo::bar, ::Equal, 1]");
 
         // Set
         assert_parses(Rule::literal_set, "#[]");
@@ -197,6 +200,7 @@ mod tests {
             Rule::literal_set,
             "#[ \"a\", Raw(0x0000000000000000000000000000000000000000000000000000000000000000) ]",
         );
+        assert_parses(Rule::literal_set, "#[foo::bar, ::Equal]");
 
         // Dict
         assert_parses(Rule::literal_dict, "{}");
@@ -206,6 +210,7 @@ mod tests {
             Rule::literal_dict,
             "{ \"raw_val\": Raw(0x0000000000000000000000000000000000000000000000000000000000000000) } ",
         );
+        assert_parses(Rule::literal_dict, "{ \"pred\": foo::bar }");
         assert_fails(Rule::literal_dict, "{ name: \"Alice\" }"); // Key must be string literal with quotes
     }
 

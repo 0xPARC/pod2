@@ -168,6 +168,9 @@ pub enum LiteralValue {
     Array(LiteralArray),
     Set(LiteralSet),
     Dict(LiteralDict),
+    /// Predicate reference as a literal value (resolves to predicate identity hash).
+    /// Allowed in containers (arrays, sets, dicts) and statement arguments.
+    PredicateLiteral(PredicateRef),
 }
 
 /// Integer literal
@@ -422,6 +425,7 @@ impl fmt::Display for LiteralValue {
             LiteralValue::Array(a) => write!(f, "{}", a),
             LiteralValue::Set(s) => write!(f, "{}", s),
             LiteralValue::Dict(d) => write!(f, "{}", d),
+            LiteralValue::PredicateLiteral(pred_ref) => write!(f, "{}", pred_ref),
         }
     }
 }
@@ -823,6 +827,28 @@ pub mod parse {
             Rule::literal_array => Ok(LiteralValue::Array(parse_literal_array(inner)?)),
             Rule::literal_set => Ok(LiteralValue::Set(parse_literal_set(inner)?)),
             Rule::literal_dict => Ok(LiteralValue::Dict(parse_literal_dict(inner)?)),
+            Rule::predicate_literal => {
+                let pred_inner = inner.into_inner().next().unwrap();
+                match pred_inner.as_rule() {
+                    Rule::qualified_predicate_ref => {
+                        let mut parts = pred_inner.into_inner();
+                        let module = parse_identifier(parts.next().unwrap());
+                        let predicate = parse_identifier(parts.next().unwrap());
+                        Ok(LiteralValue::PredicateLiteral(PredicateRef::Qualified {
+                            module,
+                            predicate,
+                        }))
+                    }
+                    Rule::unqualified_predicate_ref => {
+                        let id = parse_identifier(pred_inner.into_inner().next().unwrap());
+                        Ok(LiteralValue::PredicateLiteral(PredicateRef::Local(id)))
+                    }
+                    _ => unreachable!(
+                        "Unexpected predicate_literal rule: {:?}",
+                        pred_inner.as_rule()
+                    ),
+                }
+            }
             _ => unreachable!("Unexpected literal value rule: {:?}", inner.as_rule()),
         }
     }
@@ -1138,6 +1164,9 @@ mod tests {
                     pair.key.span = None;
                     clear_literal_spans(&mut pair.value);
                 }
+            }
+            LiteralValue::PredicateLiteral(pred_ref) => {
+                clear_predicate_ref_spans(pred_ref);
             }
         }
     }

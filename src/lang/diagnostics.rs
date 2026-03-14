@@ -287,6 +287,33 @@ fn render_validation_error(
         ValidationError::NoRequestBlock => {
             render_title_only(renderer, "requests must contain a REQUEST block")
         }
+
+        ValidationError::ShadowsNativePredicate { name, span } => {
+            let title = format!("'{}' shadows a native predicate", name);
+            render_with_optional_span(
+                renderer,
+                source,
+                path,
+                &title,
+                span.as_ref(),
+                "this name is reserved for a native predicate",
+            )
+        }
+
+        ValidationError::SameModulePredicateLiteral { name, span } => {
+            let title = format!(
+                "cannot use same-module predicate '{}' as a literal value",
+                name
+            );
+            render_with_optional_span(
+                renderer,
+                source,
+                path,
+                &title,
+                span.as_ref(),
+                "its hash depends on the module's Merkle root, which is not yet known",
+            )
+        }
     }
 }
 

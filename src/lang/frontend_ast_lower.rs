@@ -157,7 +157,8 @@ fn resolve_local_predicate(
 
 /// Lower a literal value from AST to middleware Value.
 ///
-/// This is a pure conversion that cannot fail.
+/// This is a pure conversion that cannot fail. Panics on `PredicateLiteral` —
+/// use `lower_literal_with_context` when predicate literals may appear (e.g. in containers).
 pub fn lower_literal(lit: &LiteralValue) -> Value {
     match lit {
         LiteralValue::Int(i) => Value::from(i.value),
@@ -190,12 +191,80 @@ pub fn lower_literal(lit: &LiteralValue) -> Value {
             let dict = containers::Dictionary::new(pairs);
             Value::from(dict)
         }
+        LiteralValue::PredicateLiteral(_) => {
+            unreachable!("PredicateLiteral in literal position must be lowered with context via lower_literal_with_context")
+        }
+    }
+}
+
+/// Lower a literal value, resolving predicate literals using the symbol table.
+pub fn lower_literal_with_context(
+    lit: &LiteralValue,
+    symbols: &SymbolTable,
+    context: &ResolutionContext,
+) -> Result<Value, LoweringError> {
+    match lit {
+        LiteralValue::PredicateLiteral(pred_ref) => {
+            let pred_or_wc =
+                resolve_predicate_ref(pred_ref, symbols, context).ok_or_else(|| {
+                    LoweringError::PredicateNotFound {
+                        name: format!("{}", pred_ref),
+                    }
+                })?;
+            let predicate = match pred_or_wc {
+                crate::frontend::PredicateOrWildcard::Predicate(p) => p,
+                crate::frontend::PredicateOrWildcard::Wildcard(name) => {
+                    return Err(LoweringError::PredicateNotFound {
+                        name: format!("wildcard '{}' cannot be used as a predicate literal", name),
+                    });
+                }
+            };
+            if matches!(predicate, Predicate::BatchSelf(_)) {
+                return Err(LoweringError::SameModulePredicateLiteral {
+                    name: format!("{}", pred_ref),
+                });
+            }
+            let hash = predicate.hash();
+            Ok(Value::from(hash))
+        }
+        LiteralValue::Array(a) => {
+            let elements: Vec<_> = a
+                .elements
+                .iter()
+                .map(|e| lower_literal_with_context(e, symbols, context))
+                .collect::<Result<_, _>>()?;
+            Ok(Value::from(containers::Array::new(elements)))
+        }
+        LiteralValue::Set(s) => {
+            let elements: std::collections::HashSet<_> = s
+                .elements
+                .iter()
+                .map(|e| lower_literal_with_context(e, symbols, context))
+                .collect::<Result<_, _>>()?;
+            Ok(Value::from(containers::Set::new(elements)))
+        }
+        LiteralValue::Dict(d) => {
+            let pairs: HashMap<_, _> = d
+                .pairs
+                .iter()
+                .map(|pair| {
+                    let key = Key::from(pair.key.value.as_str());
+                    let value = lower_literal_with_context(&pair.value, symbols, context)?;
+                    Ok((key, value))
+                })
+                .collect::<Result<_, LoweringError>>()?;
+            Ok(Value::from(containers::Dictionary::new(pairs)))
+        }
+        // All other variants are context-free
+        other => Ok(lower_literal(other)),
     }
 }
 
 /// Lower a statement argument from AST to BuilderArg.
 ///
-/// This is a pure conversion that cannot fail.
+/// This handles all argument types except literals containing predicate references,
+/// which require symbol table context. Use `lower_statement_arg_with_context`
+/// when predicate literals may appear (including inside containers).
 pub fn lower_statement_arg(arg: &StatementTmplArg) -> BuilderArg {
     match arg {
         StatementTmplArg::Literal(lit) => {
@@ -210,6 +279,21 @@ pub fn lower_statement_arg(arg: &StatementTmplArg) -> BuilderArg {
             };
             BuilderArg::Key(ak.root.name.clone(), key_str)
         }
+    }
+}
+
+/// Lower a statement argument, resolving predicate literals using the symbol table.
+pub fn lower_statement_arg_with_context(
+    arg: &StatementTmplArg,
+    symbols: &SymbolTable,
+    context: &ResolutionContext,
+) -> Result<BuilderArg, LoweringError> {
+    match arg {
+        StatementTmplArg::Literal(lit) => {
+            let value = lower_literal_with_context(lit, symbols, context)?;
+            Ok(BuilderArg::Literal(value))
+        }
+        other => Ok(lower_statement_arg(other)),
     }
 }
 
@@ -324,7 +408,7 @@ impl<'a> Lowerer<'a> {
         // Create a builder with the resolved predicate and desugar
         let mut builder = StatementTmplBuilder::new(predicate.clone());
         for arg in &stmt.args {
-            let builder_arg = lower_statement_arg(arg);
+            let builder_arg = lower_statement_arg_with_context(arg, symbols, &context)?;
             builder = builder.arg(builder_arg);
         }
         let desugared = builder.desugar();

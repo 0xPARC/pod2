@@ -11,7 +11,9 @@ use crate::{
     lang::{
         error::BatchingError,
         frontend_ast::{ConjunctionType, CustomPredicateDef},
-        frontend_ast_lower::{lower_statement_arg, resolve_predicate_ref, ResolutionContext},
+        frontend_ast_lower::{
+            lower_statement_arg_with_context, resolve_predicate_ref, ResolutionContext,
+        },
         frontend_ast_split::{SplitChainInfo, SplitResult},
         frontend_ast_validate::SymbolTable,
     },
@@ -372,7 +374,13 @@ fn build_statement_with_resolved_refs(
     let mut builder = StatementTmplBuilder::new(pred_or_wc);
 
     for arg in &stmt.args {
-        builder = builder.arg(lower_statement_arg(arg));
+        let builder_arg =
+            lower_statement_arg_with_context(arg, symbols, &context).map_err(|e| {
+                BatchingError::Internal {
+                    message: format!("Failed to lower argument: {}", e),
+                }
+            })?;
+        builder = builder.arg(builder_arg);
     }
 
     Ok(builder)

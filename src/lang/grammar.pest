@@ -50,6 +50,11 @@ custom_predicate_def = {
 statement_list = { statement+ }
 
 statement_arg = { literal_value | anchored_key | identifier }
+
+// Predicate literal in argument position: resolves to the predicate's identity hash.
+// Either qualified (module::predicate) or local (::predicate) for native/intro predicates.
+predicate_literal = { qualified_predicate_ref | unqualified_predicate_ref }
+unqualified_predicate_ref = { "::" ~ identifier }
 statement_arg_list = { statement_arg ~ ("," ~ statement_arg)* }
 
 // Predicate reference: either qualified (module::predicate) or local (predicate)
@@ -65,6 +70,7 @@ anchored_key = {
 }
 
 // Literal Values (ordered to avoid ambiguity, e.g., string before int)
+// predicate_literal is included so that predicate identity hashes can appear inside containers.
 literal_value = {
     literal_public_key |
     literal_secret_key |
@@ -74,6 +80,7 @@ literal_value = {
     literal_bool |
     literal_raw |
     literal_string |
+    predicate_literal |
     literal_int
 }
 

@@ -141,9 +141,9 @@ mod tests {
     use crate::{
         backends::plonky2::primitives::ec::schnorr::SecretKey,
         middleware::{
-            CustomPredicate, CustomPredicateBatch, CustomPredicateRef, Key, NativePredicate,
-            Params, Predicate, PredicateOrWildcard, RawValue, StatementTmpl, StatementTmplArg,
-            Value, Wildcard, EMPTY_HASH,
+            CustomPredicate, CustomPredicateBatch, CustomPredicateRef, IntroPredicateRef, Key,
+            NativePredicate, Params, Predicate, PredicateOrWildcard, RawValue, StatementTmpl,
+            StatementTmplArg, Value, Wildcard, EMPTY_HASH,
         },
     };
 
@@ -1073,5 +1073,218 @@ mod tests {
             },
             e => panic!("Expected LangError::Validation, but got {:?}", e),
         }
+    }
+
+    #[test]
+    fn test_e2e_predicate_literal_in_arg() -> Result<(), LangError> {
+        let params = Params::default();
+
+        // 1. Create an external module with a predicate
+        let imported_pred =
+            CustomPredicate::and(&params, "target_pred".to_string(), vec![], 1, names(&["A"]))?;
+        let batch = CustomPredicateBatch::new("extmod".to_string(), vec![imported_pred]);
+        let extmod = Arc::new(Module::new(batch.clone(), HashMap::new()));
+        let extmod_hash = extmod.id().encode_hex::<String>();
+
+        // Compute the expected hash of the imported predicate
+        let expected_pred_ref = CustomPredicateRef::new(batch.clone(), 0);
+        let expected_hash = Predicate::Custom(expected_pred_ref).hash();
+
+        // 2. Define a module that uses extmod::target_pred as a literal argument value
+        let input = format!(
+            r#"
+            use module 0x{} as extmod
+
+            checker(X) = AND(
+                Equal(X.pred_id, extmod::target_pred)
+            )
+        "#,
+            extmod_hash
+        );
+
+        // 3. Load the module
+        let module = load_module(&input, "test", &params, &[extmod])?;
+        assert_eq!(module.batch.predicates().len(), 1);
+
+        let pred = &module.batch.predicates()[0];
+        assert_eq!(pred.name, "checker");
+        assert_eq!(pred.statements().len(), 1);
+
+        // 4. Verify the second argument is a literal containing the predicate hash
+        let stmt = &pred.statements()[0];
+        let expected_stmt = StatementTmpl {
+            pred_or_wc: pred_lit(Predicate::Native(NativePredicate::Equal)),
+            args: vec![sta_ak(("X", 0), "pred_id"), sta_lit(expected_hash)],
+        };
+        assert_eq!(*stmt, expected_stmt);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_e2e_predicate_literal_in_request() -> Result<(), LangError> {
+        let params = Params::default();
+
+        // Create a module with a predicate
+        let pred = CustomPredicate::and(&params, "my_pred".to_string(), vec![], 1, names(&["A"]))?;
+        let batch = CustomPredicateBatch::new("mod1".to_string(), vec![pred]);
+        let mod1 = Arc::new(Module::new(batch.clone(), HashMap::new()));
+        let mod1_hash = mod1.id().encode_hex::<String>();
+
+        let expected_pred_ref = CustomPredicateRef::new(batch.clone(), 0);
+        let expected_hash = Predicate::Custom(expected_pred_ref).hash();
+
+        // Parse a request that uses the predicate literal as an argument
+        let input = format!(
+            r#"
+            use module 0x{} as mod1
+
+            REQUEST(
+                Equal(X.pred_id, mod1::my_pred)
+            )
+        "#,
+            mod1_hash
+        );
+
+        let request = parse_request(&input, &params, std::slice::from_ref(&mod1))?;
+        let templates = request.templates();
+        assert_eq!(templates.len(), 1);
+
+        // The second arg should be a literal with the predicate hash
+        assert_eq!(
+            templates[0].args[1],
+            StatementTmplArg::Literal(Value::from(expected_hash))
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_e2e_native_predicate_literal() -> Result<(), LangError> {
+        let params = Params::default();
+
+        let expected_hash = Predicate::Native(NativePredicate::Equal).hash();
+
+        let input = r#"
+            checker(X) = AND(
+                Equal(X.pred_id, ::Equal)
+            )
+        "#;
+
+        let module = load_module(input, "test", &params, &[])?;
+        let pred = &module.batch.predicates()[0];
+        let stmt = &pred.statements()[0];
+
+        assert_eq!(
+            stmt.args[1],
+            StatementTmplArg::Literal(Value::from(expected_hash))
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_e2e_intro_predicate_literal() -> Result<(), LangError> {
+        let params = Params::default();
+
+        let expected_hash = Predicate::Intro(IntroPredicateRef {
+            name: "ext_check".to_string(),
+            args_len: 1,
+            verifier_data_hash: EMPTY_HASH,
+        })
+        .hash();
+
+        let input = format!(
+            r#"
+            use intro ext_check(X) from 0x{}
+
+            checker(A) = AND(
+                Equal(A.pred_id, ::ext_check)
+            )
+        "#,
+            EMPTY_HASH.encode_hex::<String>()
+        );
+
+        let module = load_module(&input, "test", &params, &[])?;
+        let pred = &module.batch.predicates()[0];
+        let stmt = &pred.statements()[0];
+
+        assert_eq!(
+            stmt.args[1],
+            StatementTmplArg::Literal(Value::from(expected_hash))
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_e2e_predicate_literal_in_container() -> Result<(), LangError> {
+        let params = Params::default();
+
+        // Create an external module with a predicate
+        let imported_pred =
+            CustomPredicate::and(&params, "target_pred".to_string(), vec![], 1, names(&["A"]))?;
+        let batch = CustomPredicateBatch::new("extmod".to_string(), vec![imported_pred]);
+        let extmod = Arc::new(Module::new(batch.clone(), HashMap::new()));
+        let extmod_hash = extmod.id().encode_hex::<String>();
+
+        let expected_pred_ref = CustomPredicateRef::new(batch.clone(), 0);
+        let expected_custom_hash = Predicate::Custom(expected_pred_ref).hash();
+        let expected_native_hash = Predicate::Native(NativePredicate::Equal).hash();
+
+        // Use predicate literals inside an array and a set
+        let input = format!(
+            r#"
+            use module 0x{} as extmod
+
+            checker(X) = AND(
+                Equal(X.pred_list, [extmod::target_pred, ::Equal])
+                Equal(X.pred_set, #[extmod::target_pred, ::Equal])
+                Equal(X.pred_dict, {{ "custom": extmod::target_pred, "native": ::Equal }})
+            )
+        "#,
+            extmod_hash
+        );
+
+        let module = load_module(&input, "test", &params, &[extmod])?;
+        let pred = &module.batch.predicates()[0];
+
+        // Check the array literal (second arg of first statement)
+        let stmt0 = &pred.statements()[0];
+        let expected_array = Value::from(crate::middleware::containers::Array::new(vec![
+            Value::from(expected_custom_hash),
+            Value::from(expected_native_hash),
+        ]));
+        assert_eq!(stmt0.args[1], StatementTmplArg::Literal(expected_array));
+
+        // Check the set literal (second arg of second statement)
+        let stmt1 = &pred.statements()[1];
+        let expected_set = Value::from(crate::middleware::containers::Set::new(
+            [
+                Value::from(expected_custom_hash),
+                Value::from(expected_native_hash),
+            ]
+            .into_iter()
+            .collect::<std::collections::HashSet<_>>(),
+        ));
+        assert_eq!(stmt1.args[1], StatementTmplArg::Literal(expected_set));
+
+        // Check the dict literal (second arg of third statement)
+        let stmt2 = &pred.statements()[2];
+        let expected_dict = Value::from(crate::middleware::containers::Dictionary::new(
+            HashMap::from([
+                (
+                    crate::middleware::Key::from("custom"),
+                    Value::from(expected_custom_hash),
+                ),
+                (
+                    crate::middleware::Key::from("native"),
+                    Value::from(expected_native_hash),
+                ),
+            ]),
+        ));
+        assert_eq!(stmt2.args[1], StatementTmplArg::Literal(expected_dict));
+
+        Ok(())
     }
 }

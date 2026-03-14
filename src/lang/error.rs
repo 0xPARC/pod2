@@ -156,6 +156,9 @@ pub enum ValidationError {
     #[error("Wildcard '{name}' collides with a predicate name")]
     WildcardPredicateNameCollision { name: String },
 
+    #[error("Name '{name}' shadows a native predicate")]
+    ShadowsNativePredicate { name: String, span: Option<Span> },
+
     #[error("Predicate definitions are not allowed in requests")]
     PredicatesNotAllowedInRequest { span: Option<Span> },
 
@@ -167,6 +170,9 @@ pub enum ValidationError {
 
     #[error("Requests must contain a REQUEST block")]
     NoRequestBlock,
+
+    #[error("Cannot use same-module predicate '{name}' as a literal value (its hash depends on the module's Merkle root, which is not yet known)")]
+    SameModulePredicateLiteral { name: String, span: Option<Span> },
 }
 
 /// Lowering errors from frontend AST lowering to middleware
@@ -191,6 +197,9 @@ pub enum LoweringError {
 
     #[error("Predicate '{name}' not found in symbol table")]
     PredicateNotFound { name: String },
+
+    #[error("Cannot use same-module predicate '{name}' as a literal value (its hash depends on the module's Merkle root, which is not yet known)")]
+    SameModulePredicateLiteral { name: String },
 
     #[error("Invalid argument type in statement template")]
     InvalidArgumentType,
