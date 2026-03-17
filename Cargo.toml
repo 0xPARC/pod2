@@ -64,7 +64,7 @@ tempfile = "3"
 vergen-gitcl = { version = "1.0.0", features = ["build"] }
 
 [features]
-default = ["backend_plonky2", "zk", "mem_cache"]
+default = ["backend_plonky2", "zk", "mem_cache", "db_rocksdb"]
 backend_plonky2 = ["plonky2"]
 zk = []
 metrics = []

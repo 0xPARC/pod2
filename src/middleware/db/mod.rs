@@ -1,24 +1,19 @@
 use std::{
-    collections::{BTreeMap, HashMap, HashSet},
+    collections::HashMap,
     fmt::Debug,
     sync::{Arc, RwLock},
 };
 
-use anyhow::bail;
 use dyn_clone::DynClone;
-use schemars::JsonSchema;
-use serde::{de, ser, Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Serialize};
 
-use super::serialization::{ordered_map, ordered_set};
 #[cfg(feature = "backend_plonky2")]
-use crate::backends::plonky2::primitives::merkletree::{
-    self, MerkleProof, MerkleTree, MerkleTreeStateTransitionProof, TreeError,
-};
-use crate::middleware::{
-    hash_str, Error, Hash, Key, RawValue, Result, TypedValue, Value, EMPTY_HASH, EMPTY_VALUE,
-};
+use crate::backends::plonky2::primitives::merkletree::{self};
+use crate::middleware::{Hash, RawValue, TypedValue, Value, EMPTY_HASH};
 
 pub mod mem;
+#[cfg(feature = "db_rocksdb")]
+pub mod rocks;
 
 // Trait for database that stores values.  Must be cheap to clone.
 pub trait DB: Debug + DynClone + Sync + Send + merkletree::db::DB {

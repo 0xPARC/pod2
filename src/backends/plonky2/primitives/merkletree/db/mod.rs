@@ -18,6 +18,7 @@ use crate::{
 pub mod rocks;
 
 pub trait DB: Debug + DynClone + Sync + Send {
+    /// Must always return the empty intermediate node when hash is EMPTY_HASH
     fn load_node(&self, hash: Hash) -> Result<Option<Node>>;
     fn store_node(&mut self, node: Node) -> Result<()>;
 }
@@ -60,16 +61,6 @@ impl DB for MemDB {
     }
 }
 
-// NOTE: this can be replaced by `.to_bytes` & `from_bytes` optimized methods at `Node`
-#[allow(dead_code)]
-fn encode_node(node: &Node) -> Result<Vec<u8>> {
-    serde_json::to_vec(node).map_err(|e| anyhow!("failed to serialize node: {e}"))
-}
-#[allow(dead_code)]
-fn decode_node(bytes: &[u8]) -> Result<Node> {
-    serde_json::from_slice(bytes).map_err(|e| anyhow!("failed to deserialize node: {e}"))
-}
-
 #[cfg(test)]
 pub mod tests {
 
@@ -94,7 +85,7 @@ pub mod tests {
         let node = Leaf::new(1.into(), 1.into());
         db.store_node(Node::Leaf(node.clone()))?;
 
-        let obtained_node = db.load_node(node.hash.into())?.unwrap();
+        let obtained_node = db.load_node(node.hash)?.unwrap();
         let leaf = match obtained_node {
             Node::Leaf(l) => l,
             _ => panic!("expected a leaf"),

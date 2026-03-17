@@ -1,27 +1,21 @@
 //! This file implements the types defined at
 //! <https://0xparc.github.io/pod2/values.html#dictionary-array-set> .
 
-#![allow(unused_imports)] // TODO: Remove
-
 use std::{
-    collections::{BTreeMap, HashMap, HashSet},
+    collections::{HashMap, HashSet},
     fmt::Debug,
-    sync::{Arc, RwLock},
 };
 
-use anyhow::bail;
-use dyn_clone::{clone_box, DynClone};
 use schemars::JsonSchema;
-use serde::{de, ser, Deserialize, Deserializer, Serialize};
+use serde::{ser, Deserialize, Deserializer, Serialize};
 
-use super::serialization::{ordered_map, ordered_set};
 #[cfg(feature = "backend_plonky2")]
-use crate::backends::plonky2::primitives::merkletree::{self, MerkleProof, MerkleTree, TreeError};
+use crate::backends::plonky2::primitives::merkletree::{self, MerkleProof, MerkleTree};
 use crate::{
     backends::plonky2::primitives::merkletree::MerkleTreeStateTransitionProof,
     middleware::{
         db::{mem::MemDB, DB},
-        hash_str, Error, Hash, Key, RawValue, Result, TypedValue, Value, EMPTY_HASH, EMPTY_VALUE,
+        Error, Hash, Key, RawValue, Result, TypedValue, Value, EMPTY_HASH,
     },
 };
 
@@ -96,7 +90,7 @@ fn store_container_mt(db: &mut dyn DB, container: &Container) -> Result<()> {
 }
 
 fn store_value(db: &mut dyn DB, v: Value) -> Result<()> {
-    match v.typed() {
+    match &v.typed {
         TypedValue::Set(Set { inner })
         | TypedValue::Dictionary(Dictionary { inner })
         | TypedValue::Array(Array { inner }) => {
@@ -207,7 +201,7 @@ impl Container {
     }
     /// This is an expensive operation
     pub fn dump(&self) -> Result<HashMap<Value, Value>> {
-        self.iter().map(|kv| kv).collect()
+        self.iter().collect()
     }
 }
 
@@ -289,13 +283,17 @@ impl Dictionary {
     }
     pub fn iter(&self) -> impl Iterator<Item = Result<(String, Value)>> + use<'_> {
         self.inner.iter().map(|r| match r {
-            Ok((key, value)) => Ok((String::try_from(key.typed())?, value)),
+            Ok((key, value)) => Ok((
+                key.as_string()
+                    .ok_or_else(|| Error::custom("dictionary: key is not string"))?,
+                value,
+            )),
             Err(e) => Err(e),
         })
     }
     /// This is an expensive operation
     pub fn dump(&self) -> Result<HashMap<String, Value>> {
-        self.iter().map(|kv| kv).collect()
+        self.iter().collect()
     }
 }
 
@@ -371,7 +369,9 @@ impl Set {
     pub fn iter(&self) -> impl Iterator<Item = Result<Value>> + use<'_> {
         self.inner.iter().map(|r| match r {
             Ok((key, value)) => {
-                assert_eq!(key, value);
+                if key != value {
+                    return Err(Error::custom("set: key != value"));
+                }
                 Ok(value)
             }
             Err(e) => Err(e),
@@ -379,7 +379,7 @@ impl Set {
     }
     /// This is an expensive operation
     pub fn dump(&self) -> Result<HashSet<Value>> {
-        self.iter().map(|v| v).collect()
+        self.iter().collect()
     }
 }
 
@@ -451,7 +451,9 @@ impl Array {
     pub fn iter(&self) -> impl Iterator<Item = Result<(usize, Value)>> + use<'_> {
         self.inner.iter().map(|r| match r {
             Ok((key, value)) => {
-                let index = i64::try_from(key.typed()).unwrap();
+                let index = key
+                    .as_int()
+                    .ok_or_else(|| Error::custom("array: key is not int"))?;
                 Ok((index as usize, value))
             }
             Err(e) => Err(e),
@@ -459,7 +461,7 @@ impl Array {
     }
     /// This is an expensive operation
     pub fn dump(&self) -> Result<HashMap<usize, Value>> {
-        self.iter().map(|v| v).collect()
+        self.iter().collect()
     }
 }
 
@@ -473,12 +475,19 @@ impl Eq for Array {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::middleware::db::mem::MemDB;
+    use crate::middleware::db::{self, mem::MemDB};
 
-    #[test]
-    fn test_dict() {
-        let db = Box::new(MemDB::new());
+    fn test_databases(test_fn: &dyn Fn(Box<dyn DB>)) {
+        let db = MemDB::new();
+        test_fn(Box::new(db));
+        #[cfg(feature = "db_rocksdb")]
+        {
+            let db = db::rocks::RocksDB::open(tempfile::TempDir::new().unwrap().path()).unwrap();
+            test_fn(Box::new(db));
+        }
+    }
 
+    fn _test_dict(db: Box<dyn DB>) {
         let mut dict0 = Dictionary::empty_with_db(db.clone());
         dict0.insert(&Key::from("a"), &Value::from(1)).unwrap();
         dict0.insert(&Key::from("b"), &Value::from(2)).unwrap();
@@ -500,10 +509,7 @@ mod tests {
         assert_eq!(kvs0, kvs1);
     }
 
-    #[test]
-    fn test_set() {
-        let db = Box::new(MemDB::new());
-
+    fn _test_set(db: Box<dyn DB>) {
         let mut set0 = Set::empty_with_db(db.clone());
         set0.insert(&Value::from(1)).unwrap();
         set0.insert(&Value::from(2)).unwrap();
@@ -517,10 +523,7 @@ mod tests {
         assert_eq!(s0, s1);
     }
 
-    #[test]
-    fn test_array() {
-        let db = Box::new(MemDB::new());
-
+    fn _test_array(db: Box<dyn DB>) {
         let mut arr0 = Array::empty_with_db(db.clone());
         arr0.insert(0, Value::from("a")).unwrap();
         arr0.insert(1, Value::from("b")).unwrap();
@@ -539,10 +542,7 @@ mod tests {
         assert_eq!(a0, a1);
     }
 
-    #[test]
-    fn test_nested() {
-        let db = Box::new(MemDB::new());
-
+    fn _test_nested(db: Box<dyn DB>) {
         let mut nested = Dictionary::empty_with_db(db.clone());
         nested.insert(&Key::from("a"), &Value::from(1)).unwrap();
         nested.insert(&Key::from("b"), &Value::from(2)).unwrap();
@@ -569,12 +569,32 @@ mod tests {
         let kvs1 = dict1.dump().unwrap();
         assert_eq!(kvs0, kvs1);
 
-        match kvs1["y"].typed() {
+        match &kvs1["y"].typed {
             TypedValue::Dictionary(d) => {
                 let nested_kvs1 = d.dump().unwrap();
                 assert_eq!(nested_kvs0, nested_kvs1);
             }
             _ => unreachable!(),
         }
+    }
+
+    #[test]
+    fn test_dict() {
+        test_databases(&_test_dict);
+    }
+
+    #[test]
+    fn test_set() {
+        test_databases(&_test_set);
+    }
+
+    #[test]
+    fn test_array() {
+        test_databases(&_test_array);
+    }
+
+    #[test]
+    fn test_nested() {
+        test_databases(&_test_nested);
     }
 }

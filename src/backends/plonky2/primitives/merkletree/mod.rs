@@ -2,6 +2,7 @@
 //! <https://0xparc.github.io/pod2/merkletree.html> .
 use std::{collections::HashMap, fmt, iter::IntoIterator};
 
+use anyhow::anyhow;
 use itertools::zip_eq;
 use plonky2::{
     field::types::Field,
@@ -1004,6 +1005,13 @@ impl Node {
             Node::Intermediate(Intermediate { hash, .. }) => *hash,
         }
     }
+    // NOTE: this can be replaced by `.to_bytes` & `from_bytes` optimized methods at `Node`
+    pub fn encode(&self) -> Result<Vec<u8>, anyhow::Error> {
+        serde_json::to_vec(self).map_err(|e| anyhow!("failed to serialize node: {e}"))
+    }
+    pub fn decode(bytes: &[u8]) -> Result<Node, anyhow::Error> {
+        serde_json::from_slice(bytes).map_err(|e| anyhow!("failed to deserialize node: {e}"))
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -1075,9 +1083,9 @@ pub mod tests {
 
         #[cfg(feature = "db_rocksdb")]
         {
-            let db = Box::new(db::rocks::RocksDB::open(
-                tempfile::TempDir::new().unwrap().path(),
-            )?);
+            let db = Box::new(
+                db::rocks::RocksDB::open(tempfile::TempDir::new().unwrap().path()).unwrap(),
+            );
             test_merkletree_opt(db)?;
         }
 
@@ -1183,9 +1191,9 @@ pub mod tests {
 
         #[cfg(feature = "db_rocksdb")]
         {
-            let db = Box::new(db::rocks::RocksDB::open(
-                tempfile::TempDir::new().unwrap().path(),
-            )?);
+            let db = Box::new(
+                db::rocks::RocksDB::open(tempfile::TempDir::new().unwrap().path()).unwrap(),
+            );
             test_delete_to_empty_opt(db)?;
         }
 
@@ -1227,9 +1235,9 @@ pub mod tests {
 
         #[cfg(feature = "db_rocksdb")]
         {
-            let db = Box::new(db::rocks::RocksDB::open(
-                tempfile::TempDir::new().unwrap().path(),
-            )?);
+            let db = Box::new(
+                db::rocks::RocksDB::open(tempfile::TempDir::new().unwrap().path()).unwrap(),
+            );
             test_prove_verify_opt(db)?;
         }
 
@@ -1270,9 +1278,9 @@ pub mod tests {
 
         #[cfg(feature = "db_rocksdb")]
         {
-            let db = Box::new(db::rocks::RocksDB::open(
-                tempfile::TempDir::new().unwrap().path(),
-            )?);
+            let db = Box::new(
+                db::rocks::RocksDB::open(tempfile::TempDir::new().unwrap().path()).unwrap(),
+            );
             test_update_leaf_opt(db)?;
         }
 
@@ -1319,9 +1327,9 @@ pub mod tests {
 
         #[cfg(feature = "db_rocksdb")]
         {
-            let db = Box::new(db::rocks::RocksDB::open(
-                tempfile::TempDir::new().unwrap().path(),
-            )?);
+            let db = Box::new(
+                db::rocks::RocksDB::open(tempfile::TempDir::new().unwrap().path()).unwrap(),
+            );
             test_update_delete_leaf_opt(db)?;
         }
 
@@ -1363,9 +1371,9 @@ pub mod tests {
 
         #[cfg(feature = "db_rocksdb")]
         {
-            let db = Box::new(db::rocks::RocksDB::open(
-                tempfile::TempDir::new().unwrap().path(),
-            )?);
+            let db = Box::new(
+                db::rocks::RocksDB::open(tempfile::TempDir::new().unwrap().path()).unwrap(),
+            );
             test_delete_leaf_opt(db)?;
         }
 
@@ -1418,9 +1426,9 @@ pub mod tests {
 
         #[cfg(feature = "db_rocksdb")]
         {
-            let db = Box::new(db::rocks::RocksDB::open(
-                tempfile::TempDir::new().unwrap().path(),
-            )?);
+            let db = Box::new(
+                db::rocks::RocksDB::open(tempfile::TempDir::new().unwrap().path()).unwrap(),
+            );
             test_delete_from_two_leaves_opt(db)?;
         }
 
@@ -1454,9 +1462,9 @@ pub mod tests {
 
         #[cfg(feature = "db_rocksdb")]
         {
-            let db = Box::new(db::rocks::RocksDB::open(
-                tempfile::TempDir::new().unwrap().path(),
-            )?);
+            let db = Box::new(
+                db::rocks::RocksDB::open(tempfile::TempDir::new().unwrap().path()).unwrap(),
+            );
             test_state_transition_opt(db)?;
         }
 

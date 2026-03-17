@@ -37,11 +37,7 @@ impl DB for MemDB {
     fn load_value(&self, raw: RawValue) -> anyhow::Result<Option<Value>> {
         let values = self.values.read().expect("lock not poisoned");
 
-        Ok(if let Some(value) = values.get(&raw) {
-            Some(value.clone())
-        } else {
-            None
-        })
+        Ok(values.get(&raw).cloned())
     }
     fn store_value(&mut self, value: Value) -> anyhow::Result<()> {
         let mut values = self.values.write().expect("lock not poisoned");

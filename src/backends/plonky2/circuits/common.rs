@@ -1885,8 +1885,6 @@ impl SimpleGenerator<F, D> for LtMaskGenerator {
     }
 }
 
-// TODO
-/*
 #[cfg(test)]
 pub(crate) mod tests {
     use std::sync::Arc;
@@ -2121,4 +2119,3 @@ pub(crate) mod tests {
         Ok(())
     }
 }
-*/

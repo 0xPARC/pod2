@@ -1,13 +1,8 @@
 //! The middleware includes the type definitions and the traits used to connect the frontend and
 //! the backend.
 
-#![allow(unused_imports)] // TODO: Remove
-
-use std::sync::Arc;
-
 use anyhow::anyhow;
 use hex::ToHex;
-use itertools::Itertools;
 use strum_macros::FromRepr;
 
 mod basetypes;
@@ -34,10 +29,6 @@ pub use operation::*;
 pub use pod_deserialization::*;
 use serialization::*;
 pub use statement::*;
-
-use crate::backends::plonky2::primitives::merkletree::{
-    MerkleProof, MerkleTreeStateTransitionProof,
-};
 
 // TODO: Move all value-related types to to `value.rs`
 #[derive(Clone, Debug, Serialize, Deserialize, Eq, PartialEq)]
@@ -223,70 +214,6 @@ impl From<Array> for TypedValue {
 impl From<RawValue> for TypedValue {
     fn from(v: RawValue) -> Self {
         TypedValue::Raw(v)
-    }
-}
-
-impl TryFrom<&TypedValue> for i64 {
-    type Error = Error;
-    fn try_from(v: &TypedValue) -> std::result::Result<Self, Self::Error> {
-        if let TypedValue::Int(n) = v {
-            Ok(*n)
-        } else {
-            Err(Error::custom("Value not an int".to_string()))
-        }
-    }
-}
-
-impl TryFrom<&TypedValue> for String {
-    type Error = Error;
-    fn try_from(tv: &TypedValue) -> Result<Self> {
-        match tv {
-            TypedValue::String(s) => Ok(s.clone()),
-            _ => Err(Error::custom(format!(
-                "Value {} cannot be converted to a string.",
-                tv
-            ))),
-        }
-    }
-}
-
-impl TryFrom<&TypedValue> for Key {
-    type Error = Error;
-    fn try_from(tv: &TypedValue) -> Result<Self> {
-        Ok(Key::new(String::try_from(tv)?))
-    }
-}
-
-impl TryFrom<&TypedValue> for PublicKey {
-    type Error = Error;
-    fn try_from(v: &TypedValue) -> std::result::Result<Self, Self::Error> {
-        if let TypedValue::PublicKey(pk) = v {
-            Ok(*pk)
-        } else {
-            Err(Error::custom("Value not a public key".to_string()))
-        }
-    }
-}
-
-impl TryFrom<&TypedValue> for SecretKey {
-    type Error = Error;
-    fn try_from(v: &TypedValue) -> std::result::Result<Self, Self::Error> {
-        if let TypedValue::SecretKey(sk) = v {
-            Ok(sk.clone())
-        } else {
-            Err(Error::custom("Value not a secret key".to_string()))
-        }
-    }
-}
-
-impl TryFrom<&TypedValue> for Predicate {
-    type Error = Error;
-    fn try_from(v: &TypedValue) -> std::result::Result<Self, Self::Error> {
-        if let TypedValue::Predicate(p) = v {
-            Ok(p.clone())
-        } else {
-            Err(Error::custom("Value not a Predicate".to_string()))
-        }
     }
 }
 
@@ -501,8 +428,8 @@ impl JsonSchema for TypedValue {
 
 #[derive(Clone, Debug)]
 pub struct Value {
-    typed: TypedValue,
-    raw: RawValue,
+    pub(crate) typed: TypedValue,
+    pub(crate) raw: RawValue,
 }
 
 // Values are serialized as their TypedValue.
@@ -565,20 +492,16 @@ impl Value {
         }
     }
 
-    // TODO: Deprecate
-    pub fn typed(&self) -> &TypedValue {
-        &self.typed
-    }
     pub fn raw(&self) -> RawValue {
         self.raw
     }
     /// Returns true if the typed value is RawValue, which means it's a generic value with no type
     /// information and no extra value data.
     pub fn is_raw(&self) -> bool {
-        match self.typed {
-            TypedValue::Raw(_) => true,
-            _ => false,
-        }
+        matches!(self.typed, TypedValue::Raw(_))
+    }
+    pub fn as_raw(&self) -> RawValue {
+        self.raw
     }
     pub fn as_int(&self) -> Option<i64> {
         match self.typed {
@@ -587,24 +510,21 @@ impl Value {
             _ => None,
         }
     }
-    pub fn as_raw(&self) -> RawValue {
-        self.raw
-    }
-    pub fn as_public_key(&self) -> Option<&PublicKey> {
+    pub fn as_public_key(&self) -> Option<PublicKey> {
         match &self.typed {
-            TypedValue::PublicKey(pk) => Some(pk),
+            TypedValue::PublicKey(pk) => Some(*pk),
             _ => None,
         }
     }
-    pub fn as_secret_key(&self) -> Option<&SecretKey> {
+    pub fn as_secret_key(&self) -> Option<SecretKey> {
         match &self.typed {
-            TypedValue::SecretKey(sk) => Some(sk),
+            TypedValue::SecretKey(sk) => Some(sk.clone()),
             _ => None,
         }
     }
-    pub fn as_predicate(&self) -> Option<&Predicate> {
+    pub fn as_predicate(&self) -> Option<Predicate> {
         match &self.typed {
-            TypedValue::Predicate(p) => Some(p),
+            TypedValue::Predicate(p) => Some(p.clone()),
             _ => None,
         }
     }
@@ -652,11 +572,14 @@ impl Value {
             _ => None,
         }
     }
-    pub fn as_string(&self) -> Option<&str> {
+    pub fn as_str(&self) -> Option<&str> {
         match &self.typed {
             TypedValue::String(s) => Some(s.as_str()),
             _ => None,
         }
+    }
+    pub fn as_string(&self) -> Option<String> {
+        self.as_str().map(|s| s.to_string())
     }
     pub fn as_bool(&self) -> Option<bool> {
         match self.typed {
@@ -669,96 +592,6 @@ impl Value {
             _ => None,
         }
     }
-    /*
-    /// Determines Merkle existence proof for `key` in `self` (if applicable).
-    pub(crate) fn prove_existence<'a>(
-        &'a self,
-        key: &'a Value,
-    ) -> Result<(&'a Value, MerkleProof)> {
-        match &self.typed() {
-            TypedValue::Array(a) => match key.typed() {
-                TypedValue::Int(i) if i >= &0 => a.prove((*i) as usize),
-                _ => Err(Error::custom(format!(
-                    "Invalid key {} for container {}.",
-                    key, self
-                )))?,
-            },
-            TypedValue::Dictionary(d) => d.prove(&key.typed().try_into()?),
-            TypedValue::Set(s) => Ok((key, s.prove(key)?)),
-            _ => Err(Error::custom(format!(
-                "Invalid container value {}",
-                self.typed()
-            ))),
-        }
-    }
-    /// Determines Merkle non-existence proof for `key` in `self` (if applicable).
-    pub(crate) fn prove_nonexistence<'a>(&'a self, key: &'a Value) -> Result<MerkleProof> {
-        match &self.typed() {
-            TypedValue::Array(_) => Err(Error::custom(
-                "Arrays do not support `NotContains` operation.".to_string(),
-            )),
-            TypedValue::Dictionary(d) => d.prove_nonexistence(&key.typed().try_into()?),
-            TypedValue::Set(s) => s.prove_nonexistence(key),
-            _ => Err(Error::custom(format!(
-                "Invalid container value {}",
-                self.typed()
-            ))),
-        }
-    }
-    /// Returns a Merkle state transition proof for inserting a
-    /// key-value pair (if applicable).
-    pub(crate) fn prove_insertion(
-        &self,
-        key: &Value,
-        value: &Value,
-    ) -> Result<MerkleTreeStateTransitionProof> {
-        let container = self.typed().clone();
-        match container {
-            TypedValue::Dictionary(mut d) => d.insert(&key.typed().try_into()?, value),
-            TypedValue::Set(mut s) => s.insert(value),
-            _ => Err(Error::custom(format!(
-                "Invalid container value {}",
-                self.typed()
-            ))),
-        }
-    }
-    /// Returns a Merkle state transition proof for updating a
-    /// key-value pair (if applicable).
-    pub(crate) fn prove_update(
-        &self,
-        key: &Value,
-        value: &Value,
-    ) -> Result<MerkleTreeStateTransitionProof> {
-        let container = self.typed().clone();
-        match container {
-            TypedValue::Array(mut a) => match key.typed() {
-                TypedValue::Int(i) if i >= &0 => a.update(*i as usize, value),
-                _ => Err(Error::custom(format!(
-                    "Invalid key {} for container {}.",
-                    key, self
-                )))?,
-            },
-            TypedValue::Dictionary(mut d) => d.update(&key.typed().try_into()?, value),
-            _ => Err(Error::custom(format!(
-                "Invalid container value {} for update op",
-                self.typed()
-            ))),
-        }
-    }
-    /// Returns a Merkle state transition proof for deleting a
-    /// key (if applicable).
-    pub(crate) fn prove_deletion(&self, key: &Value) -> Result<MerkleTreeStateTransitionProof> {
-        let container = self.typed().clone();
-        match container {
-            TypedValue::Dictionary(mut d) => d.delete(&key.typed().try_into()?),
-            TypedValue::Set(mut s) => s.delete(key),
-            _ => Err(Error::custom(format!(
-                "Invalid container value {}",
-                self.typed()
-            ))),
-        }
-    }
-    */
 }
 
 // A Value can be created from any type Into<TypedValue> type: bool, string-like, i64, ...

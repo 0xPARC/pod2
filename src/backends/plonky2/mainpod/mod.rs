@@ -225,11 +225,10 @@ pub(crate) fn extract_public_key_of(
         ) = (op, st)
         {
             let deduction_err = || MiddlewareError::invalid_deduction(op.clone(), st.clone());
-            let sk = SecretKey::try_from(
-                value_from_op(sk_s, sk_ref)
-                    .ok_or_else(deduction_err)?
-                    .typed(),
-            )?;
+            let value = value_from_op(sk_s, sk_ref).ok_or_else(deduction_err)?;
+            let sk = value
+                .as_secret_key()
+                .ok_or_else(|| Error::custom("{value} not SecretKey"))?;
             aux_list[i] = OperationAux::PublicKeyOfIndex(table.len());
             table.push(sk);
         }
@@ -283,7 +282,9 @@ pub(crate) fn extract_signatures(
             aux_list[i] = OperationAux::SignedByIndex(table.len());
             table.push(SignedBy {
                 msg: msg.raw(),
-                pk: PublicKey::try_from(pk.typed())?,
+                pk: pk
+                    .as_public_key()
+                    .ok_or_else(|| Error::custom(format!("{pk} is not PublicKey")))?,
                 sig: sig.clone(),
             });
         }
@@ -815,8 +816,6 @@ impl Pod for MainPod {
     }
 }
 
-// TODO
-/*
 #[cfg(test)]
 pub mod tests {
     use std::{any::Any, collections::HashSet};
@@ -1201,4 +1200,3 @@ pub mod tests {
         builder.prove(&prover).unwrap();
     }
 }
-*/

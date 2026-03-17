@@ -2014,8 +2014,6 @@ impl InnerCircuit for MainPodVerifyTarget {
     }
 }
 
-// TODO
-/*
 #[cfg(test)]
 mod tests {
     use std::{iter, ops::Not};
@@ -3573,4 +3571,3 @@ mod tests {
         Ok(())
     }
 }
-*/

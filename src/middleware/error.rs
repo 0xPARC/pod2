@@ -166,7 +166,7 @@ impl Error {
     pub(crate) fn unsatisfied_custom_predicate_disjunction(pred: CustomPredicate) -> Self {
         new!(UnsatisfiedCustomPredicateDisjunction(pred))
     }
-    pub(crate) fn custom(s: String) -> Self {
-        new!(Custom(s))
+    pub(crate) fn custom(s: impl Into<String>) -> Self {
+        new!(Custom(s.into()))
     }
 }
