@@ -16,7 +16,7 @@ use crate::middleware::{
     self, check_custom_pred, containers::Dictionary, fill_wildcard_values, hash_op, max_op,
     prod_op, sum_op, AnchoredKey, Hash, Key, MainPodInputs, MainPodProver, NativeOperation,
     OperationAux, OperationType, Params, PublicKey, RawValue, Signature, Signer, Statement,
-    StatementArg, VDSet, Value, ValueRef,
+    StatementArg, VDSet, Value, ValueRef, EMPTY_VALUE,
 };
 
 mod custom;
@@ -377,14 +377,12 @@ impl MainPodBuilder {
                             "Invalid key argument for op {}.",
                             op
                         )))?;
+                println!("DBG {:?}", op.1.get(3));
                 let value =
                     op.1.get(3)
                         .and_then(|arg| arg.value())
-                        .ok_or(Error::custom(format!(
-                            "Invalid key argument for op {}.",
-                            op
-                        )))?
-                        .clone();
+                        .cloned()
+                        .unwrap_or(Value::from(EMPTY_VALUE));
                 let proof = match op_type {
                     Native(ContainerInsertFromEntries) => old_container
                         .as_container()
