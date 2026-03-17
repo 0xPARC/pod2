@@ -1,96 +1,45 @@
 //! This file implements the types defined at
 //! <https://0xparc.github.io/pod2/values.html#dictionary-array-set> .
 
+#![allow(unused_imports)] // TODO: Remove
+
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{BTreeMap, HashMap, HashSet},
     fmt::Debug,
     sync::{Arc, RwLock},
 };
 
 use anyhow::bail;
-use dyn_clone::DynClone;
+use dyn_clone::{clone_box, DynClone};
 use schemars::JsonSchema;
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::{de, ser, Deserialize, Deserializer, Serialize};
 
 use super::serialization::{ordered_map, ordered_set};
 #[cfg(feature = "backend_plonky2")]
-use crate::backends::plonky2::primitives::merkletree::{self, MerkleProof, MerkleTree};
+use crate::backends::plonky2::primitives::merkletree::{self, MerkleProof, MerkleTree, TreeError};
 use crate::{
     backends::plonky2::primitives::merkletree::MerkleTreeStateTransitionProof,
-    middleware::{hash_str, Error, Hash, Key, RawValue, Result, Value, EMPTY_HASH, EMPTY_VALUE},
+    middleware::{
+        db::{mem::MemDB, DB},
+        hash_str, Error, Hash, Key, RawValue, Result, TypedValue, Value, EMPTY_HASH, EMPTY_VALUE,
+    },
 };
 
-pub trait DB: Debug + DynClone + Sync + Send + merkletree::db::DB {
-    fn load_value(&self, raw: RawValue) -> anyhow::Result<Value>;
-    fn store_value(&mut self, value: Value) -> anyhow::Result<()>;
-}
-dyn_clone::clone_trait_object!(DB);
-
-/// MemDB implements the DB trait in a in-memory HashMap.
-#[derive(Clone, Debug, Default)]
-pub struct MemDB {
-    nodes: Arc<RwLock<HashMap<RawValue, merkletree::Node>>>,
-    values: Arc<RwLock<HashMap<RawValue, Value>>>,
-}
-
-impl MemDB {
-    pub fn new() -> Self {
-        Self::default()
-    }
-}
-
-impl merkletree::db::DB for MemDB {
-    fn load_node(&self, hash: RawValue) -> anyhow::Result<merkletree::Node> {
-        let nodes = self.nodes.read().expect("lock not poisoned");
-
-        if let Some(node) = nodes.get(&hash) {
-            return Ok(node.clone());
-        }
-
-        if hash == EMPTY_VALUE {
-            return Ok(merkletree::Node::Leaf(merkletree::Leaf::new(
-                hash,
-                EMPTY_VALUE,
-            )));
-        }
-
-        bail!("MemDB: node not found: {}", hash);
-    }
-
-    fn store_node(&mut self, node: merkletree::Node) -> anyhow::Result<()> {
-        let mut nodes = self.nodes.write().expect("lock not poisoned");
-        nodes.insert(node.hash().into(), node);
-        Ok(())
-    }
-}
-
-impl DB for MemDB {
-    fn load_value(&self, raw: RawValue) -> anyhow::Result<Value> {
-        let values = self.values.read().expect("lock not poisoned");
-
-        if let Some(value) = values.get(&raw) {
-            return Ok(value.clone());
-        } else {
-            bail!("MemDB: value not found: {}", raw);
-        }
-    }
-    fn store_value(&mut self, value: Value) -> anyhow::Result<()> {
-        let mut values = self.values.write().expect("lock not poisoned");
-        values.insert(value.raw(), value);
-        Ok(())
-    }
-}
-
-#[derive(Clone, Debug, JsonSchema)]
+#[derive(Clone, Debug)]
 pub struct Container {
-    mt: MerkleTree,
+    root: Hash,
     db: Box<dyn DB>,
 }
 
-#[derive(Deserialize)]
-struct ContainerAux {
-    #[serde(serialize_with = "ordered_map")]
-    kvs: HashMap<Value, Value>,
+impl JsonSchema for Container {
+    fn schema_name() -> String {
+        "Container".to_string()
+    }
+
+    fn json_schema(gen: &mut schemars::gen::SchemaGenerator) -> schemars::schema::Schema {
+        // Just use the schema of HashMap<Value, Value> since that's what we're actually serializing
+        HashMap::<Value, Value>::json_schema(gen)
+    }
 }
 
 impl Serialize for Container {
@@ -98,8 +47,18 @@ impl Serialize for Container {
     where
         S: serde::Serializer,
     {
-        let kvs: HashMap<Value, Value> = self.iter().collect()?;
-        kvs.serialize(serializer)
+        let mut pairs = self
+            .iter()
+            .collect::<Result<Vec<(Value, Value)>>>()
+            .map_err(ser::Error::custom)?;
+        pairs.sort_by(|(k1, _), (k2, _)| k1.raw().cmp(&k2.raw()));
+        // Serialize as a map
+        use serde::ser::SerializeMap;
+        let mut map = serializer.serialize_map(Some(pairs.len()))?;
+        for (k, v) in pairs {
+            map.serialize_entry(&k, &v)?;
+        }
+        map.end()
     }
 }
 
@@ -108,62 +67,102 @@ impl<'de> Deserialize<'de> for Container {
     where
         D: Deserializer<'de>,
     {
-        #[derive(Deserialize)]
-        struct Aux {
-            #[serde(serialize_with = "ordered_map")]
-            kvs: HashMap<Key, Value>,
-        }
-        let aux = Aux::deserialize(deserializer)?;
-        Ok(Dictionary::new(aux.kvs))
+        let kvs = HashMap::<Value, Value>::deserialize(deserializer)?;
+        Ok(Container::new(kvs))
     }
 }
 
 impl PartialEq for Container {
     fn eq(&self, other: &Self) -> bool {
-        self.mt.root() == other.mt.root()
+        self.root == other.root
     }
 }
 impl Eq for Container {}
 
+fn store_container_mt(db: &mut dyn DB, container: &Container) -> Result<()> {
+    match db.load_node(container.root) {
+        Err(e) => return Err(Error::Database(e)),
+        // Container already exists in the DB
+        Ok(Some(_)) => return Ok(()),
+        // Container not existing, we need to save it
+        Ok(None) => {}
+    };
+    let mut container_copy = Container::empty_with_db(db.clone_box());
+    for kv_result in container.iter() {
+        let (k, v) = kv_result?;
+        container_copy.insert(k, v)?;
+    }
+    Ok(())
+}
+
+fn store_value(db: &mut dyn DB, v: Value) -> Result<()> {
+    match v.typed() {
+        TypedValue::Set(Set { inner })
+        | TypedValue::Dictionary(Dictionary { inner })
+        | TypedValue::Array(Array { inner }) => {
+            if db.is_persistent() {
+                store_container_mt(db, inner)?;
+            }
+            db.store_value(v).map_err(Error::Database)?
+        }
+        _ => db.store_value(v).map_err(Error::Database)?,
+    }
+    Ok(())
+}
+
+fn load_value(db: &dyn DB, value_raw: RawValue) -> Result<Value> {
+    match db.load_value(value_raw) {
+        Err(e) => Err(Error::Database(e)),
+        Ok(Some(v)) => Ok(v),
+        Ok(None) => Err(Error::custom(format!(
+            "Value from {value_raw} not found in DB"
+        ))),
+    }
+}
+
 impl Container {
+    fn mt(&self) -> MerkleTree {
+        MerkleTree::from_db(self.root, self.db.clone())
+    }
     pub fn new(kvs: HashMap<Value, Value>) -> Self {
         let db = Box::new(MemDB::new());
-        let mt = MerkleTree::empty_with_db(db.clone());
-        let mut container = Self { mt, db };
+        let mut container = Self::empty_with_db(db);
         for (k, v) in kvs {
             container.insert(k, v).expect("no duplicates, no db errors");
         }
         container
     }
     pub fn empty_with_db(db: Box<dyn DB>) -> Self {
-        Self::from_db(EMPTY_HASH, db)
+        Self::from_db(EMPTY_HASH, db).expect("EMPTY_HASH exists implicitly")
     }
-    pub fn from_db(root: Hash, db: Box<dyn DB>) -> Self {
-        Self {
-            mt: MerkleTree::from_db(root, db.clone()),
-            db,
-        }
+    pub fn from_db(root: Hash, db: Box<dyn DB>) -> Result<Self> {
+        // Make sure the root exists in the db
+        let _ = merkletree::load_node(db.as_ref(), root)?;
+        Ok(Self { root, db })
     }
     pub fn commitment(&self) -> Hash {
-        self.mt.root()
+        self.root
     }
     pub fn get(&self, key_raw: RawValue) -> Result<Value> {
-        let value_raw = self.mt.get(&key_raw)?;
-        let value = self.db.load_value(value_raw).expect("TODO");
+        let value_raw = self.mt().get(&key_raw)?;
+        let value = load_value(self.db.as_ref(), value_raw)?;
         Ok(value)
     }
     pub fn prove(&self, key_raw: RawValue) -> Result<(Value, MerkleProof)> {
-        let (value_raw, mtp) = self.mt.prove(&key_raw)?;
-        let value = self.db.load_value(value_raw).expect("TODO");
+        let (value_raw, mtp) = self.mt().prove(&key_raw)?;
+        let value = load_value(self.db.as_ref(), value_raw)?;
         Ok((value, mtp))
     }
     pub fn prove_nonexistence(&self, key_raw: RawValue) -> Result<MerkleProof> {
-        Ok(self.mt.prove_nonexistence(&key_raw)?)
+        Ok(self.mt().prove_nonexistence(&key_raw)?)
     }
     pub fn insert(&mut self, key: Value, value: Value) -> Result<MerkleTreeStateTransitionProof> {
-        let mtp = self.mt.insert(&key.raw(), &value.raw())?;
-        self.db.store_value(key).expect("TODO");
-        self.db.store_value(value).expect("TODO");
+        let (key_raw, value_raw) = (key.raw(), value.raw());
+        store_value(self.db.as_mut(), key)?;
+        store_value(self.db.as_mut(), value)?;
+        let mut mt = self.mt();
+        let mtp = mt.insert(&key_raw, &value_raw)?;
+        self.root = mt.root();
         Ok(mtp)
     }
     pub fn update(
@@ -171,12 +170,17 @@ impl Container {
         key_raw: RawValue,
         value: Value,
     ) -> Result<MerkleTreeStateTransitionProof> {
-        let mtp = self.mt.update(&key_raw, &value.raw())?;
-        self.db.store_value(value).unwrap();
+        let value_raw = value.raw();
+        store_value(self.db.as_mut(), value).unwrap();
+        let mut mt = self.mt();
+        let mtp = mt.update(&key_raw, &value_raw)?;
+        self.root = mt.root();
         Ok(mtp)
     }
     pub fn delete(&mut self, key_raw: RawValue) -> Result<MerkleTreeStateTransitionProof> {
-        let mtp = self.mt.delete(&key_raw)?;
+        let mut mt = self.mt();
+        let mtp = mt.delete(&key_raw)?;
+        self.root = mt.root();
         Ok(mtp)
     }
     pub fn verify(
@@ -193,10 +197,11 @@ impl Container {
     pub fn verify_state_transition(proof: &MerkleTreeStateTransitionProof) -> Result<()> {
         MerkleTree::verify_state_transition(proof).map_err(|e| e.into())
     }
-    pub fn iter(&self) -> impl Iterator<Item = Result<(Value, Value)>> + use<'_> {
-        self.mt.iter().map(|(key_raw, value_raw)| {
-            let key = self.db.load_value(key_raw).expect("TODO");
-            let value = self.db.load_value(value_raw).expect("TODO");
+    pub fn iter(&self) -> impl Iterator<Item = Result<(Value, Value)>> {
+        let db = self.db.clone();
+        self.mt().iter().map(move |(key_raw, value_raw)| {
+            let key = load_value(db.as_ref(), key_raw)?;
+            let value = load_value(db.as_ref(), value_raw)?;
             Ok((key, value))
         })
     }
@@ -205,9 +210,9 @@ impl Container {
 /// Dictionary: the user original keys and values are hashed to be used in the leaf.
 ///    leaf.key=hash(original_key)
 ///    leaf.value=hash(original_value)
-#[derive(Clone, Debug, Serialize, JsonSchema)]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct Dictionary {
-    inner: Container,
+    pub(crate) inner: Container,
 }
 
 #[macro_export]
@@ -242,10 +247,10 @@ impl Dictionary {
             inner: Container::empty_with_db(db),
         }
     }
-    pub fn from_db(root: Hash, db: Box<dyn DB>) -> Self {
-        Self {
-            inner: Container::from_db(root, db),
-        }
+    pub fn from_db(root: Hash, db: Box<dyn DB>) -> Result<Self> {
+        Ok(Self {
+            inner: Container::from_db(root, db)?,
+        })
     }
     pub fn commitment(&self) -> Hash {
         self.inner.commitment()
@@ -280,7 +285,7 @@ impl Dictionary {
     }
     pub fn iter(&self) -> impl Iterator<Item = Result<(String, Value)>> + use<'_> {
         self.inner.iter().map(|r| match r {
-            Ok((key, value)) => Ok((String::try_from(key.typed()).expect("TODO"), value)),
+            Ok((key, value)) => Ok((String::try_from(key.typed())?, value)),
             Err(e) => Err(e),
         })
     }
@@ -296,9 +301,9 @@ impl Eq for Dictionary {}
 /// Set: the value field of the leaf is unused, and the key contains the hash of the element.
 ///    leaf.key=hash(original_value)
 ///    leaf.value=0
-#[derive(Clone, Debug, Serialize, JsonSchema)]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct Set {
-    inner: Container,
+    pub(crate) inner: Container,
 }
 
 impl Set {
@@ -312,17 +317,26 @@ impl Set {
             inner: Container::empty_with_db(db),
         }
     }
-    pub fn from_db(root: Hash, db: Box<dyn DB>) -> Self {
-        Self {
-            inner: Container::from_db(root, db),
-        }
+    pub fn from_db(root: Hash, db: Box<dyn DB>) -> Result<Self> {
+        Ok(Self {
+            inner: Container::from_db(root, db)?,
+        })
     }
     pub fn commitment(&self) -> Hash {
         self.inner.commitment()
     }
     pub fn contains(&self, value: &Value) -> Result<bool> {
-        // self.inner.get(value.raw())
-        todo!()
+        match self.inner.get(value.raw()) {
+            Err(Error::Tree(e)) => {
+                if e.is_key_not_found() {
+                    Ok(false)
+                } else {
+                    Err(Error::Tree(e))
+                }
+            }
+            Ok(_) => Ok(true),
+            Err(e) => Err(e),
+        }
     }
     pub fn prove(&self, value: &Value) -> Result<MerkleProof> {
         let (_, proof) = self.inner.prove(value.raw())?;
@@ -364,30 +378,15 @@ impl PartialEq for Set {
 }
 impl Eq for Set {}
 
-impl<'de> Deserialize<'de> for Set {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        #[derive(Deserialize, JsonSchema)]
-        struct Aux {
-            #[serde(serialize_with = "ordered_set")]
-            set: HashSet<Value>,
-        }
-        let aux = Aux::deserialize(deserializer)?;
-        Ok(Set::new(aux.set))
-    }
-}
-
 /// Array: the elements are placed at the value field of each leaf, and the key field is just the
 /// array index (integer).
 ///    leaf.key=i
 ///    leaf.value=original_value
 /// Due to its construction this should be seen as a sparse array, where there can be gaps
 /// (unused indices).
-#[derive(Clone, Debug, Serialize, JsonSchema)]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct Array {
-    inner: Container,
+    pub(crate) inner: Container,
 }
 
 impl Array {
@@ -407,10 +406,10 @@ impl Array {
             inner: Container::empty_with_db(db),
         }
     }
-    pub fn from_db(root: Hash, db: Box<dyn DB>) -> Self {
-        Self {
-            inner: Container::from_db(root, db),
-        }
+    pub fn from_db(root: Hash, db: Box<dyn DB>) -> Result<Self> {
+        Ok(Self {
+            inner: Container::from_db(root, db)?,
+        })
     }
     pub fn commitment(&self) -> Hash {
         self.inner.commitment()
@@ -455,23 +454,10 @@ impl PartialEq for Array {
 }
 impl Eq for Array {}
 
-impl<'de> Deserialize<'de> for Array {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        #[derive(Deserialize, JsonSchema)]
-        struct Aux {
-            array: Vec<Value>,
-        }
-        let aux = Aux::deserialize(deserializer)?;
-        Ok(Array::new(aux.array))
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::middleware::db::mem::MemDB;
 
     #[test]
     fn test_dict() {
@@ -493,7 +479,7 @@ mod tests {
             .into_iter()
             .collect()
         );
-        let dict1 = Dictionary::from_db(dict0.commitment(), db);
+        let dict1 = Dictionary::from_db(dict0.commitment(), db).unwrap();
         let kvs1: HashMap<String, Value> = dict1.iter().map(|kv| kv.unwrap()).collect();
         assert_eq!(kvs0, kvs1);
     }
@@ -510,7 +496,7 @@ mod tests {
 
         let s0: HashSet<Value> = set0.iter().map(|v| v.unwrap()).collect();
         assert_eq!(s0, [Value::from(1), Value::from(3)].into_iter().collect());
-        let set1 = Set::from_db(set0.commitment(), db);
+        let set1 = Set::from_db(set0.commitment(), db).unwrap();
         let s1: HashSet<Value> = set1.iter().map(|v| v.unwrap()).collect();
         assert_eq!(s0, s1);
     }
@@ -532,8 +518,47 @@ mod tests {
                 .into_iter()
                 .collect()
         );
-        let arr1 = Array::from_db(arr0.commitment(), db);
+        let arr1 = Array::from_db(arr0.commitment(), db).unwrap();
         let a1: HashMap<usize, Value> = arr1.iter().map(|kv| kv.unwrap()).collect();
         assert_eq!(a0, a1);
+    }
+
+    #[test]
+    fn test_nested() {
+        let db = Box::new(MemDB::new());
+
+        let mut nested = Dictionary::empty_with_db(db.clone());
+        nested.insert(&Key::from("a"), &Value::from(1)).unwrap();
+        nested.insert(&Key::from("b"), &Value::from(2)).unwrap();
+        let nested_kvs0: HashMap<String, Value> = nested.iter().map(|kv| kv.unwrap()).collect();
+
+        let mut dict0 = Dictionary::empty_with_db(db.clone());
+        dict0.insert(&Key::from("x"), &Value::from(1)).unwrap();
+        dict0
+            .insert(&Key::from("y"), &Value::from(nested.clone()))
+            .unwrap();
+        let kvs0: HashMap<String, Value> = dict0.iter().map(|kv| kv.unwrap()).collect();
+
+        assert_eq!(
+            kvs0,
+            [
+                ("x".to_string(), Value::from(1)),
+                ("y".to_string(), Value::from(nested))
+            ]
+            .into_iter()
+            .collect()
+        );
+
+        let dict1 = Dictionary::from_db(dict0.commitment(), db).unwrap();
+        let kvs1: HashMap<String, Value> = dict1.iter().map(|kv| kv.unwrap()).collect();
+        assert_eq!(kvs0, kvs1);
+
+        match kvs1["y"].typed() {
+            TypedValue::Dictionary(d) => {
+                let nested_kvs1: HashMap<String, Value> = d.iter().map(|kv| kv.unwrap()).collect();
+                assert_eq!(nested_kvs0, nested_kvs1);
+            }
+            _ => unreachable!(),
+        }
     }
 }

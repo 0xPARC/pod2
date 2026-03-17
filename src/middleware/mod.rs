@@ -1,6 +1,8 @@
 //! The middleware includes the type definitions and the traits used to connect the frontend and
 //! the backend.
 
+#![allow(unused_imports)] // TODO: Remove
+
 use std::sync::Arc;
 
 use anyhow::anyhow;
@@ -23,6 +25,7 @@ pub mod serialization;
 mod statement;
 use std::{any::Any, fmt};
 
+pub mod db;
 pub use basetypes::*;
 pub use custom::*;
 use dyn_clone::DynClone;
@@ -498,8 +501,7 @@ impl JsonSchema for TypedValue {
 
 #[derive(Clone, Debug)]
 pub struct Value {
-    // The `TypedValue` is under `Arc` so that cloning a `Value` is cheap.
-    typed: Arc<TypedValue>,
+    typed: TypedValue,
     raw: RawValue,
 }
 
@@ -558,16 +560,106 @@ impl Value {
     pub fn new(value: TypedValue) -> Self {
         let raw_value = RawValue::from(&value);
         Self {
-            typed: Arc::new(value),
+            typed: value,
             raw: raw_value,
         }
     }
 
+    // TODO: Deprecate
     pub fn typed(&self) -> &TypedValue {
         &self.typed
     }
     pub fn raw(&self) -> RawValue {
         self.raw
+    }
+    /// Returns true if the typed value is RawValue, which means it's a generic value with no type
+    /// information and no extra value data.
+    pub fn is_raw(&self) -> bool {
+        match self.typed {
+            TypedValue::Raw(_) => true,
+            _ => false,
+        }
+    }
+    pub fn as_int(&self) -> Option<i64> {
+        match self.typed {
+            TypedValue::Int(i) => Some(i),
+            TypedValue::Bool(b) => Some(if b { 1 } else { 0 }),
+            _ => None,
+        }
+    }
+    pub fn as_raw(&self) -> RawValue {
+        self.raw
+    }
+    pub fn as_public_key(&self) -> Option<&PublicKey> {
+        match &self.typed {
+            TypedValue::PublicKey(pk) => Some(pk),
+            _ => None,
+        }
+    }
+    pub fn as_secret_key(&self) -> Option<&SecretKey> {
+        match &self.typed {
+            TypedValue::SecretKey(sk) => Some(sk),
+            _ => None,
+        }
+    }
+    pub fn as_predicate(&self) -> Option<&Predicate> {
+        match &self.typed {
+            TypedValue::Predicate(p) => Some(p),
+            _ => None,
+        }
+    }
+    pub fn as_set(&self) -> Option<Set> {
+        match &self.typed {
+            TypedValue::Set(s) => Some(s.clone()),
+            TypedValue::Dictionary(d) => Some(Set {
+                inner: d.inner.clone(),
+            }),
+            TypedValue::Array(a) => Some(Set {
+                inner: a.inner.clone(),
+            }),
+            _ => None,
+        }
+    }
+    pub fn as_dictionary(&self) -> Option<Dictionary> {
+        match &self.typed {
+            TypedValue::Set(s) => Some(Dictionary {
+                inner: s.inner.clone(),
+            }),
+            TypedValue::Dictionary(d) => Some(d.clone()),
+            TypedValue::Array(a) => Some(Dictionary {
+                inner: a.inner.clone(),
+            }),
+            _ => None,
+        }
+    }
+    pub fn as_array(&self) -> Option<Array> {
+        match &self.typed {
+            TypedValue::Set(s) => Some(Array {
+                inner: s.inner.clone(),
+            }),
+            TypedValue::Dictionary(d) => Some(Array {
+                inner: d.inner.clone(),
+            }),
+            TypedValue::Array(a) => Some(a.clone()),
+            _ => None,
+        }
+    }
+    pub fn as_string(&self) -> Option<&str> {
+        match &self.typed {
+            TypedValue::String(s) => Some(s.as_str()),
+            _ => None,
+        }
+    }
+    pub fn as_bool(&self) -> Option<bool> {
+        match self.typed {
+            TypedValue::Bool(b) => Some(b),
+            TypedValue::Int(i) => match i {
+                0 => Some(false),
+                1 => Some(true),
+                _ => None,
+            },
+            _ => None,
+        }
     }
     /*
     /// Determines Merkle existence proof for `key` in `self` (if applicable).

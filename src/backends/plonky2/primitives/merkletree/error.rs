@@ -2,12 +2,16 @@
 
 use std::{backtrace::Backtrace, fmt::Debug};
 
+use crate::middleware::Hash;
+
 pub type TreeResult<T, E = TreeError> = core::result::Result<T, E>;
 
 #[derive(Debug, thiserror::Error)]
 pub enum TreeInnerError {
     #[error("key not found")]
     KeyNotFound,
+    #[error("node with hash {0} not found")]
+    NodeNotFound(Hash),
     #[error("key already exists")]
     KeyExists,
     #[error("max depth reached")]
@@ -22,6 +26,9 @@ pub enum TreeInnerError {
     StateTransitionProofFail(String),
     #[error("circuit max_depth {0} is smaller than proof depth {1}")]
     CircuitDepthTooSmall(usize, usize),
+    // Other
+    #[error("{0}")]
+    Custom(String),
 }
 
 #[derive(thiserror::Error)]
@@ -31,8 +38,8 @@ pub enum TreeError {
         inner: Box<TreeInnerError>,
         backtrace: Box<Backtrace>,
     },
-    #[error("anyhow::Error: {0}")]
-    Anyhow(#[from] anyhow::Error),
+    #[error("database error: {0}")]
+    Database(anyhow::Error),
 }
 
 impl Debug for TreeError {
@@ -57,8 +64,16 @@ impl TreeError {
             _ => None,
         }
     }
+    pub fn is_key_not_found(&self) -> bool {
+        self.inner()
+            .map(|e| matches!(e, TreeInnerError::KeyNotFound))
+            .unwrap_or(false)
+    }
     pub(crate) fn key_not_found() -> Self {
         new!(KeyNotFound)
+    }
+    pub(crate) fn node_not_found(hash: Hash) -> Self {
+        new!(NodeNotFound(hash))
     }
     pub(crate) fn key_exists() -> Self {
         new!(KeyExists)
@@ -80,5 +95,8 @@ impl TreeError {
     }
     pub(crate) fn circuit_depth_too_small(circuit_depth: usize, proof_depth: usize) -> Self {
         new!(CircuitDepthTooSmall(circuit_depth, proof_depth))
+    }
+    pub(crate) fn custom(s: impl Into<String>) -> Self {
+        new!(Custom(s.into()))
     }
 }

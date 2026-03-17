@@ -72,6 +72,8 @@ pub enum Error {
     },
     #[error(transparent)]
     Tree(#[from] crate::backends::plonky2::primitives::merkletree::error::TreeError),
+    #[error("database error: {0}")]
+    Database(anyhow::Error),
 }
 
 impl Debug for Error {
