@@ -205,6 +205,10 @@ impl Container {
             Ok((key, value))
         })
     }
+    /// This is an expensive operation
+    pub fn dump(&self) -> Result<HashMap<Value, Value>> {
+        self.iter().map(|kv| kv).collect()
+    }
 }
 
 /// Dictionary: the user original keys and values are hashed to be used in the leaf.
@@ -289,6 +293,10 @@ impl Dictionary {
             Err(e) => Err(e),
         })
     }
+    /// This is an expensive operation
+    pub fn dump(&self) -> Result<HashMap<String, Value>> {
+        self.iter().map(|kv| kv).collect()
+    }
 }
 
 impl PartialEq for Dictionary {
@@ -369,6 +377,10 @@ impl Set {
             Err(e) => Err(e),
         })
     }
+    /// This is an expensive operation
+    pub fn dump(&self) -> Result<HashSet<Value>> {
+        self.iter().map(|v| v).collect()
+    }
 }
 
 impl PartialEq for Set {
@@ -445,6 +457,10 @@ impl Array {
             Err(e) => Err(e),
         })
     }
+    /// This is an expensive operation
+    pub fn dump(&self) -> Result<HashMap<usize, Value>> {
+        self.iter().map(|v| v).collect()
+    }
 }
 
 impl PartialEq for Array {
@@ -469,7 +485,7 @@ mod tests {
         dict0.update(&Key::from("a"), &Value::from(3)).unwrap();
         dict0.insert(&Key::from("c"), &Value::from(4)).unwrap();
         dict0.delete(&Key::from("c")).unwrap();
-        let kvs0: HashMap<String, Value> = dict0.iter().map(|kv| kv.unwrap()).collect();
+        let kvs0 = dict0.dump().unwrap();
         assert_eq!(
             kvs0,
             [
@@ -480,7 +496,7 @@ mod tests {
             .collect()
         );
         let dict1 = Dictionary::from_db(dict0.commitment(), db).unwrap();
-        let kvs1: HashMap<String, Value> = dict1.iter().map(|kv| kv.unwrap()).collect();
+        let kvs1 = dict1.dump().unwrap();
         assert_eq!(kvs0, kvs1);
     }
 
@@ -494,10 +510,10 @@ mod tests {
         set0.insert(&Value::from(3)).unwrap();
         set0.delete(&Value::from(2)).unwrap();
 
-        let s0: HashSet<Value> = set0.iter().map(|v| v.unwrap()).collect();
+        let s0 = set0.dump().unwrap();
         assert_eq!(s0, [Value::from(1), Value::from(3)].into_iter().collect());
         let set1 = Set::from_db(set0.commitment(), db).unwrap();
-        let s1: HashSet<Value> = set1.iter().map(|v| v.unwrap()).collect();
+        let s1 = set1.dump().unwrap();
         assert_eq!(s0, s1);
     }
 
@@ -511,7 +527,7 @@ mod tests {
         arr0.insert(2, Value::from("c")).unwrap();
         arr0.delete(1).unwrap();
 
-        let a0: HashMap<usize, Value> = arr0.iter().map(|kv| kv.unwrap()).collect();
+        let a0 = arr0.dump().unwrap();
         assert_eq!(
             a0,
             [(0, Value::from("a")), (2, Value::from("c"))]
@@ -519,7 +535,7 @@ mod tests {
                 .collect()
         );
         let arr1 = Array::from_db(arr0.commitment(), db).unwrap();
-        let a1: HashMap<usize, Value> = arr1.iter().map(|kv| kv.unwrap()).collect();
+        let a1 = arr1.dump().unwrap();
         assert_eq!(a0, a1);
     }
 
@@ -530,14 +546,14 @@ mod tests {
         let mut nested = Dictionary::empty_with_db(db.clone());
         nested.insert(&Key::from("a"), &Value::from(1)).unwrap();
         nested.insert(&Key::from("b"), &Value::from(2)).unwrap();
-        let nested_kvs0: HashMap<String, Value> = nested.iter().map(|kv| kv.unwrap()).collect();
+        let nested_kvs0 = nested.dump().unwrap();
 
         let mut dict0 = Dictionary::empty_with_db(db.clone());
         dict0.insert(&Key::from("x"), &Value::from(1)).unwrap();
         dict0
             .insert(&Key::from("y"), &Value::from(nested.clone()))
             .unwrap();
-        let kvs0: HashMap<String, Value> = dict0.iter().map(|kv| kv.unwrap()).collect();
+        let kvs0 = dict0.dump().unwrap();
 
         assert_eq!(
             kvs0,
@@ -550,12 +566,12 @@ mod tests {
         );
 
         let dict1 = Dictionary::from_db(dict0.commitment(), db).unwrap();
-        let kvs1: HashMap<String, Value> = dict1.iter().map(|kv| kv.unwrap()).collect();
+        let kvs1 = dict1.dump().unwrap();
         assert_eq!(kvs0, kvs1);
 
         match kvs1["y"].typed() {
             TypedValue::Dictionary(d) => {
-                let nested_kvs1: HashMap<String, Value> = d.iter().map(|kv| kv.unwrap()).collect();
+                let nested_kvs1 = d.dump().unwrap();
                 assert_eq!(nested_kvs0, nested_kvs1);
             }
             _ => unreachable!(),

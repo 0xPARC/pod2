@@ -177,7 +177,10 @@ mod tests {
             "deserialized: {}",
             serde_json::to_string_pretty(&deserialized).unwrap()
         );
-        assert_eq!(signed_dict.dict.kvs(), deserialized.dict.kvs());
+        assert_eq!(
+            signed_dict.dict.dump().unwrap(),
+            deserialized.dict.dump().unwrap()
+        );
         assert_eq!(signed_dict.public_key, deserialized.public_key);
         assert_eq!(signed_dict.signature, deserialized.signature);
         assert_eq!(signed_dict.verify().is_ok(), deserialized.verify().is_ok());

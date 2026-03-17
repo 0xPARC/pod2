@@ -13,7 +13,7 @@ use strum_macros::FromRepr;
 mod basetypes;
 use std::{cmp::PartialEq, hash};
 
-use containers::{Array, Dictionary, Set};
+use containers::{Array, Container, Dictionary, Set};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 pub mod containers;
@@ -617,6 +617,14 @@ impl Value {
             TypedValue::Array(a) => Some(Set {
                 inner: a.inner.clone(),
             }),
+            _ => None,
+        }
+    }
+    pub fn as_container(&self) -> Option<Container> {
+        match &self.typed {
+            TypedValue::Set(s) => Some(s.inner.clone()),
+            TypedValue::Dictionary(d) => Some(d.inner.clone()),
+            TypedValue::Array(a) => Some(a.inner.clone()),
             _ => None,
         }
     }

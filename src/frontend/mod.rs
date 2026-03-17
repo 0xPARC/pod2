@@ -92,8 +92,11 @@ impl fmt::Display for SignedDict {
         // https://0xparc.github.io/pod2/merkletree.html will not need it since it will be
         // deterministic based on the keys values not on the order of the keys when added into the
         // tree.
-        for (k, v) in self.dict.kvs().iter().sorted_by_key(|kv| kv.0.hash()) {
-            writeln!(f, "  - {} = {}", k, v)?;
+        for kv in self.dict.iter() {
+            match kv {
+                Ok((k, v)) => writeln!(f, "  - {} = {}", k, v)?,
+                Err(e) => writeln!(f, "  - ERR: {}", e)?,
+            }
         }
         Ok(())
     }
@@ -106,22 +109,23 @@ impl SignedDict {
             .then_some(())
             .ok_or(Error::custom("Invalid signature!"))
     }
-    pub fn kvs(&self) -> &HashMap<Key, Value> {
-        self.dict.kvs()
-    }
-    pub fn get(&self, key: impl Into<Key>) -> Option<&Value> {
-        self.kvs().get(&key.into())
+    // pub fn kvs(&self) -> &HashMap<Key, Value> {
+    //     self.dict.kvs()
+    // }
+    pub fn get(&self, key: impl Into<Key>) -> Option<Value> {
+        // TODO: Refactor after dict.get returns Option<Value>
+        Some(self.dict.get(&key.into()).unwrap())
     }
     // Returns the Contains statement that defines key if it exists.
     pub fn get_statement(&self, key: impl Into<Key>) -> Option<Statement> {
         let key: Key = key.into();
-        self.kvs().get(&key).map(|value| {
-            Statement::Contains(
-                ValueRef::Literal(Value::from(self.dict.clone())),
-                ValueRef::Literal(Value::from(key.name())),
-                ValueRef::Literal(value.clone()),
-            )
-        })
+        // TODO: Refactor after dict.get returns Option<Value>
+        let value = self.dict.get(&key).unwrap();
+        Some(Statement::Contains(
+            ValueRef::Literal(Value::from(self.dict.clone())),
+            ValueRef::Literal(Value::from(key.name())),
+            ValueRef::Literal(value.clone()),
+        ))
     }
 }
 
@@ -347,11 +351,12 @@ impl MainPodBuilder {
                         .ok_or(Error::custom(format!(
                             "Invalid key argument for op {}.",
                             op
-                        )))?;
+                        )))?
+                        .raw();
                 let proof = if op_type == &Native(ContainsFromEntries) {
-                    container.prove_existence(key)?.1
+                    container.as_container().unwrap().prove(key)?.1
                 } else {
-                    container.prove_nonexistence(key)?
+                    container.as_container().unwrap().prove_nonexistence(key)?
                 };
                 Ok(Operation(op_type.clone(), op.1, OpAux::MerkleProof(proof)))
             }
@@ -378,15 +383,18 @@ impl MainPodBuilder {
                         .ok_or(Error::custom(format!(
                             "Invalid key argument for op {}.",
                             op
-                        )));
+                        )))?
+                        .clone();
                 let proof = match op_type {
-                    Native(ContainerInsertFromEntries) => {
-                        old_container.prove_insertion(key, value?)?
-                    }
-                    Native(ContainerUpdateFromEntries) => {
-                        old_container.prove_update(key, value?)?
-                    }
-                    _ => old_container.prove_deletion(key)?,
+                    Native(ContainerInsertFromEntries) => old_container
+                        .as_container()
+                        .unwrap()
+                        .insert(key.clone(), value)?,
+                    Native(ContainerUpdateFromEntries) => old_container
+                        .as_container()
+                        .unwrap()
+                        .update(key.raw(), value)?,
+                    _ => old_container.as_container().unwrap().delete(key.raw())?,
                 };
                 Ok(Operation(
                     op_type.clone(),
