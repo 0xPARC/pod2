@@ -1,7 +1,6 @@
 //! The middleware includes the type definitions and the traits used to connect the frontend and
 //! the backend.
 
-use anyhow::anyhow;
 use hex::ToHex;
 use strum_macros::FromRepr;
 
@@ -70,79 +69,6 @@ pub enum TypedValue {
     String(String),
     #[serde(untagged)]
     Bool(bool),
-}
-
-#[derive(FromRepr)]
-#[repr(u8)]
-pub enum ValueType {
-    Raw = 0,
-    Int = 1,
-    Bool = 2,
-    String = 3,
-    Set = 4,
-    Dictionary = 5,
-    Array = 6,
-    PublicKey = 7,
-    SecretKey = 8,
-    Predicate = 9,
-}
-
-impl TypedValue {
-    pub fn value_type(&self) -> u8 {
-        use ValueType::*;
-        (match self {
-            Self::Raw(..) => Raw,
-            Self::Int(..) => Int,
-            Self::Bool(..) => Bool,
-            Self::String(..) => String,
-            Self::Set(..) => Set,
-            Self::Dictionary(..) => Dictionary,
-            Self::Array(..) => Array,
-            Self::PublicKey(..) => PublicKey,
-            Self::SecretKey(..) => SecretKey,
-            Self::Predicate(..) => Predicate,
-        }) as u8
-    }
-
-    pub fn to_bytes(&self) -> anyhow::Result<Vec<u8>> {
-        let mut bytes = Vec::new();
-        bytes.push(self.value_type());
-        use TypedValue::*;
-        match self {
-            Raw(v) => serde_json::to_writer(&mut bytes, v),
-            Int(v) => serde_json::to_writer(&mut bytes, v),
-            Bool(v) => serde_json::to_writer(&mut bytes, v),
-            String(v) => serde_json::to_writer(&mut bytes, v),
-            Set(v) => serde_json::to_writer(&mut bytes, &v.commitment()),
-            Dictionary(v) => serde_json::to_writer(&mut bytes, &v.commitment()),
-            Array(v) => serde_json::to_writer(&mut bytes, &v.commitment()),
-            PublicKey(v) => serde_json::to_writer(&mut bytes, v),
-            SecretKey(v) => serde_json::to_writer(&mut bytes, v),
-            Predicate(v) => serde_json::to_writer(&mut bytes, v),
-        }?;
-        Ok(bytes)
-    }
-
-    pub fn from_bytes(bytes: &[u8]) -> anyhow::Result<Self> {
-        let value_type = bytes[0];
-        let bytes = &bytes[1..];
-        use TypedValue::*;
-        let value = match ValueType::from_repr(value_type)
-            .ok_or_else(|| anyhow!("invalid value_type {value_type}"))?
-        {
-            ValueType::Raw => Raw(serde_json::from_slice(bytes)?),
-            ValueType::Int => Int(serde_json::from_slice(bytes)?),
-            ValueType::Bool => Bool(serde_json::from_slice(bytes)?),
-            ValueType::String => String(serde_json::from_slice(bytes)?),
-            ValueType::Set => Set(serde_json::from_slice(bytes)?),
-            ValueType::Dictionary => Dictionary(serde_json::from_slice(bytes)?),
-            ValueType::Array => Array(serde_json::from_slice(bytes)?),
-            ValueType::PublicKey => PublicKey(serde_json::from_slice(bytes)?),
-            ValueType::SecretKey => SecretKey(serde_json::from_slice(bytes)?),
-            ValueType::Predicate => Predicate(serde_json::from_slice(bytes)?),
-        };
-        Ok(value)
-    }
 }
 
 impl From<&str> for TypedValue {
