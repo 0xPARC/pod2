@@ -377,7 +377,6 @@ impl MainPodBuilder {
                             "Invalid key argument for op {}.",
                             op
                         )))?;
-                println!("DBG {:?}", op.1.get(3));
                 let value =
                     op.1.get(3)
                         .and_then(|arg| arg.value())

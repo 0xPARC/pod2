@@ -79,7 +79,6 @@ enum ValueAux {
     Dictionary(Hash),
     Array(Hash),
     String(String),
-    Bool(bool),
 }
 
 impl From<Value> for ValueAux {
@@ -94,7 +93,6 @@ impl From<Value> for ValueAux {
             TypedValue::Dictionary(v) => ValueAux::Dictionary(v.commitment()),
             TypedValue::Array(v) => ValueAux::Array(v.commitment()),
             TypedValue::String(v) => ValueAux::String(v),
-            TypedValue::Bool(v) => ValueAux::Bool(v),
         }
     }
 }
@@ -111,7 +109,6 @@ impl ValueAux {
             ValueAux::Dictionary(v) => Value::from(Dictionary::from_db(v, Box::new(db.clone()))?),
             ValueAux::Array(v) => Value::from(Array::from_db(v, Box::new(db.clone()))?),
             ValueAux::String(v) => Value::from(v),
-            ValueAux::Bool(v) => Value::from(v),
         })
     }
 }

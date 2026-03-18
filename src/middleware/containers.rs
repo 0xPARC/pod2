@@ -3,11 +3,14 @@
 
 use std::{
     collections::{HashMap, HashSet},
-    fmt::Debug,
+    fmt::{self, Debug},
 };
 
 use schemars::JsonSchema;
-use serde::{ser, Deserialize, Deserializer, Serialize};
+use serde::{
+    de::{SeqAccess, Visitor},
+    ser, Deserialize, Deserializer, Serialize,
+};
 
 #[cfg(feature = "backend_plonky2")]
 use crate::backends::plonky2::primitives::merkletree::{self, MerkleProof, MerkleTree};
@@ -31,8 +34,8 @@ impl JsonSchema for Container {
     }
 
     fn json_schema(gen: &mut schemars::gen::SchemaGenerator) -> schemars::schema::Schema {
-        // Just use the schema of HashMap<Value, Value> since that's what we're actually serializing
-        HashMap::<Value, Value>::json_schema(gen)
+        // Just use the schema of Vec<Vec<Value>> since that's what we're actually serializing
+        Vec::<Vec<Value>>::json_schema(gen)
     }
 }
 
@@ -46,13 +49,45 @@ impl Serialize for Container {
             .collect::<Result<Vec<(Value, Value)>>>()
             .map_err(ser::Error::custom)?;
         pairs.sort_by(|(k1, _), (k2, _)| k1.raw().cmp(&k2.raw()));
-        // Serialize as a map
-        use serde::ser::SerializeMap;
-        let mut map = serializer.serialize_map(Some(pairs.len()))?;
+        // Serialize as an array
+        use serde::ser::SerializeSeq;
+        let mut seq = serializer.serialize_seq(Some(pairs.len()))?;
         for (k, v) in pairs {
-            map.serialize_entry(&k, &v)?;
+            if k == v {
+                seq.serialize_element(&[&v])?;
+            } else {
+                seq.serialize_element(&[&k, &v])?;
+            }
         }
-        map.end()
+        seq.end()
+    }
+}
+
+struct ContainerVisitor;
+
+impl<'de> Visitor<'de> for ContainerVisitor {
+    type Value = HashMap<Value, Value>;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+        formatter.write_str("a sequence of `[Value]` or `[Value, Value]`")
+    }
+
+    fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+    where
+        A: SeqAccess<'de>,
+    {
+        let mut kvs = HashMap::<Value, Value>::new();
+        while let Some(mut elem) = seq.next_element::<Vec<Value>>()? {
+            if elem.len() == 2 {
+                let (v, k) = (elem.pop().unwrap(), elem.pop().unwrap());
+                kvs.insert(k, v);
+            } else {
+                let v = elem.pop().unwrap();
+                kvs.insert(v.clone(), v);
+            }
+        }
+
+        Ok(kvs)
     }
 }
 
@@ -61,7 +96,7 @@ impl<'de> Deserialize<'de> for Container {
     where
         D: Deserializer<'de>,
     {
-        let kvs = HashMap::<Value, Value>::deserialize(deserializer)?;
+        let kvs = deserializer.deserialize_seq(ContainerVisitor)?;
         Ok(Container::new(kvs))
     }
 }

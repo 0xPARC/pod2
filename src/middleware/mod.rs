@@ -32,7 +32,7 @@ pub use statement::*;
 // TODO: Move all value-related types to to `value.rs`
 #[derive(Clone, Debug, Serialize, Deserialize, Eq, PartialEq)]
 // TODO #[schemars(transform = serialization::transform_value_schema)]
-pub enum TypedValue {
+pub(crate) enum TypedValue {
     // Serde cares about the order of the enum variants, with untagged variants
     // appearing at the end.
     // Variants without "untagged" will be serialized as "tagged" values by
@@ -67,8 +67,6 @@ pub enum TypedValue {
     Array(Array),
     #[serde(untagged)]
     String(String),
-    #[serde(untagged)]
-    Bool(bool),
 }
 
 impl From<&str> for TypedValue {
@@ -91,7 +89,11 @@ impl From<i64> for TypedValue {
 
 impl From<bool> for TypedValue {
     fn from(b: bool) -> Self {
-        TypedValue::Bool(b)
+        if b {
+            TypedValue::Int(1)
+        } else {
+            TypedValue::Int(0)
+        }
     }
 }
 
@@ -154,7 +156,6 @@ impl fmt::Display for TypedValue {
                     Err(_) => write!(f, "\"{}\"", s),
                 }
             }
-            TypedValue::Bool(b) => write!(f, "{}", b),
             TypedValue::Array(a) => {
                 write!(f, "[")?;
                 for (i, r) in a.iter().enumerate() {
@@ -221,7 +222,6 @@ impl From<&TypedValue> for RawValue {
         match v {
             TypedValue::String(s) => RawValue::from(hash_str(s)),
             TypedValue::Int(v) => RawValue::from(*v),
-            TypedValue::Bool(b) => RawValue::from(*b as i64),
             TypedValue::Dictionary(d) => RawValue::from(d.commitment()),
             TypedValue::Set(s) => RawValue::from(s.commitment()),
             TypedValue::Array(a) => RawValue::from(a.commitment()),
@@ -410,7 +410,7 @@ impl fmt::Display for Value {
 }
 
 impl Value {
-    pub fn new(value: TypedValue) -> Self {
+    pub(crate) fn new(value: TypedValue) -> Self {
         let raw_value = RawValue::from(&value);
         Self {
             typed: value,
@@ -432,7 +432,6 @@ impl Value {
     pub fn as_int(&self) -> Option<i64> {
         match self.typed {
             TypedValue::Int(i) => Some(i),
-            TypedValue::Bool(b) => Some(if b { 1 } else { 0 }),
             _ => None,
         }
     }
@@ -509,7 +508,6 @@ impl Value {
     }
     pub fn as_bool(&self) -> Option<bool> {
         match self.typed {
-            TypedValue::Bool(b) => Some(b),
             TypedValue::Int(i) => match i {
                 0 => Some(false),
                 1 => Some(true),
