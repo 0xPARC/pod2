@@ -24,6 +24,8 @@ jobs:
       run: cargo build --features metrics
     - name: Build time
       run: cargo build --features time
+    - name: Build db_rocksdb
+      run: cargo build --features db_rocksdb
     - name: Build disk_cache
       run: cargo build --no-default-features --features backend_plonky2,zk,disk_cache
 

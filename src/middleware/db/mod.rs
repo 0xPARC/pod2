@@ -5,11 +5,10 @@ use std::{
 };
 
 use dyn_clone::DynClone;
-use serde::{Deserialize, Serialize};
 
 #[cfg(feature = "backend_plonky2")]
 use crate::backends::plonky2::primitives::merkletree::{self};
-use crate::middleware::{Hash, RawValue, TypedValue, Value, EMPTY_HASH};
+use crate::middleware::{Hash, RawValue, Value, EMPTY_HASH};
 
 pub mod mem;
 #[cfg(feature = "db_rocksdb")]

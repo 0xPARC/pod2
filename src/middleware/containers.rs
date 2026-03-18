@@ -501,13 +501,14 @@ impl Eq for Array {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::middleware::db::{self, mem::MemDB};
+    use crate::middleware::db::mem::MemDB;
 
     fn test_databases(test_fn: &dyn Fn(Box<dyn DB>)) {
         let db = MemDB::new();
         test_fn(Box::new(db));
         #[cfg(feature = "db_rocksdb")]
         {
+            use crate::middleware::db;
             let db = db::rocks::RocksDB::open(tempfile::TempDir::new().unwrap().path()).unwrap();
             test_fn(Box::new(db));
         }

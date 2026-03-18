@@ -64,11 +64,6 @@ impl TreeError {
             _ => None,
         }
     }
-    pub fn is_key_not_found(&self) -> bool {
-        self.inner()
-            .map(|e| matches!(e, TreeInnerError::KeyNotFound))
-            .unwrap_or(false)
-    }
     pub(crate) fn key_not_found() -> Self {
         new!(KeyNotFound)
     }

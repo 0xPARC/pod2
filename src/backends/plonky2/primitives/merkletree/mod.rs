@@ -1169,17 +1169,17 @@ pub mod tests {
     fn test_key_not_found() -> Result<()> {
         let db = Box::new(db::MemDB::new());
         let mut tree = MerkleTree::empty_with_db(db.clone());
-        let err = tree.get(&RawValue::from(5)).unwrap_err();
-        assert!(err.is_key_not_found());
+        let value_option = tree.get(&RawValue::from(5)).unwrap();
+        assert_eq!(None, value_option);
 
         tree.insert(&RawValue::from(1), &RawValue::from(42))?;
-        let err = tree.get(&RawValue::from(5)).unwrap_err();
-        assert!(err.is_key_not_found());
+        let value_option = tree.get(&RawValue::from(5)).unwrap();
+        assert_eq!(None, value_option);
 
-        // If the root doesn't exist the error should be different
+        // If the root doesn't exist there should be an error
         let tree = MerkleTree::from_db(Hash::from(RawValue::from(42)), db);
-        let err = tree.get(&RawValue::from(5)).unwrap_err();
-        assert!(!err.is_key_not_found());
+        let result = tree.get(&RawValue::from(5));
+        assert!(result.is_err());
 
         Ok(())
     }
