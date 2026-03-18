@@ -2,11 +2,12 @@ use std::{fmt, path::Path, sync::Arc};
 
 use anyhow::{anyhow, Result};
 use rocksdb::{Options, TransactionDB, TransactionDBOptions};
+use serde::{Deserialize, Serialize};
 
 use super::*;
 use crate::middleware::{
     containers::{Array, Dictionary, Set},
-    Predicate, PublicKey, SecretKey,
+    Predicate, PublicKey, SecretKey, TypedValue,
 };
 
 fn node_key(hash: Hash) -> Vec<u8> {
