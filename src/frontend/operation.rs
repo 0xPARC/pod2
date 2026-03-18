@@ -70,7 +70,7 @@ impl From<&Value> for OperationArg {
 impl From<(&Dictionary, &str)> for OperationArg {
     fn from((dict, key): (&Dictionary, &str)) -> Self {
         // TODO: Use TryFrom
-        let value = dict.get(&key.into()).unwrap();
+        let value = dict.get(&key.into()).unwrap().unwrap();
         Self::Statement(Statement::Contains(
             dict.clone().into(),
             key.into(),

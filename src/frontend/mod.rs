@@ -13,10 +13,11 @@ use serde::{Deserialize, Serialize};
 pub use serialization::SerializedMainPod;
 
 use crate::middleware::{
-    self, check_custom_pred, containers::Dictionary, fill_wildcard_values, hash_op, max_op,
-    prod_op, sum_op, AnchoredKey, Hash, Key, MainPodInputs, MainPodProver, NativeOperation,
-    OperationAux, OperationType, Params, PublicKey, RawValue, Signature, Signer, Statement,
-    StatementArg, VDSet, Value, ValueRef, EMPTY_VALUE,
+    self, check_custom_pred,
+    containers::{Container, Dictionary},
+    fill_wildcard_values, hash_op, max_op, prod_op, sum_op, AnchoredKey, Hash, Key, MainPodInputs,
+    MainPodProver, NativeOperation, OperationAux, OperationType, Params, PublicKey, RawValue,
+    Signature, Signer, Statement, StatementArg, VDSet, Value, ValueRef, EMPTY_VALUE,
 };
 
 mod custom;
@@ -109,23 +110,19 @@ impl SignedDict {
             .then_some(())
             .ok_or(Error::custom("Invalid signature!"))
     }
-    // pub fn kvs(&self) -> &HashMap<Key, Value> {
-    //     self.dict.kvs()
-    // }
     pub fn get(&self, key: impl Into<Key>) -> Option<Value> {
-        // TODO: Refactor after dict.get returns Option<Value>
-        Some(self.dict.get(&key.into()).unwrap())
+        self.dict.get(&key.into()).unwrap()
     }
     // Returns the Contains statement that defines key if it exists.
     pub fn get_statement(&self, key: impl Into<Key>) -> Option<Statement> {
         let key: Key = key.into();
-        // TODO: Refactor after dict.get returns Option<Value>
-        let value = self.dict.get(&key).unwrap();
-        Some(Statement::Contains(
-            ValueRef::Literal(Value::from(self.dict.clone())),
-            ValueRef::Literal(Value::from(key.name())),
-            ValueRef::Literal(value.clone()),
-        ))
+        self.dict.get(&key).unwrap().map(|value| {
+            Statement::Contains(
+                ValueRef::Literal(Value::from(self.dict.clone())),
+                ValueRef::Literal(Value::from(key.name())),
+                ValueRef::Literal(value.clone()),
+            )
+        })
     }
 }
 
@@ -158,6 +155,11 @@ impl fmt::Display for MainPodBuilder {
         }
         Ok(())
     }
+}
+
+fn as_container_or_err(v: &Value) -> Result<Container> {
+    v.as_container()
+        .ok_or_else(|| Error::custom(format!("{v} not a container")))
 }
 
 impl MainPodBuilder {
@@ -354,9 +356,9 @@ impl MainPodBuilder {
                         )))?
                         .raw();
                 let proof = if op_type == &Native(ContainsFromEntries) {
-                    container.as_container().unwrap().prove(key)?.1
+                    as_container_or_err(container)?.prove(key)?.1
                 } else {
-                    container.as_container().unwrap().prove_nonexistence(key)?
+                    as_container_or_err(container)?.prove_nonexistence(key)?
                 };
                 Ok(Operation(op_type.clone(), op.1, OpAux::MerkleProof(proof)))
             }
@@ -383,15 +385,13 @@ impl MainPodBuilder {
                         .cloned()
                         .unwrap_or(Value::from(EMPTY_VALUE));
                 let proof = match op_type {
-                    Native(ContainerInsertFromEntries) => old_container
-                        .as_container()
-                        .unwrap()
-                        .insert(key.clone(), value)?,
-                    Native(ContainerUpdateFromEntries) => old_container
-                        .as_container()
-                        .unwrap()
-                        .update(key.raw(), value)?,
-                    _ => old_container.as_container().unwrap().delete(key.raw())?,
+                    Native(ContainerInsertFromEntries) => {
+                        as_container_or_err(old_container)?.insert(key.clone(), value)?
+                    }
+                    Native(ContainerUpdateFromEntries) => {
+                        as_container_or_err(old_container)?.update(key.raw(), value)?
+                    }
+                    _ => as_container_or_err(old_container)?.delete(key.raw())?,
                 };
                 Ok(Operation(
                     op_type.clone(),

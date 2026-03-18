@@ -236,7 +236,7 @@ impl MerkleTree {
     }
 
     /// returns the value at the given key
-    pub fn get(&self, key: &RawValue) -> Result<RawValue> {
+    pub fn get(&self, key: &RawValue) -> Result<Option<RawValue>> {
         let path = keypath(*key);
         let key_resolution = Self::down(
             self.db.as_ref(),
@@ -247,8 +247,8 @@ impl MerkleTree {
             MerkleTreeOp::ReadOnly,
         )?;
         match key_resolution {
-            Some((k, v)) if &k == key => Ok(v),
-            _ => Err(Error::key_not_found()),
+            Some((k, v)) if &k == key => Ok(Some(v)),
+            _ => Ok(None),
         }
     }
 

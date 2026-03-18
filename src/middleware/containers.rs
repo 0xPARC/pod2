@@ -172,10 +172,11 @@ impl Container {
     pub fn commitment(&self) -> Hash {
         self.root
     }
-    pub fn get(&self, key_raw: RawValue) -> Result<Value> {
-        let value_raw = self.mt().get(&key_raw)?;
-        let value = load_value(self.db.as_ref(), value_raw)?;
-        Ok(value)
+    pub fn get(&self, key_raw: RawValue) -> Result<Option<Value>> {
+        Ok(match self.mt().get(&key_raw)? {
+            Some(value_raw) => Some(load_value(self.db.as_ref(), value_raw)?),
+            None => None,
+        })
     }
     pub fn prove(&self, key_raw: RawValue) -> Result<(Value, MerkleProof)> {
         let (value_raw, mtp) = self.mt().prove(&key_raw)?;
@@ -288,7 +289,7 @@ impl Dictionary {
     pub fn commitment(&self) -> Hash {
         self.inner.commitment()
     }
-    pub fn get(&self, key: &Key) -> Result<Value> {
+    pub fn get(&self, key: &Key) -> Result<Option<Value>> {
         self.inner.get(key.raw())
     }
     pub fn prove(&self, key: &Key) -> Result<(Value, MerkleProof)> {
@@ -367,17 +368,7 @@ impl Set {
         self.inner.commitment()
     }
     pub fn contains(&self, value: &Value) -> Result<bool> {
-        match self.inner.get(value.raw()) {
-            Err(Error::Tree(e)) => {
-                if e.is_key_not_found() {
-                    Ok(false)
-                } else {
-                    Err(Error::Tree(e))
-                }
-            }
-            Ok(_) => Ok(true),
-            Err(e) => Err(e),
-        }
+        Ok(self.inner.get(value.raw())?.is_some())
     }
     pub fn prove(&self, value: &Value) -> Result<MerkleProof> {
         let (_, proof) = self.inner.prove(value.raw())?;
@@ -461,7 +452,7 @@ impl Array {
     pub fn commitment(&self) -> Hash {
         self.inner.commitment()
     }
-    pub fn get(&self, i: usize) -> Result<Value> {
+    pub fn get(&self, i: usize) -> Result<Option<Value>> {
         self.inner.get(Value::from(i as i64).raw())
     }
     pub fn prove(&self, i: usize) -> Result<(Value, MerkleProof)> {
