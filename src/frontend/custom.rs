@@ -176,6 +176,12 @@ impl CustomPredicateBatchBuilder {
         priv_args: &[&str],
         sts: &[StatementTmplBuilder],
     ) -> Result<Predicate> {
+        if self.predicates.iter().any(|p| p.name == name) {
+            return Err(Error::custom(format!(
+                "Duplicate predicate name '{}' in batch",
+                name
+            )));
+        }
         if self.predicates.len() >= Params::max_custom_batch_size() {
             return Err(Error::max_length(
                 "self.predicates.len".to_string(),

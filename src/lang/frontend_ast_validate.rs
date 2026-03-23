@@ -619,14 +619,14 @@ impl Validator {
                 span: id.span,
             });
         }
-        // Must refer to a known custom predicate in this module
-        if !self.symbols.predicates.contains_key(&id.name) {
-            return Err(ValidationError::UndefinedPredicate {
+        // Must refer to a custom predicate defined in this module (not intro/imported)
+        match self.symbols.predicates.get(&id.name) {
+            Some(info) if matches!(info.kind, PredicateKind::Custom { .. }) => Ok(()),
+            _ => Err(ValidationError::UndefinedPredicate {
                 name: id.name.clone(),
                 span: id.span,
-            });
+            }),
         }
-        Ok(())
     }
 
     /// Recursively validate a literal value, checking predicate hash references.
