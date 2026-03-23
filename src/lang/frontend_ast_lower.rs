@@ -346,6 +346,9 @@ impl<'a> Lowerer<'a> {
                     let key = Key::from(key_str.as_str());
                     MWStatementTmplArg::AnchoredKey(wildcard, key)
                 }
+                BuilderArg::SelfPredicateHash(_) => {
+                    unreachable!("SelfPredicateHash should not appear in request lowering")
+                }
             };
             mw_args.push(mw_arg);
         }

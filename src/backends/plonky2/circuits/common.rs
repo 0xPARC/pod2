@@ -788,10 +788,22 @@ impl CustomPredicateEntryTarget {
                     }
                     x => x.clone(),
                 };
-                StatementTmpl {
-                    pred_or_wc,
-                    args: st_tmpl.args,
-                }
+                let args = st_tmpl
+                    .args
+                    .into_iter()
+                    .map(|arg| match arg {
+                        StatementTmplArg::SelfPredicateHash(i) => {
+                            let pred_hash = Predicate::Custom(CustomPredicateRef {
+                                batch: batch.clone(),
+                                index: i,
+                            })
+                            .hash();
+                            StatementTmplArg::Literal(Value::from(pred_hash))
+                        }
+                        other => other,
+                    })
+                    .collect();
+                StatementTmpl { pred_or_wc, args }
             })
             .collect_vec();
         let predicate = CustomPredicate {
@@ -2012,7 +2024,7 @@ pub(crate) mod tests {
         // Empty case
         let mut cpb_builder = CustomPredicateBatchBuilder::new(params.clone(), "empty".into());
         _ = cpb_builder.predicate_and("empty", &[], &[], &[])?;
-        let custom_predicate_batch = cpb_builder.finish();
+        let custom_predicate_batch = cpb_builder.finish()?;
         helper_custom_predicate_in_batch_target(&custom_predicate_batch).unwrap();
 
         // Some cases from the examples
