@@ -8,7 +8,7 @@ use std::{
 
 use schemars::JsonSchema;
 use serde::{
-    de::{SeqAccess, Visitor},
+    de::{Error as _, SeqAccess, Visitor},
     ser, Deserialize, Deserializer, Serialize,
 };
 
@@ -78,12 +78,20 @@ impl<'de> Visitor<'de> for ContainerVisitor {
     {
         let mut kvs = HashMap::<Value, Value>::new();
         while let Some(mut elem) = seq.next_element::<Vec<Value>>()? {
-            if elem.len() == 2 {
-                let (v, k) = (elem.pop().unwrap(), elem.pop().unwrap());
-                kvs.insert(k, v);
-            } else {
-                let v = elem.pop().unwrap();
-                kvs.insert(v.clone(), v);
+            match elem.len() {
+                1 => {
+                    let v = elem.pop().unwrap();
+                    kvs.insert(v.clone(), v);
+                }
+                2 => {
+                    let (v, k) = (elem.pop().unwrap(), elem.pop().unwrap());
+                    kvs.insert(k, v);
+                }
+                n => {
+                    return Err(A::Error::custom(format!(
+                        "invalid vec length of {n} in container entry"
+                    )))
+                }
             }
         }
 
@@ -201,7 +209,7 @@ impl Container {
         value: Value,
     ) -> Result<MerkleTreeStateTransitionProof> {
         let value_raw = value.raw();
-        store_value(self.db.as_mut(), value).unwrap();
+        store_value(self.db.as_mut(), value)?;
         let mut mt = self.mt();
         let mtp = mt.update(&key_raw, &value_raw)?;
         self.root = mt.root();

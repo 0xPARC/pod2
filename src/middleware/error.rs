@@ -72,6 +72,8 @@ pub enum Error {
     },
     #[error(transparent)]
     Tree(#[from] crate::backends::plonky2::primitives::merkletree::error::TreeError),
+    #[error(transparent)]
+    Json(#[from] serde_json::Error),
     #[error("database error: {0}")]
     Database(anyhow::Error),
 }

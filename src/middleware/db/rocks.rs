@@ -2,13 +2,8 @@ use std::{fmt, path::Path, sync::Arc};
 
 use anyhow::{anyhow, Result};
 use rocksdb::{Options, TransactionDB, TransactionDBOptions};
-use serde::{Deserialize, Serialize};
 
 use super::*;
-use crate::middleware::{
-    containers::{Array, Dictionary, Set},
-    Predicate, PublicKey, SecretKey, TypedValue,
-};
 
 fn node_key(hash: Hash) -> Vec<u8> {
     let mut k = Vec::with_capacity(2 + 4);
@@ -69,75 +64,37 @@ impl merkletree::db::DB for RocksDB {
     }
 }
 
-#[derive(Serialize, Deserialize)]
-enum ValueAux {
-    Raw(RawValue),
-    Int(i64),
-    PublicKey(PublicKey),
-    SecretKey(SecretKey),
-    Predicate(Predicate),
-    Set(Hash),
-    Dictionary(Hash),
-    Array(Hash),
-    String(String),
-}
-
-impl From<Value> for ValueAux {
-    fn from(v: Value) -> Self {
-        match v.typed {
-            TypedValue::Int(v) => ValueAux::Int(v),
-            TypedValue::Raw(v) => ValueAux::Raw(v),
-            TypedValue::PublicKey(v) => ValueAux::PublicKey(v),
-            TypedValue::SecretKey(v) => ValueAux::SecretKey(v),
-            TypedValue::Predicate(v) => ValueAux::Predicate(v),
-            TypedValue::Set(v) => ValueAux::Set(v.commitment()),
-            TypedValue::Dictionary(v) => ValueAux::Dictionary(v.commitment()),
-            TypedValue::Array(v) => ValueAux::Array(v.commitment()),
-            TypedValue::String(v) => ValueAux::String(v),
-        }
-    }
-}
-
-impl ValueAux {
-    fn into_value(self, db: &RocksDB) -> Result<Value> {
-        Ok(match self {
-            ValueAux::Int(v) => Value::from(v),
-            ValueAux::Raw(v) => Value::from(v),
-            ValueAux::PublicKey(v) => Value::from(v),
-            ValueAux::SecretKey(v) => Value::from(v),
-            ValueAux::Predicate(v) => Value::from(v),
-            ValueAux::Set(v) => Value::from(Set::from_db(v, Box::new(db.clone()))?),
-            ValueAux::Dictionary(v) => Value::from(Dictionary::from_db(v, Box::new(db.clone()))?),
-            ValueAux::Array(v) => Value::from(Array::from_db(v, Box::new(db.clone()))?),
-            ValueAux::String(v) => Value::from(v),
-        })
-    }
-}
-
-// NOTE: serialization is using json.  Using a byte-native serialization would improve performance
-// and storage usage.
 impl DB for RocksDB {
     fn load_value(&self, raw: RawValue) -> anyhow::Result<Option<Value>> {
         match self.db.get(value_key(raw))? {
             None => Ok(None),
-            Some(bytes) => {
-                let value_aux: ValueAux = serde_json::from_slice(bytes.as_ref())?;
-                Ok(Some(value_aux.into_value(self)?))
-            }
+            Some(bytes) => Ok(Some({
+                if bytes.is_empty() {
+                    Value::from(raw)
+                } else {
+                    Value::from_bytes(bytes.as_ref(), self.clone_box())?
+                }
+            })),
         }
     }
     fn store_value(&mut self, value: Value) -> anyhow::Result<()> {
         let value_key = value_key(value.raw());
         let tx = self.db.transaction();
         if let Some(old_value_bytes) = tx.get_for_update(&value_key, true)? {
-            // NOTE: If we could peek instead of doing a full decode this would improve performance
-            let old_value: ValueAux = serde_json::from_slice(&old_value_bytes)?;
-            // If we had a non-raw value stored never overwrite it with a raw value
-            if !matches!(old_value, ValueAux::Raw(_)) && value.is_raw() {
+            let is_raw = old_value_bytes.is_empty();
+            // If we had a non-RawValue stored don't overwrite it (specially not with a
+            // RawValue).   Also skip redundant RawValue overwrite.
+            if !is_raw || (is_raw && value.is_raw()) {
                 return Ok(());
             }
         }
-        let value_bytes = serde_json::to_vec(&ValueAux::from(value))?;
+        let value_bytes = if value.is_raw() {
+            // For RawValue we store an empty vector because it's a duplicate of the key.
+            // This way we can easily check for RawValue without decoding.
+            vec![]
+        } else {
+            Value::to_bytes(&value)
+        };
         tx.put(value_key, value_bytes)?;
         Ok(tx.commit()?)
     }

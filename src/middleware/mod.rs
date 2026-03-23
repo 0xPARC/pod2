@@ -389,6 +389,55 @@ impl JsonSchema for Value {
     }
 }
 
+/// Dual of TypedValue that is not recursive: for container types no entry only the commitment
+/// (merkle tree root of underlying data) is available.  Used for byte serialization for
+/// persistent storage.
+#[derive(Serialize, Deserialize)]
+enum TypedValueNoRec {
+    Raw(RawValue),
+    Int(i64),
+    PublicKey(PublicKey),
+    SecretKey(SecretKey),
+    Predicate(Predicate),
+    Set(Hash),
+    Dictionary(Hash),
+    Array(Hash),
+    String(String),
+}
+
+// NOTE: byte serialization is using json.  Using a byte-native serialization would improve
+// performance and storage usage.
+impl Value {
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let v = match &self.typed {
+            TypedValue::Int(v) => TypedValueNoRec::Int(*v),
+            TypedValue::Raw(v) => TypedValueNoRec::Raw(*v),
+            TypedValue::PublicKey(v) => TypedValueNoRec::PublicKey(*v),
+            TypedValue::SecretKey(v) => TypedValueNoRec::SecretKey(v.clone()),
+            TypedValue::Predicate(v) => TypedValueNoRec::Predicate(v.clone()),
+            TypedValue::Set(v) => TypedValueNoRec::Set(v.commitment()),
+            TypedValue::Dictionary(v) => TypedValueNoRec::Dictionary(v.commitment()),
+            TypedValue::Array(v) => TypedValueNoRec::Array(v.commitment()),
+            TypedValue::String(v) => TypedValueNoRec::String(v.clone()),
+        };
+        serde_json::to_vec(&TypedValueNoRec::from(v)).expect("json serialization succeeds")
+    }
+    pub fn from_bytes(bytes: &[u8], db: Box<dyn db::DB>) -> Result<Self> {
+        let v: TypedValueNoRec = serde_json::from_slice(&bytes)?;
+        Ok(match v {
+            TypedValueNoRec::Int(v) => Value::from(v),
+            TypedValueNoRec::Raw(v) => Value::from(v),
+            TypedValueNoRec::PublicKey(v) => Value::from(v),
+            TypedValueNoRec::SecretKey(v) => Value::from(v),
+            TypedValueNoRec::Predicate(v) => Value::from(v),
+            TypedValueNoRec::Set(v) => Value::from(Set::from_db(v, db)?),
+            TypedValueNoRec::Dictionary(v) => Value::from(Dictionary::from_db(v, db)?),
+            TypedValueNoRec::Array(v) => Value::from(Array::from_db(v, db)?),
+            TypedValueNoRec::String(v) => Value::from(v),
+        })
+    }
+}
+
 impl PartialEq for Value {
     fn eq(&self, other: &Self) -> bool {
         self.raw == other.raw
