@@ -160,7 +160,7 @@ fn resolve_local_predicate(
 /// This is a pure conversion that cannot fail for context-free literals.
 /// Panics on ExternalPredicateHash — use `lower_literal_with_context` when
 /// external predicate references may appear (e.g. inside containers).
-pub fn lower_literal(lit: &LiteralValue) -> Value {
+pub(crate) fn lower_literal(lit: &LiteralValue) -> Value {
     match lit {
         LiteralValue::Int(i) => Value::from(i.value),
         LiteralValue::Bool(b) => Value::from(b.value),
@@ -270,7 +270,7 @@ pub fn lower_literal_with_context(
 ///
 /// Context-free for most arg types. Panics on ExternalPredicateHash inside literals —
 /// use `lower_statement_arg_with_context` when external predicate references may appear.
-pub fn lower_statement_arg(arg: &StatementTmplArg) -> BuilderArg {
+pub(crate) fn lower_statement_arg(arg: &StatementTmplArg) -> BuilderArg {
     match arg {
         StatementTmplArg::Literal(lit) => {
             let value = lower_literal(lit);

@@ -92,7 +92,7 @@ impl StatementTmpl {
             if i > 0 {
                 write!(w, ", ")?;
             }
-            arg.fmt_podlang(w)?;
+            arg.fmt_podlang_with_batch_context(w, batch_context)?;
         }
         write!(w, ")")?;
 
@@ -102,7 +102,30 @@ impl StatementTmpl {
 
 impl PrettyPrint for StatementTmplArg {
     fn fmt_podlang_with_indent(&self, w: &mut dyn Write, _indent: usize) -> std::fmt::Result {
-        write!(w, "{}", self)
+        self.fmt_podlang_with_batch_context(w, None)
+    }
+}
+
+impl StatementTmplArg {
+    fn fmt_podlang_with_batch_context(
+        &self,
+        w: &mut dyn Write,
+        batch_context: Option<&CustomPredicateBatch>,
+    ) -> std::fmt::Result {
+        match self {
+            StatementTmplArg::SelfPredicateHash(index) => {
+                if let Some(batch) = batch_context {
+                    if let Some(predicate) = batch.predicates().get(*index) {
+                        write!(w, "@self_predicate({})", predicate.name)
+                    } else {
+                        write!(w, "@self_predicate(self_{})", index)
+                    }
+                } else {
+                    write!(w, "@self_predicate(self_{})", index)
+                }
+            }
+            other => write!(w, "{}", other),
+        }
     }
 }
 
@@ -538,6 +561,34 @@ mod tests {
             Value::from(sk.clone()).to_podlang_string()
         );
         assert_round_trip(&input);
+    }
+
+    #[test]
+    fn test_round_trip_self_predicate_hash() {
+        let input = r#"
+            pred_A(x, y) = AND(
+                Equal(x, y)
+            )
+
+            pred_B(x) = AND(
+                Equal(x, @self_predicate(pred_A))
+            )
+        "#;
+        assert_round_trip(input);
+    }
+
+    #[test]
+    fn test_round_trip_self_predicate_hash_cyclic() {
+        let input = r#"
+            pred_A(x) = AND(
+                Equal(x, @self_predicate(pred_B))
+            )
+
+            pred_B(x) = AND(
+                Equal(x, @self_predicate(pred_A))
+            )
+        "#;
+        assert_round_trip(input);
     }
 
     #[test]
