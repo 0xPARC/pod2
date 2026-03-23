@@ -420,10 +420,10 @@ impl Value {
             TypedValue::Array(v) => TypedValueNoRec::Array(v.commitment()),
             TypedValue::String(v) => TypedValueNoRec::String(v.clone()),
         };
-        serde_json::to_vec(&TypedValueNoRec::from(v)).expect("json serialization succeeds")
+        serde_json::to_vec(&v).expect("json serialization succeeds")
     }
     pub fn from_bytes(bytes: &[u8], db: Box<dyn db::DB>) -> Result<Self> {
-        let v: TypedValueNoRec = serde_json::from_slice(&bytes)?;
+        let v: TypedValueNoRec = serde_json::from_slice(bytes)?;
         Ok(match v {
             TypedValueNoRec::Int(v) => Value::from(v),
             TypedValueNoRec::Raw(v) => Value::from(v),
