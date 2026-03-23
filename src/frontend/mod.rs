@@ -13,10 +13,11 @@ use serde::{Deserialize, Serialize};
 pub use serialization::SerializedMainPod;
 
 use crate::middleware::{
-    self, check_custom_pred, containers::Dictionary, fill_wildcard_values, hash_op, max_op,
-    prod_op, sum_op, AnchoredKey, Hash, Key, MainPodInputs, MainPodProver, NativeOperation,
-    OperationAux, OperationType, Params, PublicKey, RawValue, Signature, Signer, Statement,
-    StatementArg, VDSet, Value, ValueRef,
+    self, check_custom_pred,
+    containers::{Container, Dictionary},
+    fill_wildcard_values, hash_op, max_op, prod_op, sum_op, AnchoredKey, Hash, Key, MainPodInputs,
+    MainPodProver, NativeOperation, OperationAux, OperationType, Params, PublicKey, RawValue,
+    Signature, Signer, Statement, StatementArg, VDSet, Value, ValueRef, EMPTY_VALUE,
 };
 
 mod custom;
@@ -92,8 +93,11 @@ impl fmt::Display for SignedDict {
         // https://0xparc.github.io/pod2/merkletree.html will not need it since it will be
         // deterministic based on the keys values not on the order of the keys when added into the
         // tree.
-        for (k, v) in self.dict.kvs().iter().sorted_by_key(|kv| kv.0.hash()) {
-            writeln!(f, "  - {} = {}", k, v)?;
+        for kv in self.dict.iter() {
+            match kv {
+                Ok((k, v)) => writeln!(f, "  - {} = {}", k, v)?,
+                Err(e) => writeln!(f, "  - ERR: {}", e)?,
+            }
         }
         Ok(())
     }
@@ -106,16 +110,13 @@ impl SignedDict {
             .then_some(())
             .ok_or(Error::custom("Invalid signature!"))
     }
-    pub fn kvs(&self) -> &HashMap<Key, Value> {
-        self.dict.kvs()
-    }
-    pub fn get(&self, key: impl Into<Key>) -> Option<&Value> {
-        self.kvs().get(&key.into())
+    pub fn get(&self, key: impl Into<Key>) -> Option<Value> {
+        self.dict.get(&key.into()).unwrap()
     }
     // Returns the Contains statement that defines key if it exists.
     pub fn get_statement(&self, key: impl Into<Key>) -> Option<Statement> {
         let key: Key = key.into();
-        self.kvs().get(&key).map(|value| {
+        self.dict.get(&key).unwrap().map(|value| {
             Statement::Contains(
                 ValueRef::Literal(Value::from(self.dict.clone())),
                 ValueRef::Literal(Value::from(key.name())),
@@ -154,6 +155,11 @@ impl fmt::Display for MainPodBuilder {
         }
         Ok(())
     }
+}
+
+fn as_container_or_err(v: &Value) -> Result<Container> {
+    v.as_container()
+        .ok_or_else(|| Error::custom(format!("{v} not a container")))
 }
 
 impl MainPodBuilder {
@@ -347,11 +353,12 @@ impl MainPodBuilder {
                         .ok_or(Error::custom(format!(
                             "Invalid key argument for op {}.",
                             op
-                        )))?;
+                        )))?
+                        .raw();
                 let proof = if op_type == &Native(ContainsFromEntries) {
-                    container.prove_existence(key)?.1
+                    as_container_or_err(container)?.prove(key)?.1
                 } else {
-                    container.prove_nonexistence(key)?
+                    as_container_or_err(container)?.prove_nonexistence(key)?
                 };
                 Ok(Operation(op_type.clone(), op.1, OpAux::MerkleProof(proof)))
             }
@@ -375,18 +382,16 @@ impl MainPodBuilder {
                 let value =
                     op.1.get(3)
                         .and_then(|arg| arg.value())
-                        .ok_or(Error::custom(format!(
-                            "Invalid key argument for op {}.",
-                            op
-                        )));
+                        .cloned()
+                        .unwrap_or(Value::from(EMPTY_VALUE));
                 let proof = match op_type {
                     Native(ContainerInsertFromEntries) => {
-                        old_container.prove_insertion(key, value?)?
+                        as_container_or_err(old_container)?.insert(key.clone(), value)?
                     }
                     Native(ContainerUpdateFromEntries) => {
-                        old_container.prove_update(key, value?)?
+                        as_container_or_err(old_container)?.update(key.raw(), value)?
                     }
-                    _ => old_container.prove_deletion(key)?,
+                    _ => as_container_or_err(old_container)?.delete(key.raw())?,
                 };
                 Ok(Operation(
                     op_type.clone(),

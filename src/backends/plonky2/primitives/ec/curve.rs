@@ -207,7 +207,7 @@ impl Point {
             u: *u,
         });
         points.find(|p| p.is_in_subgroup()).ok_or(Error::custom(
-            "One of the points must lie in the EC subgroup.".into(),
+            "One of the points must lie in the EC subgroup.",
         ))
     }
     pub fn as_bytes_from_subgroup(&self) -> Result<Vec<u8>, Error> {

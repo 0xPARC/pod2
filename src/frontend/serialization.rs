@@ -83,7 +83,7 @@ mod tests {
         middleware::{
             self,
             containers::{Array, Dictionary, Set},
-            Params, Signer as _, TypedValue, DEFAULT_VD_LIST,
+            Params, Signer as _, Value, DEFAULT_VD_LIST,
         },
     };
 
@@ -91,48 +91,46 @@ mod tests {
     fn test_value_serialization() {
         // Pairs of values and their expected serialized representations
         let values = vec![
-            (TypedValue::String("hello".to_string()), "\"hello\""),
-            (TypedValue::Int(42), "{\"Int\":\"42\"}"),
-            (TypedValue::Bool(true), "true"),
+            (Value::from("hello"), "\"hello\""),
+            (Value::from(42), "{\"Int\":\"42\"}"),
+            (Value::from(true), r#"{"Int":"1"}"#),
             (
-                TypedValue::Array(Array::new(vec!["foo".into(), false.into()])),
-                "{\"array\":[\"foo\",false]}",
+                Value::from(Array::new(vec![Value::from("foo"), Value::from(false)])),
+                r#"{"inner":[[{"Int":"0"},"foo"],[{"Int":"1"},{"Int":"0"}]]}"#,
             ),
             (
-                TypedValue::Dictionary(
-                    Dictionary::new(HashMap::from([
-                        // The set of valid keys is equal to the set of valid JSON keys
-                        ("foo".into(), 123.into()),
-                        // Empty strings are valid JSON keys
-                        (("".into()), "baz".into()),
-                        // Keys can contain whitespace
-                        (("    hi".into()), false.into()),
-                        // Keys can contain special characters
-                        (("!@£$%^&&*()".into()), "".into()),
-                        // Keys can contain _very_ special characters
-                        (("\0".into()), "".into()),
-                        // Keys can contain emojis
-                        (("🥳".into()), "party time!".into()),
-                    ]))
-                ),
-                "{\"kvs\":{\"\":\"baz\",\"\\u0000\":\"\",\"    hi\":false,\"!@£$%^&&*()\":\"\",\"foo\":{\"Int\":\"123\"},\"🥳\":\"party time!\"}}",
+                Value::from(Dictionary::new(HashMap::from([
+                    // The set of valid keys is equal to the set of valid JSON keys
+                    ("foo".into(), 123.into()),
+                    // Empty strings are valid JSON keys
+                    (("".into()), "baz".into()),
+                    // Keys can contain whitespace
+                    (("    hi".into()), false.into()),
+                    // Keys can contain special characters
+                    (("!@£$%^&&*()".into()), "".into()),
+                    // Keys can contain _very_ special characters
+                    (("\0".into()), "".into()),
+                    // Keys can contain emojis
+                    (("🥳".into()), "party time!".into()),
+                ]))),
+                r#"{"inner":[["!@£$%^&&*()",""],["🥳","party time!"],["    hi",{"Int":"0"}],["foo",{"Int":"123"}],["\u0000",""],["","baz"]]}"#,
             ),
             (
-                TypedValue::Set(Set::new(HashSet::from(["foo".into(), "bar".into()]))),
-                "{\"set\":[\"bar\",\"foo\"]}",
+                Value::from(Set::new(HashSet::from(["foo".into(), "bar".into()]))),
+                r#"{"inner":[["bar"],["foo"]]}"#,
             ),
         ];
 
         for (value, expected) in values {
             let serialized = serde_json::to_string(&value).unwrap();
             assert_eq!(serialized, expected);
-            let deserialized: TypedValue = serde_json::from_str(&serialized).unwrap();
+            let deserialized: Value = serde_json::from_str(&serialized).unwrap();
             assert_eq!(
                 value, deserialized,
                 "value {:#?} should equal deserialized {:#?}",
                 value, deserialized
             );
-            let expected_deserialized: TypedValue = serde_json::from_str(expected).unwrap();
+            let expected_deserialized: Value = serde_json::from_str(expected).unwrap();
             assert_eq!(value, expected_deserialized);
         }
     }
@@ -177,7 +175,10 @@ mod tests {
             "deserialized: {}",
             serde_json::to_string_pretty(&deserialized).unwrap()
         );
-        assert_eq!(signed_dict.dict.kvs(), deserialized.dict.kvs());
+        assert_eq!(
+            signed_dict.dict.dump().unwrap(),
+            deserialized.dict.dump().unwrap()
+        );
         assert_eq!(signed_dict.public_key, deserialized.public_key);
         assert_eq!(signed_dict.signature, deserialized.signature);
         assert_eq!(signed_dict.verify().is_ok(), deserialized.verify().is_ok());

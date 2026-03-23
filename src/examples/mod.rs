@@ -180,11 +180,7 @@ impl EthDosHelper {
         };
         assert_eq!(int, Value::from(int_attestation.public_key));
 
-        let n_i64 = if let TypedValue::Int(x) = n.typed() {
-            *x
-        } else {
-            panic!("distance value is not Int")
-        };
+        let n_i64 = n.as_int().unwrap();
 
         // eth_dos src->dst dist=n+1
         self.n_plus_1(&mut pod, eth_dos_int_to_dst, int_attestation, n_i64)?;

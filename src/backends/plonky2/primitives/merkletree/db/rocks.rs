@@ -3,10 +3,9 @@ use std::{fmt, path::Path, sync::Arc};
 use anyhow::{anyhow, Result};
 use rocksdb::{Options, TransactionDB, TransactionDBOptions};
 
-use super::DB;
 use crate::{
-    backends::plonky2::primitives::merkletree::{Leaf, Node},
-    middleware::{RawValue, EMPTY_VALUE},
+    backends::plonky2::primitives::merkletree::{self, db},
+    middleware::{Hash, RawValue, EMPTY_HASH},
 };
 
 #[derive(Clone)]
@@ -30,29 +29,27 @@ impl fmt::Debug for RocksDB {
     }
 }
 
-impl DB for RocksDB {
-    fn load_node(&self, hash: RawValue) -> Result<Node> {
-        if hash == EMPTY_VALUE {
-            return Ok(Node::Leaf(Leaf::new(hash, EMPTY_VALUE)));
+impl db::DB for RocksDB {
+    fn load_node(&self, hash: Hash) -> Result<Option<merkletree::Node>> {
+        if hash == EMPTY_HASH {
+            return Ok(Some(merkletree::Node::Intermediate(
+                merkletree::Intermediate::new(EMPTY_HASH, EMPTY_HASH),
+            )));
         }
 
-        let maybe_node_bytes = self
+        match self
             .0
-            .get(hash.to_bytes())
-            .map_err(|e| anyhow!("rocksdb transaction get failed: {e}"))?;
-
-        match maybe_node_bytes {
-            Some(bytes) => super::decode_node(&bytes),
-            None => Err(anyhow!("rocksdb: node not found")),
+            .get(RawValue::from(hash).to_bytes())
+            .map_err(|e| anyhow!("rocksdb: get failed: {e}"))?
+        {
+            None => Ok(None),
+            Some(bytes) => Ok(Some(merkletree::Node::decode(bytes.as_ref())?)),
         }
     }
 
-    fn store_node(&mut self, node: Node) -> Result<()> {
+    fn store_node(&mut self, node: merkletree::Node) -> Result<()> {
         self.0
-            .put(
-                RawValue::from(node.hash()).to_bytes(),
-                super::encode_node(&node)?,
-            )
+            .put(RawValue::from(node.hash()).to_bytes(), node.encode()?)
             .map_err(|e| anyhow!("rocksdb transaction put failed: {e}"))
     }
 }

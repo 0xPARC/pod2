@@ -61,8 +61,8 @@ macro_rules! new {
 }
 use InnerError::*;
 impl Error {
-    pub fn custom(s: String) -> Self {
-        new!(Custom(s))
+    pub fn custom(s: impl Into<String>) -> Self {
+        new!(Custom(s.into()))
     }
     pub fn plonky2_proof_fail(context: impl Into<String>, e: anyhow::Error) -> Self {
         Self::Plonky2ProofFail(context.into(), e)

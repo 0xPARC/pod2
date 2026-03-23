@@ -1,16 +1,13 @@
 //! The middleware includes the type definitions and the traits used to connect the frontend and
 //! the backend.
 
-use std::sync::Arc;
-
 use hex::ToHex;
-use itertools::Itertools;
 use strum_macros::FromRepr;
 
 mod basetypes;
 use std::{cmp::PartialEq, hash};
 
-use containers::{Array, Dictionary, Set};
+use containers::{Array, Container, Dictionary, Set};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 pub mod containers;
@@ -22,6 +19,7 @@ pub mod serialization;
 mod statement;
 use std::{any::Any, fmt};
 
+pub mod db;
 pub use basetypes::*;
 pub use custom::*;
 use dyn_clone::DynClone;
@@ -31,14 +29,10 @@ pub use pod_deserialization::*;
 use serialization::*;
 pub use statement::*;
 
-use crate::backends::plonky2::primitives::merkletree::{
-    MerkleProof, MerkleTreeStateTransitionProof,
-};
-
 // TODO: Move all value-related types to to `value.rs`
 #[derive(Clone, Debug, Serialize, Deserialize, Eq, PartialEq)]
 // TODO #[schemars(transform = serialization::transform_value_schema)]
-pub enum TypedValue {
+pub(crate) enum TypedValue {
     // Serde cares about the order of the enum variants, with untagged variants
     // appearing at the end.
     // Variants without "untagged" will be serialized as "tagged" values by
@@ -73,8 +67,6 @@ pub enum TypedValue {
     Array(Array),
     #[serde(untagged)]
     String(String),
-    #[serde(untagged)]
-    Bool(bool),
 }
 
 impl From<&str> for TypedValue {
@@ -97,7 +89,11 @@ impl From<i64> for TypedValue {
 
 impl From<bool> for TypedValue {
     fn from(b: bool) -> Self {
-        TypedValue::Bool(b)
+        if b {
+            TypedValue::Int(1)
+        } else {
+            TypedValue::Int(0)
+        }
     }
 }
 
@@ -149,70 +145,6 @@ impl From<RawValue> for TypedValue {
     }
 }
 
-impl TryFrom<&TypedValue> for i64 {
-    type Error = Error;
-    fn try_from(v: &TypedValue) -> std::result::Result<Self, Self::Error> {
-        if let TypedValue::Int(n) = v {
-            Ok(*n)
-        } else {
-            Err(Error::custom("Value not an int".to_string()))
-        }
-    }
-}
-
-impl TryFrom<&TypedValue> for String {
-    type Error = Error;
-    fn try_from(tv: &TypedValue) -> Result<Self> {
-        match tv {
-            TypedValue::String(s) => Ok(s.clone()),
-            _ => Err(Error::custom(format!(
-                "Value {} cannot be converted to a string.",
-                tv
-            ))),
-        }
-    }
-}
-
-impl TryFrom<&TypedValue> for Key {
-    type Error = Error;
-    fn try_from(tv: &TypedValue) -> Result<Self> {
-        Ok(Key::new(String::try_from(tv)?))
-    }
-}
-
-impl TryFrom<&TypedValue> for PublicKey {
-    type Error = Error;
-    fn try_from(v: &TypedValue) -> std::result::Result<Self, Self::Error> {
-        if let TypedValue::PublicKey(pk) = v {
-            Ok(*pk)
-        } else {
-            Err(Error::custom("Value not a public key".to_string()))
-        }
-    }
-}
-
-impl TryFrom<&TypedValue> for SecretKey {
-    type Error = Error;
-    fn try_from(v: &TypedValue) -> std::result::Result<Self, Self::Error> {
-        if let TypedValue::SecretKey(sk) = v {
-            Ok(sk.clone())
-        } else {
-            Err(Error::custom("Value not a secret key".to_string()))
-        }
-    }
-}
-
-impl TryFrom<&TypedValue> for Predicate {
-    type Error = Error;
-    fn try_from(v: &TypedValue) -> std::result::Result<Self, Self::Error> {
-        if let TypedValue::Predicate(p) = v {
-            Ok(p.clone())
-        } else {
-            Err(Error::custom("Value not a Predicate".to_string()))
-        }
-    }
-}
-
 impl fmt::Display for TypedValue {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -224,36 +156,54 @@ impl fmt::Display for TypedValue {
                     Err(_) => write!(f, "\"{}\"", s),
                 }
             }
-            TypedValue::Bool(b) => write!(f, "{}", b),
             TypedValue::Array(a) => {
                 write!(f, "[")?;
-                for (i, v) in a.array().iter().enumerate() {
+                for (i, r) in a.iter().enumerate() {
                     if i > 0 {
                         write!(f, ", ")?;
                     }
-                    write!(f, "{}", v)?;
+                    if i == 8 {
+                        write!(f, "…")?;
+                        break;
+                    }
+                    match r {
+                        Ok((index, value)) => write!(f, "{}: {}", index, value)?,
+                        Err(e) => write!(f, "{e}")?,
+                    }
                 }
                 write!(f, "]")
             }
             TypedValue::Dictionary(d) => {
                 write!(f, "{{ ")?;
-                let kvs: Vec<_> = d.kvs().iter().sorted_by_key(|(k, _)| k.name()).collect();
-                for (i, (k, v)) in kvs.iter().enumerate() {
+                for (i, r) in d.iter().enumerate() {
                     if i > 0 {
                         write!(f, ", ")?;
                     }
-                    write!(f, "{}: {}", k, v)?;
+                    if i == 8 {
+                        write!(f, "…")?;
+                        break;
+                    }
+                    match r {
+                        Ok((key, value)) => write!(f, "{}: {}", key, value)?,
+                        Err(e) => write!(f, "{e}")?,
+                    }
                 }
                 write!(f, " }}")
             }
             TypedValue::Set(s) => {
                 write!(f, "#[")?;
-                let values: Vec<_> = s.set().iter().sorted_by_key(|k| k.raw()).collect();
-                for (i, v) in values.iter().enumerate() {
+                for (i, r) in s.iter().enumerate() {
                     if i > 0 {
                         write!(f, ", ")?;
                     }
-                    write!(f, "{}", v)?;
+                    if i == 8 {
+                        write!(f, "…")?;
+                        break;
+                    }
+                    match r {
+                        Ok(value) => write!(f, "{}", value)?,
+                        Err(e) => write!(f, "{e}")?,
+                    }
                 }
                 write!(f, "]")
             }
@@ -272,7 +222,6 @@ impl From<&TypedValue> for RawValue {
         match v {
             TypedValue::String(s) => RawValue::from(hash_str(s)),
             TypedValue::Int(v) => RawValue::from(*v),
-            TypedValue::Bool(b) => RawValue::from(*b as i64),
             TypedValue::Dictionary(d) => RawValue::from(d.commitment()),
             TypedValue::Set(s) => RawValue::from(s.commitment()),
             TypedValue::Array(a) => RawValue::from(a.commitment()),
@@ -405,9 +354,8 @@ impl JsonSchema for TypedValue {
 
 #[derive(Clone, Debug)]
 pub struct Value {
-    // The `TypedValue` is under `Arc` so that cloning a `Value` is cheap.
-    typed: Arc<TypedValue>,
-    raw: RawValue,
+    pub(crate) typed: TypedValue,
+    pub(crate) raw: RawValue,
 }
 
 // Values are serialized as their TypedValue.
@@ -441,6 +389,55 @@ impl JsonSchema for Value {
     }
 }
 
+/// Dual of TypedValue that is not recursive: for container types no entry only the commitment
+/// (merkle tree root of underlying data) is available.  Used for byte serialization for
+/// persistent storage.
+#[derive(Serialize, Deserialize)]
+enum TypedValueNoRec {
+    Raw(RawValue),
+    Int(i64),
+    PublicKey(PublicKey),
+    SecretKey(SecretKey),
+    Predicate(Predicate),
+    Set(Hash),
+    Dictionary(Hash),
+    Array(Hash),
+    String(String),
+}
+
+// NOTE: byte serialization is using json.  Using a byte-native serialization would improve
+// performance and storage usage.
+impl Value {
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let v = match &self.typed {
+            TypedValue::Int(v) => TypedValueNoRec::Int(*v),
+            TypedValue::Raw(v) => TypedValueNoRec::Raw(*v),
+            TypedValue::PublicKey(v) => TypedValueNoRec::PublicKey(*v),
+            TypedValue::SecretKey(v) => TypedValueNoRec::SecretKey(v.clone()),
+            TypedValue::Predicate(v) => TypedValueNoRec::Predicate(v.clone()),
+            TypedValue::Set(v) => TypedValueNoRec::Set(v.commitment()),
+            TypedValue::Dictionary(v) => TypedValueNoRec::Dictionary(v.commitment()),
+            TypedValue::Array(v) => TypedValueNoRec::Array(v.commitment()),
+            TypedValue::String(v) => TypedValueNoRec::String(v.clone()),
+        };
+        serde_json::to_vec(&v).expect("json serialization succeeds")
+    }
+    pub fn from_bytes(bytes: &[u8], db: Box<dyn db::DB>) -> Result<Self> {
+        let v: TypedValueNoRec = serde_json::from_slice(bytes)?;
+        Ok(match v {
+            TypedValueNoRec::Int(v) => Value::from(v),
+            TypedValueNoRec::Raw(v) => Value::from(v),
+            TypedValueNoRec::PublicKey(v) => Value::from(v),
+            TypedValueNoRec::SecretKey(v) => Value::from(v),
+            TypedValueNoRec::Predicate(v) => Value::from(v),
+            TypedValueNoRec::Set(v) => Value::from(Set::from_db(v, db)?),
+            TypedValueNoRec::Dictionary(v) => Value::from(Dictionary::from_db(v, db)?),
+            TypedValueNoRec::Array(v) => Value::from(Array::from_db(v, db)?),
+            TypedValueNoRec::String(v) => Value::from(v),
+        })
+    }
+}
+
 impl PartialEq for Value {
     fn eq(&self, other: &Self) -> bool {
         self.raw == other.raw
@@ -462,106 +459,110 @@ impl fmt::Display for Value {
 }
 
 impl Value {
-    pub fn new(value: TypedValue) -> Self {
+    pub(crate) fn new(value: TypedValue) -> Self {
         let raw_value = RawValue::from(&value);
         Self {
-            typed: Arc::new(value),
+            typed: value,
             raw: raw_value,
         }
     }
 
-    pub fn typed(&self) -> &TypedValue {
-        &self.typed
-    }
     pub fn raw(&self) -> RawValue {
         self.raw
     }
-    /// Determines Merkle existence proof for `key` in `self` (if applicable).
-    pub(crate) fn prove_existence<'a>(
-        &'a self,
-        key: &'a Value,
-    ) -> Result<(&'a Value, MerkleProof)> {
-        match &self.typed() {
-            TypedValue::Array(a) => match key.typed() {
-                TypedValue::Int(i) if i >= &0 => a.prove((*i) as usize),
-                _ => Err(Error::custom(format!(
-                    "Invalid key {} for container {}.",
-                    key, self
-                )))?,
+    /// Returns true if the typed value is RawValue, which means it's a generic value with no type
+    /// information and no extra value data.
+    pub fn is_raw(&self) -> bool {
+        matches!(self.typed, TypedValue::Raw(_))
+    }
+    pub fn as_raw(&self) -> RawValue {
+        self.raw
+    }
+    pub fn as_int(&self) -> Option<i64> {
+        match self.typed {
+            TypedValue::Int(i) => Some(i),
+            _ => None,
+        }
+    }
+    pub fn as_public_key(&self) -> Option<PublicKey> {
+        match &self.typed {
+            TypedValue::PublicKey(pk) => Some(*pk),
+            _ => None,
+        }
+    }
+    pub fn as_secret_key(&self) -> Option<SecretKey> {
+        match &self.typed {
+            TypedValue::SecretKey(sk) => Some(sk.clone()),
+            _ => None,
+        }
+    }
+    pub fn as_predicate(&self) -> Option<Predicate> {
+        match &self.typed {
+            TypedValue::Predicate(p) => Some(p.clone()),
+            _ => None,
+        }
+    }
+    pub fn as_set(&self) -> Option<Set> {
+        match &self.typed {
+            TypedValue::Set(s) => Some(s.clone()),
+            TypedValue::Dictionary(d) => Some(Set {
+                inner: d.inner.clone(),
+            }),
+            TypedValue::Array(a) => Some(Set {
+                inner: a.inner.clone(),
+            }),
+            _ => None,
+        }
+    }
+    pub fn as_container(&self) -> Option<Container> {
+        match &self.typed {
+            TypedValue::Set(s) => Some(s.inner.clone()),
+            TypedValue::Dictionary(d) => Some(d.inner.clone()),
+            TypedValue::Array(a) => Some(a.inner.clone()),
+            _ => None,
+        }
+    }
+    pub fn as_dictionary(&self) -> Option<Dictionary> {
+        match &self.typed {
+            TypedValue::Set(s) => Some(Dictionary {
+                inner: s.inner.clone(),
+            }),
+            TypedValue::Dictionary(d) => Some(d.clone()),
+            TypedValue::Array(a) => Some(Dictionary {
+                inner: a.inner.clone(),
+            }),
+            _ => None,
+        }
+    }
+    pub fn as_array(&self) -> Option<Array> {
+        match &self.typed {
+            TypedValue::Set(s) => Some(Array {
+                inner: s.inner.clone(),
+            }),
+            TypedValue::Dictionary(d) => Some(Array {
+                inner: d.inner.clone(),
+            }),
+            TypedValue::Array(a) => Some(a.clone()),
+            _ => None,
+        }
+    }
+    pub fn as_str(&self) -> Option<&str> {
+        match &self.typed {
+            TypedValue::String(s) => Some(s.as_str()),
+            _ => None,
+        }
+    }
+    pub fn as_string(&self) -> Option<String> {
+        self.as_str().map(|s| s.to_string())
+    }
+    pub fn as_bool(&self) -> Option<bool> {
+        match self.typed {
+            TypedValue::Int(i) => match i {
+                0 => Some(false),
+                1 => Some(true),
+                _ => None,
             },
-            TypedValue::Dictionary(d) => d.prove(&key.typed().try_into()?),
-            TypedValue::Set(s) => Ok((key, s.prove(key)?)),
-            _ => Err(Error::custom(format!(
-                "Invalid container value {}",
-                self.typed()
-            ))),
-        }
-    }
-    /// Determines Merkle non-existence proof for `key` in `self` (if applicable).
-    pub(crate) fn prove_nonexistence<'a>(&'a self, key: &'a Value) -> Result<MerkleProof> {
-        match &self.typed() {
-            TypedValue::Array(_) => Err(Error::custom(
-                "Arrays do not support `NotContains` operation.".to_string(),
-            )),
-            TypedValue::Dictionary(d) => d.prove_nonexistence(&key.typed().try_into()?),
-            TypedValue::Set(s) => s.prove_nonexistence(key),
-            _ => Err(Error::custom(format!(
-                "Invalid container value {}",
-                self.typed()
-            ))),
-        }
-    }
-    /// Returns a Merkle state transition proof for inserting a
-    /// key-value pair (if applicable).
-    pub(crate) fn prove_insertion(
-        &self,
-        key: &Value,
-        value: &Value,
-    ) -> Result<MerkleTreeStateTransitionProof> {
-        let container = self.typed().clone();
-        match container {
-            TypedValue::Dictionary(mut d) => d.insert(&key.typed().try_into()?, value),
-            TypedValue::Set(mut s) => s.insert(value),
-            _ => Err(Error::custom(format!(
-                "Invalid container value {}",
-                self.typed()
-            ))),
-        }
-    }
-    /// Returns a Merkle state transition proof for updating a
-    /// key-value pair (if applicable).
-    pub(crate) fn prove_update(
-        &self,
-        key: &Value,
-        value: &Value,
-    ) -> Result<MerkleTreeStateTransitionProof> {
-        let container = self.typed().clone();
-        match container {
-            TypedValue::Array(mut a) => match key.typed() {
-                TypedValue::Int(i) if i >= &0 => a.update(*i as usize, value),
-                _ => Err(Error::custom(format!(
-                    "Invalid key {} for container {}.",
-                    key, self
-                )))?,
-            },
-            TypedValue::Dictionary(mut d) => d.update(&key.typed().try_into()?, value),
-            _ => Err(Error::custom(format!(
-                "Invalid container value {} for update op",
-                self.typed()
-            ))),
-        }
-    }
-    /// Returns a Merkle state transition proof for deleting a
-    /// key (if applicable).
-    pub(crate) fn prove_deletion(&self, key: &Value) -> Result<MerkleTreeStateTransitionProof> {
-        let container = self.typed().clone();
-        match container {
-            TypedValue::Dictionary(mut d) => d.delete(&key.typed().try_into()?),
-            TypedValue::Set(mut s) => s.delete(key),
-            _ => Err(Error::custom(format!(
-                "Invalid container value {}",
-                self.typed()
-            ))),
+            _ => None,
         }
     }
 }

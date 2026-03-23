@@ -7,17 +7,14 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     backends::plonky2::primitives::{
-        ec::{
-            curve::{Point as PublicKey, GROUP_ORDER},
-            schnorr::{SecretKey, Signature},
-        },
+        ec::{curve::GROUP_ORDER, schnorr::Signature},
         merkletree::{MerkleProof, MerkleTree, MerkleTreeOp, MerkleTreeStateTransitionProof},
     },
     middleware::{
         hash_values, AnchoredKey, CustomPredicate, CustomPredicateRef, Error, Hash, Key,
         MiddlewareInnerError, NativePredicate, Params, Predicate, PredicateOrWildcard, Result,
-        Statement, StatementArg, StatementTmpl, StatementTmplArg, ToFields, TypedValue, Value,
-        ValueRef, Wildcard, F,
+        Statement, StatementArg, StatementTmpl, StatementTmplArg, ToFields, Value, ValueRef,
+        Wildcard, F,
     },
 };
 
@@ -241,6 +238,10 @@ pub(crate) fn hash_op(x: Value, y: Value) -> Value {
     Value::from(hash_values(&[x, y]))
 }
 
+fn ok_or_type_err<T>(o: Option<T>, v: &Value, typ: &'static str) -> Result<T> {
+    o.ok_or_else(|| Error::custom(format!("{v} type is not {typ}")))
+}
+
 impl Operation {
     pub fn op_type(&self) -> OperationType {
         type OT = OperationType;
@@ -404,20 +405,20 @@ impl Operation {
         v3: &Value,
         f: impl FnOnce(i64, i64) -> i64,
     ) -> Result<bool> {
-        let i1: i64 = v1.typed().try_into()?;
-        let i2: i64 = v2.typed().try_into()?;
-        let i3: i64 = v3.typed().try_into()?;
+        let i1 = ok_or_type_err(v1.as_int(), v1, "Int")?;
+        let i2 = ok_or_type_err(v2.as_int(), v2, "Int")?;
+        let i3 = ok_or_type_err(v3.as_int(), v3, "Int")?;
         Ok(i1 == f(i2, i3))
     }
 
     pub(crate) fn check_public_key(v1: &Value, v2: &Value) -> Result<bool> {
-        let pk: PublicKey = v1.typed().try_into()?;
-        let sk: SecretKey = v2.typed().try_into()?;
+        let pk = ok_or_type_err(v1.as_public_key(), v1, "PublicKey")?;
+        let sk = ok_or_type_err(v2.as_secret_key(), v2, "SecretKey")?;
         Ok(sk.0 < *GROUP_ORDER && pk == sk.public_key())
     }
 
     pub(crate) fn check_signed_by(msg: &Value, pk: &Value, sig: &Signature) -> Result<bool> {
-        let pk: PublicKey = pk.typed().try_into()?;
+        let pk = ok_or_type_err(pk.as_public_key(), pk, "PublicKey")?;
         Ok(sig.verify(pk, msg.raw()))
     }
 
@@ -428,8 +429,8 @@ impl Operation {
         let val = |v, s| value_from_op(s, v).ok_or_else(deduction_err);
         let int_val = |v, s| {
             let v_op = value_from_op(s, v).ok_or_else(deduction_err)?;
-            match v_op.typed() {
-                &TypedValue::Int(i) => Ok(i),
+            match v_op.as_int() {
+                Some(i) => Ok(i),
                 _ => Err(deduction_err()),
             }
         };
@@ -494,8 +495,7 @@ impl Operation {
                     && pf.op_value == value.raw())
                 .then_some(())
                 .ok_or(Error::custom(
-                    "The provided Merkle tree state transition proof does not match the claim."
-                        .into(),
+                    "The provided Merkle tree state transition proof does not match the claim.",
                 ))?;
                 MerkleTree::verify_state_transition(pf)?;
                 true
@@ -515,8 +515,7 @@ impl Operation {
                     && pf.op_value == value.raw())
                 .then_some(())
                 .ok_or(Error::custom(
-                    "The provided Merkle tree state transition proof does not match the claim."
-                        .into(),
+                    "The provided Merkle tree state transition proof does not match the claim.",
                 ))?;
                 MerkleTree::verify_state_transition(pf)?;
                 true
@@ -534,8 +533,7 @@ impl Operation {
                     && pf.op_key == key.raw())
                 .then_some(())
                 .ok_or(Error::custom(
-                    "The provided Merkle tree state transition proof does not match the claim."
-                        .into(),
+                    "The provided Merkle tree state transition proof does not match the claim.",
                 ))?;
                 MerkleTree::verify_state_transition(pf)?;
                 true
@@ -789,9 +787,8 @@ impl fmt::Display for Operation {
 
 pub(crate) fn root_key_to_ak(root: &Value, key: &Value) -> Option<AnchoredKey> {
     let root_hash = Hash::from(root.raw());
-    Key::try_from(key.typed())
-        .map(|key| AnchoredKey::new(root_hash, key))
-        .ok()
+    key.as_str()
+        .map(|s| AnchoredKey::new(root_hash, Key::from(s)))
 }
 
 /// Returns the value associated with `output_ref`.

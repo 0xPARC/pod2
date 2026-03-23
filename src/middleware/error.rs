@@ -72,6 +72,10 @@ pub enum Error {
     },
     #[error(transparent)]
     Tree(#[from] crate::backends::plonky2::primitives::merkletree::error::TreeError),
+    #[error(transparent)]
+    Json(#[from] serde_json::Error),
+    #[error("database error: {0}")]
+    Database(anyhow::Error),
 }
 
 impl Debug for Error {
@@ -164,7 +168,7 @@ impl Error {
     pub(crate) fn unsatisfied_custom_predicate_disjunction(pred: CustomPredicate) -> Self {
         new!(UnsatisfiedCustomPredicateDisjunction(pred))
     }
-    pub(crate) fn custom(s: String) -> Self {
-        new!(Custom(s))
+    pub(crate) fn custom(s: impl Into<String>) -> Self {
+        new!(Custom(s.into()))
     }
 }

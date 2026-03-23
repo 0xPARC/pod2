@@ -131,7 +131,7 @@ impl CustomPredicateBatch {
 
 impl PrettyPrint for Value {
     fn fmt_podlang_with_indent(&self, w: &mut dyn Write, _indent: usize) -> std::fmt::Result {
-        write!(w, "{}", self.typed())
+        write!(w, "{}", self.typed)
     }
 }
 

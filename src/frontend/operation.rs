@@ -4,7 +4,7 @@ use crate::{
     frontend::SignedDict,
     middleware::{
         containers::Dictionary, root_key_to_ak, CustomPredicateRef, NativeOperation, OperationAux,
-        OperationType, Signature, Statement, TypedValue, Value, ValueRef,
+        OperationType, Signature, Statement, Value, ValueRef,
     },
 };
 
@@ -39,10 +39,9 @@ impl OperationArg {
     }
 
     pub(crate) fn int_value_and_ref(&self) -> Option<(ValueRef, i64)> {
-        self.value_and_ref().and_then(|(r, v)| match v.typed() {
-            &TypedValue::Int(i) => Some((r, i)),
-            _ => None,
-        })
+        self.value_and_ref()
+            .and_then(|(r, v)| v.as_int().map(|i| Some((r, i))))
+            .flatten()
     }
 }
 
@@ -71,7 +70,7 @@ impl From<&Value> for OperationArg {
 impl From<(&Dictionary, &str)> for OperationArg {
     fn from((dict, key): (&Dictionary, &str)) -> Self {
         // TODO: Use TryFrom
-        let value = dict.get(&key.into()).cloned().unwrap();
+        let value = dict.get(&key.into()).unwrap().unwrap();
         Self::Statement(Statement::Contains(
             dict.clone().into(),
             key.into(),
