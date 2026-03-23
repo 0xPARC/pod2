@@ -157,7 +157,9 @@ fn resolve_local_predicate(
 
 /// Lower a literal value from AST to middleware Value.
 ///
-/// This is a pure conversion that cannot fail.
+/// This is a pure conversion that cannot fail for context-free literals.
+/// Panics on ExternalPredicateHash — use `lower_literal_with_context` when
+/// external predicate references may appear (e.g. inside containers).
 pub fn lower_literal(lit: &LiteralValue) -> Value {
     match lit {
         LiteralValue::Int(i) => Value::from(i.value),
@@ -190,12 +192,84 @@ pub fn lower_literal(lit: &LiteralValue) -> Value {
             let dict = containers::Dictionary::new(pairs);
             Value::from(dict)
         }
+        LiteralValue::NativePredicateHash(id) => {
+            let np = NativePredicate::from_str(&id.name).expect("validated native predicate");
+            Value::from(Predicate::Native(np).hash())
+        }
+        LiteralValue::ExternalPredicateHash { .. } => {
+            unreachable!(
+                "ExternalPredicateHash must be lowered with context via lower_literal_with_context"
+            )
+        }
+    }
+}
+
+/// Lower a literal value, resolving external predicate references using the symbol table.
+pub fn lower_literal_with_context(
+    lit: &LiteralValue,
+    symbols: &SymbolTable,
+    context: &ResolutionContext,
+) -> Result<Value, LoweringError> {
+    match lit {
+        LiteralValue::ExternalPredicateHash { module, predicate } => {
+            let pred_or_wc = resolve_predicate_ref(
+                &PredicateRef::Qualified {
+                    module: module.clone(),
+                    predicate: predicate.clone(),
+                },
+                symbols,
+                context,
+            )
+            .ok_or_else(|| LoweringError::PredicateNotFound {
+                name: format!("{}::{}", module.name, predicate.name),
+            })?;
+            let pred = match pred_or_wc {
+                crate::frontend::PredicateOrWildcard::Predicate(p) => p,
+                crate::frontend::PredicateOrWildcard::Wildcard(_) => {
+                    return Err(LoweringError::PredicateNotFound {
+                        name: format!("{}::{}", module.name, predicate.name),
+                    });
+                }
+            };
+            Ok(Value::from(pred.hash()))
+        }
+        LiteralValue::Array(a) => {
+            let elements: Vec<_> = a
+                .elements
+                .iter()
+                .map(|e| lower_literal_with_context(e, symbols, context))
+                .collect::<Result<_, _>>()?;
+            Ok(Value::from(containers::Array::new(elements)))
+        }
+        LiteralValue::Set(s) => {
+            let elements: std::collections::HashSet<_> = s
+                .elements
+                .iter()
+                .map(|e| lower_literal_with_context(e, symbols, context))
+                .collect::<Result<_, _>>()?;
+            Ok(Value::from(containers::Set::new(elements)))
+        }
+        LiteralValue::Dict(d) => {
+            let pairs: HashMap<_, _> = d
+                .pairs
+                .iter()
+                .map(|pair| {
+                    let key = Key::from(pair.key.value.as_str());
+                    let value = lower_literal_with_context(&pair.value, symbols, context)?;
+                    Ok((key, value))
+                })
+                .collect::<Result<_, LoweringError>>()?;
+            Ok(Value::from(containers::Dictionary::new(pairs)))
+        }
+        // All other variants are context-free
+        other => Ok(lower_literal(other)),
     }
 }
 
 /// Lower a statement argument from AST to BuilderArg.
 ///
-/// This is a pure conversion that cannot fail.
+/// Context-free for most arg types. Panics on ExternalPredicateHash inside literals —
+/// use `lower_statement_arg_with_context` when external predicate references may appear.
 pub fn lower_statement_arg(arg: &StatementTmplArg) -> BuilderArg {
     match arg {
         StatementTmplArg::Literal(lit) => {
@@ -210,6 +284,25 @@ pub fn lower_statement_arg(arg: &StatementTmplArg) -> BuilderArg {
             };
             BuilderArg::Key(ak.root.name.clone(), key_str)
         }
+        StatementTmplArg::SelfPredicateHash(id) => BuilderArg::SelfPredicateHash(id.name.clone()),
+    }
+}
+
+/// Lower a statement argument, resolving external predicate references using the symbol table.
+pub fn lower_statement_arg_with_context(
+    arg: &StatementTmplArg,
+    symbols: &SymbolTable,
+    context: &ResolutionContext,
+) -> Result<BuilderArg, LoweringError> {
+    match arg {
+        StatementTmplArg::Literal(lit) => {
+            let value = lower_literal_with_context(lit, symbols, context)?;
+            Ok(BuilderArg::Literal(value))
+        }
+        StatementTmplArg::SelfPredicateHash(id) => {
+            Ok(BuilderArg::SelfPredicateHash(id.name.clone()))
+        }
+        other => Ok(lower_statement_arg(other)),
     }
 }
 
@@ -324,7 +417,7 @@ impl<'a> Lowerer<'a> {
         // Create a builder with the resolved predicate and desugar
         let mut builder = StatementTmplBuilder::new(predicate.clone());
         for arg in &stmt.args {
-            let builder_arg = lower_statement_arg(arg);
+            let builder_arg = lower_statement_arg_with_context(arg, symbols, &context)?;
             builder = builder.arg(builder_arg);
         }
         let desugared = builder.desugar();
@@ -402,7 +495,7 @@ impl<'a> Lowerer<'a> {
                         names.push(ak.root.name.clone());
                     }
                 }
-                StatementTmplArg::Literal(_) => {}
+                StatementTmplArg::Literal(_) | StatementTmplArg::SelfPredicateHash(_) => {}
             }
         }
     }

@@ -11,7 +11,9 @@ use crate::{
     lang::{
         error::BatchingError,
         frontend_ast::{ConjunctionType, CustomPredicateDef},
-        frontend_ast_lower::{lower_statement_arg, resolve_predicate_ref, ResolutionContext},
+        frontend_ast_lower::{
+            lower_statement_arg_with_context, resolve_predicate_ref, ResolutionContext,
+        },
         frontend_ast_split::{SplitChainInfo, SplitResult},
         frontend_ast_validate::SymbolTable,
     },
@@ -374,7 +376,13 @@ fn build_statement_with_resolved_refs(
     let mut builder = StatementTmplBuilder::new(pred_or_wc);
 
     for arg in &stmt.args {
-        builder = builder.arg(lower_statement_arg(arg));
+        let builder_arg =
+            lower_statement_arg_with_context(arg, symbols, &context).map_err(|e| {
+                BatchingError::Internal {
+                    message: format!("Failed to lower argument: {}", e),
+                }
+            })?;
+        builder = builder.arg(builder_arg);
     }
 
     Ok(builder)
@@ -668,6 +676,112 @@ mod tests {
         assert_eq!(
             *pred.statements[1].pred_or_wc(),
             PredicateOrWildcard::Predicate(Predicate::Custom(ordering_ref))
+        );
+    }
+
+    #[test]
+    fn test_self_predicate_hash_podlang() {
+        let params = Params::default();
+        let module = load_module(
+            r#"
+            pred_A(x, y) = AND(
+                Equal(x, y)
+            )
+
+            pred_B(x) = AND(
+                Equal(x, @self_predicate(pred_A))
+            )
+            "#,
+            "test",
+            &params,
+            &[],
+        )
+        .unwrap();
+
+        let batch = &module.batch;
+
+        // pred_B is at index 1, its template should have SelfPredicateHash(0) resolved
+        // to a Literal containing pred_A's hash after normalization
+        let pred_a_ref = CustomPredicateRef::new(batch.clone(), 0);
+        let pred_a_hash = crate::middleware::Value::from(Predicate::Custom(pred_a_ref).hash());
+
+        // Use normalized_predicate to resolve
+        let pred_b_ref = CustomPredicateRef::new(batch.clone(), 1);
+        let normalized = pred_b_ref.normalized_predicate();
+        assert_eq!(
+            normalized.statements[0].args[1],
+            crate::middleware::StatementTmplArg::Literal(pred_a_hash)
+        );
+    }
+
+    #[test]
+    fn test_self_predicate_hash_podlang_cyclic() {
+        let params = Params::default();
+        let module = load_module(
+            r#"
+            pred_A(x) = AND(
+                Equal(x, @self_predicate(pred_B))
+            )
+
+            pred_B(x) = AND(
+                Equal(x, @self_predicate(pred_A))
+            )
+            "#,
+            "test",
+            &params,
+            &[],
+        )
+        .unwrap();
+
+        let batch = &module.batch;
+        let pred_a_ref = CustomPredicateRef::new(batch.clone(), 0);
+        let pred_b_ref = CustomPredicateRef::new(batch.clone(), 1);
+        let pred_a_hash =
+            crate::middleware::Value::from(Predicate::Custom(pred_a_ref.clone()).hash());
+        let pred_b_hash =
+            crate::middleware::Value::from(Predicate::Custom(pred_b_ref.clone()).hash());
+
+        // pred_A's normalized form should contain pred_B's hash
+        let norm_a = pred_a_ref.normalized_predicate();
+        assert_eq!(
+            norm_a.statements[0].args[1],
+            crate::middleware::StatementTmplArg::Literal(pred_b_hash)
+        );
+
+        // pred_B's normalized form should contain pred_A's hash
+        let norm_b = pred_b_ref.normalized_predicate();
+        assert_eq!(
+            norm_b.statements[0].args[1],
+            crate::middleware::StatementTmplArg::Literal(pred_a_hash)
+        );
+    }
+
+    #[test]
+    fn test_native_predicate_hash_podlang() {
+        let params = Params::default();
+        let module = load_module(
+            r#"
+            pred_C(x) = AND(
+                Equal(x, @native_predicate(Equal))
+            )
+            "#,
+            "test",
+            &params,
+            &[],
+        )
+        .unwrap();
+
+        let batch = &module.batch;
+        let pred_c_ref = CustomPredicateRef::new(batch.clone(), 0);
+        let pred_c = pred_c_ref.predicate();
+
+        // The second arg should be a Literal containing Equal's predicate hash
+        let equal_hash = crate::middleware::Value::from(
+            Predicate::Native(crate::middleware::NativePredicate::Equal).hash(),
+        );
+        assert_eq!(
+            pred_c.statements[0].args[1],
+            crate::middleware::StatementTmplArg::Literal(equal_hash)
         );
     }
 }

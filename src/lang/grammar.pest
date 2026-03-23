@@ -49,7 +49,14 @@ custom_predicate_def = {
 
 statement_list = { statement+ }
 
-statement_arg = { literal_value | anchored_key | identifier }
+// Predicate hash literals: resolve to the predicate's identity hash as a value.
+// @native_predicate and @external_predicate are in literal_value (usable in containers).
+// @self_predicate is only in statement_arg (not in containers — deferred resolution).
+predicate_hash_native = { "@native_predicate" ~ "(" ~ identifier ~ ")" }
+predicate_hash_external = { "@external_predicate" ~ "(" ~ identifier ~ "," ~ identifier ~ ")" }
+predicate_hash_self = { "@self_predicate" ~ "(" ~ identifier ~ ")" }
+
+statement_arg = { predicate_hash_self | literal_value | anchored_key | identifier }
 statement_arg_list = { statement_arg ~ ("," ~ statement_arg)* }
 
 // Predicate reference: either qualified (module::predicate) or local (predicate)
@@ -74,6 +81,8 @@ literal_value = {
     literal_bool |
     literal_raw |
     literal_string |
+    predicate_hash_native |
+    predicate_hash_external |
     literal_int
 }
 
