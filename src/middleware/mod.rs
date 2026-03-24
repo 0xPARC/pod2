@@ -815,7 +815,7 @@ impl Default for Params {
             max_input_pods_public_statements: 8,
             max_statements: 48,
             max_public_statements: 8,
-            max_operation_args: 5,
+            max_operation_args: BASE_PARAMS.max_statement_args + 1,
             max_custom_predicates: 8,
             max_custom_predicate_verifications: 8,
             max_custom_predicate_wildcards: 8,

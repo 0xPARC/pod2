@@ -2042,7 +2042,8 @@ mod tests {
         frontend::{self, literal, CustomPredicateBatchBuilder, StatementTmplBuilder},
         middleware::{
             hash_values, AnchoredKey, Hash, Key, OperationType, Predicate, PredicateOrWildcard,
-            RawValue, StatementArg, StatementTmpl, StatementTmplArg, Wildcard, EMPTY_VALUE,
+            RawValue, StatementArg, StatementTmpl, StatementTmplArg, ValueRef, Wildcard,
+            EMPTY_VALUE,
         },
     };
 
@@ -3241,6 +3242,10 @@ mod tests {
         Ok(data.verify(proof.clone())?)
     }
 
+    fn value_ref(v: impl Into<ValueRef>) -> ValueRef {
+        v.into()
+    }
+
     // TODO: Add negative tests
     #[test]
     fn test_custom_operation_verify_gadget_positive() -> frontend::Result<()> {
@@ -3275,7 +3280,7 @@ mod tests {
         let args = vec![Value::from(dict), Value::from(1234)];
         let expected_st = Statement::Custom(
             custom_predicate.clone(),
-            vec![args[0].clone(), Value::from(0)],
+            vec![value_ref(args[0].clone()), value_ref(0)],
         );
 
         helper_custom_operation_verify_gadget(
@@ -3296,7 +3301,7 @@ mod tests {
         let args = vec![Value::from(dict), Value::from(0)];
         let expected_st = Statement::Custom(
             custom_predicate.clone(),
-            vec![args[0].clone(), Value::from(0)],
+            vec![value_ref(args[0].clone()), value_ref(0)],
         );
 
         helper_custom_operation_verify_gadget(
@@ -3317,7 +3322,7 @@ mod tests {
         let args = vec![Value::from(dict), Value::from(1234)];
         let expected_st = Statement::Custom(
             custom_predicate.clone(),
-            vec![args[0].clone(), Value::from(0)],
+            vec![value_ref(args[0].clone()), value_ref(0)],
         );
 
         helper_custom_operation_verify_gadget(
@@ -3369,7 +3374,7 @@ mod tests {
         let args = vec![Value::from(dict), Value::from(secret_dict)];
         let expected_st = Statement::Custom(
             custom_predicate.clone(),
-            vec![args[0].clone(), Value::from(0)],
+            vec![value_ref(args[0].clone()), value_ref(0)],
         );
 
         helper_custom_operation_verify_gadget(

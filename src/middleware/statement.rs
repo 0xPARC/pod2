@@ -311,7 +311,7 @@ pub enum Statement {
         /* old_root */ ValueRef,
         /*   key    */ ValueRef,
     ),
-    Custom(CustomPredicateRef, Vec<Value>),
+    Custom(CustomPredicateRef, Vec<ValueRef>),
     Intro(IntroPredicateRef, Vec<Value>),
 }
 
@@ -407,7 +407,7 @@ impl Statement {
                 vec![ak1.into(), ak2.into(), ak3.into(), ak4.into()]
             }
             Self::ContainerDelete(ak1, ak2, ak3) => vec![ak1.into(), ak2.into(), ak3.into()],
-            Self::Custom(_, args) => Vec::from_iter(args.into_iter().map(Literal)),
+            Self::Custom(_, args) => Vec::from_iter(args.into_iter().map(StatementArg::from)),
             Self::Intro(_, args) => Vec::from_iter(args.into_iter().map(Literal)),
         }
     }
@@ -478,14 +478,11 @@ impl Statement {
             }
             (BatchSelf(_), _) => unreachable!(),
             (Custom(cpr), _) => {
-                let v_args: Result<Vec<Value>> = args
+                let v_args = args
                     .iter()
-                    .map(|x| match x {
-                        StatementArg::Literal(v) => Ok(v.clone()),
-                        _ => Err(Error::incorrect_statements_args()),
-                    })
-                    .collect();
-                Self::Custom(cpr, v_args?)
+                    .map(|x| Ok(x.try_into()?))
+                    .collect::<Result<Vec<ValueRef>>>()?;
+                Self::Custom(cpr, v_args)
             }
             (Intro(ir), _) => {
                 let v_args: Result<Vec<Value>> = args

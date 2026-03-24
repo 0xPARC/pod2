@@ -1,6 +1,6 @@
 use std::{fmt, iter};
 
-use itertools::Itertools;
+use itertools::{zip_eq, Itertools};
 use log::error;
 use plonky2::field::types::Field;
 use serde::{Deserialize, Serialize};
@@ -14,7 +14,7 @@ use crate::{
         hash_values, AnchoredKey, CustomPredicate, CustomPredicateRef, Error, Hash, Key,
         MiddlewareInnerError, NativePredicate, Params, Predicate, PredicateOrWildcard, Result,
         Statement, StatementArg, StatementTmpl, StatementTmplArg, ToFields, Value, ValueRef,
-        Wildcard, F,
+        Wildcard, BASE_PARAMS, F,
     },
 };
 
@@ -89,6 +89,7 @@ pub enum NativeOperation {
     ContainerInsertFromEntries = 16,
     ContainerUpdateFromEntries = 17,
     ContainerDeleteFromEntries = 18,
+    ReplaceValueByEntry = 19,
 
     // Syntactic sugar operations.  These operations are not supported by the backend.  The
     // frontend compiler is responsible of translating these operations into the operations above.
@@ -164,6 +165,7 @@ impl OperationType {
                 NativeOperation::ContainerDeleteFromEntries => {
                     Some(Predicate::Native(NativePredicate::ContainerDelete))
                 }
+                NativeOperation::ReplaceValueByEntry => None,
                 no => unreachable!("Unexpected syntactic sugar op {:?}", no),
             },
             OperationType::Custom(cpr) => Some(Predicate::Custom(cpr.clone())),
@@ -219,6 +221,10 @@ pub enum Operation {
         /*  key    */ Statement,
         /*  proof  */ MerkleTreeStateTransitionProof,
     ),
+    ReplaceValueByEntry(
+        /* Contains/None len=max_statement_args */ Vec<Statement>,
+        /* to copy */ Statement,
+    ),
     Custom(CustomPredicateRef, Vec<Statement>),
 }
 
@@ -270,6 +276,7 @@ impl Operation {
                 OT::Native(ContainerUpdateFromEntries)
             }
             Self::ContainerDeleteFromEntries(_, _, _, _) => OT::Native(ContainerDeleteFromEntries),
+            Self::ReplaceValueByEntry(_, _) => OT::Native(ReplaceValueByEntry),
             Self::Custom(cpr, _) => OT::Custom(cpr.clone()),
         }
     }
@@ -295,6 +302,11 @@ impl Operation {
             Self::ContainerInsertFromEntries(s1, s2, s3, s4, _pf) => vec![s1, s2, s3, s4],
             Self::ContainerUpdateFromEntries(s1, s2, s3, s4, _pf) => vec![s1, s2, s3, s4],
             Self::ContainerDeleteFromEntries(s1, s2, s3, _pf) => vec![s1, s2, s3],
+            Self::ReplaceValueByEntry(args, s) => {
+                let mut sts = args;
+                sts.push(s);
+                sts
+            }
             Self::Custom(_, args) => args,
         }
     }
@@ -377,6 +389,18 @@ impl Operation {
                     &[s1, s2, s3],
                     OA::MerkleTreeStateTransitionProof(pf),
                 ) => Self::ContainerDeleteFromEntries(s1.clone(), s2.clone(), s3.clone(), pf),
+                (NO::ReplaceValueByEntry, args, OA::None) => {
+                    let mut args = args.to_vec();
+                    if args.len() != BASE_PARAMS.max_statement_args + 1 {
+                        return Err(Error::custom(format!(
+                            "ReplaceValueByEntry requires exactly {} args byt {} were found",
+                            BASE_PARAMS.max_statement_args + 1,
+                            args.len()
+                        )));
+                    }
+                    let st = args.pop().expect("valid vec len");
+                    Self::ReplaceValueByEntry(args, st)
+                }
                 _ => Err(Error::custom(format!(
                     "Ill-formed operation {:?} with {} arguments {:?} and aux {:?}.",
                     op_code,
@@ -541,7 +565,10 @@ impl Operation {
             (Self::Custom(CustomPredicateRef { batch, index }, args), Custom(cpr, s_args))
                 if batch == &cpr.batch && index == &cpr.index =>
             {
-                check_custom_pred(params, cpr, args, s_args).map(|_| true)?
+                let resolved_s_args = zip_eq(s_args.iter(), args.iter())
+                    .map(|(arg_v, arg_s)| Ok(val(arg_v, arg_s)?))
+                    .collect::<Result<Vec<Value>>>()?;
+                check_custom_pred(params, cpr, args, &resolved_s_args).map(|_| true)?
             }
             _ => return Err(deduction_err()),
         };
@@ -643,9 +670,10 @@ pub fn wildcard_values_from_op_st(
     params: &Params,
     pred: &CustomPredicate,
     op_args: &[Statement],
-    st_args: &[Value],
+    // entry_map: &HashMap<(Hash, Hash), Value>,
+    resolved_st_args: &[Value],
 ) -> Result<Vec<Value>> {
-    let mut wildcard_map = st_args
+    let mut wildcard_map = resolved_st_args
         .iter()
         .map(|v| Some(v.clone()))
         .chain(core::iter::repeat(None))
@@ -710,7 +738,7 @@ pub(crate) fn check_custom_pred(
     params: &Params,
     custom_pred_ref: &CustomPredicateRef,
     args: &[Statement],
-    s_args: &[Value],
+    resolved_s_args: &[Value],
 ) -> Result<()> {
     let pred = custom_pred_ref.predicate();
     if pred.statements.len() != args.len() {
@@ -721,21 +749,21 @@ pub(crate) fn check_custom_pred(
             args.len(),
         ));
     }
-    if pred.args_len != s_args.len() {
+    if pred.args_len != resolved_s_args.len() {
         return Err(Error::diff_amount(
             "custom predicate statement".to_string(),
             "args".to_string(),
             pred.args_len,
-            s_args.len(),
+            resolved_s_args.len(),
         ));
     }
 
     // Check that the resolved wildcards match the statement arguments.
-    let wc_values = match wildcard_values_from_op_st(params, pred, args, s_args) {
+    let wc_values = match wildcard_values_from_op_st(params, pred, args, resolved_s_args) {
         Ok(wc_values) => wc_values,
         Err(Error::Inner { inner, backtrace }) => match *inner {
             MiddlewareInnerError::InvalidWildcardAssignment(wc, v, prev)
-                if wc.index <= s_args.len() =>
+                if wc.index <= resolved_s_args.len() =>
             {
                 return Err(Error::mismatched_wildcard_value_and_statement_arg(
                     v,

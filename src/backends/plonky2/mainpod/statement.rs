@@ -4,7 +4,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     backends::plonky2::error::{Error, Result},
-    middleware::{self, NativePredicate, Predicate, StatementArg, ToFields, Value, BASE_PARAMS},
+    middleware::{
+        self, NativePredicate, Predicate, StatementArg, ToFields, Value, ValueRef, BASE_PARAMS,
+    },
 };
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -96,15 +98,12 @@ impl TryFrom<Statement> for middleware::Statement {
                 )))?,
             },
             Predicate::Custom(cpr) => {
-                let vs: Vec<Value> = proper_args
+                let args: Vec<ValueRef> = proper_args
                     .into_iter()
-                    .filter_map(|arg| match arg {
-                        SA::None => None,
-                        SA::Literal(v) => Some(v),
-                        _ => unreachable!(),
-                    })
+                    // ValueRef from StatementArg gives Err on None, which is used for padding
+                    .filter_map(|arg| arg.try_into().ok())
                     .collect();
-                S::Custom(cpr, vs)
+                S::Custom(cpr, args)
             }
             Predicate::Intro(ir) => {
                 let vs: Vec<Value> = proper_args

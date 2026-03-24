@@ -579,7 +579,7 @@ mod tests {
         middleware::{
             AnchoredKey, CustomPredicate, CustomPredicateBatch, CustomPredicateRef, Key,
             NativePredicate, Operation, Params, Predicate, Statement, StatementTmpl,
-            StatementTmplArg,
+            StatementTmplArg, ValueRef,
         },
     };
 
@@ -601,6 +601,9 @@ mod tests {
     }
     fn names(names: &[&str]) -> Vec<String> {
         names.iter().map(|s| s.to_string()).collect()
+    }
+    fn value_ref(v: impl Into<ValueRef>) -> ValueRef {
+        v.into()
     }
 
     #[allow(clippy::upper_case_acronyms)]
@@ -650,7 +653,7 @@ mod tests {
         });
         let custom_statement = Statement::Custom(
             CustomPredicateRef::new(cust_pred_batch.clone(), 0),
-            vec![Value::from(d0.clone())],
+            vec![value_ref(d0.clone())],
         );
 
         let custom_deduction = Operation::Custom(
@@ -782,7 +785,7 @@ mod tests {
         // Example statement
         let ethdos_example = Statement::Custom(
             CustomPredicateRef::new(eth_dos_distance_batch.clone(), 2),
-            vec![Value::from("Alice"), Value::from("Bob"), Value::from(7)],
+            vec![value_ref("Alice"), value_ref("Bob"), value_ref(7)],
         );
 
         // Copies should work.
@@ -791,7 +794,7 @@ mod tests {
         // This could arise as the inductive step.
         let ethdos_ind_example = Statement::Custom(
             CustomPredicateRef::new(eth_dos_distance_batch.clone(), 1),
-            vec![Value::from("Alice"), Value::from("Bob"), Value::from(7)],
+            vec![value_ref("Alice"), value_ref("Bob"), value_ref(7)],
         );
 
         assert!(Operation::Custom(
@@ -806,12 +809,12 @@ mod tests {
         let ethdos_facts = vec![
             Statement::Custom(
                 CustomPredicateRef::new(eth_dos_distance_batch.clone(), 2),
-                vec![Value::from("Alice"), Value::from("Charlie"), Value::from(6)],
+                vec![value_ref("Alice"), value_ref("Charlie"), value_ref(6)],
             ),
             Statement::sum_of(Value::from(7), Value::from(6), Value::from(1)),
             Statement::Custom(
                 CustomPredicateRef::new(eth_friend_batch.clone(), 0),
-                vec![Value::from("Charlie"), Value::from("Bob")],
+                vec![value_ref("Charlie"), value_ref("Bob")],
             ),
         ];
 
