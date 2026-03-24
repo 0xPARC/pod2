@@ -1534,8 +1534,8 @@ pub fn calculate_statements_hash_circuit(
     sts_hash
 }
 
-// Replace predicates of batch-self with the corresponding global custom predicate batch_id and
-// index
+// Replace BatchSelf predicates with the corresponding Custom(batch_id, index), and
+// SelfPredicateHash args with Literal(hash(Custom(batch_id, index))).
 fn normalize_st_tmpl_circuit(
     params: &Params,
     builder: &mut CircuitBuilder,
@@ -1577,8 +1577,7 @@ fn normalize_st_tmpl_circuit(
             let is_sph = builder.is_equal(arg.elements[0], prefix_sph);
 
             // The predicate index is in elements[1] (same slot as WildcardLiteral).
-            // Use 0 when not SelfPredicateHash to satisfy range constraints in vec_ref.
-            let pred_index = builder.select(is_sph, arg.elements[1], zero);
+            let pred_index = arg.elements[1];
 
             // Compute hash(Custom(batch_id, pred_index))
             let pred_target = PredicateTarget::new_custom(builder, id, pred_index);

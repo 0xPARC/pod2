@@ -771,7 +771,8 @@ impl CustomPredicateEntryTarget {
         pw.set_target_arr(&self.id.elements, &predicate.batch.id().0)?;
         pw.set_target(self.index, F::from_canonical_usize(predicate.index))?;
 
-        // Replace statement templates of batch-self with (id,index)
+        // Replace BatchSelf predicates with Custom(batch, i), and
+        // SelfPredicateHash args with Literal(hash(Custom(batch, i)))
         let batch = &predicate.batch;
         let predicate = predicate.predicate();
         let statements = predicate

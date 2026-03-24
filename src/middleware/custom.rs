@@ -72,11 +72,12 @@ impl From<StatementTmplArgPrefix> for F {
 impl ToFields for StatementTmplArg {
     fn to_fields(&self) -> Vec<F> {
         // Encoding:
-        // None =>                      (0,          0, 0, 0, 0,  0, 0, 0, 0)
-        // Literal(v) =>                (1,        [v         ],  0, 0, 0, 0)
-        // Key(wc_index, key_or_wc) =>  (2, [wc_index], 0, 0, 0, [key_or_wc])
-        // WildcardLiteral(wc_index) => (3, [wc_index], 0, 0, 0,  0, 0, 0, 0)
-        // In all three cases, we pad to 2 * hash_size + 1 = 9 field elements
+        // None =>                         (0,          0, 0, 0, 0,  0, 0, 0, 0)
+        // Literal(v) =>                   (1,        [v         ],  0, 0, 0, 0)
+        // Key(wc_index, key_or_wc) =>     (2, [wc_index], 0, 0, 0, [key_or_wc])
+        // WildcardLiteral(wc_index) =>    (3, [wc_index], 0, 0, 0,  0, 0, 0, 0)
+        // SelfPredicateHash(pred_index) => (4, pred_index, 0, 0, 0,  0, 0, 0, 0)
+        // In all cases, we pad to 2 * hash_size + 1 = 9 field elements
         match self {
             StatementTmplArg::None => iter::once(F::from(StatementTmplArgPrefix::None))
                 .chain(iter::repeat(F::ZERO))
