@@ -137,7 +137,7 @@ pub struct MainPodBuilder {
     pub operations: Vec<Operation>,
     pub public_statements: Vec<Statement>,
     // Internal state
-    dict_contains: Vec<(Value, Value)>, // (root, key)
+    contains: Vec<(RawValue, RawValue)>, // (root, key)
 }
 
 impl fmt::Display for MainPodBuilder {
@@ -171,10 +171,16 @@ impl MainPodBuilder {
             statements: Vec::new(),
             operations: Vec::new(),
             public_statements: Vec::new(),
-            dict_contains: Vec::new(),
+            contains: Vec::new(),
         }
     }
+    pub fn len(&self) -> usize {
+        self.operations.len()
+    }
     pub fn add_pod(&mut self, pod: MainPod) -> Result<()> {
+        for st in &pod.public_statements {
+            self.track_contains(st);
+        }
         self.input_pods.push(pod);
         match self.input_pods.len() > self.params.max_input_pods {
             true => Err(Error::too_many_input_pods(
@@ -184,21 +190,25 @@ impl MainPodBuilder {
             _ => Ok(()),
         }
     }
-    pub fn insert(&mut self, public: bool, st_op: (Statement, Operation)) -> Result<()> {
-        // TODO: Do error handling instead of panic
-        let (st, op) = st_op;
 
-        // If we're adding a Contains statement with literal arguments (an Entry), track it in
-        // `dict_contains` to avoid adding it again via `Self::add_entries_contains`.
+    // If we're adding a Contains statement with literal arguments (an Entry), track it in
+    // `dict_contains` to avoid adding it again via `Self::add_entries_contains`.
+    fn track_contains(&mut self, st: &Statement) {
         if let Statement::Contains(
             ValueRef::Literal(dict),
             ValueRef::Literal(key),
             ValueRef::Literal(_),
         ) = &st
         {
-            let root_key = (dict.clone(), key.clone());
-            self.dict_contains.push(root_key);
+            let root_key = (dict.raw(), key.raw());
+            self.contains.push(root_key);
         }
+    }
+
+    pub fn insert(&mut self, public: bool, st_op: (Statement, Operation)) -> Result<()> {
+        // TODO: Do error handling instead of panic
+        let (st, op) = st_op;
+        self.track_contains(&st);
 
         if public {
             self.public_statements.push(st.clone());
@@ -404,7 +414,7 @@ impl MainPodBuilder {
     }
 
     fn op_statement(
-        &mut self,
+        &self,
         wildcard_values: Vec<(usize, Value)>,
         op: Operation,
     ) -> Result<Statement> {
@@ -630,9 +640,16 @@ impl MainPodBuilder {
                 ValueRef::Literal(v),
             )) = arg
             {
-                let root_key = (dict.clone(), key.clone());
-                if !self.dict_contains.contains(&root_key) {
-                    self.dict_contains.push(root_key);
+                // if format!("{:#}", dict)
+                //     == "Raw(0xfa2ec82b6a771c76abfed381bc011d8a510775cec9744bc2acfb9d2cdd7141ce)"
+                // {
+                //     println!("DBG add_entries_contains");
+                //     println!("  - op: {:?}", op.0);
+                // }
+
+                let root_key = (dict.raw(), key.raw());
+                if !self.contains.contains(&root_key) {
+                    self.contains.push(root_key);
                     self.priv_op(Operation::dict_contains(dict, key, v))?;
                 }
             }
@@ -647,12 +664,40 @@ impl MainPodBuilder {
         wildcard_values: Vec<(usize, Value)>,
         op: Operation,
     ) -> Result<Statement> {
+        // DBG
+        // if op
+        //     .1
+        //     .get(0)
+        //     .map(|a| format!("{:#}", a))
+        //     .unwrap_or("".to_string())
+        //     == "Raw(0xfa2ec82b6a771c76abfed381bc011d8a510775cec9744bc2acfb9d2cdd7141ce)"
+        // {
+        //     let key_raw = match op.1.get(1).unwrap() {
+        //         OperationArg::Literal(v) => v.raw(),
+        //         _ => unreachable!(),
+        //     };
+        //     println!("DBG key: {}, aux: {}", key_raw, op.2);
+        //     match op.2 {
+        //         OperationAux::None => {
+        //             println!("DBG op args:");
+        //             for arg in &op.1 {
+        //                 println!("  - {}", arg);
+        //             }
+        //             println!("{}", std::backtrace::Backtrace::capture());
+        //         }
+        //         _ => {}
+        //     }
+        // }
+
         self.add_entries_contains(&op)?;
         let op = Self::fill_in_aux(Self::lower_op(op)?)?;
         let st = self.op_statement(wildcard_values, op.clone())?;
-        self.insert(public, (st, op))?;
+        // Skip adding the statement and operation if it already exists
+        if self.statements.iter().find(|s| **s == st).is_none() {
+            self.insert(public, (st.clone(), op))?;
+        }
 
-        Ok(self.statements[self.statements.len() - 1].clone())
+        Ok(st)
     }
 
     pub fn reveal(&mut self, st: &Statement) {
