@@ -595,6 +595,11 @@ pub fn check_st_tmpl(
         (StatementTmplArg::Wildcard(wc), StatementArg::Literal(v)) => {
             wc_check_or_set(v.clone(), wc, wildcard_map)
         }
+        (StatementTmplArg::SelfPredicateHash(_), _) => {
+            unreachable!(
+                "SelfPredicateHash should be normalized to Literal before template matching"
+            )
+        }
         _ => Err(Error::mismatched_statement_tmpl_arg(
             st_tmpl_arg.clone(),
             st_arg.clone(),
@@ -712,7 +717,7 @@ pub(crate) fn check_custom_pred(
     args: &[Statement],
     s_args: &[Value],
 ) -> Result<()> {
-    let pred = custom_pred_ref.predicate();
+    let pred = custom_pred_ref.normalized_predicate();
     if pred.statements.len() != args.len() {
         return Err(Error::diff_amount(
             "custom predicate operation".to_string(),
@@ -731,7 +736,7 @@ pub(crate) fn check_custom_pred(
     }
 
     // Check that the resolved wildcards match the statement arguments.
-    let wc_values = match wildcard_values_from_op_st(params, pred, args, s_args) {
+    let wc_values = match wildcard_values_from_op_st(params, &pred, args, s_args) {
         Ok(wc_values) => wc_values,
         Err(Error::Inner { inner, backtrace }) => match *inner {
             MiddlewareInnerError::InvalidWildcardAssignment(wc, v, prev)

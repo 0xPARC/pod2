@@ -578,7 +578,7 @@ impl MainPodBuilder {
                 }
             }
             OperationType::Custom(cpr) => {
-                let pred = &cpr.batch.predicates()[cpr.index];
+                let pred = cpr.normalized_predicate();
                 if pred.statements.len() != op.1.len() {
                     return Err(Error::custom(format!(
                         "Custom predicate operation needs {} statements but has {}.",
@@ -606,7 +606,7 @@ impl MainPodBuilder {
                     }
                     wildcard_map[index] = Some(value);
                 }
-                fill_wildcard_values(pred, &args, &mut wildcard_map)?;
+                fill_wildcard_values(&pred, &args, &mut wildcard_map)?;
                 let v_default = Value::from(0);
                 let st_args: Vec<_> = wildcard_map
                     .into_iter()

@@ -345,7 +345,9 @@ fn build_single_batch(
             })?;
     }
 
-    Ok(builder.finish())
+    builder.finish().map_err(|e| BatchingError::Internal {
+        message: format!("Failed to finalize batch '{}': {}", batch_name, e),
+    })
 }
 
 /// Build a statement template with properly resolved predicate references
