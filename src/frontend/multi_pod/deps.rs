@@ -100,11 +100,6 @@ impl DependencyGraph {
                             pod_hash,
                             statement: dep_stmt.clone(),
                         }));
-                    // }  else if AnchoredKeyId::from_contains_statement(dep_stmt).is_some() {
-                    //   // Anchored-key Contains args may be implicit requirements that are
-                    //   // auto-materialized by MainPodBuilder. They are handled by anchored-key
-                    //   // resource accounting, not by statement dependency edges.
-                    //   continue;
                     } else {
                         // Statement arguments should either be internal (created earlier)
                         // or from external PODs (except anchored-key implicit Contains).

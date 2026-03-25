@@ -631,7 +631,7 @@ impl MainPodBuilder {
     }
 
     /// For every operation that has Entry statements as arguments we add a Contains statement to
-    /// open the dictionary.
+    /// open the dictionary (unless such Contains already exists).
     fn add_entries_contains(&mut self, op: &Operation) -> Result<()> {
         for arg in &op.1 {
             if let OperationArg::Statement(Statement::Contains(
@@ -640,13 +640,6 @@ impl MainPodBuilder {
                 ValueRef::Literal(v),
             )) = arg
             {
-                // if format!("{:#}", dict)
-                //     == "Raw(0xfa2ec82b6a771c76abfed381bc011d8a510775cec9744bc2acfb9d2cdd7141ce)"
-                // {
-                //     println!("DBG add_entries_contains");
-                //     println!("  - op: {:?}", op.0);
-                // }
-
                 let root_key = (dict.raw(), key.raw());
                 if !self.contains.contains(&root_key) {
                     self.contains.push(root_key);
@@ -664,31 +657,6 @@ impl MainPodBuilder {
         wildcard_values: Vec<(usize, Value)>,
         op: Operation,
     ) -> Result<Statement> {
-        // DBG
-        // if op
-        //     .1
-        //     .get(0)
-        //     .map(|a| format!("{:#}", a))
-        //     .unwrap_or("".to_string())
-        //     == "Raw(0xfa2ec82b6a771c76abfed381bc011d8a510775cec9744bc2acfb9d2cdd7141ce)"
-        // {
-        //     let key_raw = match op.1.get(1).unwrap() {
-        //         OperationArg::Literal(v) => v.raw(),
-        //         _ => unreachable!(),
-        //     };
-        //     println!("DBG key: {}, aux: {}", key_raw, op.2);
-        //     match op.2 {
-        //         OperationAux::None => {
-        //             println!("DBG op args:");
-        //             for arg in &op.1 {
-        //                 println!("  - {}", arg);
-        //             }
-        //             println!("{}", std::backtrace::Backtrace::capture());
-        //         }
-        //         _ => {}
-        //     }
-        // }
-
         self.add_entries_contains(&op)?;
         let op = Self::fill_in_aux(Self::lower_op(op)?)?;
         let st = self.op_statement(wildcard_values, op.clone())?;

@@ -168,10 +168,6 @@ pub struct MultiPodBuilder {
     options: Options,
     /// External input PODs (already proved).
     input_pods: Vec<MainPod>,
-    /// Statements created by this builder.
-    // statements: Vec<Statement>,
-    /// Operations that produce each statement.
-    // operations: Vec<Operation>,
     /// Optional initial wildcard values for custom operations
     operations_wildcard_values: HashMap<usize, Vec<(usize, Value)>>,
     /// Indices of statements that should be public in output PODs.
@@ -261,76 +257,27 @@ impl SolvedMultiPod {
         let statements_sorted: BTreeSet<usize> = statements_in_this_pod.iter().copied().collect();
         let public_set = &solution.pod_public_statements[pod_idx];
 
-        // TODO: Remove this because we're deduping earlier
-        // Track statements proved locally in this POD for argument remapping.
-        // We index by statement content so duplicate statements can reuse a single
-        // built statement slot in MainPodBuilder.
-        let mut added_statements_by_content: HashMap<Statement, Statement> = HashMap::new();
-
         for &stmt_idx in &statements_sorted {
-            let original_stmt = self.statements[stmt_idx].clone();
-
-            // If this statement content was already built in this POD, reuse it instead
-            // of replaying the operation. If any duplicate is public, reveal the
-            // already-built statement.
-            if let Some(_existing_stmt) = added_statements_by_content.get(&original_stmt) {
-                continue;
-            }
-
-            let mut op = self.operations[stmt_idx].clone();
-            // DBG
-            // if op
-            //     .1
-            //     .get(0)
-            //     .map(|a| format!("{:#}", a))
-            //     .unwrap_or("".to_string())
-            //     == "Raw(0xfa2ec82b6a771c76abfed381bc011d8a510775cec9744bc2acfb9d2cdd7141ce)"
-            // {
-            //     let key_raw = match op.1.get(1).unwrap() {
-            //         OperationArg::Literal(v) => v.raw(),
-            //         _ => unreachable!(),
-            //     };
-            //     println!("DBG (solver) key: {}, aux: {}", key_raw, op.2);
-            // }
+            let op = self.operations[stmt_idx].clone();
             let wildcard_values = self
                 .operations_wildcard_values
                 .get(&stmt_idx)
                 .cloned()
                 .unwrap_or_default();
 
-            // Remap Statement arguments that reference locally-proved statements.
-            // For external dependencies (from input PODs including earlier generated PODs),
-            // the original Statement is used directly - MainPodBuilder will find it in
-            // the input POD's public statements via find_op_arg.
-            for arg in &mut op.1 {
-                if let OperationArg::Statement(ref orig_stmt) = arg {
-                    if let Some(remapped_stmt) = added_statements_by_content.get(orig_stmt) {
-                        *arg = OperationArg::Statement(remapped_stmt.clone());
-                    }
-                }
-            }
-
-            // println!("DBG add op {}", op);
             let stmt = builder.op(false, wildcard_values, op)?;
-
-            added_statements_by_content.insert(original_stmt, stmt);
+            assert_eq!(stmt, self.statements[stmt_idx]); // Sanity check
         }
 
         // For the output pod, make statements public in the original order.
         // Intermediate pods use the solver-selected public set.
         if pod_idx == solution.pod_count - 1 {
             for idx in &self.output_public_indices {
-                let stmt = added_statements_by_content
-                    .get(&self.statements[*idx])
-                    .expect("exists");
-                builder.reveal(stmt);
+                builder.reveal(&self.statements[*idx]);
             }
         } else {
             for idx in public_set {
-                let stmt = added_statements_by_content
-                    .get(&self.statements[*idx])
-                    .expect("exists");
-                builder.reveal(stmt);
+                builder.reveal(&self.statements[*idx]);
             }
         }
 
@@ -463,7 +410,6 @@ impl MultiPodBuilder {
 
     /// Create a new MultiPodBuilder with custom options.
     pub fn new_with_options(params: &Params, vd_set: &VDSet, options: Options) -> Self {
-        // println!("DBG MultiPodBuilder.new");
         let unlimited_params = Params {
             max_statements: usize::MAX / 2,
             max_public_statements: usize::MAX / 2,
@@ -478,8 +424,6 @@ impl MultiPodBuilder {
             options,
             builder,
             input_pods: Vec::new(),
-            // statements: Vec::new(),
-            // operations: Vec::new(),
             operations_wildcard_values: HashMap::new(),
             output_public_indices: Vec::new(),
         }
@@ -582,56 +526,17 @@ impl MultiPodBuilder {
             operations,
             ..
         } = self.builder;
-        // println!("DBG MultiPodBuilder.solve statements:");
-        // for (i, st) in statements.iter().enumerate() {
-        //     println!("  {}: {}", i, st);
-        // }
         // Compute costs for each statement
         let costs: Vec<StatementCost> = operations
             .iter()
             .map(StatementCost::from_operation)
             .collect();
 
-        // Collect all unique anchored keys from the costs
-        // let all_anchored_keys: Vec<AnchoredKeyId> = costs
-        //     .iter()
-        //     .flat_map(|c| c.anchored_keys.iter().cloned())
-        //     .collect::<std::collections::BTreeSet<_>>()
-        //     .into_iter()
-        //     .collect();
-
-        // Build map from anchored key to its producing statement index (if any).
-        // A Contains statement with literal (dict, key, value) "produces" that anchored key.
-        // let mut ak_to_producer: HashMap<AnchoredKeyId, usize> = HashMap::new();
-        // for (stmt_idx, stmt) in statements.iter().enumerate() {
-        //     if let Some(ak) = AnchoredKeyId::from_contains_statement(stmt) {
-        //         // First producer wins (shouldn't have duplicates in practice)
-        //         ak_to_producer.entry(ak).or_insert(stmt_idx);
-        //     }
-        // }
-
-        // Build parallel array: anchored_key_producers[i] = producer for all_anchored_keys[i]
-        // let anchored_key_producers: Vec<Option<usize>> = all_anchored_keys
-        //     .iter()
-        //     .map(|ak| ak_to_producer.get(ak).copied())
-        //     .collect();
-
         // Build external POD statement mapping
         let external_pod_statements = build_external_statement_map(&self.input_pods);
 
         // Build dependency graph
         let deps = DependencyGraph::build(&statements, &operations, &external_pod_statements);
-
-        // // Build statement content groups for deduplication.
-        // // Statements with identical content share a single slot in the POD.
-        // // Keep groups ordered by first occurrence index for deterministic solver input.
-        // let mut first_idx_by_stmt: HashMap<&Statement, usize> = HashMap::new();
-        // let mut groups_by_first_idx: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
-        // for (idx, stmt) in statements.iter().enumerate() {
-        //     let first_idx = *first_idx_by_stmt.entry(stmt).or_insert(idx);
-        //     groups_by_first_idx.entry(first_idx).or_default().push(idx);
-        // }
-        // let statement_content_groups: Vec<Vec<usize>> = groups_by_first_idx.into_values().collect();
 
         // Run solver
         let input = solver::SolverInput {
@@ -641,12 +546,8 @@ impl MultiPodBuilder {
             output_public_indices: &self.output_public_indices,
             params: &self.params,
             max_pods: self.options.max_pods,
-            // all_anchored_keys: &all_anchored_keys,
-            // anchored_key_producers: &anchored_key_producers,
-            // statement_content_groups: &statement_content_groups,
         };
 
-        println!("{:#?}", input);
         let solution = solver::solve(&input)?;
 
         Ok(SolvedMultiPod {
