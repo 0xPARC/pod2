@@ -205,20 +205,11 @@ impl MainPodBuilder {
         }
     }
 
-    pub fn insert(&mut self, public: bool, st_op: (Statement, Operation)) -> Result<()> {
+    pub fn insert(&mut self, st_op: (Statement, Operation)) -> Result<()> {
         // TODO: Do error handling instead of panic
         let (st, op) = st_op;
         self.track_contains(&st);
 
-        if public {
-            self.public_statements.push(st.clone());
-        }
-        if self.public_statements.len() > self.params.max_public_statements {
-            return Err(Error::too_many_public_statements(
-                self.public_statements.len(),
-                self.params.max_public_statements,
-            ));
-        }
         self.statements.push(st);
         self.operations.push(op);
         if self.statements.len() > self.params.max_statements {
@@ -662,14 +653,26 @@ impl MainPodBuilder {
         let st = self.op_statement(wildcard_values, op.clone())?;
         // Skip adding the statement and operation if it already exists
         if !self.statements.contains(&st) {
-            self.insert(public, (st.clone(), op))?;
+            self.insert((st.clone(), op))?;
+        }
+        if public {
+            self.reveal(&st)?;
         }
 
         Ok(st)
     }
 
-    pub fn reveal(&mut self, st: &Statement) {
-        self.public_statements.push(st.clone());
+    pub fn reveal(&mut self, st: &Statement) -> Result<()> {
+        if !self.public_statements.contains(st) {
+            self.public_statements.push(st.clone());
+        }
+        if self.public_statements.len() > self.params.max_public_statements {
+            return Err(Error::too_many_public_statements(
+                self.public_statements.len(),
+                self.params.max_public_statements,
+            ));
+        }
+        Ok(())
     }
 
     pub fn prove(&self, prover: &dyn MainPodProver) -> Result<MainPod> {
@@ -1364,11 +1367,9 @@ pub mod tests {
             OperationAux::None,
         );
         builder
-            .insert(false, (value_of_a.clone(), op_contains.clone()))
+            .insert((value_of_a.clone(), op_contains.clone()))
             .unwrap();
-        builder
-            .insert(false, (value_of_b.clone(), op_contains))
-            .unwrap();
+        builder.insert((value_of_b.clone(), op_contains)).unwrap();
         let st = Statement::equal(
             AnchoredKey::from((&local, "a")),
             AnchoredKey::from((&local, "b")),
@@ -1381,7 +1382,7 @@ pub mod tests {
             ],
             OperationAux::None,
         );
-        builder.insert(false, (st, op)).unwrap();
+        builder.insert((st, op)).unwrap();
 
         let prover = MockProver {};
         let pod = builder.prove(&prover).unwrap();

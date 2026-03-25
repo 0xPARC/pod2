@@ -1195,7 +1195,8 @@ pub mod tests {
             cpr,
             [1, 1, 2].into_iter().map(middleware::Value::from).collect(),
         );
-        builder.insert(true, (st, op)).unwrap();
+        builder.insert((st.clone(), op)).unwrap();
+        builder.reveal(&st).unwrap();
         let prover = Prover {};
         builder.prove(&prover).unwrap();
     }

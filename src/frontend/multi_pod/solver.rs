@@ -544,19 +544,6 @@ fn try_solve_with_pods(
         })
         .collect();
 
-    // anchored_key_used[ak][p] - anchored key ak is used in POD p
-    // When a statement references an anchored key (via a Contains statement argument),
-    // that POD must have a Contains statement for that (dict, key) pair.
-    // MainPodBuilder::add_entries_contains auto-inserts these, and we must account
-    // for them in the statement count.
-    // let anchored_key_used: Vec<Vec<Variable>> = (0..input.all_anchored_keys.len())
-    //     .map(|_| {
-    //         (0..target_pods)
-    //             .map(|_| vars.add(variable().binary()))
-    //             .collect()
-    //     })
-    //     .collect();
-
     // uses_input[p][pp] - POD p uses POD pp as an input (pp < p)
     // We only create variables for pp < p
     let uses_input: Vec<Vec<Variable>> = (0..target_pods)

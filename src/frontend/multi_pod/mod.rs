@@ -213,7 +213,6 @@ impl SolvedMultiPod {
         let mut pods: Vec<MainPod> = Vec::with_capacity(solution.pod_count);
 
         for pod_idx in 0..solution.pod_count {
-            // println!("DBG SolvedMultiPod.prove pod {}", pod_idx);
             let pod = self.build_single_pod(pod_idx, &pods, prover)?;
             pods.push(pod);
         }
@@ -273,11 +272,11 @@ impl SolvedMultiPod {
         // Intermediate pods use the solver-selected public set.
         if pod_idx == solution.pod_count - 1 {
             for idx in &self.output_public_indices {
-                builder.reveal(&self.statements[*idx]);
+                builder.reveal(&self.statements[*idx])?;
             }
         } else {
             for idx in public_set {
-                builder.reveal(&self.statements[*idx]);
+                builder.reveal(&self.statements[*idx])?;
             }
         }
 
@@ -285,7 +284,7 @@ impl SolvedMultiPod {
         // for this POD. These do not require local proving in this POD.
         for ext_premise_idx in &solution.pod_public_external_premises[pod_idx] {
             let ext_premise = &solution.external_premises[*ext_premise_idx];
-            builder.reveal(&ext_premise.statement);
+            builder.reveal(&ext_premise.statement)?;
         }
 
         // Step 4: Prove the POD
@@ -466,7 +465,7 @@ impl MultiPodBuilder {
         if public {
             let index = self.stmt_index(&stmt);
             if !self.output_public_indices.contains(&index) {
-                self.output_public_indices.push(self.stmt_index(&stmt));
+                self.output_public_indices.push(index);
             }
         }
         Ok(stmt)

@@ -5,7 +5,6 @@
 
 use std::collections::HashMap;
 
-// use super::cost::AnchoredKeyId;
 use crate::{
     frontend::{Operation, OperationArg},
     middleware::{Hash, Statement},
