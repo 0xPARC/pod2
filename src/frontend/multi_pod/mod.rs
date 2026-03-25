@@ -502,17 +502,29 @@ impl MultiPodBuilder {
         self.op(false, vec![], op)
     }
 
+    // Find the index of a statement that has been added.  Panics if the statement doesn't
+    // exist.
+    fn stmt_index(&self, stmt: &Statement) -> usize {
+        self.builder
+            .statements
+            .iter()
+            .position(|s| s == stmt)
+            .expect("exists")
+    }
+
     pub fn op(
         &mut self,
         public: bool,
         wildcard_values: Vec<(usize, Value)>,
         op: Operation,
     ) -> Result<Statement> {
-        if public {
-            // Index is always new (just added), so push without duplicate check
-            self.output_public_indices.push(self.len());
-        }
         let stmt = self.add_operation(wildcard_values, op)?;
+        if public {
+            let index = self.stmt_index(&stmt);
+            if !self.output_public_indices.contains(&index) {
+                self.output_public_indices.push(self.stmt_index(&stmt));
+            }
+        }
         Ok(stmt)
     }
 
@@ -522,8 +534,6 @@ impl MultiPodBuilder {
         wildcard_values: Vec<(usize, Value)>,
         op: Operation,
     ) -> Result<Statement> {
-        self.operations_wildcard_values
-            .insert(self.len(), wildcard_values.clone());
         // Get or create the cached builder
         //
         // NOTE: We clone input pods here because MainPodBuilder takes ownership.
@@ -534,6 +544,8 @@ impl MultiPodBuilder {
         let stmt = self
             .builder
             .op(false, wildcard_values.clone(), op.clone())?;
+        self.operations_wildcard_values
+            .insert(self.stmt_index(&stmt), wildcard_values.clone());
 
         Ok(stmt)
     }
