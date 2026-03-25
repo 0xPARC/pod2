@@ -784,42 +784,21 @@ mod tests {
         // provide dependencies to the output POD.
         let solved = builder.solve()?;
         let solution = solved.solution();
-        println!("{:#?}", solution);
 
         // Expected: exactly 2 PODs
-        //   - POD 0 (intermediate): statements 0 (contains), 1 (a_out); a_out is public
-        //   - POD 1 (output): statement 2 (b_out); b_out is public
-        // The output POD accesses a_out from POD 0 to satisfy b_out's dependency.
-        // assert_eq!(
-        //     solution.pod_count, 2,
-        //     "Expected exactly 2 PODs for 3-statement chain with max_priv=2"
-        // );
+        //   Solution A:
+        //   - POD 0 (intermediate): public statements 0 (contains)
+        //   - POD 1 (output): inherits statement 0 (contains) from POD0, statement 1 (a_out),
+        //   public statement 2 (b_out)
+        //   Solution B:
+        //   - POD 0 (intermediate): statements 0 (contains), public statement 1 (a_out)
+        //   - POD 1 (output): inherits statement 1 (a_out) from POD0, public statement 2 (b_out)
 
-        // // POD 0 should contain statements 0 and 1 (contains and a_out)
-        // assert!(
-        //     solution.pod_statements[0].contains(&0) && solution.pod_statements[0].contains(&1),
-        //     "POD 0 should contain statements 0 (contains) and 1 (a_out), got {:?}",
-        //     solution.pod_statements[0]
-        // );
-
-        // // Statement 1 (a_out) should be public in POD 0 so POD 1 can access it
-        // assert!(
-        //     solution.pod_public_statements[0].contains(&1),
-        //     "Statement 1 (a_out) should be public in POD 0"
-        // );
-
-        // // POD 1 (output) should contain statement 2 (b_out)
-        // assert!(
-        //     solution.pod_statements[1].contains(&2),
-        //     "POD 1 should contain statement 2 (b_out), got {:?}",
-        //     solution.pod_statements[1]
-        // );
-
-        // // Statement 2 (b_out) should be public in POD 1 (it's output-public)
-        // assert!(
-        //     solution.pod_public_statements[1].contains(&2),
-        //     "Statement 2 (b_out) should be public in output POD"
-        // );
+        // Statement 2 (b_out) should be public in POD 1 (it's output-public)
+        assert!(
+            solution.pod_public_statements[1].contains(&2),
+            "Statement 2 (b_out) should be public in output POD"
+        );
 
         // Prove and verify all PODs
         let prover = MockProver {};
