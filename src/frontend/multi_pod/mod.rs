@@ -53,7 +53,7 @@ use std::{
 };
 
 use crate::{
-    frontend::{MainPod, MainPodBuilder, Operation, OperationArg},
+    frontend::{MainPod, MainPodBuilder, Operation},
     middleware::{Hash, MainPodProver, Params, Statement, VDSet, Value},
 };
 
@@ -512,8 +512,8 @@ impl MultiPodBuilder {
     }
 
     /// Get the number of statements.
-    pub fn len(&self) -> usize {
-        self.builder.len()
+    pub fn stmt_len(&self) -> usize {
+        self.builder.stmt_len()
     }
 
     /// Solve the packing problem and return a solved builder ready for proving.
@@ -554,8 +554,8 @@ impl MultiPodBuilder {
             params: self.params,
             vd_set: self.vd_set,
             input_pods: self.input_pods,
-            statements: statements,
-            operations: operations,
+            statements,
+            operations,
             output_public_indices: self.output_public_indices,
             operations_wildcard_values: self.operations_wildcard_values,
             solution,

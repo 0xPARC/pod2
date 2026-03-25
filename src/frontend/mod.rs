@@ -174,8 +174,8 @@ impl MainPodBuilder {
             contains: Vec::new(),
         }
     }
-    pub fn len(&self) -> usize {
-        self.operations.len()
+    pub fn stmt_len(&self) -> usize {
+        self.statements.len()
     }
     pub fn add_pod(&mut self, pod: MainPod) -> Result<()> {
         for st in &pod.public_statements {
@@ -661,7 +661,7 @@ impl MainPodBuilder {
         let op = Self::fill_in_aux(Self::lower_op(op)?)?;
         let st = self.op_statement(wildcard_values, op.clone())?;
         // Skip adding the statement and operation if it already exists
-        if self.statements.iter().find(|s| **s == st).is_none() {
+        if !self.statements.contains(&st) {
             self.insert(public, (st.clone(), op))?;
         }
 
