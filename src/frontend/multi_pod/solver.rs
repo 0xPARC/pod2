@@ -52,7 +52,7 @@ use itertools::Itertools;
 use super::Result;
 use crate::{
     frontend::multi_pod::{
-        cost::{CustomBatchId, StatementCost},
+        cost::{CustomPredicateId, StatementCost},
         deps::{DependencyGraph, ExternalDependency, StatementSource},
     },
     middleware::{Hash, Params},
@@ -385,11 +385,11 @@ pub fn solve(input: &SolverInput) -> Result<MultiPodSolution> {
         )));
     }
 
-    // Collect all unique custom batch IDs used
-    let all_batches: Vec<CustomBatchId> = input
+    // Collect all unique custom predicate IDs used
+    let all_custom_predicates: Vec<CustomPredicateId> = input
         .costs
         .iter()
-        .flat_map(|c| c.custom_batch_ids.iter().cloned())
+        .flat_map(|c| c.custom_predicates_ids.iter().cloned())
         .unique()
         .collect();
 
@@ -416,7 +416,11 @@ pub fn solve(input: &SolverInput) -> Result<MultiPodSolution> {
     }
 
     let dep_stats = dependency_stats(input.deps);
-    let batch_memberships: usize = input.costs.iter().map(|c| c.custom_batch_ids.len()).sum();
+    let batch_memberships: usize = input
+        .costs
+        .iter()
+        .map(|c| c.custom_predicates_ids.len())
+        .sum();
     // let anchored_key_memberships: usize = input.costs.iter().map(|c| c.anchored_keys.len()).sum();
     let debug_ctx = SolveDebugContext {
         dep_stats,
@@ -462,13 +466,13 @@ pub fn solve(input: &SolverInput) -> Result<MultiPodSolution> {
 
         log::debug!(
             "MILP summary: statements={} output_public={} \
-             batches={} deps_internal_edges={} deps_external_edges={} external_input_pods={} \
+             custom_predicates={} deps_internal_edges={} deps_external_edges={} external_input_pods={} \
              external_premises={} search_min_pods={} max_pods={}",
             n,
             num_output_public,
             // input.statement_content_groups.len(),
             // input.all_anchored_keys.len(),
-            all_batches.len(),
+            all_custom_predicates.len(),
             dep_stats.internal_edges,
             dep_stats.external_edges,
             external_pods.len(),
@@ -511,7 +515,7 @@ pub fn solve(input: &SolverInput) -> Result<MultiPodSolution> {
         if let Some(solution) = try_solve_with_pods(
             input,
             target_pods,
-            &all_batches,
+            &all_custom_predicates,
             &external_pods,
             &external_premises,
             &debug_ctx,
@@ -538,7 +542,7 @@ pub fn solve(input: &SolverInput) -> Result<MultiPodSolution> {
 fn try_solve_with_pods(
     input: &SolverInput,
     target_pods: usize,
-    all_batches: &[CustomBatchId],
+    all_custom_predicates: &[CustomPredicateId],
     external_pods: &[Hash],
     external_premises: &[ExternalDependency],
     debug_ctx: &SolveDebugContext,
@@ -572,8 +576,8 @@ fn try_solve_with_pods(
         .map(|_| vars.add(variable().binary()))
         .collect();
 
-    // batch_used[b][p] - custom batch b is used in POD p
-    let batch_used: Vec<Vec<Variable>> = (0..all_batches.len())
+    // custom_predicates[b][p] - custom predicate b is used in POD p
+    let custom_predicate_used: Vec<Vec<Variable>> = (0..all_custom_predicates.len())
         .map(|_| {
             (0..target_pods)
                 .map(|_| vars.add(variable().binary()))
@@ -647,7 +651,7 @@ fn try_solve_with_pods(
         let estimate = ModelSizeEstimate::for_target_pods(
             input,
             target_pods,
-            all_batches.len(),
+            all_custom_predicates.len(),
             external_pods.len(),
             external_premises.len(),
             debug_ctx,
@@ -814,16 +818,15 @@ fn try_solve_with_pods(
     // }
 
     for p in 0..target_pods {
-        // 6a: Unique statement count (unique content groups + anchored key Contains)
-        // Statements with identical content share a slot, so we count content groups, not indices.
+        // 6a: Statement count
         // // Anchored key Contains statements are auto-inserted by MainPodBuilder when needed.
         // // The total must not exceed max_priv_statements (= max_statements - max_public_statements).
-        let unique_stmt_sum: Expression = (0..n).map(|g| prove[g][p]).sum();
+        let stmt_sum: Expression = (0..n).map(|g| prove[g][p]).sum();
         // let anchored_key_sum: Expression = (0..input.all_anchored_keys.len())
         //     .map(|ak| anchored_key_used[ak][p])
         //     .sum();
         model.add_constraint(constraint!(
-            unique_stmt_sum <= (input.params.max_priv_statements() as f64) * pod_used[p]
+            stmt_sum <= (input.params.max_priv_statements() as f64) * pod_used[p]
         ));
 
         // 6b: Public statement count (internal public statements + forwarded external premises)
@@ -882,19 +885,31 @@ fn try_solve_with_pods(
     }
 
     // Constraint 7: Batch cardinality
-    // batch_used[b][p] >= prove[s][p] for all s that use batch b (batch is used if any statement uses it)
-    // batch_used[b][p] <= sum of prove[s][p] for all s using batch b (batch is 0 if no statements use it)
-    for (b, batch_id) in all_batches.iter().enumerate() {
+    // custom_predicate_used[b][p] >= prove[s][p] for all s that use custom predicate b (custom
+    // predicate is used if any statement uses it)
+    // custom_predicate_used[b][p] <= sum of prove[s][p] for all s using custom predicate b (custom
+    // predicate is 0 if no statements use it)
+    for (b, predicate_id) in all_custom_predicates.iter().enumerate() {
         for p in 0..target_pods {
             let mut sum: Expression = 0.into();
             for s in 0..n {
-                if input.costs[s].custom_batch_ids.contains(batch_id) {
-                    model.add_constraint(constraint!(batch_used[b][p] >= prove[s][p]));
+                if input.costs[s].custom_predicates_ids.contains(predicate_id) {
+                    model.add_constraint(constraint!(custom_predicate_used[b][p] >= prove[s][p]));
                     sum += prove[s][p];
                 }
             }
-            model.add_constraint(constraint!(batch_used[b][p] <= sum));
+            model.add_constraint(constraint!(custom_predicate_used[b][p] <= sum));
         }
+    }
+
+    // Custom predicate count per POD
+    for p in 0..target_pods {
+        let custom_predicate_sum: Expression = (0..all_custom_predicates.len())
+            .map(|b| custom_predicate_used[b][p])
+            .sum();
+        model.add_constraint(constraint!(
+            custom_predicate_sum <= (input.params.max_custom_predicates as f64) * pod_used[p]
+        ));
     }
 
     // Constraint 7b: Anchored key tracking

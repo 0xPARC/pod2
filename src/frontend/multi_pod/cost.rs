@@ -7,19 +7,19 @@ use std::collections::BTreeSet;
 
 use crate::{
     frontend::Operation,
-    middleware::{CustomPredicateBatch, Hash, NativeOperation, OperationType},
+    middleware::{CustomPredicateRef, Hash, NativeOperation, OperationType, Predicate},
 };
 
-/// Unique identifier for a custom predicate batch.
+/// Unique identifier for a custom predicate in a module.
 ///
-/// Uses the batch's cryptographic hash as identifier. Two batches with the same
+/// Uses the predicate's cryptographic hash as identifier. Two predicates with the same
 /// hash are considered identical for resource counting purposes.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct CustomBatchId(pub Hash);
+pub struct CustomPredicateId(pub Hash);
 
-impl From<&CustomPredicateBatch> for CustomBatchId {
-    fn from(batch: &CustomPredicateBatch) -> Self {
-        Self(batch.id())
+impl From<&CustomPredicateRef> for CustomPredicateId {
+    fn from(predicate: &CustomPredicateRef) -> Self {
+        Self(Predicate::Custom(predicate.clone()).hash())
     }
 }
 
@@ -86,10 +86,9 @@ pub struct StatementCost {
     /// Limit: `params.max_public_key_of`
     pub public_key_of: usize,
 
-    // TODO: This needs to be replaced by custom_predicate_ids!
-    /// Custom predicate batches used (for batch cardinality constraint).
-    /// Limit: `params.max_custom_predicate_batches` distinct batches per POD.
-    pub custom_batch_ids: BTreeSet<CustomBatchId>,
+    /// Custom predicates used (for custom predicate cardinality constraint).
+    /// Limit: `params.max_custom_predicates` distinct custom predicates per POD.
+    pub custom_predicates_ids: BTreeSet<CustomPredicateId>,
     // /// Anchored keys referenced by this operation.
     // ///
     // /// When a Contains statement with all literal values is used as an argument,
@@ -162,8 +161,8 @@ impl StatementCost {
             }
             OperationType::Custom(cpr) => {
                 cost.custom_pred_verifications = 1;
-                cost.custom_batch_ids
-                    .insert(CustomBatchId::from(&*cpr.batch));
+                cost.custom_predicates_ids
+                    .insert(CustomPredicateId::from(cpr));
             }
         }
 
