@@ -434,13 +434,21 @@ fn partition_residual(
         return vec![vec![]]; // no parents needed
     }
 
+    let mut partitions = Vec::new();
+
     if r.len() <= max_public {
-        // Fits in one parent.
-        return vec![vec![r.clone()]];
+        // Single-parent candidate: all of R in one parent.
+        partitions.push(vec![r.clone()]);
+        if max_inputs < 2 {
+            return partitions;
+        }
+        // Continue to enumerate multi-parent alternatives in case the
+        // single parent can't satisfy other constraints (e.g., resource
+        // composition or external-input fan-in).
     }
 
     if max_inputs < 2 {
-        return vec![];
+        return partitions;
     }
 
     // Compute affinity groups: which D statements does each R statement serve?
@@ -458,8 +466,6 @@ fn partition_residual(
 
     let groups: Vec<BTreeSet<usize>> = affinity_groups.into_values().collect();
 
-    let mut partitions = Vec::new();
-
     // Greedy affinity merge: try to merge groups into ≤ max_inputs partitions.
     if let Some(partition) = merge_affinity_groups(&groups, max_inputs, max_public) {
         partitions.push(partition);
@@ -476,9 +482,16 @@ fn partition_residual(
         }
     }
 
-    // Deduplicate partitions (backtracking may produce duplicates).
-    partitions.sort();
-    partitions.dedup();
+    // Order-preserving dedup: greedy/affinity candidates stay first.
+    let mut seen = Vec::new();
+    partitions.retain(|p| {
+        if seen.contains(p) {
+            false
+        } else {
+            seen.push(p.clone());
+            true
+        }
+    });
 
     partitions
 }
