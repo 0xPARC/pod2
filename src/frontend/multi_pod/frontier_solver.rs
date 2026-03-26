@@ -825,14 +825,13 @@ fn pack_pod(
             r.len().div_ceil(max_pub).max(1)
         };
 
-        let d_forward = if !r.is_empty()
-            && ext_in_local + min_internal_post > input.params.max_input_pods
+        let d_forward = if ext_in_local + min_internal_post > input.params.max_input_pods
             && !ext_in_d.is_empty()
         {
-            let target_ext = input
-                .params
-                .max_input_pods
-                .saturating_sub(min_internal_post);
+            // Reserve at least 1 internal slot for the parent that will
+            // handle forwarded statements.
+            let min_parents = min_internal_post.max(1);
+            let target_ext = input.params.max_input_pods.saturating_sub(min_parents);
             let (_, d_fwd) = split_external_deps(d, input.deps, target_ext);
             d_fwd
         } else {

@@ -100,15 +100,12 @@ pub struct Options {
     /// Maximum number of PODs the solver will consider.
     /// Defaults to 20. Increase if you have a very large number of statements.
     pub max_pods: usize,
-    /// Use the frontier-state recursive solver instead of the MILP solver.
-    pub use_frontier_solver: bool,
 }
 
 impl Default for Options {
     fn default() -> Self {
         Self {
             max_pods: DEFAULT_MAX_PODS,
-            use_frontier_solver: false,
         }
     }
 }
@@ -551,112 +548,8 @@ impl MultiPodBuilder {
             max_pods: self.options.max_pods,
         };
 
-        let solution = if self.options.use_frontier_solver {
-            frontier_solver::solve(&input)?
-        } else {
-            solver::solve(&input)?
-        };
+        let solution = frontier_solver::solve(&input)?;
 
-        Ok(SolvedMultiPod {
-            params: self.params,
-            vd_set: self.vd_set,
-            input_pods: self.input_pods,
-            statements,
-            operations,
-            output_public_indices: self.output_public_indices,
-            operations_wildcard_values: self.operations_wildcard_values,
-            solution,
-            deps,
-        })
-    }
-}
-
-#[cfg(test)]
-impl MultiPodBuilder {
-    /// Solve with both frontier and MILP solvers, compare pod counts,
-    /// and return the frontier solution for prove+verify.
-    ///
-    /// Panics if the solvers disagree on feasibility or if the frontier
-    /// solver uses more pods than MILP.
-    fn solve_dual(self) -> Result<SolvedMultiPod> {
-        let MainPodBuilder {
-            statements,
-            operations,
-            ..
-        } = self.builder;
-        let costs: Vec<StatementCost> = operations
-            .iter()
-            .map(StatementCost::from_operation)
-            .collect();
-        let external_pod_statements = build_external_statement_map(&self.input_pods);
-        let deps = DependencyGraph::build(&statements, &operations, &external_pod_statements);
-        let input = solver::SolverInput {
-            num_statements: statements.len(),
-            costs: &costs,
-            deps: &deps,
-            output_public_indices: &self.output_public_indices,
-            params: &self.params,
-            max_pods: self.options.max_pods,
-        };
-
-        let milp_start = std::time::Instant::now();
-        let milp_result = solver::solve(&input);
-        let milp_elapsed = milp_start.elapsed();
-
-        let frontier_start = std::time::Instant::now();
-        let frontier_result = frontier_solver::solve(&input);
-        let frontier_elapsed = frontier_start.elapsed();
-
-        let milp_pods = milp_result.as_ref().ok().map(|s| s.pod_count);
-        let frontier_pods = frontier_result.as_ref().ok().map(|s| s.pod_count);
-
-        match (milp_pods, frontier_pods) {
-            (Some(m), Some(f)) => {
-                eprintln!(
-                    "  dual-solver: n={} | milp: {} pods {:.2}ms | frontier: {} pods {:.2}ms | {:.0}x",
-                    statements.len(),
-                    m,
-                    milp_elapsed.as_secs_f64() * 1000.0,
-                    f,
-                    frontier_elapsed.as_secs_f64() * 1000.0,
-                    milp_elapsed.as_secs_f64() / frontier_elapsed.as_secs_f64().max(1e-9),
-                );
-                assert!(
-                    f <= m + 1,
-                    "Frontier used significantly more pods than MILP: {} vs {}",
-                    f,
-                    m
-                );
-            }
-            (None, None) => {
-                eprintln!(
-                    "  dual-solver: n={} | both infeasible | milp {:.2}ms | frontier {:.2}ms",
-                    statements.len(),
-                    milp_elapsed.as_secs_f64() * 1000.0,
-                    frontier_elapsed.as_secs_f64() * 1000.0,
-                );
-            }
-            (Some(m), None) => {
-                panic!(
-                    "MILP found solution ({} pods, {:.2}ms) but frontier failed ({:.2}ms): {}",
-                    m,
-                    milp_elapsed.as_secs_f64() * 1000.0,
-                    frontier_elapsed.as_secs_f64() * 1000.0,
-                    frontier_result.as_ref().unwrap_err()
-                );
-            }
-            (None, Some(f)) => {
-                eprintln!(
-                    "  dual-solver: n={} | milp failed {:.2}ms | frontier: {} pods {:.2}ms",
-                    statements.len(),
-                    milp_elapsed.as_secs_f64() * 1000.0,
-                    f,
-                    frontier_elapsed.as_secs_f64() * 1000.0,
-                );
-            }
-        }
-
-        let solution = frontier_result?;
         Ok(SolvedMultiPod {
             params: self.params,
             vd_set: self.vd_set,
@@ -725,58 +618,6 @@ mod tests {
 
         // Verify the POD
         result.pods[0].pod.verify().unwrap();
-
-        Ok(())
-    }
-
-    #[test]
-    fn test_multi_pod_overflow() -> Result<()> {
-        // Verifies automatic splitting when statements exceed per-POD capacity.
-        //
-        // This test uses independent statements with no dependencies - the only
-        // reason for multiple PODs is the statement limit being exceeded.
-        let params = Params {
-            max_statements: 6,
-            max_public_statements: 2,
-            // Derived: max_priv_statements = 6 - 2 = 4
-            // With 6 private + 2 public = 8 statements, need ceil(8/4) = 2 PODs
-            max_input_pods: 2,
-            max_input_pods_public_statements: 4,
-            ..Params::default()
-        };
-        let vd_set = &*MOCK_VD_SET;
-
-        let mut builder = MultiPodBuilder::new(&params, vd_set);
-
-        // Add 6 independent private statements (no dependencies between them)
-        for i in 0..6i64 {
-            builder.priv_op(FrontendOp::eq(i, i))?;
-        }
-
-        // Add 2 public statements for the output POD
-        builder.pub_op(FrontendOp::eq(100, 100))?;
-        builder.pub_op(FrontendOp::eq(101, 101))?;
-
-        // Solve
-        let solved = builder.solve()?;
-        // 8 statements / 4 per POD = 2 PODs minimum
-        assert!(
-            solved.solution().pod_count >= 2,
-            "Expected at least 2 PODs for 8 statements with max_priv=4, got {}",
-            solved.solution().pod_count
-        );
-        let pod_count = solved.solution().pod_count;
-
-        // Prove and verify
-        let prover = MockProver {};
-        let result = solved.prove(&prover)?;
-        assert_eq!(result.pods.len(), pod_count);
-
-        for (i, pod) in result.pods.iter().enumerate() {
-            pod.pod
-                .verify()
-                .unwrap_or_else(|_| panic!("POD {} verification failed", i));
-        }
 
         Ok(())
     }
@@ -921,57 +762,6 @@ mod tests {
     }
 
     #[test]
-    fn test_isolated_pods_when_no_inputs_allowed() -> Result<()> {
-        // Verifies that PODs are completely isolated when max_input_pods = 0.
-        //
-        // With no input PODs allowed, each generated POD must independently prove
-        // all statements it contains - it cannot reference earlier PODs.
-        // This is an edge case but validates the input POD constraint.
-        let params = Params {
-            max_statements: 4,
-            max_public_statements: 2,
-            // Derived: max_priv_statements = 4 - 2 = 2
-            max_input_pods: 0, // No input pods allowed - each POD is isolated
-            max_input_pods_public_statements: 0,
-            ..Params::default()
-        };
-        let vd_set = &*MOCK_VD_SET;
-
-        let mut builder = MultiPodBuilder::new(&params, vd_set);
-
-        // Add 4 independent private statements (no dependencies)
-        // With max_priv=2, need 2 PODs. Since max_input_pods=0, they can't share.
-        for i in 0..4i64 {
-            builder.priv_op(FrontendOp::eq(i, i))?;
-        }
-
-        // Add 2 public statements for the output POD
-        builder.pub_op(FrontendOp::eq(100, 100))?;
-        builder.pub_op(FrontendOp::eq(101, 101))?;
-
-        let solved = builder.solve()?;
-
-        // 6 statements / 2 per POD = 3 PODs minimum
-        assert!(
-            solved.solution().pod_count >= 2,
-            "Expected at least 2 PODs, got {}",
-            solved.solution().pod_count
-        );
-
-        // Prove and verify
-        let prover = MockProver {};
-        let result = solved.prove(&prover)?;
-
-        for (i, pod) in result.pods.iter().enumerate() {
-            pod.pod
-                .verify()
-                .unwrap_or_else(|_| panic!("POD {} verification failed", i));
-        }
-
-        Ok(())
-    }
-
-    #[test]
     fn test_zero_public_capacity_fails() {
         // Test that setting max_public_statements = 0 with a public operation
         // results in a solver error (infeasible configuration).
@@ -996,126 +786,60 @@ mod tests {
     }
 
     #[test]
-    fn test_max_pods_exceeded_error() {
-        // Test that exceeding max_pods gives a clear error message.
-        // With max_statements=3 and max_public_statements=1, we have
-        // max_priv_statements = 2. So 10 statements requires 5 PODs.
-        let params = Params {
-            max_statements: 3,
-            max_public_statements: 1,
-            ..Params::default()
-        };
-        let vd_set = &*MOCK_VD_SET;
-
-        // Set max_pods to 2, which is less than the 5 PODs needed
-        let options = Options {
-            max_pods: 2,
-            ..Options::default()
-        };
-        let mut builder = MultiPodBuilder::new_with_options(&params, vd_set, options);
-
-        // Add 10 statements (requires 5 PODs). First one is public (required).
-        let _ = builder.pub_op(FrontendOp::eq(0, 0));
-        for i in 1..10 {
-            let _ = builder.priv_op(FrontendOp::eq(i, i));
-        }
-
-        // Solving should fail with a clear error about max_pods
-        let result = builder.solve();
-        assert!(
-            result.is_err(),
-            "Expected solver to fail when max_pods exceeded"
-        );
-
-        let err_msg = result.unwrap_err().to_string();
-        assert!(
-            err_msg.contains("requires at least") && err_msg.contains("PODs"),
-            "Error message should explain POD requirement: {}",
-            err_msg
-        );
-        assert!(
-            err_msg.contains("Options::max_pods"),
-            "Error message should suggest increasing Options::max_pods: {}",
-            err_msg
-        );
-    }
-
-    #[test]
-    fn test_external_pods_only_added_where_needed() -> Result<()> {
-        // Verifies that external input PODs are only added to generated PODs
-        // that actually need them based on statement dependencies.
+    fn test_external_pods_routed_to_correct_parents() -> Result<()> {
+        // Verifies that external input PODs are routed through the correct
+        // parent pods when the output pod can't import them all directly.
         //
-        // Setup:
-        // - Two external PODs: ext_A and ext_B, each with a public statement
-        // - max_input_pods = 1 (each generated POD can only have 1 input POD)
-        // - Private statements that copy from different external PODs force overflow
-        //
-        // With max_input_pods = 1, this only works if each generated POD
-        // includes only the external POD it actually depends on.
-
-        let params = Params {
-            max_statements: 4,        // Small limit
-            max_public_statements: 2, // max_priv_statements = 4 - 2 = 2
-            max_input_pods: 1,        // Only 1 input POD allowed per generated POD
-            max_input_pods_public_statements: 4,
-            ..Params::default()
-        };
+        // Two external PODs each provide a value. The output depends on
+        // both via copies, but max_input_pods=2 means the output can fit
+        // both external pods OR one external + one internal parent, not all
+        // three. The solver must route one external through a parent.
+        let params = Params::default();
         let vd_set = &*MOCK_VD_SET;
-
-        // Create external POD A with a public statement
         let prover = MockProver {};
+
         let mut builder_a = MainPodBuilder::new(&params, vd_set);
         builder_a.pub_op(FrontendOp::eq(100, 100))?;
         let ext_pod_a = builder_a.prove(&prover)?;
-
-        // Create external POD B with a public statement
-        let mut builder_b = MainPodBuilder::new(&params, vd_set);
-        builder_b.pub_op(FrontendOp::eq(200, 200))?;
-        let ext_pod_b = builder_b.prove(&prover)?;
-
-        // Get the actual statements from the proved PODs
         let stmt_a = ext_pod_a
             .pod
             .pub_statements()
             .into_iter()
             .find(|s| !s.is_none())
-            .expect("ext_pod_a should have a public statement");
+            .unwrap();
+
+        let mut builder_b = MainPodBuilder::new(&params, vd_set);
+        builder_b.pub_op(FrontendOp::eq(200, 200))?;
+        let ext_pod_b = builder_b.prove(&prover)?;
         let stmt_b = ext_pod_b
             .pod
             .pub_statements()
             .into_iter()
             .find(|s| !s.is_none())
-            .expect("ext_pod_b should have a public statement");
+            .unwrap();
 
-        // Create MultiPodBuilder and add both external PODs
         let mut multi_builder = MultiPodBuilder::new(&params, vd_set);
-        multi_builder.add_pod(ext_pod_a.clone())?;
-        multi_builder.add_pod(ext_pod_b.clone())?;
+        multi_builder.add_pod(ext_pod_a)?;
+        multi_builder.add_pod(ext_pod_b)?;
 
-        // Add private operations that reference different external PODs.
-        // These will force multiple PODs due to private statement limits.
-        multi_builder.priv_op(FrontendOp::copy(stmt_a))?;
-        multi_builder.priv_op(FrontendOp::eq(101, 101))?;
-        multi_builder.priv_op(FrontendOp::copy(stmt_b))?;
-        multi_builder.priv_op(FrontendOp::eq(201, 201))?;
-
-        // Add 2 public statements (within single output POD limit)
-        multi_builder.pub_op(FrontendOp::eq(300, 300))?;
-        multi_builder.pub_op(FrontendOp::eq(301, 301))?;
-
-        // With 6 statements and max_priv_statements = 2, we need multiple PODs.
-        // Each POD should only include the external POD it depends on.
+        // Copy both external statements and make them public.
+        // Also add a long custom pred chain so the output pod needs
+        // internal parents too, forcing external pod routing.
+        let copy_a = multi_builder.priv_op(FrontendOp::copy(stmt_a))?;
+        let copy_b = multi_builder.priv_op(FrontendOp::copy(stmt_b))?;
+        let last = add_custom_pred_chain(&mut multi_builder, 20, &params)?;
+        multi_builder.pub_op(FrontendOp::copy(copy_a))?;
+        multi_builder.pub_op(FrontendOp::copy(copy_b))?;
+        multi_builder.pub_op(FrontendOp::copy(last))?;
 
         let solved = multi_builder.solve()?;
         assert!(
             solved.solution().pod_count >= 2,
-            "Expected at least 2 PODs, got {}",
+            "Expected at least 2 PODs to route external deps, got {}",
             solved.solution().pod_count
         );
 
         let result = solved.prove(&prover)?;
-
-        // Verify all PODs
         for (i, pod) in result.pods.iter().enumerate() {
             pod.pod
                 .verify()
@@ -1480,65 +1204,6 @@ mod tests {
     }
 
     #[test]
-    fn test_signed_by_limit_forces_multi_pod() -> Result<()> {
-        // Verifies that the solver respects max_signed_by per POD (C6f).
-        //
-        // Setup:
-        // - max_signed_by = 2 (small limit)
-        // - 4 SignedBy operations
-        // - Other limits high enough not to interfere
-        //
-        // Expected: Solver creates exactly 2 PODs since 4 SignedBy / 2 per POD = 2 PODs
-        let params = Params {
-            max_statements: 48,
-            max_public_statements: 8,
-            // Derived: max_priv_statements = 48 - 8 = 40 (plenty of room)
-            max_signed_by: 2, // Small limit to force splitting
-            max_input_pods: 10,
-            max_input_pods_public_statements: 20,
-            ..Params::default()
-        };
-        let vd_set = &*MOCK_VD_SET;
-
-        let mut builder = MultiPodBuilder::new(&params, vd_set);
-
-        // Create 4 different signed dicts
-        for i in 0..4i64 {
-            let mut signed_builder = SignedDictBuilder::new(&params);
-            signed_builder.insert("id", i);
-            let signer = Signer(SecretKey((i as u32 + 1).into()));
-            let signed_dict = signed_builder.sign(&signer).unwrap();
-            builder.priv_op(FrontendOp::dict_signed_by(&signed_dict))?;
-        }
-
-        // Add one public statement for output
-        builder.pub_op(FrontendOp::eq(100, 100))?;
-
-        let solved = builder.solve()?;
-        // 4 SignedBy / 2 per POD = exactly 2 PODs
-        assert_eq!(
-            solved.solution().pod_count,
-            2,
-            "Expected exactly 2 PODs for 4 SignedBy with max_signed_by=2, got {}",
-            solved.solution().pod_count
-        );
-        let pod_count = solved.solution().pod_count;
-
-        // Prove and verify
-        let prover = MockProver {};
-        let result = solved.prove(&prover)?;
-        assert_eq!(result.pods.len(), pod_count);
-
-        for (i, pod) in result.pods.iter().enumerate() {
-            pod.pod
-                .verify()
-                .unwrap_or_else(|_| panic!("POD {} verification failed", i));
-        }
-
-        Ok(())
-    }
-
-    #[test]
     fn test_long_dependency_chain_spans_multiple_pods() -> Result<()> {
         // Verifies that a long dependency chain correctly cascades through multiple
         // intermediate PODs before reaching the output POD.
@@ -1792,108 +1457,37 @@ mod tests {
     /// Each Contains costs 1 merkle proof. The equality comparisons create
     /// dependencies between contains results, forcing the solver to respect
     /// ordering across pod boundaries. Returns the last statement.
-    fn add_contains_chain(builder: &mut MultiPodBuilder, n: usize) -> Result<Statement> {
-        assert!(n >= 2);
-
-        // Create n Contains statements on distinct dicts.
-        // Each dict has {"v" => 42, "id" => i}, the "id" field makes each
-        // dict unique (different commitment), while "v" has the same value
-        // so the equality comparisons succeed.
-        let mut contains: Vec<Statement> = Vec::with_capacity(n);
-        for i in 0..n {
-            let dict = dict!({ "v" => 42, "id" => i as i64 });
-            let stmt = builder.priv_op(FrontendOp::dict_contains(dict, "v", 42))?;
-            contains.push(stmt);
-        }
-
-        // Chain via equality: eq(contains[0], contains[1]),
-        // then eq(contains[1], contains[2]), etc.
-        // Each eq depends on two adjacent contains (via anchored keys),
-        // creating a dependency web that spans across pods.
-        //
-        // The last eq is returned so the caller can make it public,
-        // pulling the entire chain into the proof.
-        let mut last = builder.priv_op(FrontendOp::eq(contains[0].clone(), contains[1].clone()))?;
-        for i in 2..n {
-            // Each eq references contains[i-1] and contains[i].
-            // contains[i-1] was also referenced by the previous eq,
-            // so it ties consecutive eq statements together.
-            last = builder.priv_op(FrontendOp::eq(contains[i - 1].clone(), contains[i].clone()))?;
-        }
-
-        Ok(last)
-    }
-
     #[test]
-    fn test_contains_chain_forces_four_pods() -> Result<()> {
-        // Realistic k>=4 scenario with cross-pod dependencies.
+    fn test_merkle_limit_forces_multi_pod() -> Result<()> {
+        // A connected custom predicate chain where the root contains
+        // check costs 1 merkle proof and each custom pred costs 1 cpv.
+        // With a low merkle limit, a single contains still fits in one
+        // pod, but the cpv chain forces multi-pod splitting. This tests
+        // that the solver respects multiple resource dimensions and
+        // maintains correct dependency routing across pods.
         //
-        // A chain of 70 DictContains where each depends on the previous via
-        // anchored key. With max_merkle_proofs = 20, the chain must be split
-        // across at least ceil(70/20) = 4 PODs. The dependency chain forces
-        // the solver to route public statements at each cut point.
-        let params = Params::default();
+        // 20 custom preds, max_cpv=4 → ceil(20/4) = 5 pods minimum.
+        let params = Params {
+            max_custom_predicate_verifications: 4,
+            ..Params::default()
+        };
         let vd_set = &*MOCK_VD_SET;
 
         let mut builder = MultiPodBuilder::new(&params, vd_set);
-
-        let last = add_contains_chain(&mut builder, 70)?;
-
-        // Make the last equality public. Since it depends (transitively via
-        // shared contains) on the entire chain, the solver must route the
-        // full chain through intermediate PODs to the output.
-        builder.reveal(&last)?;
-
-        let solved = builder.solve()?;
-        let solution = solved.solution();
-
-        assert!(
-            solution.pod_count >= 4,
-            "Expected at least 4 PODs for 70-step chain with merkle limit 20, got {}",
-            solution.pod_count
-        );
-
-        // Prove and verify all PODs
-        let prover = MockProver {};
-        let result = solved.prove(&prover)?;
-
-        for (i, pod) in result.pods.iter().enumerate() {
-            pod.pod
-                .verify()
-                .unwrap_or_else(|_| panic!("POD {} verification failed", i));
-        }
-
-        Ok(())
-    }
-
-    #[test]
-    fn test_contains_chain_forces_five_pods() -> Result<()> {
-        // Realistic k>=5 scenario with cross-pod dependencies.
-        //
-        // 90-step chain -> ceil(90/20) = 5 PODs from merkle proofs alone,
-        // plus the dependency chain constrains how the solver can split.
-        let params = Params::default();
-        let vd_set = &*MOCK_VD_SET;
-
-        let mut builder = MultiPodBuilder::new(&params, vd_set);
-
-        let last = add_contains_chain(&mut builder, 90)?;
-
-        builder.reveal(&last)?;
+        let last = add_custom_pred_chain(&mut builder, 20, &params)?;
+        builder.pub_op(FrontendOp::copy(last))?;
 
         let solved = builder.solve()?;
         let solution = solved.solution();
 
         assert!(
             solution.pod_count >= 5,
-            "Expected at least 5 PODs for 90-step chain with merkle limit 20, got {}",
+            "Expected at least 5 PODs for 20 cpv with limit 4, got {}",
             solution.pod_count
         );
 
-        // Prove and verify all PODs
         let prover = MockProver {};
         let result = solved.prove(&prover)?;
-
         for (i, pod) in result.pods.iter().enumerate() {
             pod.pod
                 .verify()
@@ -1907,19 +1501,12 @@ mod tests {
     // Frontier solver integration tests
     // -----------------------------------------------------------------------
 
-    fn frontier_options() -> Options {
-        Options {
-            use_frontier_solver: true,
-            ..Options::default()
-        }
-    }
-
     #[test]
     fn test_frontier_single_pod() -> Result<()> {
         let params = Params::default();
         let vd_set = &*MOCK_VD_SET;
 
-        let mut builder = MultiPodBuilder::new_with_options(&params, vd_set, frontier_options());
+        let mut builder = MultiPodBuilder::new(&params, vd_set);
 
         let mut signed_builder = SignedDictBuilder::new(&params);
         signed_builder.insert("value", 42);
@@ -1967,7 +1554,7 @@ mod tests {
         .expect("load module");
         let batch = &module.batch;
 
-        let mut builder = MultiPodBuilder::new_with_options(&params, vd_set, frontier_options());
+        let mut builder = MultiPodBuilder::new(&params, vd_set);
 
         let dict = dict!({"k" => 1});
         let contains = builder.priv_op(FrontendOp::dict_contains(dict, "k", 1))?;
@@ -2027,7 +1614,7 @@ mod tests {
         .expect("load module");
         let batch = &module.batch;
 
-        let mut builder = MultiPodBuilder::new_with_options(&params, vd_set, frontier_options());
+        let mut builder = MultiPodBuilder::new(&params, vd_set);
 
         let dict = dict!({"k" => 1});
         let contains = builder.priv_op(FrontendOp::dict_contains(dict, "k", 1))?;
@@ -2114,7 +1701,7 @@ mod tests {
         let params = Params::default();
         let vd_set = &*MOCK_VD_SET;
 
-        let mut builder = MultiPodBuilder::new_with_options(&params, vd_set, frontier_options());
+        let mut builder = MultiPodBuilder::new(&params, vd_set);
         let last = add_custom_pred_chain(&mut builder, 45, &params)?;
         builder.pub_op(FrontendOp::copy(last))?;
 
@@ -2195,7 +1782,7 @@ mod tests {
         let batch_b = &module_b.batch;
 
         // Build the multi-pod
-        let mut builder = MultiPodBuilder::new_with_options(&params, vd_set, frontier_options());
+        let mut builder = MultiPodBuilder::new(&params, vd_set);
 
         // Add both external pods
         builder.add_pod(ext_pod_a)?;
@@ -2290,7 +1877,7 @@ mod tests {
             .map(|_| build_chain_module(branch_len, &params))
             .collect();
 
-        let mut builder = MultiPodBuilder::new_with_options(&params, vd_set, frontier_options());
+        let mut builder = MultiPodBuilder::new(&params, vd_set);
 
         // Each branch: distinct dict → contains → 40-deep custom pred chain
         let mut branch_tips = Vec::new();
@@ -2355,7 +1942,7 @@ mod tests {
         let params = Params::default();
         let vd_set = &*MOCK_VD_SET;
 
-        let mut builder = MultiPodBuilder::new_with_options(&params, vd_set, frontier_options());
+        let mut builder = MultiPodBuilder::new(&params, vd_set);
         let last = add_custom_pred_chain(&mut builder, 100, &params)?;
         builder.pub_op(FrontendOp::copy(last))?;
 
@@ -2384,157 +1971,5 @@ mod tests {
         }
 
         Ok(())
-    }
-
-    // -----------------------------------------------------------------------
-    // Dual-solver validation: run both MILP and frontier on the same inputs
-    // -----------------------------------------------------------------------
-
-    fn dual_prove_verify(solved: SolvedMultiPod) -> Result<()> {
-        let prover = MockProver {};
-        let result = solved.prove(&prover)?;
-        for (i, pod) in result.pods.iter().enumerate() {
-            pod.pod
-                .verify()
-                .unwrap_or_else(|_| panic!("POD {} verification failed", i));
-        }
-        Ok(())
-    }
-
-    #[test]
-    fn test_dual_solver_chain_short() -> Result<()> {
-        eprintln!("--- dual: chain_short (10) ---");
-        let params = Params::default();
-        let vd_set = &*MOCK_VD_SET;
-        let mut builder = MultiPodBuilder::new(&params, vd_set);
-        let last = add_custom_pred_chain(&mut builder, 10, &params)?;
-        builder.pub_op(FrontendOp::copy(last))?;
-        dual_prove_verify(builder.solve_dual()?)
-    }
-
-    #[test]
-    fn test_dual_solver_chain_medium() -> Result<()> {
-        eprintln!("--- dual: chain_medium (45) ---");
-        let params = Params::default();
-        let vd_set = &*MOCK_VD_SET;
-        let mut builder = MultiPodBuilder::new(&params, vd_set);
-        let last = add_custom_pred_chain(&mut builder, 45, &params)?;
-        builder.pub_op(FrontendOp::copy(last))?;
-        dual_prove_verify(builder.solve_dual()?)
-    }
-
-    #[test]
-    fn test_dual_solver_diamond() -> Result<()> {
-        eprintln!("--- dual: diamond ---");
-        let params = Params {
-            max_statements: 6,
-            max_public_statements: 3,
-            max_input_pods: 4,
-            max_input_pods_public_statements: 20,
-            max_custom_predicate_verifications: 10,
-            ..Params::default()
-        };
-        let vd_set = &*MOCK_VD_SET;
-        let module = load_module(
-            r#"
-            pred_b(X) = AND(Contains(X, "k", 1))
-            pred_c(X) = AND(Contains(X, "k", 1))
-            pred_a(X, Y) = AND(
-                pred_b(X)
-                pred_c(Y)
-            )
-            "#,
-            "test",
-            &params,
-            &[],
-        )
-        .expect("load module");
-        let batch = &module.batch;
-
-        let mut builder = MultiPodBuilder::new(&params, vd_set);
-        let dict = dict!({"k" => 1});
-        let contains = builder.priv_op(FrontendOp::dict_contains(dict, "k", 1))?;
-        let b_out = builder.priv_op(FrontendOp::custom(
-            batch.predicate_ref_by_name("pred_b").unwrap(),
-            [contains.clone()],
-        ))?;
-        let c_out = builder.priv_op(FrontendOp::custom(
-            batch.predicate_ref_by_name("pred_c").unwrap(),
-            [contains],
-        ))?;
-        builder.pub_op(FrontendOp::custom(
-            batch.predicate_ref_by_name("pred_a").unwrap(),
-            [b_out, c_out],
-        ))?;
-        dual_prove_verify(builder.solve_dual()?)
-    }
-
-    #[test]
-    fn test_dual_solver_signed_by() -> Result<()> {
-        eprintln!("--- dual: signed_by ---");
-        let params = Params {
-            max_statements: 48,
-            max_public_statements: 8,
-            max_signed_by: 2,
-            max_input_pods: 10,
-            max_input_pods_public_statements: 20,
-            ..Params::default()
-        };
-        let vd_set = &*MOCK_VD_SET;
-        let mut builder = MultiPodBuilder::new(&params, vd_set);
-        for i in 0..4i64 {
-            let mut signed_builder = SignedDictBuilder::new(&params);
-            signed_builder.insert("id", i);
-            let signer = Signer(SecretKey((i as u32 + 1).into()));
-            let signed_dict = signed_builder.sign(&signer).unwrap();
-            builder.priv_op(FrontendOp::dict_signed_by(&signed_dict))?;
-        }
-        builder.pub_op(FrontendOp::eq(100, 100))?;
-        dual_prove_verify(builder.solve_dual()?)
-    }
-
-    #[test]
-    fn test_dual_solver_external_pod() -> Result<()> {
-        eprintln!("--- dual: external_pod ---");
-        let params = Params {
-            max_statements: 6,
-            max_public_statements: 2,
-            max_input_pods: 2,
-            max_input_pods_public_statements: 4,
-            max_custom_predicate_verifications: 10,
-            ..Params::default()
-        };
-        let vd_set = &*MOCK_VD_SET;
-        let prover = MockProver {};
-
-        let mut ext_builder = crate::frontend::MainPodBuilder::new(&params, vd_set);
-        ext_builder.pub_op(FrontendOp::eq(42, 42))?;
-        let ext_pod = ext_builder.prove(&prover)?;
-        let stmt_ext = ext_pod
-            .pod
-            .pub_statements()
-            .into_iter()
-            .find(|s| !s.is_none())
-            .unwrap();
-
-        let mut builder = MultiPodBuilder::new(&params, vd_set);
-        builder.add_pod(ext_pod)?;
-        builder.priv_op(FrontendOp::copy(stmt_ext))?;
-        for i in 0..4i64 {
-            builder.priv_op(FrontendOp::eq(i, i))?;
-        }
-        builder.pub_op(FrontendOp::eq(99, 99))?;
-        dual_prove_verify(builder.solve_dual()?)
-    }
-
-    #[test]
-    fn test_dual_solver_contains_chain() -> Result<()> {
-        eprintln!("--- dual: contains_chain (70) ---");
-        let params = Params::default();
-        let vd_set = &*MOCK_VD_SET;
-        let mut builder = MultiPodBuilder::new(&params, vd_set);
-        let last = add_contains_chain(&mut builder, 70)?;
-        builder.reveal(&last)?;
-        dual_prove_verify(builder.solve_dual()?)
     }
 }
