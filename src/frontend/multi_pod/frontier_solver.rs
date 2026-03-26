@@ -629,7 +629,17 @@ pub fn solve(input: &SolverInput) -> Result<MultiPodSolution> {
     for k in 1..=input.max_pods {
         let mut memo: HashMap<MemoKey, Option<PackResult>> = HashMap::new();
         if let Some(result) = pack_pod(&output_frontier, k, input, &mut memo) {
-            return Ok(convert_to_solution(result, input));
+            let solution = convert_to_solution(result, input);
+            #[cfg(test)]
+            {
+                let errors = solution.validate(input);
+                assert!(
+                    errors.is_empty(),
+                    "frontier solver produced invalid solution:\n{}",
+                    errors.join("\n")
+                );
+            }
+            return Ok(solution);
         }
     }
 
@@ -681,198 +691,196 @@ fn pack_pod(
 
     // Find L candidates.
     let candidates = l_search(d, &c, input.costs, input.deps, input.params);
+    let max_pub = input.params.max_public_statements;
 
-    // Try each candidate, first without D-splitting, then with it.
-    // D-splitting forwards some D statements (those with external deps)
-    // through parent pods, freeing input slots for internal parents. We
-    // only attempt it after the non-split pass fails.
-    for split_d in [false, true] {
-        for candidate in &candidates {
-            let (local, r) = trim_external_overflow(
-                &candidate.local,
-                &candidate.residual,
-                d,
-                input.deps,
-                input.params.max_input_pods,
-                input.params.max_public_statements,
-            );
+    for candidate in &candidates {
+        // --- Input slot budget ---
+        // Compute how many internal parent slots the residual requires.
+        // This drives both external trimming and D-splitting.
+        let min_internal = if candidate.residual.is_empty() {
+            0
+        } else {
+            candidate.residual.len().div_ceil(max_pub).max(1)
+        };
 
-            // D-splitting: when external deps in D consume all input slots
-            // AND the residual needs internal parents, forward some D
-            // statements through parent pods to free slots.
-            let d_forward = if split_d && !r.is_empty() {
-                let external_pods_needed = count_external_pods(&local, input.deps);
-                let internal_input_slots = input
-                    .params
-                    .max_input_pods
-                    .saturating_sub(external_pods_needed);
-                if internal_input_slots == 0 {
-                    let ext_in_d = collect_external_pods(d, input.deps);
-                    if !ext_in_d.is_empty() {
-                        let max_ext = external_pods_needed.saturating_sub(1);
-                        let (_, d_fwd) = split_external_deps(d, input.deps, max_ext);
-                        d_fwd
-                    } else {
-                        BTreeSet::new()
-                    }
-                } else {
-                    BTreeSet::new()
-                }
-            } else {
-                BTreeSet::new()
-            };
+        // How many external pod slots we can afford.
+        let max_ext = input.params.max_input_pods.saturating_sub(min_internal);
 
-            // On the split_d=true pass, skip if splitting produced nothing
-            // new (would duplicate the split_d=false attempt).
-            if split_d && d_forward.is_empty() {
-                continue;
+        // --- Trim external overflow from L (non-D statements) ---
+        let (local, r) = trim_external_overflow(
+            &candidate.local,
+            &candidate.residual,
+            d,
+            input.deps,
+            max_ext,
+        );
+
+        // --- D-splitting ---
+        // If external deps in D would still overflow after trimming,
+        // forward excess D statements through parent pods.
+        let ext_in_local = count_external_pods(&local, input.deps);
+        let ext_in_d = collect_external_pods(d, input.deps);
+        let min_internal_post = if r.is_empty() {
+            0
+        } else {
+            r.len().div_ceil(max_pub).max(1)
+        };
+
+        let d_forward = if !r.is_empty()
+            && ext_in_local + min_internal_post > input.params.max_input_pods
+            && !ext_in_d.is_empty()
+        {
+            let target_ext = input
+                .params
+                .max_input_pods
+                .saturating_sub(min_internal_post);
+            let (_, d_fwd) = split_external_deps(d, input.deps, target_ext);
+            d_fwd
+        } else {
+            BTreeSet::new()
+        };
+
+        // Apply D-split: remove forwarded statements from local, add to R.
+        let (local, r) = if !d_forward.is_empty() {
+            let mut new_local = local;
+            let mut new_r = r;
+            for &s in &d_forward {
+                new_local.remove(&s);
+                new_r.insert(s);
             }
-
-            // Adjust local and residual for forwarded D statements.
-            let (local, r) = if !d_forward.is_empty() {
-                let mut new_local = local;
-                let mut new_r = r;
-                for &s in &d_forward {
-                    new_local.remove(&s);
-                    new_r.insert(s);
-                }
-                // Remove orphaned statements: those in local that are NOT in
-                // d_local and NOT depended on by any remaining local statement.
-                let needed: BTreeSet<usize> = new_local
-                    .iter()
-                    .flat_map(|&s| {
-                        input.deps.statement_deps[s]
-                            .iter()
-                            .filter_map(|dep| match dep {
-                                StatementSource::Internal(idx) => Some(*idx),
-                                _ => None,
-                            })
-                    })
-                    .collect();
-                let orphans: Vec<usize> = new_local
-                    .iter()
-                    .filter(|&&s| !d.contains(&s) && !needed.contains(&s))
-                    .copied()
-                    .collect();
-                for s in orphans {
-                    new_local.remove(&s);
-                }
-                // Recompute residual for trimmed local.
-                for &s in &new_local {
-                    for dep in &input.deps.statement_deps[s] {
-                        if let StatementSource::Internal(idx) = dep {
-                            if !new_local.contains(idx) {
-                                new_r.insert(*idx);
-                            }
+            // Remove orphaned statements no longer needed by any local stmt.
+            let needed: BTreeSet<usize> = new_local
+                .iter()
+                .flat_map(|&s| {
+                    input.deps.statement_deps[s]
+                        .iter()
+                        .filter_map(|dep| match dep {
+                            StatementSource::Internal(idx) => Some(*idx),
+                            _ => None,
+                        })
+                })
+                .collect();
+            let orphans: Vec<usize> = new_local
+                .iter()
+                .filter(|&&s| !d.contains(&s) && !needed.contains(&s))
+                .copied()
+                .collect();
+            for s in orphans {
+                new_local.remove(&s);
+            }
+            // Recompute residual for trimmed local.
+            for &s in &new_local {
+                for dep in &input.deps.statement_deps[s] {
+                    if let StatementSource::Internal(idx) = dep {
+                        if !new_local.contains(idx) {
+                            new_r.insert(*idx);
                         }
                     }
                 }
-                (new_local, new_r)
-            } else {
-                (local, r)
-            };
-
-            let d_local: BTreeSet<usize> = d.difference(&d_forward).copied().collect();
-            let mut local = local;
-            let mut r = r;
-
-            // Compute resource counts.
-            let external_pods_needed = count_external_pods(&local, input.deps);
-            let internal_input_slots = input
-                .params
-                .max_input_pods
-                .saturating_sub(external_pods_needed);
-
-            // Re-proving: if R needs more parents than available input slots,
-            // try absorbing cheap R subgraphs into L to reduce parent count.
-            if !r.is_empty() && internal_input_slots > 0 {
-                let mut usage = ResourceUsage::default();
-                for &s in &local {
-                    usage.add(&input.costs[s]);
-                }
-                absorb_subgraphs(
-                    &mut local,
-                    &mut r,
-                    &mut usage,
-                    input.costs,
-                    input.deps,
-                    input.params,
-                    input.params.max_public_statements,
-                    internal_input_slots,
-                );
             }
+            (new_local, new_r)
+        } else {
+            (local, r)
+        };
 
-            if r.is_empty() {
-                let result = PackResult {
-                    pods: vec![PodNode {
-                        statements: local.iter().copied().collect(),
-                        public_statements: d.clone(),
-                        internal_inputs: vec![],
-                    }],
-                };
-                memo.insert(key, Some(result.clone()));
-                return Some(result);
+        let d_local: BTreeSet<usize> = d.difference(&d_forward).copied().collect();
+        let mut local = local;
+        let mut r = r;
+
+        // --- Final slot computation ---
+        let ext_pods_needed = count_external_pods(&local, input.deps);
+        let internal_input_slots = input.params.max_input_pods.saturating_sub(ext_pods_needed);
+
+        // --- Re-proving: absorb cheap R subgraphs to reduce parent count ---
+        if !r.is_empty() && internal_input_slots > 0 {
+            let mut usage = ResourceUsage::default();
+            for &s in &local {
+                usage.add(&input.costs[s]);
             }
-
-            if internal_input_slots == 0 {
-                continue;
-            }
-
-            // Partition R across available parent slots.
-            let partitions = partition_residual(
-                &r,
-                internal_input_slots,
-                input.params.max_public_statements,
-                &d_local,
-                &local,
+            absorb_subgraphs(
+                &mut local,
+                &mut r,
+                &mut usage,
+                input.costs,
                 input.deps,
+                input.params,
+                max_pub,
+                internal_input_slots,
             );
+        }
 
-            for partition in &partitions {
-                let mut parent_pods: Vec<PodNode> = Vec::new();
-                let mut parent_pod_counts: Vec<usize> = Vec::new();
-                let mut feasible = true;
+        // --- Base case: everything fits in this pod ---
+        if r.is_empty() {
+            let result = PackResult {
+                pods: vec![PodNode {
+                    statements: local.iter().copied().collect(),
+                    public_statements: d.clone(),
+                    internal_inputs: vec![],
+                }],
+            };
+            memo.insert(key, Some(result.clone()));
+            return Some(result);
+        }
 
-                for parent_d in partition {
-                    if parent_d.is_empty() {
-                        continue;
+        // Prune: infeasible if no internal parent slots available.
+        if internal_input_slots == 0 {
+            continue;
+        }
+
+        // --- Partition R and recurse ---
+        let partitions = partition_residual(
+            &r,
+            internal_input_slots,
+            max_pub,
+            &d_local,
+            &local,
+            input.deps,
+        );
+
+        for partition in &partitions {
+            let mut parent_pods: Vec<PodNode> = Vec::new();
+            let mut parent_pod_counts: Vec<usize> = Vec::new();
+            let mut feasible = true;
+
+            for parent_d in partition {
+                if parent_d.is_empty() {
+                    continue;
+                }
+                let parent_k = k_budget - 1 - parent_pods.len();
+                if parent_k == 0 {
+                    feasible = false;
+                    break;
+                }
+                match pack_pod(parent_d, parent_k, input, memo) {
+                    Some(mut parent_result) => {
+                        parent_pod_counts.push(parent_result.pods.len());
+                        parent_pods.append(&mut parent_result.pods);
                     }
-                    let parent_k = k_budget - 1 - parent_pods.len();
-                    if parent_k == 0 {
+                    None => {
                         feasible = false;
                         break;
                     }
-                    match pack_pod(parent_d, parent_k, input, memo) {
-                        Some(mut parent_result) => {
-                            parent_pod_counts.push(parent_result.pods.len());
-                            parent_pods.append(&mut parent_result.pods);
-                        }
-                        None => {
-                            feasible = false;
-                            break;
-                        }
-                    }
+                }
+            }
+
+            if feasible {
+                let mut parent_indices = Vec::new();
+                let mut offset = 0;
+                for &count in &parent_pod_counts {
+                    parent_indices.push(offset + count - 1);
+                    offset += count;
                 }
 
-                if feasible {
-                    let mut parent_indices = Vec::new();
-                    let mut offset = 0;
-                    for &count in &parent_pod_counts {
-                        parent_indices.push(offset + count - 1);
-                        offset += count;
-                    }
+                let mut all_pods = parent_pods;
+                all_pods.push(PodNode {
+                    statements: local.iter().copied().collect(),
+                    public_statements: d.clone(),
+                    internal_inputs: parent_indices,
+                });
 
-                    let mut all_pods = parent_pods;
-                    all_pods.push(PodNode {
-                        statements: local.iter().copied().collect(),
-                        public_statements: d.clone(),
-                        internal_inputs: parent_indices,
-                    });
-
-                    let result = PackResult { pods: all_pods };
-                    memo.insert(key, Some(result.clone()));
-                    return Some(result);
-                }
+                let result = PackResult { pods: all_pods };
+                memo.insert(key, Some(result.clone()));
+                return Some(result);
             }
         }
     }
@@ -881,23 +889,21 @@ fn pack_pod(
     None
 }
 
-/// When L references more external pods than input slots allow, move
-/// statements with excess external deps from L to R so a parent pod
-/// can forward them.
+/// When L references more external pods than `max_ext_allowed` input slots,
+/// move non-D statements with excess external deps from L to R so a parent
+/// pod can forward them.
 ///
-/// Keeps external pods that are referenced by mandatory statements (D)
-/// and the most-referenced external pods. Statements depending on
-/// excluded external pods move to R.
+/// `max_ext_allowed` is the caller's budget for external pod input slots
+/// (typically `max_input_pods - min_internal_parents`).
 ///
-/// Also trims when external pods would consume all input slots and the
-/// residual needs internal parent slots.
+/// Keeps external pods referenced by D statements (mandatory) and the
+/// most-referenced external pods up to the budget.
 fn trim_external_overflow(
     local: &BTreeSet<usize>,
     residual: &BTreeSet<usize>,
     d: &BTreeSet<usize>,
     deps: &DependencyGraph,
-    max_input_pods: usize,
-    max_public: usize,
+    max_ext_allowed: usize,
 ) -> (BTreeSet<usize>, BTreeSet<usize>) {
     // Find which external pods each statement in L needs.
     let mut ext_pod_users: HashMap<crate::middleware::Hash, Vec<usize>> = HashMap::new();
@@ -916,16 +922,7 @@ fn trim_external_overflow(
 
     let total_ext = ext_pod_users.len();
 
-    // Reserve input slots for internal parents when residual is non-empty.
-    let min_internal_parents = if residual.is_empty() {
-        0
-    } else {
-        residual.len().div_ceil(max_public).max(1)
-    };
-    let max_ext_allowed = max_input_pods.saturating_sub(min_internal_parents);
-
     if total_ext <= max_ext_allowed {
-        // No overflow — everything fits with room for internal parents.
         return (local.clone(), residual.clone());
     }
 
@@ -1390,6 +1387,76 @@ mod tests {
             solution.pod_count >= 2 && solution.pod_count <= 3,
             "Expected 2-3 pods, got {}",
             solution.pod_count
+        );
+    }
+
+    #[test]
+    fn test_greedy_l_suboptimal_multi_resource() {
+        // Demonstrates the Pareto L-search gap: the greedy picks s2 (which
+        // costs both merkle=1 AND cpv=1), filling both resource dimensions.
+        // This prevents s0 (merkle-only) and s1 (cpv-only) from fitting,
+        // creating R={0,1} which exceeds max_public=1 for the single parent.
+        //
+        // Optimal L={3,0,1} packs both single-resource statements, leaving
+        // R={2} which fits in 1 parent. The greedy misses this.
+        //
+        // This test documents the gap; it currently fails (reports infeasible).
+        let n = 4;
+        let costs: Vec<StatementCost> = vec![
+            StatementCost {
+                merkle_proofs: 1,
+                ..StatementCost::default()
+            }, // s0: merkle only
+            StatementCost {
+                custom_pred_verifications: 1,
+                ..StatementCost::default()
+            }, // s1: cpv only
+            StatementCost {
+                merkle_proofs: 1,
+                custom_pred_verifications: 1,
+                ..StatementCost::default()
+            }, // s2: both
+            StatementCost::default(), // s3: output
+        ];
+        let deps = DependencyGraph {
+            statement_deps: vec![
+                vec![],
+                vec![],
+                vec![],
+                vec![
+                    StatementSource::Internal(0),
+                    StatementSource::Internal(1),
+                    StatementSource::Internal(2),
+                ],
+            ],
+        };
+        let params = Params {
+            max_statements: 4,        // max_priv = 4 - 1 = 3
+            max_public_statements: 1, // only 1 public per pod
+            max_merkle_proofs_containers: 1,
+            max_custom_predicate_verifications: 1,
+            max_input_pods: 1,
+            max_input_pods_public_statements: 4,
+            ..Params::default()
+        };
+
+        let input = SolverInput {
+            num_statements: n,
+            costs: &costs,
+            deps: &deps,
+            output_public_indices: &[3],
+            params: &params,
+            max_pods: 10,
+        };
+
+        // This SHOULD find a 2-pod solution: L={3,0,1}, parent proves {2}.
+        // Currently fails because the greedy picks L={3,2} instead.
+        let result = solve(&input);
+        assert!(
+            result.is_err(),
+            "Expected infeasible (greedy L-search gap) but got {} pods. \
+             If this passes, the Pareto L-search or an equivalent fix was implemented!",
+            result.as_ref().unwrap().pod_count
         );
     }
 

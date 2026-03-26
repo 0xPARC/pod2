@@ -1778,20 +1778,6 @@ mod tests {
         Ok(())
     }
 
-    /// Helper: build a signed dict with n_keys entries {"k0" => 0, "k1" => 1, ...}.
-    fn make_signed_dict(
-        params: &Params,
-        n_keys: usize,
-        signer_id: u32,
-    ) -> crate::frontend::SignedDict {
-        let mut signed_builder = SignedDictBuilder::new(params);
-        for i in 0..n_keys {
-            signed_builder.insert(&format!("k{}", i), i as i64);
-        }
-        let signer = Signer(SecretKey(signer_id.into()));
-        signed_builder.sign(&signer).unwrap()
-    }
-
     /// Helper: populate a builder with n_dicts signed dicts × n_keys DictContains each.
     ///
     /// Each dict costs 1 SignedBy + n_keys merkle proofs. With default
