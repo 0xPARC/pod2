@@ -1443,16 +1443,16 @@ mod tests {
         Ok(())
     }
 
-    /// Helper: populate a builder with n_dicts signed dicts × n_keys DictContains each.
+    /// Helper: populate a builder with n_dicts signed dicts x n_keys DictContains each.
     ///
     /// Each dict costs 1 SignedBy + n_keys merkle proofs. With default
-    /// max_merkle_proofs_containers = 20, n_dicts × n_keys > 20 forces
+    /// max_merkle_proofs_containers = 20, n_dicts x n_keys > 20 forces
     /// multiple PODs.
     /// Add a chain of `n` DictContains + equality checks with dependencies.
     ///
     /// Creates `n` dicts each containing `{"v" => 42}`, proves Contains on
     /// each, then chains them with equality comparisons:
-    ///   contains_0 → eq(contains_0, contains_1) → eq(prev_eq, contains_2) → ...
+    ///   contains_0 -> eq(contains_0, contains_1) -> eq(prev_eq, contains_2) -> ...
     ///
     /// Each Contains costs 1 merkle proof. The equality comparisons create
     /// dependencies between contains results, forcing the solver to respect
@@ -1466,7 +1466,7 @@ mod tests {
         // that the solver respects multiple resource dimensions and
         // maintains correct dependency routing across pods.
         //
-        // 20 custom preds, max_cpv=4 → ceil(20/4) = 5 pods minimum.
+        // 20 custom preds, max_cpv=4 -> ceil(20/4) = 5 pods minimum.
         let params = Params {
             max_custom_predicate_verifications: 4,
             ..Params::default()
@@ -1696,7 +1696,7 @@ mod tests {
         // Default params: max_priv=40, max_custom_pred_verifications=8.
         // Chain of 45 custom preds + 1 contains = 46 statements.
         // ceil(46/40) = 2 PODs from slot pressure. Also hits custom pred
-        // verification limit (8 per pod) → ceil(45/8) = 6 PODs.
+        // verification limit (8 per pod) -> ceil(45/8) = 6 PODs.
         // The binding constraint is custom pred verifications.
         let params = Params::default();
         let vd_set = &*MOCK_VD_SET;
@@ -1738,16 +1738,16 @@ mod tests {
         // two custom predicate branches that merge, cross-branch transitive_eq.
         //
         // Resource pressure from multiple dimensions:
-        // - custom_pred_verifications (8/pod): 2 branches × 15 deep = 30 → 4+ PODs
-        // - statement slots (40/pod): ~50+ statements → 2+ PODs
+        // - custom_pred_verifications (8/pod): 2 branches x 15 deep = 30 -> 4+ PODs
+        // - statement slots (40/pod): ~50+ statements -> 2+ PODs
         // - input slots (2/pod): external pods + internal parents
         //
         // DAG structure (not linear):
-        //   ext_a → contains_a ─┐
-        //                       ├─ branch_a (15 custom preds) ─┐
-        //   ext_b → contains_b ─┘                              ├─ merge → output
-        //                       ├─ branch_b (15 custom preds) ─┘
-        //   dict_c → contains_c ┘
+        //   ext_a -> contains_a --\
+        //                         +-- branch_a (15 custom preds) --\
+        //   ext_b -> contains_b --/                                +-- merge -> output
+        //                         +-- branch_b (15 custom preds) --/
+        //   dict_c -> contains_c -/
         let params = Params::default();
         let vd_set = &*MOCK_VD_SET;
         let prover = MockProver {};
@@ -1840,7 +1840,7 @@ mod tests {
                 .sum::<usize>()
         );
 
-        // With 30 custom pred verifications (limit 8/pod) → at least 4 PODs.
+        // With 30 custom pred verifications (limit 8/pod) -> at least 4 PODs.
         // Two independent branches means the solver must route both to the output.
         assert!(
             solution.pod_count >= 4,
@@ -1861,8 +1861,8 @@ mod tests {
 
     #[test]
     fn test_frontier_complex_jumbo() -> Result<()> {
-        // Jumbo test: 4 branches × 40 custom predicates = 160 verifications.
-        // With limit 8/pod → ceil(160/8) = 20 PODs minimum.
+        // Jumbo test: 4 branches x 40 custom predicates = 160 verifications.
+        // With limit 8/pod -> ceil(160/8) = 20 PODs minimum.
         // Each branch rooted at a distinct DictContains (merkle proof cost).
         // All branches converge to public outputs.
         let params = Params::default();
@@ -1879,7 +1879,7 @@ mod tests {
 
         let mut builder = MultiPodBuilder::new(&params, vd_set);
 
-        // Each branch: distinct dict → contains → 40-deep custom pred chain
+        // Each branch: distinct dict -> contains -> 40-deep custom pred chain
         let mut branch_tips = Vec::new();
         for (branch_idx, module) in modules.iter().enumerate() {
             let batch = &module.batch;

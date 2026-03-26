@@ -239,13 +239,11 @@ fn absorb_subgraphs(
 
         // Check that absorbing this subgraph doesn't introduce new external
         // pod dependencies (which would consume input slots too).
-        let new_ext = to_absorb.iter().any(|&stmt| {
-            deps.statement_deps[stmt]
-                .iter()
-                .any(|dep| matches!(dep, StatementSource::External(_)))
-                && !local.contains(&stmt)
-        });
-        if new_ext {
+        // Only skip if the subgraph references external pods not already
+        // imported by the current local set.
+        let existing_ext = collect_external_pods(local, deps);
+        let subgraph_ext = collect_external_pods(&to_absorb, deps);
+        if !subgraph_ext.is_subset(&existing_ext) {
             continue; // Would need additional external inputs.
         }
 
@@ -412,8 +410,8 @@ fn greedy_l(
 // R-partition: split residual across parents
 // ---------------------------------------------------------------------------
 
-/// Generate valid partitions of residual R across ≤ max_inputs parents,
-/// each receiving ≤ max_public statements.
+/// Generate valid partitions of residual R across <= max_inputs parents,
+/// each receiving <= max_public statements.
 ///
 /// Uses output-path affinity: statements in R that serve the same D
 /// statements (i.e., the same D statements transitively depend on them)
@@ -466,15 +464,15 @@ fn partition_residual(
 
     let groups: Vec<BTreeSet<usize>> = affinity_groups.into_values().collect();
 
-    // Greedy affinity merge: try to merge groups into ≤ max_inputs partitions.
+    // Greedy affinity merge: try to merge groups into <= max_inputs partitions.
     if let Some(partition) = merge_affinity_groups(&groups, max_inputs, max_public) {
         partitions.push(partition);
     }
 
     // Complete fallback: enumerate all valid k-way partitions via backtracking.
-    // Each item is assigned to one of k parts (each ≤ max_public).
+    // Each item is assigned to one of k parts (each <= max_public).
     // Symmetry-broken: first occurrence of part j must precede part j+1.
-    // Bounded to |R| ≤ 16 to keep enumeration tractable.
+    // Bounded to |R| <= 16 to keep enumeration tractable.
     if r.len() <= max_public * max_inputs {
         let items: Vec<usize> = r.iter().copied().collect();
         if items.len() <= 16 {
@@ -496,7 +494,7 @@ fn partition_residual(
     partitions
 }
 
-/// Enumerate k-way partitions of `items` where each part has ≤ `max_per_part`
+/// Enumerate k-way partitions of `items` where each part has <= `max_per_part`
 /// elements. Appends unique results to `out`.
 ///
 /// Uses backtracking with symmetry breaking: the first occurrence of part j
@@ -612,7 +610,7 @@ fn compute_affinities(
     affinity
 }
 
-/// Merge affinity groups into ≤ max_parts partitions, each ≤ max_per_part.
+/// Merge affinity groups into <= max_parts partitions, each <= max_per_part.
 /// Greedy: sort groups largest-first, assign each to the smallest partition
 /// that still has room.
 fn merge_affinity_groups(
@@ -725,7 +723,8 @@ pub fn solve(input: &SolverInput) -> Result<MultiPodSolution> {
     }
 
     Err(super::Error::Solver(format!(
-        "No feasible solution found with up to {} PODs",
+        "No feasible solution found with up to {} PODs. \
+         Try increasing Options::max_pods or reducing statement count.",
         input.max_pods
     )))
 }
@@ -840,7 +839,7 @@ fn pack_pod(
 
         // Apply D-split: remove forwarded statements from local, add to R.
         let (local, r) = if !d_forward.is_empty() {
-            apply_d_split(local, r, &d_forward, d, input.deps)
+            apply_d_split(local, &d_forward, d, input.deps)
         } else {
             (local, r)
         };
@@ -957,16 +956,13 @@ fn pack_pod(
 /// remove orphaned statements, and recompute the residual.
 fn apply_d_split(
     local: BTreeSet<usize>,
-    r: BTreeSet<usize>,
     d_forward: &BTreeSet<usize>,
     d: &BTreeSet<usize>,
     deps: &DependencyGraph,
 ) -> (BTreeSet<usize>, BTreeSet<usize>) {
     let mut new_local = local;
-    let mut new_r = r;
     for &s in d_forward {
         new_local.remove(&s);
-        new_r.insert(s);
     }
     // Remove orphaned statements no longer needed by any local stmt.
     let needed: BTreeSet<usize> = new_local
@@ -986,16 +982,10 @@ fn apply_d_split(
     for s in orphans {
         new_local.remove(&s);
     }
-    // Recompute residual for trimmed local.
-    for &s in &new_local {
-        for dep in &deps.statement_deps[s] {
-            if let StatementSource::Internal(idx) = dep {
-                if !new_local.contains(idx) {
-                    new_r.insert(*idx);
-                }
-            }
-        }
-    }
+    // Recompute residual from scratch for trimmed local, then include
+    // forwarded D statements (which parent pods must now prove).
+    let mut new_r = residual(&new_local, deps);
+    new_r.extend(d_forward.iter().copied());
     (new_local, new_r)
 }
 
@@ -1384,7 +1374,7 @@ mod tests {
             statement_deps: vec![vec![]; 10],
         };
         let parts = partition_residual(&r, 2, 8, &d, &local, &deps);
-        // All partitions should have 2 parents, each ≤ 8.
+        // All partitions should have 2 parents, each <= 8.
         assert!(!parts.is_empty());
         for p in &parts {
             assert_eq!(p.len(), 2);
@@ -1559,11 +1549,11 @@ mod tests {
         // Without absorption: needs 4 pods (3 parents + 1 output), infeasible
         //   with max_input_pods=2.
         // With absorption: the cheapest branch is re-proved in the output pod,
-        //   reducing parents to 2 → feasible.
+        //   reducing parents to 2 -> feasible.
         //
-        //   s0 → s1 (branch A)
-        //   s2 → s3 (branch B)
-        //   s4 → s5 (branch C, cheap, will be absorbed)
+        //   s0 -> s1 (branch A)
+        //   s2 -> s3 (branch B)
+        //   s4 -> s5 (branch C, cheap, will be absorbed)
         //   s6 = output (depends on s1, s3, s5)
         //
         // All statements cost 1 merkle proof. Limit 6 merkle proofs per pod
@@ -1603,10 +1593,10 @@ mod tests {
 
         let solution = solve(&input).unwrap();
         // With absorption: output pod absorbs one branch (2 stmts) locally,
-        // imports the other two branches from 2 parents. Should need ≤ 3 pods.
+        // imports the other two branches from 2 parents. Should need <= 3 pods.
         assert!(
             solution.pod_count <= 3,
-            "Expected ≤ 3 pods with fan-in absorption, got {}",
+            "Expected <= 3 pods with fan-in absorption, got {}",
             solution.pod_count
         );
     }

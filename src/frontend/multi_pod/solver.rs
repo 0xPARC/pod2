@@ -237,10 +237,12 @@ impl MultiPodSolution {
                             if local_set.contains(dep_idx) {
                                 continue; // Proved locally.
                             }
-                            // Must be available from an input pod's public set.
+                            // Must be public in some input pod (the parent may
+                            // have proved it locally or forwarded it from its
+                            // own parent -- either way, public visibility is
+                            // what matters for availability).
                             let from_parent = self.pod_internal_inputs[p].iter().any(|&parent| {
-                                self.pod_statements[parent].contains(dep_idx)
-                                    && self.pod_public_statements[parent].contains(dep_idx)
+                                self.pod_public_statements[parent].contains(dep_idx)
                             });
                             if !from_parent {
                                 errors.push(format!(
