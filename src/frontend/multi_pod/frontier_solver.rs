@@ -102,10 +102,9 @@ impl ResourceUsage {
 /// the given set, including the set itself. Only follows internal deps.
 ///
 /// If `available` is provided, statements in that set are treated as
-/// already available (e.g., from a child pod's public interface) and
-/// their transitive deps are not followed. The available statements
-/// themselves ARE included in the closure (they need to be in L to
-/// satisfy the dependency) but the walk stops there.
+/// pre-satisfied boundaries: they ARE included in the closure but their
+/// transitive deps are not followed. This is used by `absorb_subgraphs`
+/// to compute the incremental cost of absorbing a statement.
 fn closure(
     frontier: &BTreeSet<usize>,
     deps: &DependencyGraph,
@@ -134,9 +133,9 @@ fn closure(
     result
 }
 
-/// Find statements that can be cheaply re-proved: they have no internal
-/// dependencies, so re-proving them costs only their own resource cost
-/// (no cascading deps to also re-prove).
+/// Find dep-free statements (no internal dependencies). Unused since
+/// `absorb_subgraphs` handles re-proving for arbitrary subgraphs.
+#[allow(dead_code)]
 fn find_reprove_candidates(deps: &DependencyGraph) -> BTreeSet<usize> {
     let mut candidates = BTreeSet::new();
     for (i, dep_list) in deps.statement_deps.iter().enumerate() {
@@ -199,7 +198,7 @@ fn absorb_subgraphs(
     // For each statement in R, compute its absorption cost: the full
     // subgraph (statement + transitive deps) that would need to be
     // re-proved locally, excluding statements already in L.
-    let mut candidates: Vec<(usize, BTreeSet<usize>, ResourceUsage)> = Vec::new();
+    let mut candidates: Vec<(usize, BTreeSet<usize>)> = Vec::new();
 
     for &s in r.iter() {
         // Compute the subgraph: closure of {s} minus what's already in L.
@@ -222,20 +221,14 @@ fn absorb_subgraphs(
             continue; // Would need additional external inputs.
         }
 
-        // Compute resource cost of the subgraph.
-        let mut sub_usage = ResourceUsage::default();
-        for &stmt in &to_absorb {
-            sub_usage.add(&costs[stmt]);
-        }
-
-        candidates.push((s, to_absorb, sub_usage));
+        candidates.push((s, to_absorb));
     }
 
     // Sort by total statement count (cheapest subgraph first).
-    candidates.sort_by_key(|(_, subgraph, _)| subgraph.len());
+    candidates.sort_by_key(|(_, subgraph)| subgraph.len());
 
     // Greedily absorb until R fits in available parent slots.
-    for (_, subgraph, sub_usage) in candidates {
+    for (_, subgraph) in candidates {
         let parents_needed = if r.is_empty() {
             0
         } else {
@@ -276,27 +269,15 @@ fn absorb_subgraphs(
 struct PackingCandidate {
     /// Statements proved locally in this pod (L).
     local: BTreeSet<usize>,
-    /// Statements that must be public (the export obligations D).
-    public: BTreeSet<usize>,
     /// Unmet dependencies that must come from parent pods (R).
     residual: BTreeSet<usize>,
-    /// Resource usage of L.
-    usage: ResourceUsage,
 }
 
-/// Maximum number of L candidates to keep on the Pareto frontier.
-const MAX_L_CANDIDATES: usize = 16;
-
-/// Find Pareto-optimal (L, R) packing candidates for a single pod.
+/// Find local packing candidates for a single pod.
 ///
-/// Given:
-/// - `d`: statements this pod must export (prove and make public)
-/// - `c`: closure of d (all transitive dependencies)
-/// - `costs`: per-statement resource costs
-/// - `deps`: dependency graph
-/// - `params`: per-pod resource limits
-///
-/// Returns a list of candidates sorted by residual size (smallest first).
+/// Currently returns a single greedy candidate. A future Pareto L-search
+/// could generate multiple candidates with different resource tradeoffs,
+/// but this is a quality improvement, not required for correctness.
 fn l_search(
     d: &BTreeSet<usize>,
     c: &BTreeSet<usize>,
@@ -304,17 +285,7 @@ fn l_search(
     deps: &DependencyGraph,
     params: &Params,
 ) -> Vec<PackingCandidate> {
-    // Start with the greedy seed: include all of c, then remove statements
-    // from the "outside in" (leaves of the closure that aren't in d) until
-    // the resource budget fits.
     let greedy = greedy_l(d, c, costs, deps, params);
-
-    // For now, return just the greedy candidate. The branch-and-bound
-    // refinement (exploring alternatives when the greedy R is infeasible
-    // downstream) will be added in a later step.
-    //
-    // TODO: Add bounded B&B over L choices, keeping Pareto frontier by
-    // (resource usage, |R|, R structure).
     if let Some(candidate) = greedy {
         vec![candidate]
     } else {
@@ -322,14 +293,14 @@ fn l_search(
     }
 }
 
-/// Greedy L-search seed: try to fit as much of the closure as possible
+/// Greedy L-search: try to fit as much of the closure as possible
 /// into one pod's budget.
 ///
 /// Strategy:
 /// 1. Start with D (mandatory).
-/// 2. Add remaining closure statements in reverse topological order
-///    (deepest dependencies first), prioritized by resource-boundary
-///    pressure — statements consuming the scarcest resource go first.
+/// 2. Add remaining closure statements in reverse index order (highest
+///    index first). For linear chains this packs contiguous segments
+///    adjacent to D, producing optimal chain splits.
 /// 3. Stop adding when the budget is full.
 fn greedy_l(
     d: &BTreeSet<usize>,
@@ -338,10 +309,6 @@ fn greedy_l(
     deps: &DependencyGraph,
     params: &Params,
 ) -> Option<PackingCandidate> {
-    // Compute which resource dimension is most scarce for the closure.
-    // "Scarcity" = total cost / capacity (higher = tighter).
-    let scarcity = resource_scarcity(c, costs, params);
-
     // Start with D (mandatory).
     let mut local: BTreeSet<usize> = d.clone();
     let mut usage = ResourceUsage::default();
@@ -349,16 +316,14 @@ fn greedy_l(
         usage.add(&costs[s]);
     }
 
-    // Remaining optional statements in c that are NOT in local, sorted by
-    // reverse topological order (highest index first = closest to D).
-    // This ensures we fill the pod with statements adjacent to D in the
-    // dependency chain, minimizing the residual frontier.
+    // Remaining optional statements sorted by reverse index order.
+    // For chains, this packs contiguous segments adjacent to D.
     let mut optional: Vec<usize> = c.difference(&local).copied().collect();
     optional.sort_by(|a, b| b.cmp(a)); // highest index first
 
-    // Check that what we have so far fits.
+    // Check that D alone fits.
     if !usage.fits(params) {
-        return None; // D + re-provable statements exceed one pod's budget
+        return None; // D exceeds one pod's budget
     }
 
     // Greedily add optional statements.
@@ -366,25 +331,19 @@ fn greedy_l(
         let mut trial = usage.clone();
         trial.add(&costs[s]);
         if trial.fits(params) {
-            // Check precedence: all deps of s that are in c should either
-            // already be in local, or we're accepting them as residual.
-            // Since we're adding greedily, we just add if it fits.
             local.insert(s);
             usage = trial;
         }
     }
 
     let r = residual(&local, deps);
-    Some(PackingCandidate {
-        local,
-        public: d.clone(),
-        residual: r,
-        usage,
-    })
+    Some(PackingCandidate { local, residual: r })
 }
 
 /// Compute per-dimension scarcity ratios for a set of statements.
 /// Higher = tighter (more demand relative to capacity).
+/// Unused: reserved for future Pareto L-search prioritization.
+#[allow(dead_code)]
 fn resource_scarcity(
     statements: &BTreeSet<usize>,
     costs: &[StatementCost],
@@ -426,6 +385,8 @@ fn resource_scarcity(
 /// Priority score for including a statement in the local set.
 /// Higher = more valuable to include (consumes scarce resources,
 /// reducing the burden on parent pods).
+/// Unused: reserved for future Pareto L-search prioritization.
+#[allow(dead_code)]
 fn statement_priority(s: usize, costs: &[StatementCost], scarcity: &[f64; 6]) -> f64 {
     let c = &costs[s];
     let mut score = scarcity[0]; // 1 statement slot, weighted by slot scarcity
@@ -580,7 +541,7 @@ fn merge_affinity_groups(
     max_per_part: usize,
 ) -> Option<Vec<BTreeSet<usize>>> {
     let mut sorted: Vec<&BTreeSet<usize>> = groups.iter().collect();
-    sorted.sort_by(|a, b| b.len().cmp(&a.len()));
+    sorted.sort_by_key(|s| std::cmp::Reverse(s.len()));
 
     let mut partitions: Vec<BTreeSet<usize>> = Vec::new();
 
@@ -667,7 +628,7 @@ pub fn solve(input: &SolverInput) -> Result<MultiPodSolution> {
     // Incremental k: try k=1, 2, 3, ...
     for k in 1..=input.max_pods {
         let mut memo: HashMap<MemoKey, Option<PackResult>> = HashMap::new();
-        if let Some(result) = pack_pod(&output_frontier, &output_frontier, k, input, &mut memo) {
+        if let Some(result) = pack_pod(&output_frontier, k, input, &mut memo) {
             return Ok(convert_to_solution(result, input));
         }
     }
@@ -680,16 +641,16 @@ pub fn solve(input: &SolverInput) -> Result<MultiPodSolution> {
 
 /// Recursively pack a pod and its ancestors.
 ///
-/// - `d`: statements this pod must export (make public).
-/// - `output_public`: the original output-public set (only for the output pod).
+/// - `d`: statements this pod must export (make public). For the output
+///   pod this is the user's public set; for intermediate pods it's the
+///   partition element assigned by the parent.
 /// - `k_budget`: maximum pods available (including this one).
 /// - `input`: the full problem input.
-/// - `memo`: memoization table.
+/// - `memo`: memoization table keyed by (D, k_budget).
 ///
 /// Returns Some(PackResult) if feasible, None if not.
 fn pack_pod(
     d: &BTreeSet<usize>,
-    output_public: &BTreeSet<usize>,
     k_budget: usize,
     input: &SolverInput,
     memo: &mut HashMap<MemoKey, Option<PackResult>>,
@@ -881,7 +842,7 @@ fn pack_pod(
                         feasible = false;
                         break;
                     }
-                    match pack_pod(parent_d, output_public, parent_k, input, memo) {
+                    match pack_pod(parent_d, parent_k, input, memo) {
                         Some(mut parent_result) => {
                             parent_pod_counts.push(parent_result.pods.len());
                             parent_pods.append(&mut parent_result.pods);
@@ -1129,14 +1090,16 @@ fn convert_to_solution(result: PackResult, input: &SolverInput) -> MultiPodSolut
     for dep_list in &input.deps.statement_deps {
         for dep in dep_list {
             if let StatementSource::External(ext) = dep {
-                if !external_pod_to_idx.contains_key(&ext.pod_hash) {
-                    external_pod_to_idx.insert(ext.pod_hash, external_pod_hashes.len());
+                external_pod_to_idx.entry(ext.pod_hash).or_insert_with(|| {
                     external_pod_hashes.push(ext.pod_hash);
-                }
-                if !external_premise_to_idx.contains_key(ext) {
-                    external_premise_to_idx.insert(ext.clone(), external_premises.len());
-                    external_premises.push(ext.clone());
-                }
+                    external_pod_hashes.len() - 1
+                });
+                external_premise_to_idx
+                    .entry(ext.clone())
+                    .or_insert_with(|| {
+                        external_premises.push(ext.clone());
+                        external_premises.len() - 1
+                    });
             }
         }
     }
@@ -1155,7 +1118,6 @@ fn convert_to_solution(result: PackResult, input: &SolverInput) -> MultiPodSolut
 
         // Track external inputs for this pod.
         let mut ext_inputs = BTreeSet::new();
-        let local_set: BTreeSet<usize> = pod.statements.iter().copied().collect();
         for &s in &pod.statements {
             for dep in &input.deps.statement_deps[s] {
                 if let StatementSource::External(ext) = dep {
@@ -1374,9 +1336,11 @@ mod tests {
     }
 
     #[test]
-    fn test_solve_two_pods_wide() {
-        // 8 independent statements (no deps between them), limit 4 per pod.
-        // All merkle cost 1. Output public is s7.
+    fn test_solve_independent_stmts_only_reachable_packed() {
+        // 8 independent statements (no deps), limit 4 merkle proofs per pod.
+        // Output public is s7 (0 merkle cost, no deps).
+        // The frontier solver only packs closure(D) = {7}, so 1 pod suffices.
+        // (Unreachable statements s0-s6 are ignored.)
         let costs = make_costs(8, &[1, 1, 1, 1, 1, 1, 1, 0]);
         let deps = DependencyGraph {
             statement_deps: vec![vec![]; 8],
@@ -1397,20 +1361,14 @@ mod tests {
 
         let solution = solve(&input).unwrap();
         assert_eq!(solution.pod_count, 1);
-        // With no dependencies, all 8 fit in one pod (7 merkle ≤ 20 default,
-        // but we set limit to 4 — however 7 of the 8 have merkle cost 1,
-        // and the output pod can hold 4 merkle proofs + s7 which has 0).
-        // Actually 7 merkle proofs > 4 limit, so we need 2 pods.
     }
 
     #[test]
-    fn test_solve_chain_with_re_proving() {
+    fn test_solve_chain_needs_split() {
         // Chain: 0 -> 1 -> 2 -> 3 -> 4 -> 5 (output public)
         // 5 merkle proofs (s0-s4), limit 4 per pod.
-        // Without re-proving: parent needs closure({4}) = {0,1,2,3,4} = 5 merkle > 4.
-        // With re-proving: output pod has {0,1,2,3,5}, parent has {3,4}
-        //   (s3 re-proved). But re-proving is not yet supported, so we expect
-        //   the solver to need 3 pods.
+        // Greedy packs output pod with {2,3,4,5} (4 merkle), residual {1}.
+        // Parent proves {0,1}, makes 1 public. 2 pods total.
         let costs = make_costs(6, &[1, 1, 1, 1, 1, 0]);
         let deps = make_chain_deps(6);
         let params = Params {
@@ -1428,7 +1386,6 @@ mod tests {
         };
 
         let solution = solve(&input).unwrap();
-        // Without re-proving, need 3 pods. With re-proving, 2 would suffice.
         assert!(
             solution.pod_count >= 2 && solution.pod_count <= 3,
             "Expected 2-3 pods, got {}",
