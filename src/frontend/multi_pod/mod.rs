@@ -1796,7 +1796,7 @@ mod tests {
         assert!(n >= 2);
 
         // Create n Contains statements on distinct dicts.
-        // Each dict has {"v" => 42, "id" => i} — the "id" field makes each
+        // Each dict has {"v" => 42, "id" => i}, the "id" field makes each
         // dict unique (different commitment), while "v" has the same value
         // so the equality comparisons succeed.
         let mut contains: Vec<Statement> = Vec::with_capacity(n);
@@ -1942,7 +1942,7 @@ mod tests {
     fn test_frontier_overflow() -> Result<()> {
         // Force overflow via a dependency chain that exceeds per-pod capacity.
         // Unlike the MILP test, the frontier solver only proves statements
-        // reachable from the output — so we need the private statements to
+        // reachable from the output, so we need the private statements to
         // be in the output's dependency closure.
         let params = Params {
             max_statements: 4,
@@ -2165,7 +2165,7 @@ mod tests {
         let vd_set = &*MOCK_VD_SET;
         let prover = MockProver {};
 
-        // Create TWO external input PODs — this exercises external pod forwarding
+        // Create TWO external input PODs - this exercises external pod forwarding
         // since the output pod only has 2 input slots and needs internal parents too.
         let mut builder_ext_a = MainPodBuilder::new(&params, vd_set);
         builder_ext_a.pub_op(FrontendOp::eq(100, 100))?;
@@ -2209,7 +2209,7 @@ mod tests {
         let contains_c = builder.priv_op(FrontendOp::dict_contains(dict_c, "k", 1))?;
         let contains_d = builder.priv_op(FrontendOp::dict_contains(dict_d, "k", 1))?;
 
-        // Layer 2: Branch A — chain of custom predicates rooted at contains_c
+        // Layer 2: Branch A - chain of custom predicates rooted at contains_c
         let mut prev_a = contains_c;
         for i in 0..branch_len {
             let name = format!("pred_{}", i);
@@ -2219,7 +2219,7 @@ mod tests {
             ))?;
         }
 
-        // Layer 2: Branch B — chain of custom predicates rooted at contains_d
+        // Layer 2: Branch B - chain of custom predicates rooted at contains_d
         let mut prev_b = contains_d;
         for i in 0..branch_len {
             let name = format!("pred_{}", i);

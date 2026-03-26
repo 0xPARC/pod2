@@ -1,7 +1,17 @@
 //! Frontier-state recursive packing solver for multi-POD assignment.
 //!
-//! Searches over pod boundary interfaces rather than statement assignments.
-//! See `/workspace/docs/plans/multi_pod_frontier_solver.md` for the design.
+//! Assigns statements to intermediate proof pods by recursively packing from
+//! the output pod's public statements inward. Each recursion picks a local
+//! set L (what this pod proves) and a residual set R (what parent pods must
+//! export), then partitions R across parents and recurses.
+//!
+//! Key techniques:
+//! - **Greedy L-search** with force-include alternatives for Pareto diversity.
+//! - **Affinity-based R-partitioning** (grouping residuals by which D
+//!   statements they serve), with complete k-way backtracking fallback.
+//! - **Subgraph absorption** to re-prove cheap fan-in branches locally.
+//! - **Persistent memoization** keyed on (frontier, k_budget) across
+//!   incremental k iterations.
 
 use std::collections::{BTreeSet, HashMap};
 
@@ -17,40 +27,94 @@ use crate::middleware::Params;
 // Resource tracking
 // ---------------------------------------------------------------------------
 
+/// Resource dimensions tracked per pod. Adding a new resource type requires
+/// adding a variant here and implementing its cost/capacity accessors below.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+enum ResourceDimension {
+    Statements,
+    MerkleProofs,
+    MerkleStateTransitions,
+    CustomPredVerifications,
+    SignedBy,
+    PublicKeyOf,
+    CustomPredicates,
+}
+
+const NUM_DIMS: usize = 7;
+/// Summable dimensions (all except CustomPredicates, which is a set).
+const SUMMABLE_DIMS: [ResourceDimension; NUM_DIMS - 1] = [
+    ResourceDimension::Statements,
+    ResourceDimension::MerkleProofs,
+    ResourceDimension::MerkleStateTransitions,
+    ResourceDimension::CustomPredVerifications,
+    ResourceDimension::SignedBy,
+    ResourceDimension::PublicKeyOf,
+];
+
+/// Cost dimensions used for force-include ranking (non-trivial per-statement
+/// resource axes, excluding Statements which is always 1).
+const RANKING_DIMS: [ResourceDimension; 5] = [
+    ResourceDimension::MerkleProofs,
+    ResourceDimension::MerkleStateTransitions,
+    ResourceDimension::CustomPredVerifications,
+    ResourceDimension::SignedBy,
+    ResourceDimension::PublicKeyOf,
+];
+
+/// Extract the summable cost value for a dimension from a `StatementCost`.
+fn dim_cost(dim: ResourceDimension, cost: &StatementCost) -> usize {
+    match dim {
+        ResourceDimension::Statements => 1,
+        ResourceDimension::MerkleProofs => cost.merkle_proofs,
+        ResourceDimension::MerkleStateTransitions => cost.merkle_state_transitions,
+        ResourceDimension::CustomPredVerifications => cost.custom_pred_verifications,
+        ResourceDimension::SignedBy => cost.signed_by,
+        ResourceDimension::PublicKeyOf => cost.public_key_of,
+        ResourceDimension::CustomPredicates => cost.custom_predicates_ids.len(),
+    }
+}
+
+/// Per-pod capacity for a resource dimension.
+fn dim_capacity(dim: ResourceDimension, params: &Params) -> usize {
+    match dim {
+        ResourceDimension::Statements => params.max_priv_statements(),
+        ResourceDimension::MerkleProofs => params.max_merkle_proofs_containers,
+        ResourceDimension::MerkleStateTransitions => {
+            params.max_merkle_tree_state_transition_proofs_containers
+        }
+        ResourceDimension::CustomPredVerifications => params.max_custom_predicate_verifications,
+        ResourceDimension::SignedBy => params.max_signed_by,
+        ResourceDimension::PublicKeyOf => params.max_public_key_of,
+        ResourceDimension::CustomPredicates => params.max_custom_predicates,
+    }
+}
+
 /// Aggregate resource usage for a set of statements, comparable against
 /// per-POD capacity limits.
 #[derive(Clone, Debug, Default)]
 struct ResourceUsage {
-    statements: usize,
-    merkle_proofs: usize,
-    merkle_state_transitions: usize,
-    custom_pred_verifications: usize,
-    signed_by: usize,
-    public_key_of: usize,
+    /// Summable totals indexed by dimension ordinal (same order as `SUMMABLE_DIMS`).
+    totals: [usize; NUM_DIMS - 1],
+    /// Distinct custom predicates (set-based, not summable).
     custom_predicates: BTreeSet<CustomPredicateId>,
 }
 
 impl ResourceUsage {
     fn add(&mut self, cost: &StatementCost) {
-        self.statements += 1;
-        self.merkle_proofs += cost.merkle_proofs;
-        self.merkle_state_transitions += cost.merkle_state_transitions;
-        self.custom_pred_verifications += cost.custom_pred_verifications;
-        self.signed_by += cost.signed_by;
-        self.public_key_of += cost.public_key_of;
+        for (i, &dim) in SUMMABLE_DIMS.iter().enumerate() {
+            self.totals[i] += dim_cost(dim, cost);
+        }
         self.custom_predicates
             .extend(cost.custom_predicates_ids.iter().cloned());
     }
 
     fn fits(&self, params: &Params) -> bool {
-        self.statements <= params.max_priv_statements()
-            && self.merkle_proofs <= params.max_merkle_proofs_containers
-            && self.merkle_state_transitions
-                <= params.max_merkle_tree_state_transition_proofs_containers
-            && self.custom_pred_verifications <= params.max_custom_predicate_verifications
-            && self.signed_by <= params.max_signed_by
-            && self.public_key_of <= params.max_public_key_of
-            && self.custom_predicates.len() <= params.max_custom_predicates
+        for (i, &dim) in SUMMABLE_DIMS.iter().enumerate() {
+            if self.totals[i] > dim_capacity(dim, params) {
+                return false;
+            }
+        }
+        self.custom_predicates.len() <= dim_capacity(ResourceDimension::CustomPredicates, params)
     }
 
     /// Quick lower bound on pods needed for a set of resource costs.
@@ -63,31 +127,11 @@ impl ResourceUsage {
             totals.add(c.borrow());
         }
         let mut min_pods = 1usize;
-        min_pods = min_pods.max(totals.statements.div_ceil(params.max_priv_statements()));
-        min_pods = min_pods.max(
-            totals
-                .merkle_proofs
-                .div_ceil(params.max_merkle_proofs_containers),
-        );
-        if params.max_merkle_tree_state_transition_proofs_containers > 0 {
-            min_pods = min_pods.max(
-                totals
-                    .merkle_state_transitions
-                    .div_ceil(params.max_merkle_tree_state_transition_proofs_containers),
-            );
-        }
-        if params.max_custom_predicate_verifications > 0 {
-            min_pods = min_pods.max(
-                totals
-                    .custom_pred_verifications
-                    .div_ceil(params.max_custom_predicate_verifications),
-            );
-        }
-        if params.max_signed_by > 0 {
-            min_pods = min_pods.max(totals.signed_by.div_ceil(params.max_signed_by));
-        }
-        if params.max_public_key_of > 0 {
-            min_pods = min_pods.max(totals.public_key_of.div_ceil(params.max_public_key_of));
+        for (i, &dim) in SUMMABLE_DIMS.iter().enumerate() {
+            let cap = dim_capacity(dim, params);
+            if cap > 0 {
+                min_pods = min_pods.max(totals.totals[i].div_ceil(cap));
+            }
         }
         min_pods
     }
@@ -131,22 +175,6 @@ fn closure(
         }
     }
     result
-}
-
-/// Find dep-free statements (no internal dependencies). Unused since
-/// `absorb_subgraphs` handles re-proving for arbitrary subgraphs.
-#[allow(dead_code)]
-fn find_reprove_candidates(deps: &DependencyGraph) -> BTreeSet<usize> {
-    let mut candidates = BTreeSet::new();
-    for (i, dep_list) in deps.statement_deps.iter().enumerate() {
-        let has_internal = dep_list
-            .iter()
-            .any(|d| matches!(d, StatementSource::Internal(_)));
-        if !has_internal {
-            candidates.insert(i);
-        }
-    }
-    candidates
 }
 
 /// Compute the residual frontier: statements NOT in `local` that are
@@ -273,11 +301,17 @@ struct PackingCandidate {
     residual: BTreeSet<usize>,
 }
 
+/// Maximum number of force-include alternatives to generate.
+const MAX_FORCE_INCLUDE: usize = 16;
+
 /// Find local packing candidates for a single pod.
 ///
-/// Currently returns a single greedy candidate. A future Pareto L-search
-/// could generate multiple candidates with different resource tradeoffs,
-/// but this is a quality improvement, not required for correctness.
+/// Returns the greedy candidate first (optimal for chains), followed by
+/// force-include alternatives that try different resource tradeoffs.
+/// For each statement the greedy rejected, we try force-including it
+/// and re-running the greedy. This addresses the Pareto gap where the
+/// greedy picks a multi-resource statement that blocks cheaper
+/// single-resource alternatives.
 fn l_search(
     d: &BTreeSet<usize>,
     c: &BTreeSet<usize>,
@@ -286,11 +320,45 @@ fn l_search(
     params: &Params,
 ) -> Vec<PackingCandidate> {
     let greedy = greedy_l(d, c, costs, deps, params);
-    if let Some(candidate) = greedy {
-        vec![candidate]
-    } else {
-        vec![]
+    let mut candidates = Vec::new();
+    let mut seen_locals: Vec<BTreeSet<usize>> = Vec::new();
+
+    if let Some(g) = greedy {
+        let rejected: BTreeSet<usize> = c.difference(&g.local).copied().collect();
+        seen_locals.push(g.local.clone());
+        candidates.push(g);
+
+        // Generate alternatives by force-including rejected statements.
+        // Prioritize statements that consume fewer resource dimensions
+        // (single-resource statements are most likely to improve packing).
+        let mut rejected_ranked: Vec<(usize, usize)> = rejected
+            .iter()
+            .map(|&s| {
+                let c = &costs[s];
+                let dims = RANKING_DIMS
+                    .iter()
+                    .filter(|&&dim| dim_cost(dim, c) > 0)
+                    .count();
+                (s, dims)
+            })
+            .collect();
+        // Fewest dimensions first, then by index for determinism.
+        rejected_ranked.sort_by_key(|&(s, dims)| (dims, s));
+
+        for &(forced, _) in rejected_ranked.iter().take(MAX_FORCE_INCLUDE) {
+            // Force-include: add to mandatory set, re-run greedy.
+            let mut d_ext = d.clone();
+            d_ext.insert(forced);
+            if let Some(alt) = greedy_l(&d_ext, c, costs, deps, params) {
+                if !seen_locals.contains(&alt.local) {
+                    seen_locals.push(alt.local.clone());
+                    candidates.push(alt);
+                }
+            }
+        }
     }
+
+    candidates
 }
 
 /// Greedy L-search: try to fit as much of the closure as possible
@@ -338,64 +406,6 @@ fn greedy_l(
 
     let r = residual(&local, deps);
     Some(PackingCandidate { local, residual: r })
-}
-
-/// Compute per-dimension scarcity ratios for a set of statements.
-/// Higher = tighter (more demand relative to capacity).
-/// Unused: reserved for future Pareto L-search prioritization.
-#[allow(dead_code)]
-fn resource_scarcity(
-    statements: &BTreeSet<usize>,
-    costs: &[StatementCost],
-    params: &Params,
-) -> [f64; 6] {
-    let mut totals = [0usize; 6];
-    for &s in statements {
-        let c = &costs[s];
-        totals[0] += 1; // statement slot
-        totals[1] += c.merkle_proofs;
-        totals[2] += c.merkle_state_transitions;
-        totals[3] += c.custom_pred_verifications;
-        totals[4] += c.signed_by;
-        totals[5] += c.public_key_of;
-    }
-
-    let caps = [
-        params.max_priv_statements() as f64,
-        params.max_merkle_proofs_containers as f64,
-        params.max_merkle_tree_state_transition_proofs_containers as f64,
-        params.max_custom_predicate_verifications as f64,
-        params.max_signed_by as f64,
-        params.max_public_key_of as f64,
-    ];
-
-    let mut scarcity = [0.0f64; 6];
-    for i in 0..6 {
-        scarcity[i] = if caps[i] > 0.0 {
-            totals[i] as f64 / caps[i]
-        } else if totals[i] > 0 {
-            f64::INFINITY
-        } else {
-            0.0
-        };
-    }
-    scarcity
-}
-
-/// Priority score for including a statement in the local set.
-/// Higher = more valuable to include (consumes scarce resources,
-/// reducing the burden on parent pods).
-/// Unused: reserved for future Pareto L-search prioritization.
-#[allow(dead_code)]
-fn statement_priority(s: usize, costs: &[StatementCost], scarcity: &[f64; 6]) -> f64 {
-    let c = &costs[s];
-    let mut score = scarcity[0]; // 1 statement slot, weighted by slot scarcity
-    score += c.merkle_proofs as f64 * scarcity[1];
-    score += c.merkle_state_transitions as f64 * scarcity[2];
-    score += c.custom_pred_verifications as f64 * scarcity[3];
-    score += c.signed_by as f64 * scarcity[4];
-    score += c.public_key_of as f64 * scarcity[5];
-    score
 }
 
 // ---------------------------------------------------------------------------
@@ -455,48 +465,105 @@ fn partition_residual(
         partitions.push(partition);
     }
 
-    // Complete fallback for max_inputs == 2: bitmask enumeration of bipartitions.
-    // This ensures we don't declare infeasible when the greedy merge fails but
-    // a valid partition exists, and also explores alternatives when the greedy
-    // merge succeeds but leads to recursive failure.
-    if max_inputs == 2 {
+    // Complete fallback: enumerate all valid k-way partitions via backtracking.
+    // Each item is assigned to one of k parts (each ≤ max_public).
+    // Symmetry-broken: first occurrence of part j must precede part j+1.
+    // Bounded to |R| ≤ 16 to keep enumeration tractable.
+    if r.len() <= max_public * max_inputs {
         let items: Vec<usize> = r.iter().copied().collect();
-        let n = items.len();
-        if n <= 16 && r.len() <= max_public * max_inputs {
-            let min_first = n.saturating_sub(max_public);
-            let max_first = max_public.min(n);
-
-            for mask in 0u32..(1u32 << n) {
-                let count = mask.count_ones() as usize;
-                if count < min_first || count > max_first {
-                    continue;
-                }
-                let mut a = BTreeSet::new();
-                let mut b = BTreeSet::new();
-                for (i, &item) in items.iter().enumerate() {
-                    if mask & (1 << i) != 0 {
-                        a.insert(item);
-                    } else {
-                        b.insert(item);
-                    }
-                }
-                // Symmetry breaking: first set has the smallest element.
-                if !a.is_empty() && !b.is_empty() && a.first() > b.first() {
-                    continue;
-                }
-                let candidate = vec![a, b];
-                // Skip if this duplicates the greedy result.
-                if !partitions.contains(&candidate) {
-                    partitions.push(candidate);
-                }
-            }
+        if items.len() <= 16 {
+            enumerate_k_way(&items, max_inputs, max_public, &mut partitions);
         }
     }
 
-    // For max_inputs > 2 without bitmask, the greedy merge is all we have.
-    // This is sufficient for practical cases (max_input_pods is typically 2).
+    // Deduplicate partitions (backtracking may produce duplicates).
+    partitions.sort();
+    partitions.dedup();
 
     partitions
+}
+
+/// Enumerate k-way partitions of `items` where each part has ≤ `max_per_part`
+/// elements. Appends unique results to `out`.
+///
+/// Uses backtracking with symmetry breaking: the first occurrence of part j
+/// must appear before the first occurrence of part j+1. This avoids
+/// generating permutations of the same partition.
+fn enumerate_k_way(
+    items: &[usize],
+    k: usize,
+    max_per_part: usize,
+    out: &mut Vec<Vec<BTreeSet<usize>>>,
+) {
+    let n = items.len();
+    if n == 0 || k == 0 {
+        return;
+    }
+    let mut assignment = vec![0usize; n];
+    let mut sizes = vec![0usize; k];
+    enumerate_k_way_bt(
+        items,
+        k,
+        max_per_part,
+        0,
+        &mut assignment,
+        &mut sizes,
+        0,
+        out,
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
+fn enumerate_k_way_bt(
+    items: &[usize],
+    k: usize,
+    max_per_part: usize,
+    idx: usize,
+    assignment: &mut [usize],
+    sizes: &mut [usize],
+    max_part_used: usize, // highest part index assigned so far + 1
+    out: &mut Vec<Vec<BTreeSet<usize>>>,
+) {
+    if idx == items.len() {
+        // Build the partition from the assignment.
+        let mut parts: Vec<BTreeSet<usize>> = vec![BTreeSet::new(); k];
+        for (i, &item) in items.iter().enumerate() {
+            parts[assignment[i]].insert(item);
+        }
+        parts.retain(|p| !p.is_empty());
+        if parts.len() >= 2 {
+            out.push(parts);
+        }
+        return;
+    }
+
+    // Symmetry breaking: item idx can be assigned to parts 0..=max_part_used,
+    // where max_part_used is at most k-1. Assigning to max_part_used "opens"
+    // a new part (incrementing the next max_part_used).
+    let limit = max_part_used.min(k - 1);
+    for part in 0..=limit {
+        if sizes[part] >= max_per_part {
+            continue; // This part is full.
+        }
+        assignment[idx] = part;
+        sizes[part] += 1;
+        let new_max = if part == max_part_used {
+            max_part_used + 1
+        } else {
+            max_part_used
+        };
+        enumerate_k_way_bt(
+            items,
+            k,
+            max_per_part,
+            idx + 1,
+            assignment,
+            sizes,
+            new_max,
+            out,
+        );
+        sizes[part] -= 1;
+    }
 }
 
 /// For each statement in R, compute which D statements transitively depend
@@ -626,8 +693,9 @@ pub fn solve(input: &SolverInput) -> Result<MultiPodSolution> {
     let output_frontier: BTreeSet<usize> = input.output_public_indices.iter().copied().collect();
 
     // Incremental k: try k=1, 2, 3, ...
+    // Memo persists across iterations so results from smaller k are reused.
+    let mut memo: HashMap<MemoKey, Option<PackResult>> = HashMap::new();
     for k in 1..=input.max_pods {
-        let mut memo: HashMap<MemoKey, Option<PackResult>> = HashMap::new();
         if let Some(result) = pack_pod(&output_frontier, k, input, &mut memo) {
             let solution = convert_to_solution(result, input);
             #[cfg(test)]
@@ -647,6 +715,24 @@ pub fn solve(input: &SolverInput) -> Result<MultiPodSolution> {
         "No feasible solution found with up to {} PODs",
         input.max_pods
     )))
+}
+
+/// Find the minimal-pod solution for frontier D within a budget of max_k pods.
+/// Tries k=1, 2, ..., max_k and returns the first feasible result.
+/// With persistent memo, earlier k results are cached, so repeated calls
+/// with increasing max_k are cheap.
+fn pack_pod_min(
+    d: &BTreeSet<usize>,
+    max_k: usize,
+    input: &SolverInput,
+    memo: &mut HashMap<MemoKey, Option<PackResult>>,
+) -> Option<PackResult> {
+    for k in 1..=max_k {
+        if let Some(result) = pack_pod(d, k, input, memo) {
+            return Some(result);
+        }
+    }
+    None
 }
 
 /// Recursively pack a pod and its ancestors.
@@ -718,7 +804,7 @@ fn pack_pod(
         // --- D-splitting ---
         // If external deps in D would still overflow after trimming,
         // forward excess D statements through parent pods.
-        let ext_in_local = count_external_pods(&local, input.deps);
+        let ext_in_local = collect_external_pods(&local, input.deps).len();
         let ext_in_d = collect_external_pods(d, input.deps);
         let min_internal_post = if r.is_empty() {
             0
@@ -742,43 +828,7 @@ fn pack_pod(
 
         // Apply D-split: remove forwarded statements from local, add to R.
         let (local, r) = if !d_forward.is_empty() {
-            let mut new_local = local;
-            let mut new_r = r;
-            for &s in &d_forward {
-                new_local.remove(&s);
-                new_r.insert(s);
-            }
-            // Remove orphaned statements no longer needed by any local stmt.
-            let needed: BTreeSet<usize> = new_local
-                .iter()
-                .flat_map(|&s| {
-                    input.deps.statement_deps[s]
-                        .iter()
-                        .filter_map(|dep| match dep {
-                            StatementSource::Internal(idx) => Some(*idx),
-                            _ => None,
-                        })
-                })
-                .collect();
-            let orphans: Vec<usize> = new_local
-                .iter()
-                .filter(|&&s| !d.contains(&s) && !needed.contains(&s))
-                .copied()
-                .collect();
-            for s in orphans {
-                new_local.remove(&s);
-            }
-            // Recompute residual for trimmed local.
-            for &s in &new_local {
-                for dep in &input.deps.statement_deps[s] {
-                    if let StatementSource::Internal(idx) = dep {
-                        if !new_local.contains(idx) {
-                            new_r.insert(*idx);
-                        }
-                    }
-                }
-            }
-            (new_local, new_r)
+            apply_d_split(local, r, &d_forward, d, input.deps)
         } else {
             (local, r)
         };
@@ -788,7 +838,7 @@ fn pack_pod(
         let mut r = r;
 
         // --- Final slot computation ---
-        let ext_pods_needed = count_external_pods(&local, input.deps);
+        let ext_pods_needed = collect_external_pods(&local, input.deps).len();
         let internal_input_slots = input.params.max_input_pods.saturating_sub(ext_pods_needed);
 
         // --- Re-proving: absorb cheap R subgraphs to reduce parent count ---
@@ -851,7 +901,9 @@ fn pack_pod(
                     feasible = false;
                     break;
                 }
-                match pack_pod(parent_d, parent_k, input, memo) {
+                // Use pack_pod_min to find the minimal-pod solution for
+                // this parent, leaving maximum budget for siblings.
+                match pack_pod_min(parent_d, parent_k, input, memo) {
                     Some(mut parent_result) => {
                         parent_pod_counts.push(parent_result.pods.len());
                         parent_pods.append(&mut parent_result.pods);
@@ -887,6 +939,52 @@ fn pack_pod(
 
     memo.insert(key, None);
     None
+}
+
+/// Apply a D-split: remove forwarded D statements from local, add to R,
+/// remove orphaned statements, and recompute the residual.
+fn apply_d_split(
+    local: BTreeSet<usize>,
+    r: BTreeSet<usize>,
+    d_forward: &BTreeSet<usize>,
+    d: &BTreeSet<usize>,
+    deps: &DependencyGraph,
+) -> (BTreeSet<usize>, BTreeSet<usize>) {
+    let mut new_local = local;
+    let mut new_r = r;
+    for &s in d_forward {
+        new_local.remove(&s);
+        new_r.insert(s);
+    }
+    // Remove orphaned statements no longer needed by any local stmt.
+    let needed: BTreeSet<usize> = new_local
+        .iter()
+        .flat_map(|&s| {
+            deps.statement_deps[s].iter().filter_map(|dep| match dep {
+                StatementSource::Internal(idx) => Some(*idx),
+                _ => None,
+            })
+        })
+        .collect();
+    let orphans: Vec<usize> = new_local
+        .iter()
+        .filter(|&&s| !d.contains(&s) && !needed.contains(&s))
+        .copied()
+        .collect();
+    for s in orphans {
+        new_local.remove(&s);
+    }
+    // Recompute residual for trimmed local.
+    for &s in &new_local {
+        for dep in &deps.statement_deps[s] {
+            if let StatementSource::Internal(idx) = dep {
+                if !new_local.contains(idx) {
+                    new_r.insert(*idx);
+                }
+            }
+        }
+    }
+    (new_local, new_r)
 }
 
 /// When L references more external pods than `max_ext_allowed` input slots,
@@ -957,7 +1055,7 @@ fn trim_external_overflow(
         });
 
         if needs_excluded_ext && !d.contains(&s) {
-            // Move to residual — a parent pod will handle this.
+            // Move to residual - a parent pod will handle this.
             new_residual.insert(s);
         } else {
             new_local.insert(s);
@@ -1048,19 +1146,6 @@ fn split_external_deps(
     }
 
     (d_local, d_forward)
-}
-
-/// Count distinct external pods referenced by statements in the local set.
-fn count_external_pods(local: &BTreeSet<usize>, deps: &DependencyGraph) -> usize {
-    let mut external_pods = BTreeSet::new();
-    for &s in local {
-        for dep in &deps.statement_deps[s] {
-            if let StatementSource::External(ext) = dep {
-                external_pods.insert(ext.pod_hash);
-            }
-        }
-    }
-    external_pods.len()
 }
 
 // ---------------------------------------------------------------------------
@@ -1391,16 +1476,14 @@ mod tests {
     }
 
     #[test]
-    fn test_greedy_l_suboptimal_multi_resource() {
-        // Demonstrates the Pareto L-search gap: the greedy picks s2 (which
-        // costs both merkle=1 AND cpv=1), filling both resource dimensions.
-        // This prevents s0 (merkle-only) and s1 (cpv-only) from fitting,
-        // creating R={0,1} which exceeds max_public=1 for the single parent.
+    fn test_force_include_finds_pareto_optimal() {
+        // The greedy picks s2 (merkle=1, cpv=1), filling both resource
+        // dimensions with one statement. This blocks s0 (merkle-only) and
+        // s1 (cpv-only) from fitting, making R={0,1} too large for the
+        // single parent slot (max_public=1).
         //
-        // Optimal L={3,0,1} packs both single-resource statements, leaving
-        // R={2} which fits in 1 parent. The greedy misses this.
-        //
-        // This test documents the gap; it currently fails (reports infeasible).
+        // Force-include generates an alternative by force-including s0,
+        // which produces L={3,0,1} with R={2}, which fits in 1 parent.
         let n = 4;
         let costs: Vec<StatementCost> = vec![
             StatementCost {
@@ -1449,14 +1532,10 @@ mod tests {
             max_pods: 10,
         };
 
-        // This SHOULD find a 2-pod solution: L={3,0,1}, parent proves {2}.
-        // Currently fails because the greedy picks L={3,2} instead.
-        let result = solve(&input);
-        assert!(
-            result.is_err(),
-            "Expected infeasible (greedy L-search gap) but got {} pods. \
-             If this passes, the Pareto L-search or an equivalent fix was implemented!",
-            result.as_ref().unwrap().pod_count
+        let solution = solve(&input).unwrap();
+        assert_eq!(
+            solution.pod_count, 2,
+            "Expected 2 pods (force-include finds L={{3,0,1}}, parent proves {{2}})"
         );
     }
 
@@ -1472,7 +1551,7 @@ mod tests {
         //
         //   s0 → s1 (branch A)
         //   s2 → s3 (branch B)
-        //   s4 → s5 (branch C, cheap — will be absorbed)
+        //   s4 → s5 (branch C, cheap, will be absorbed)
         //   s6 = output (depends on s1, s3, s5)
         //
         // All statements cost 1 merkle proof. Limit 6 merkle proofs per pod
