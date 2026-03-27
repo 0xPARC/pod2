@@ -60,7 +60,7 @@ use crate::{
 
 mod cost;
 mod deps;
-mod frontier_solver;
+mod packing_solver;
 mod solution;
 
 use cost::StatementCost;
@@ -548,7 +548,7 @@ impl MultiPodBuilder {
             max_pods: self.options.max_pods,
         };
 
-        let solution = frontier_solver::solve(&input)?;
+        let solution = packing_solver::solve(&input)?;
 
         Ok(SolvedMultiPod {
             params: self.params,

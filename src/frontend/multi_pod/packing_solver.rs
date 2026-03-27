@@ -1,14 +1,14 @@
-//! Frontier-state recursive packing solver for multi-POD assignment.
+//! Recursive packing solver for multi-POD assignment.
 //!
 //! The solver works backwards from the output pod. It starts with the set of
-//! statements the output must make public (the "frontier" D), computes their
+//! statements the output must make public (the "public set" D), computes their
 //! transitive dependency closure C, then tries to fit as much of C as possible
 //! into a single pod. Whatever does not fit becomes the "residual" R -- the
 //! set of statements that parent pods must prove and export publicly so this
 //! pod can consume them.
 //!
 //! R is then partitioned across one or more parent pods, each receiving a
-//! subset as its own frontier, and the process recurses. Partitioning uses
+//! subset as its own public set, and the process recurses. Partitioning uses
 //! output-path affinity (grouping residuals that serve the same D statements)
 //! to keep related dependency chains together, with a complete k-way
 //! backtracking fallback for small R.
@@ -28,7 +28,7 @@
 //! fewer input slots.
 //!
 //! The outer loop tries increasing pod budgets k=1, 2, 3, ... and a
-//! persistent memo table keyed on (frontier, k_budget) ensures that
+//! persistent memo table keyed on (public_set, k_budget) ensures that
 //! sub-problems solved at smaller k are not re-explored when k increases.
 
 use std::collections::{BTreeSet, HashMap};
@@ -127,19 +127,19 @@ impl ResourceUsage {
 /// transitive deps are not followed. This is used by `absorb_subgraphs`
 /// to compute the incremental cost of absorbing a statement.
 fn closure(
-    frontier: &BTreeSet<usize>,
+    public_set: &BTreeSet<usize>,
     deps: &DependencyGraph,
     available: Option<&BTreeSet<usize>>,
 ) -> BTreeSet<usize> {
     let mut result = BTreeSet::new();
-    let mut stack: Vec<usize> = frontier.iter().copied().collect();
+    let mut stack: Vec<usize> = public_set.iter().copied().collect();
     while let Some(s) = stack.pop() {
         if !result.insert(s) {
             continue;
         }
         // If this statement is available from elsewhere, don't follow its deps.
         if let Some(avail) = available {
-            if avail.contains(&s) && !frontier.contains(&s) {
+            if avail.contains(&s) && !public_set.contains(&s) {
                 continue;
             }
         }
@@ -154,8 +154,8 @@ fn closure(
     result
 }
 
-/// Compute the residual frontier: statements NOT in `local` that are
-/// direct internal dependencies of statements IN `local`.
+/// Compute the residual: statements NOT in `local` that are direct
+/// internal dependencies of statements IN `local`.
 fn residual(local: &BTreeSet<usize>, deps: &DependencyGraph) -> BTreeSet<usize> {
     let mut r = BTreeSet::new();
     for &s in local {
@@ -399,8 +399,8 @@ fn greedy_l(
 /// are grouped together. This naturally co-locates external pod
 /// dependencies and keeps dependency chains intact.
 ///
-/// Returns a list of partitions, where each partition is a Vec of Frontiers
-/// (one per parent pod).
+/// Returns a list of partitions, where each partition is a Vec of public
+/// sets (one per parent pod).
 fn partition_residual(
     r: &BTreeSet<usize>,
     max_inputs: usize,
@@ -741,10 +741,10 @@ fn refine_packing(
 // Recursive solver
 // ---------------------------------------------------------------------------
 
-/// Memoization key: (sorted frontier statement indices, k_budget).
+/// Memoization key: (sorted public set statement indices, k_budget).
 #[derive(Clone, Debug, Hash, Eq, PartialEq)]
 struct MemoKey {
-    frontier: Vec<usize>,
+    public_set: Vec<usize>,
     k_budget: usize,
 }
 
@@ -759,14 +759,14 @@ struct PodNode {
     internal_inputs: Vec<usize>,
 }
 
-/// Result of packing a frontier into pods.
+/// Result of packing a public set into pods.
 #[derive(Clone, Debug)]
 struct PackResult {
     /// Pods in topological order (earliest first, this pod last).
     pods: Vec<PodNode>,
 }
 
-/// Solve the packing problem using frontier-state recursive search.
+/// Solve the packing problem using recursive search.
 pub fn solve(input: &SolverInput) -> Result<MultiPodSolution> {
     if input.output_public_indices.is_empty() {
         return Err(super::Error::Solver(
@@ -782,14 +782,15 @@ pub fn solve(input: &SolverInput) -> Result<MultiPodSolution> {
         )));
     }
 
-    // The output pod's export obligations.
-    let output_frontier: BTreeSet<usize> = input.output_public_indices.iter().copied().collect();
+    // The output pod's public set: statements it must export.
+    let output_public_set: BTreeSet<usize> =
+        input.output_public_indices.iter().copied().collect();
 
     // Incremental k: try k=1, 2, 3, ...
     // Memo persists across iterations so results from smaller k are reused.
     let mut memo: HashMap<MemoKey, Option<PackResult>> = HashMap::new();
     for k in 1..=input.max_pods {
-        if let Some(result) = pack_pod(&output_frontier, k, input, &mut memo) {
+        if let Some(result) = pack_pod(&output_public_set, k, input, &mut memo) {
             return Ok(convert_to_solution(result, input));
         }
     }
@@ -801,7 +802,7 @@ pub fn solve(input: &SolverInput) -> Result<MultiPodSolution> {
     )))
 }
 
-/// Find the minimal-pod solution for frontier D within a budget of max_k pods.
+/// Find the minimal-pod solution for public set D within a budget of max_k pods.
 /// Tries k=1, 2, ..., max_k and returns the first feasible result.
 /// With persistent memo, earlier k results are cached, so repeated calls
 /// with increasing max_k are cheap.
@@ -826,7 +827,7 @@ fn pack_pod_min(
 ///   partition element assigned by the parent.
 /// - `k_budget`: maximum pods available (including this one).
 /// - `input`: the full problem input.
-/// - `memo`: memoization table keyed by (D, k_budget).
+/// - `memo`: memoization table keyed by (public_set, k_budget).
 ///
 /// Returns Some(PackResult) if feasible, None if not.
 fn pack_pod(
@@ -841,7 +842,7 @@ fn pack_pod(
 
     // Check memo.
     let key = MemoKey {
-        frontier: d.iter().copied().collect(),
+        public_set: d.iter().copied().collect(),
         k_budget,
     };
     if let Some(cached) = memo.get(&key) {
@@ -1305,16 +1306,16 @@ mod tests {
     #[test]
     fn test_closure_chain() {
         let deps = make_chain_deps(5);
-        let frontier: BTreeSet<usize> = [4].into();
-        let c = closure(&frontier, &deps, None);
+        let public_set: BTreeSet<usize> = [4].into();
+        let c = closure(&public_set, &deps, None);
         assert_eq!(c, (0..5).collect::<BTreeSet<_>>());
     }
 
     #[test]
     fn test_closure_partial() {
         let deps = make_chain_deps(5);
-        let frontier: BTreeSet<usize> = [2].into();
-        let c = closure(&frontier, &deps, None);
+        let public_set: BTreeSet<usize> = [2].into();
+        let c = closure(&public_set, &deps, None);
         assert_eq!(c, (0..3).collect::<BTreeSet<_>>());
     }
 
@@ -1437,7 +1438,7 @@ mod tests {
     fn test_solve_independent_stmts_only_reachable_packed() {
         // 8 independent statements (no deps), limit 4 merkle proofs per pod.
         // Output public is s7 (0 merkle cost, no deps).
-        // The frontier solver only packs closure(D) = {7}, so 1 pod suffices.
+        // The packing solver only packs closure(D) = {7}, so 1 pod suffices.
         // (Unreachable statements s0-s6 are ignored.)
         let costs = make_costs(8, &[1, 1, 1, 1, 1, 1, 1, 0]);
         let deps = DependencyGraph {
