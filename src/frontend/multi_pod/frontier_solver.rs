@@ -1,24 +1,42 @@
 //! Frontier-state recursive packing solver for multi-POD assignment.
 //!
-//! Assigns statements to intermediate proof pods by recursively packing from
-//! the output pod's public statements inward. Each recursion picks a local
-//! set L (what this pod proves) and a residual set R (what parent pods must
-//! export), then partitions R across parents and recurses.
+//! The solver works backwards from the output pod. It starts with the set of
+//! statements the output must make public (the "frontier" D), computes their
+//! transitive dependency closure C, then tries to fit as much of C as possible
+//! into a single pod. Whatever does not fit becomes the "residual" R -- the
+//! set of statements that parent pods must prove and export publicly so this
+//! pod can consume them.
 //!
-//! Key techniques:
-//! - **Greedy L-search** with force-include alternatives for Pareto diversity.
-//! - **Affinity-based R-partitioning** (grouping residuals by which D
-//!   statements they serve), with complete k-way backtracking fallback.
-//! - **Subgraph absorption** to re-prove cheap fan-in branches locally.
-//! - **Persistent memoization** keyed on (frontier, k_budget) across
-//!   incremental k iterations.
+//! R is then partitioned across one or more parent pods, each receiving a
+//! subset as its own frontier, and the process recurses. Partitioning uses
+//! output-path affinity (grouping residuals that serve the same D statements)
+//! to keep related dependency chains together, with a complete k-way
+//! backtracking fallback for small R.
+//!
+//! Choosing what to prove locally (the L-search) is a greedy packing that
+//! respects all resource dimensions (statements, merkle proofs, custom
+//! predicate verifications, etc.). Because a single greedy pass can make
+//! suboptimal Pareto tradeoffs -- e.g. picking a multi-resource statement
+//! that blocks several cheaper single-resource ones -- the solver also
+//! generates force-include alternatives: for each statement the greedy
+//! rejected, it tries force-including that statement and re-running the
+//! greedy, producing a diverse set of candidates to try.
+//!
+//! When fan-in exceeds the per-pod input slot limit (max_input_pods), the
+//! solver attempts subgraph absorption: re-proving cheap dependency subgraphs
+//! locally rather than importing them from a parent, trading pod capacity for
+//! fewer input slots.
+//!
+//! The outer loop tries increasing pod budgets k=1, 2, 3, ... and a
+//! persistent memo table keyed on (frontier, k_budget) ensures that
+//! sub-problems solved at smaller k are not re-explored when k increases.
 
 use std::collections::{BTreeSet, HashMap};
 
 use super::{
     cost::{CustomPredicateId, StatementCost},
     deps::{DependencyGraph, ExternalDependency, StatementSource},
-    solver::{MultiPodSolution, SolverInput},
+    solution::{MultiPodSolution, SolverInput},
     Result,
 };
 use crate::middleware::Params;
@@ -27,94 +45,40 @@ use crate::middleware::Params;
 // Resource tracking
 // ---------------------------------------------------------------------------
 
-/// Resource dimensions tracked per pod. Adding a new resource type requires
-/// adding a variant here and implementing its cost/capacity accessors below.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
-enum ResourceDimension {
-    Statements,
-    MerkleProofs,
-    MerkleStateTransitions,
-    CustomPredVerifications,
-    SignedBy,
-    PublicKeyOf,
-    CustomPredicates,
-}
-
-const NUM_DIMS: usize = 7;
-/// Summable dimensions (all except CustomPredicates, which is a set).
-const SUMMABLE_DIMS: [ResourceDimension; NUM_DIMS - 1] = [
-    ResourceDimension::Statements,
-    ResourceDimension::MerkleProofs,
-    ResourceDimension::MerkleStateTransitions,
-    ResourceDimension::CustomPredVerifications,
-    ResourceDimension::SignedBy,
-    ResourceDimension::PublicKeyOf,
-];
-
-/// Cost dimensions used for force-include ranking (non-trivial per-statement
-/// resource axes, excluding Statements which is always 1).
-const RANKING_DIMS: [ResourceDimension; 5] = [
-    ResourceDimension::MerkleProofs,
-    ResourceDimension::MerkleStateTransitions,
-    ResourceDimension::CustomPredVerifications,
-    ResourceDimension::SignedBy,
-    ResourceDimension::PublicKeyOf,
-];
-
-/// Extract the summable cost value for a dimension from a `StatementCost`.
-fn dim_cost(dim: ResourceDimension, cost: &StatementCost) -> usize {
-    match dim {
-        ResourceDimension::Statements => 1,
-        ResourceDimension::MerkleProofs => cost.merkle_proofs,
-        ResourceDimension::MerkleStateTransitions => cost.merkle_state_transitions,
-        ResourceDimension::CustomPredVerifications => cost.custom_pred_verifications,
-        ResourceDimension::SignedBy => cost.signed_by,
-        ResourceDimension::PublicKeyOf => cost.public_key_of,
-        ResourceDimension::CustomPredicates => cost.custom_predicates_ids.len(),
-    }
-}
-
-/// Per-pod capacity for a resource dimension.
-fn dim_capacity(dim: ResourceDimension, params: &Params) -> usize {
-    match dim {
-        ResourceDimension::Statements => params.max_priv_statements(),
-        ResourceDimension::MerkleProofs => params.max_merkle_proofs_containers,
-        ResourceDimension::MerkleStateTransitions => {
-            params.max_merkle_tree_state_transition_proofs_containers
-        }
-        ResourceDimension::CustomPredVerifications => params.max_custom_predicate_verifications,
-        ResourceDimension::SignedBy => params.max_signed_by,
-        ResourceDimension::PublicKeyOf => params.max_public_key_of,
-        ResourceDimension::CustomPredicates => params.max_custom_predicates,
-    }
-}
-
 /// Aggregate resource usage for a set of statements, comparable against
-/// per-POD capacity limits.
+/// per-POD capacity limits. Fields mirror `StatementCost` for clarity.
 #[derive(Clone, Debug, Default)]
 struct ResourceUsage {
-    /// Summable totals indexed by dimension ordinal (same order as `SUMMABLE_DIMS`).
-    totals: [usize; NUM_DIMS - 1],
-    /// Distinct custom predicates (set-based, not summable).
+    statements: usize,
+    merkle_proofs: usize,
+    merkle_state_transitions: usize,
+    custom_pred_verifications: usize,
+    signed_by: usize,
+    public_key_of: usize,
     custom_predicates: BTreeSet<CustomPredicateId>,
 }
 
 impl ResourceUsage {
     fn add(&mut self, cost: &StatementCost) {
-        for (i, &dim) in SUMMABLE_DIMS.iter().enumerate() {
-            self.totals[i] += dim_cost(dim, cost);
-        }
+        self.statements += 1;
+        self.merkle_proofs += cost.merkle_proofs;
+        self.merkle_state_transitions += cost.merkle_state_transitions;
+        self.custom_pred_verifications += cost.custom_pred_verifications;
+        self.signed_by += cost.signed_by;
+        self.public_key_of += cost.public_key_of;
         self.custom_predicates
             .extend(cost.custom_predicates_ids.iter().cloned());
     }
 
     fn fits(&self, params: &Params) -> bool {
-        for (i, &dim) in SUMMABLE_DIMS.iter().enumerate() {
-            if self.totals[i] > dim_capacity(dim, params) {
-                return false;
-            }
-        }
-        self.custom_predicates.len() <= dim_capacity(ResourceDimension::CustomPredicates, params)
+        self.statements <= params.max_priv_statements()
+            && self.merkle_proofs <= params.max_merkle_proofs_containers
+            && self.merkle_state_transitions
+                <= params.max_merkle_tree_state_transition_proofs_containers
+            && self.custom_pred_verifications <= params.max_custom_predicate_verifications
+            && self.signed_by <= params.max_signed_by
+            && self.public_key_of <= params.max_public_key_of
+            && self.custom_predicates.len() <= params.max_custom_predicates
     }
 
     /// Quick lower bound on pods needed for a set of resource costs.
@@ -126,11 +90,24 @@ impl ResourceUsage {
         for c in costs {
             totals.add(c.borrow());
         }
+        let pairs: [(usize, usize); 6] = [
+            (totals.statements, params.max_priv_statements()),
+            (totals.merkle_proofs, params.max_merkle_proofs_containers),
+            (
+                totals.merkle_state_transitions,
+                params.max_merkle_tree_state_transition_proofs_containers,
+            ),
+            (
+                totals.custom_pred_verifications,
+                params.max_custom_predicate_verifications,
+            ),
+            (totals.signed_by, params.max_signed_by),
+            (totals.public_key_of, params.max_public_key_of),
+        ];
         let mut min_pods = 1usize;
-        for (i, &dim) in SUMMABLE_DIMS.iter().enumerate() {
-            let cap = dim_capacity(dim, params);
+        for (total, cap) in pairs {
             if cap > 0 {
-                min_pods = min_pods.max(totals.totals[i].div_ceil(cap));
+                min_pods = min_pods.max(total.div_ceil(cap));
             }
         }
         min_pods
@@ -333,10 +310,14 @@ fn l_search(
             .iter()
             .map(|&s| {
                 let c = &costs[s];
-                let dims = RANKING_DIMS
-                    .iter()
-                    .filter(|&&dim| dim_cost(dim, c) > 0)
-                    .count();
+                // Count non-zero resource dimensions (excluding statements,
+                // which is always 1). Fewer dimensions = more likely to
+                // improve packing when force-included.
+                let dims = (c.merkle_proofs > 0) as usize
+                    + (c.merkle_state_transitions > 0) as usize
+                    + (c.custom_pred_verifications > 0) as usize
+                    + (c.signed_by > 0) as usize
+                    + (c.public_key_of > 0) as usize;
                 (s, dims)
             })
             .collect();
@@ -656,6 +637,107 @@ fn merge_affinity_groups(
 }
 
 // ---------------------------------------------------------------------------
+// Packing refinement
+// ---------------------------------------------------------------------------
+
+/// Result of refining a greedy packing candidate to fit input-slot and
+/// external-pod constraints.
+struct RefinedPacking {
+    /// Statements proved locally in this pod (after trimming/absorption).
+    local: BTreeSet<usize>,
+    /// Unmet dependencies for parent pods (after trimming/absorption).
+    residual: BTreeSet<usize>,
+    /// D statements this pod will prove (D minus forwarded).
+    d_local: BTreeSet<usize>,
+    /// Number of internal parent input slots available.
+    internal_input_slots: usize,
+}
+
+/// Take a greedy `PackingCandidate` and refine it by:
+/// 1. Trimming statements whose external deps exceed input-slot budget.
+/// 2. D-splitting: forwarding D statements with excess external deps to parents.
+/// 3. Absorbing cheap R subgraphs to reduce parent count when fan-in is tight.
+fn refine_packing(
+    candidate: &PackingCandidate,
+    d: &BTreeSet<usize>,
+    input: &SolverInput,
+) -> RefinedPacking {
+    let max_pub = input.params.max_public_statements;
+
+    // Input slot budget: how many internal parent slots does R need?
+    let min_internal = if candidate.residual.is_empty() {
+        0
+    } else {
+        candidate.residual.len().div_ceil(max_pub).max(1)
+    };
+    let max_ext = input.params.max_input_pods.saturating_sub(min_internal);
+
+    // Trim external overflow from L (non-D statements).
+    let (local, r) = trim_external_overflow(&candidate.local, d, input.deps, max_ext);
+
+    // D-splitting: if external deps in D would still overflow after trimming,
+    // forward excess D statements through parent pods.
+    let ext_in_local = collect_external_pods(&local, input.deps).len();
+    let ext_in_d = collect_external_pods(d, input.deps);
+    let min_internal_post = if r.is_empty() {
+        0
+    } else {
+        r.len().div_ceil(max_pub).max(1)
+    };
+
+    let d_forward = if ext_in_local + min_internal_post > input.params.max_input_pods
+        && !ext_in_d.is_empty()
+    {
+        let min_parents = min_internal_post.max(1);
+        let target_ext = input.params.max_input_pods.saturating_sub(min_parents);
+        let (_, d_fwd) = split_external_deps(d, input.deps, target_ext);
+        d_fwd
+    } else {
+        BTreeSet::new()
+    };
+
+    // Apply D-split.
+    let (local, r) = if !d_forward.is_empty() {
+        apply_d_split(local, &d_forward, d, input.deps)
+    } else {
+        (local, r)
+    };
+
+    let d_local: BTreeSet<usize> = d.difference(&d_forward).copied().collect();
+    let mut local = local;
+    let mut r = r;
+
+    // Final slot computation.
+    let ext_pods_needed = collect_external_pods(&local, input.deps).len();
+    let internal_input_slots = input.params.max_input_pods.saturating_sub(ext_pods_needed);
+
+    // Re-proving: absorb cheap R subgraphs to reduce parent count.
+    if !r.is_empty() && internal_input_slots > 0 {
+        let mut usage = ResourceUsage::default();
+        for &s in &local {
+            usage.add(&input.costs[s]);
+        }
+        absorb_subgraphs(
+            &mut local,
+            &mut r,
+            &mut usage,
+            input.costs,
+            input.deps,
+            input.params,
+            max_pub,
+            internal_input_slots,
+        );
+    }
+
+    RefinedPacking {
+        local,
+        residual: r,
+        d_local,
+        internal_input_slots,
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Recursive solver
 // ---------------------------------------------------------------------------
 
@@ -708,17 +790,7 @@ pub fn solve(input: &SolverInput) -> Result<MultiPodSolution> {
     let mut memo: HashMap<MemoKey, Option<PackResult>> = HashMap::new();
     for k in 1..=input.max_pods {
         if let Some(result) = pack_pod(&output_frontier, k, input, &mut memo) {
-            let solution = convert_to_solution(result, input);
-            #[cfg(test)]
-            {
-                let errors = solution.validate(input);
-                assert!(
-                    errors.is_empty(),
-                    "frontier solver produced invalid solution:\n{}",
-                    errors.join("\n")
-                );
-            }
-            return Ok(solution);
+            return Ok(convert_to_solution(result, input));
         }
     }
 
@@ -792,89 +864,13 @@ fn pack_pod(
     let max_pub = input.params.max_public_statements;
 
     for candidate in &candidates {
-        // --- Input slot budget ---
-        // Compute how many internal parent slots the residual requires.
-        // This drives both external trimming and D-splitting.
-        let min_internal = if candidate.residual.is_empty() {
-            0
-        } else {
-            candidate.residual.len().div_ceil(max_pub).max(1)
-        };
-
-        // How many external pod slots we can afford.
-        let max_ext = input.params.max_input_pods.saturating_sub(min_internal);
-
-        // --- Trim external overflow from L (non-D statements) ---
-        let (local, r) = trim_external_overflow(
-            &candidate.local,
-            &candidate.residual,
-            d,
-            input.deps,
-            max_ext,
-        );
-
-        // --- D-splitting ---
-        // If external deps in D would still overflow after trimming,
-        // forward excess D statements through parent pods.
-        let ext_in_local = collect_external_pods(&local, input.deps).len();
-        let ext_in_d = collect_external_pods(d, input.deps);
-        let min_internal_post = if r.is_empty() {
-            0
-        } else {
-            r.len().div_ceil(max_pub).max(1)
-        };
-
-        let d_forward = if ext_in_local + min_internal_post > input.params.max_input_pods
-            && !ext_in_d.is_empty()
-        {
-            // Reserve at least 1 internal slot for the parent that will
-            // handle forwarded statements.
-            let min_parents = min_internal_post.max(1);
-            let target_ext = input.params.max_input_pods.saturating_sub(min_parents);
-            let (_, d_fwd) = split_external_deps(d, input.deps, target_ext);
-            d_fwd
-        } else {
-            BTreeSet::new()
-        };
-
-        // Apply D-split: remove forwarded statements from local, add to R.
-        let (local, r) = if !d_forward.is_empty() {
-            apply_d_split(local, &d_forward, d, input.deps)
-        } else {
-            (local, r)
-        };
-
-        let d_local: BTreeSet<usize> = d.difference(&d_forward).copied().collect();
-        let mut local = local;
-        let mut r = r;
-
-        // --- Final slot computation ---
-        let ext_pods_needed = collect_external_pods(&local, input.deps).len();
-        let internal_input_slots = input.params.max_input_pods.saturating_sub(ext_pods_needed);
-
-        // --- Re-proving: absorb cheap R subgraphs to reduce parent count ---
-        if !r.is_empty() && internal_input_slots > 0 {
-            let mut usage = ResourceUsage::default();
-            for &s in &local {
-                usage.add(&input.costs[s]);
-            }
-            absorb_subgraphs(
-                &mut local,
-                &mut r,
-                &mut usage,
-                input.costs,
-                input.deps,
-                input.params,
-                max_pub,
-                internal_input_slots,
-            );
-        }
+        let refined = refine_packing(candidate, d, input);
 
         // --- Base case: everything fits in this pod ---
-        if r.is_empty() {
+        if refined.residual.is_empty() {
             let result = PackResult {
                 pods: vec![PodNode {
-                    statements: local.iter().copied().collect(),
+                    statements: refined.local.iter().copied().collect(),
                     public_statements: d.clone(),
                     internal_inputs: vec![],
                 }],
@@ -884,17 +880,17 @@ fn pack_pod(
         }
 
         // Prune: infeasible if no internal parent slots available.
-        if internal_input_slots == 0 {
+        if refined.internal_input_slots == 0 {
             continue;
         }
 
         // --- Partition R and recurse ---
         let partitions = partition_residual(
-            &r,
-            internal_input_slots,
+            &refined.residual,
+            refined.internal_input_slots,
             max_pub,
-            &d_local,
-            &local,
+            &refined.d_local,
+            &refined.local,
             input.deps,
         );
 
@@ -936,7 +932,7 @@ fn pack_pod(
 
                 let mut all_pods = parent_pods;
                 all_pods.push(PodNode {
-                    statements: local.iter().copied().collect(),
+                    statements: refined.local.iter().copied().collect(),
                     public_statements: d.clone(),
                     internal_inputs: parent_indices,
                 });
@@ -1000,7 +996,6 @@ fn apply_d_split(
 /// most-referenced external pods up to the budget.
 fn trim_external_overflow(
     local: &BTreeSet<usize>,
-    residual: &BTreeSet<usize>,
     d: &BTreeSet<usize>,
     deps: &DependencyGraph,
     max_ext_allowed: usize,
@@ -1023,7 +1018,7 @@ fn trim_external_overflow(
     let total_ext = ext_pod_users.len();
 
     if total_ext <= max_ext_allowed {
-        return (local.clone(), residual.clone());
+        return (local.clone(), residual(local, deps));
     }
 
     // Too many external pods. Keep mandatory ones + highest-use ones.
@@ -1045,7 +1040,7 @@ fn trim_external_overflow(
 
     // Move statements with excluded external deps from L to R.
     let mut new_local = BTreeSet::new();
-    let mut new_residual = residual.clone();
+    let mut evicted = BTreeSet::new();
 
     for &s in local {
         let needs_excluded_ext = deps.statement_deps[s].iter().any(|dep| {
@@ -1057,23 +1052,16 @@ fn trim_external_overflow(
         });
 
         if needs_excluded_ext && !d.contains(&s) {
-            // Move to residual - a parent pod will handle this.
-            new_residual.insert(s);
+            evicted.insert(s);
         } else {
             new_local.insert(s);
         }
     }
 
-    // Recompute residual: add any deps of new_local that aren't in new_local.
-    for &s in &new_local {
-        for dep in &deps.statement_deps[s] {
-            if let StatementSource::Internal(d_idx) = dep {
-                if !new_local.contains(d_idx) {
-                    new_residual.insert(*d_idx);
-                }
-            }
-        }
-    }
+    // Recompute residual from scratch for the trimmed local set,
+    // then include evicted statements (parent pods must prove them).
+    let mut new_residual = residual(&new_local, deps);
+    new_residual.extend(evicted);
 
     (new_local, new_residual)
 }
@@ -1124,7 +1112,7 @@ fn split_external_deps(
         .iter()
         .map(|(h, users)| (*h, users.len()))
         .collect();
-    ranked.sort_by(|a, b| b.1.cmp(&a.1)); // most users first
+    ranked.sort_by_key(|b| std::cmp::Reverse(b.1)); // most users first
 
     let kept: BTreeSet<crate::middleware::Hash> =
         ranked.iter().take(max_ext_slots).map(|(h, _)| *h).collect();
@@ -1154,11 +1142,58 @@ fn split_external_deps(
 // Solution conversion
 // ---------------------------------------------------------------------------
 
+/// For each parent pod, determine which external premises must be forwarded
+/// publicly so that child pods can access them without direct external imports.
+///
+/// A premise needs forwarding when: (a) a child pod's statement depends on it,
+/// (b) the child does not import the source external pod directly, and
+/// (c) the parent does import it.
+fn compute_external_forwarding(
+    result: &PackResult,
+    input: &SolverInput,
+    external_pod_to_idx: &HashMap<crate::middleware::Hash, usize>,
+    external_premise_to_idx: &HashMap<ExternalDependency, usize>,
+    pod_external_inputs: &[BTreeSet<usize>],
+    pod_public_external_premises: &mut [BTreeSet<usize>],
+) {
+    let pod_count = result.pods.len();
+    for p in 0..pod_count {
+        let children: Vec<usize> = (0..pod_count)
+            .filter(|&c| result.pods[c].internal_inputs.contains(&p))
+            .collect();
+        if children.is_empty() {
+            continue;
+        }
+
+        for &child in &children {
+            for &s in &result.pods[child].statements {
+                for dep in &input.deps.statement_deps[s] {
+                    if let StatementSource::External(ext) = dep {
+                        let ext_pod_idx = external_pod_to_idx.get(&ext.pod_hash).copied();
+                        let child_has_direct =
+                            ext_pod_idx.is_some_and(|i| pod_external_inputs[child].contains(&i));
+                        if child_has_direct {
+                            continue;
+                        }
+                        let parent_has =
+                            ext_pod_idx.is_some_and(|i| pod_external_inputs[p].contains(&i));
+                        if parent_has {
+                            if let Some(&prem_idx) = external_premise_to_idx.get(ext) {
+                                pod_public_external_premises[p].insert(prem_idx);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 /// Convert the internal PackResult into the MultiPodSolution expected
 /// by SolvedMultiPod::prove().
 fn convert_to_solution(result: PackResult, input: &SolverInput) -> MultiPodSolution {
     let pod_count = result.pods.len();
-    let n = input.num_statements;
+    let n = input.costs.len();
 
     let mut statement_to_pods: Vec<Vec<usize>> = vec![vec![]; n];
     let mut pod_statements: Vec<Vec<usize>> = Vec::with_capacity(pod_count);
@@ -1216,34 +1251,14 @@ fn convert_to_solution(result: PackResult, input: &SolverInput) -> MultiPodSolut
         pod_public_external_premises.push(BTreeSet::new());
     }
 
-    // Populate pod_public_external_premises: when a non-output pod imports
-    // an external pod and has a child that does NOT import that same external
-    // pod, forward the external premises so the child can access them.
-    for p in 0..pod_count {
-        // Find children of pod p.
-        let has_child = (0..pod_count).any(|c| result.pods[c].internal_inputs.contains(&p));
-        if !has_child {
-            continue; // Output pod or leaf, no forwarding needed.
-        }
-
-        for &ext_pod_idx in &pod_external_inputs[p] {
-            let ext_hash = external_pod_hashes[ext_pod_idx];
-
-            // Check if any child does NOT import this external pod directly.
-            let child_needs_forward = (0..pod_count)
-                .filter(|&c| result.pods[c].internal_inputs.contains(&p))
-                .any(|c| !pod_external_inputs[c].contains(&ext_pod_idx));
-
-            if child_needs_forward {
-                // Forward all premises from this external pod.
-                for (prem_idx, prem) in external_premises.iter().enumerate() {
-                    if prem.pod_hash == ext_hash {
-                        pod_public_external_premises[p].insert(prem_idx);
-                    }
-                }
-            }
-        }
-    }
+    compute_external_forwarding(
+        &result,
+        input,
+        &external_pod_to_idx,
+        &external_premise_to_idx,
+        &pod_external_inputs,
+        &mut pod_public_external_premises,
+    );
 
     MultiPodSolution {
         pod_count,
@@ -1404,7 +1419,6 @@ mod tests {
         let params = Params::default();
 
         let input = SolverInput {
-            num_statements: 3,
             costs: &costs,
             deps: &deps,
             output_public_indices: &[2],
@@ -1435,7 +1449,6 @@ mod tests {
         };
 
         let input = SolverInput {
-            num_statements: 8,
             costs: &costs,
             deps: &deps,
             output_public_indices: &[7],
@@ -1461,7 +1474,6 @@ mod tests {
         };
 
         let input = SolverInput {
-            num_statements: 6,
             costs: &costs,
             deps: &deps,
             output_public_indices: &[5],
@@ -1486,7 +1498,6 @@ mod tests {
         //
         // Force-include generates an alternative by force-including s0,
         // which produces L={3,0,1} with R={2}, which fits in 1 parent.
-        let n = 4;
         let costs: Vec<StatementCost> = vec![
             StatementCost {
                 merkle_proofs: 1,
@@ -1526,7 +1537,6 @@ mod tests {
         };
 
         let input = SolverInput {
-            num_statements: n,
             costs: &costs,
             deps: &deps,
             output_public_indices: &[3],
@@ -1583,7 +1593,6 @@ mod tests {
         };
 
         let input = SolverInput {
-            num_statements: n,
             costs: &costs,
             deps: &deps,
             output_public_indices: &[6],

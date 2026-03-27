@@ -12,9 +12,10 @@
 //!
 //! # Architecture
 //!
-//! The multi-POD system uses a MILP (Mixed Integer Linear Program) solver to find the
-//! optimal assignment of statements to PODs. The solver minimizes the number of PODs
-//! while respecting:
+//! The multi-POD system uses a recursive packing solver to find the minimal
+//! assignment of statements to PODs. The solver works backwards from the
+//! output pod's public statements, greedily packing each pod and recursing
+//! on the residual. It minimizes the number of PODs while respecting:
 //! - Per-POD resource limits (statements, batches, merkle proofs, etc.)
 //! - Statement dependencies (if A depends on B, B must be available when proving A)
 //! - Input POD limits (each POD can only reference a limited number of other PODs)
@@ -60,11 +61,11 @@ use crate::{
 mod cost;
 mod deps;
 mod frontier_solver;
-mod solver;
+mod solution;
 
 use cost::StatementCost;
 use deps::{DependencyGraph, StatementSource};
-pub use solver::MultiPodSolution;
+pub use solution::MultiPodSolution;
 
 /// Error type for multi-POD operations.
 #[derive(Debug, thiserror::Error)]
@@ -72,7 +73,7 @@ pub enum Error {
     Custom(String),
     /// Error from the frontend.
     Frontend(#[from] crate::frontend::Error),
-    /// Error from the MILP solver.
+    /// Error from the packing solver.
     Solver(String),
     /// No solution exists (shouldn't happen with valid input).
     NoSolution,
@@ -147,8 +148,8 @@ impl MultiPodResult {
 /// 1. **Add operations**: Use [`priv_op`](Self::priv_op) and [`pub_op`](Self::pub_op)
 ///    to add statements, just like `MainPodBuilder`.
 ///
-/// 2. **Solve**: Call [`solve`](Self::solve) to run the MILP solver, which determines
-///    the optimal assignment of statements to PODs. This consumes the builder and
+/// 2. **Solve**: Call [`solve`](Self::solve) to run the packing solver, which determines
+///    the minimal assignment of statements to PODs. This consumes the builder and
 ///    returns a [`SolvedMultiPod`].
 ///
 /// 3. **Prove**: Call [`prove`](SolvedMultiPod::prove) on the solved result to build
@@ -518,7 +519,7 @@ impl MultiPodBuilder {
 
     /// Solve the packing problem and return a solved builder ready for proving.
     ///
-    /// This runs the MILP solver to find the optimal POD assignment.
+    /// This runs the packing solver to find the minimal POD assignment.
     /// Consumes the builder and returns a [`SolvedMultiPod`] that can be proved.
     pub fn solve(self) -> Result<SolvedMultiPod> {
         let MainPodBuilder {
@@ -539,8 +540,7 @@ impl MultiPodBuilder {
         let deps = DependencyGraph::build(&statements, &operations, &external_pod_statements);
 
         // Run solver
-        let input = solver::SolverInput {
-            num_statements: statements.len(),
+        let input = solution::SolverInput {
             costs: &costs,
             deps: &deps,
             output_public_indices: &self.output_public_indices,
@@ -1528,7 +1528,7 @@ mod tests {
     #[test]
     fn test_frontier_overflow() -> Result<()> {
         // Force overflow via a dependency chain that exceeds per-pod capacity.
-        // Unlike the MILP test, the frontier solver only proves statements
+        // The frontier solver only proves statements
         // reachable from the output, so we need the private statements to
         // be in the output's dependency closure.
         let params = Params {
