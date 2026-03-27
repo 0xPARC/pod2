@@ -1443,20 +1443,6 @@ mod tests {
         Ok(())
     }
 
-    /// Helper: populate a builder with n_dicts signed dicts x n_keys DictContains each.
-    ///
-    /// Each dict costs 1 SignedBy + n_keys merkle proofs. With default
-    /// max_merkle_proofs_containers = 20, n_dicts x n_keys > 20 forces
-    /// multiple PODs.
-    /// Add a chain of `n` DictContains + equality checks with dependencies.
-    ///
-    /// Creates `n` dicts each containing `{"v" => 42}`, proves Contains on
-    /// each, then chains them with equality comparisons:
-    ///   contains_0 -> eq(contains_0, contains_1) -> eq(prev_eq, contains_2) -> ...
-    ///
-    /// Each Contains costs 1 merkle proof. The equality comparisons create
-    /// dependencies between contains results, forcing the solver to respect
-    /// ordering across pod boundaries. Returns the last statement.
     #[test]
     fn test_merkle_limit_forces_multi_pod() -> Result<()> {
         // A connected custom predicate chain where the root contains
@@ -1483,157 +1469,6 @@ mod tests {
         assert!(
             solution.pod_count >= 5,
             "Expected at least 5 PODs for 20 cpv with limit 4, got {}",
-            solution.pod_count
-        );
-
-        let prover = MockProver {};
-        let result = solved.prove(&prover)?;
-        for (i, pod) in result.pods.iter().enumerate() {
-            pod.pod
-                .verify()
-                .unwrap_or_else(|_| panic!("POD {} verification failed", i));
-        }
-
-        Ok(())
-    }
-
-    // -----------------------------------------------------------------------
-    // Frontier solver integration tests
-    // -----------------------------------------------------------------------
-
-    #[test]
-    fn test_frontier_single_pod() -> Result<()> {
-        let params = Params::default();
-        let vd_set = &*MOCK_VD_SET;
-
-        let mut builder = MultiPodBuilder::new(&params, vd_set);
-
-        let mut signed_builder = SignedDictBuilder::new(&params);
-        signed_builder.insert("value", 42);
-        let signer = Signer(SecretKey(1u32.into()));
-        let signed_dict = signed_builder.sign(&signer).unwrap();
-
-        builder.pub_op(FrontendOp::dict_signed_by(&signed_dict))?;
-
-        let solved = builder.solve()?;
-        assert_eq!(solved.solution().pod_count, 1);
-
-        let prover = MockProver {};
-        let result = solved.prove(&prover)?;
-        result.pods[0].pod.verify().unwrap();
-
-        Ok(())
-    }
-
-    #[test]
-    fn test_frontier_overflow() -> Result<()> {
-        // Force overflow via a dependency chain that exceeds per-pod capacity.
-        // The frontier solver only proves statements
-        // reachable from the output, so we need the private statements to
-        // be in the output's dependency closure.
-        let params = Params {
-            max_statements: 4,
-            max_public_statements: 2,
-            max_input_pods: 4,
-            max_input_pods_public_statements: 20,
-            max_custom_predicate_verifications: 10,
-            ..Params::default()
-        };
-        let vd_set = &*MOCK_VD_SET;
-
-        let module = load_module(
-            r#"
-            pred_a(X) = AND(Contains(X, "k", 1))
-            pred_b(X) = AND(pred_a(X))
-            pred_c(X) = AND(pred_b(X))
-            "#,
-            "test",
-            &params,
-            &[],
-        )
-        .expect("load module");
-        let batch = &module.batch;
-
-        let mut builder = MultiPodBuilder::new(&params, vd_set);
-
-        let dict = dict!({"k" => 1});
-        let contains = builder.priv_op(FrontendOp::dict_contains(dict, "k", 1))?;
-        let a_out = builder.priv_op(FrontendOp::custom(
-            batch.predicate_ref_by_name("pred_a").unwrap(),
-            [contains],
-        ))?;
-        let b_out = builder.priv_op(FrontendOp::custom(
-            batch.predicate_ref_by_name("pred_b").unwrap(),
-            [a_out],
-        ))?;
-        let _c_out = builder.pub_op(FrontendOp::custom(
-            batch.predicate_ref_by_name("pred_c").unwrap(),
-            [b_out],
-        ))?;
-
-        let solved = builder.solve()?;
-        assert!(
-            solved.solution().pod_count >= 2,
-            "Expected at least 2 PODs, got {}",
-            solved.solution().pod_count
-        );
-
-        let prover = MockProver {};
-        let result = solved.prove(&prover)?;
-        for (i, pod) in result.pods.iter().enumerate() {
-            pod.pod
-                .verify()
-                .unwrap_or_else(|_| panic!("POD {} verification failed", i));
-        }
-
-        Ok(())
-    }
-
-    #[test]
-    fn test_frontier_cross_pod_deps() -> Result<()> {
-        // Same as test_cross_pod_dependencies but with frontier solver.
-        let params = Params {
-            max_statements: 4,
-            max_public_statements: 2,
-            max_input_pods: 4,
-            max_input_pods_public_statements: 20,
-            max_custom_predicate_verifications: 10,
-            ..Params::default()
-        };
-        let vd_set = &*MOCK_VD_SET;
-
-        let module = load_module(
-            r#"
-            pred_a(X) = AND(Contains(X, "k", 1))
-            pred_b(X) = AND(pred_a(X))
-            "#,
-            "test",
-            &params,
-            &[],
-        )
-        .expect("load module");
-        let batch = &module.batch;
-
-        let mut builder = MultiPodBuilder::new(&params, vd_set);
-
-        let dict = dict!({"k" => 1});
-        let contains = builder.priv_op(FrontendOp::dict_contains(dict, "k", 1))?;
-
-        let a_out = builder.priv_op(FrontendOp::custom(
-            batch.predicate_ref_by_name("pred_a").unwrap(),
-            [contains],
-        ))?;
-
-        let _b_out = builder.pub_op(FrontendOp::custom(
-            batch.predicate_ref_by_name("pred_b").unwrap(),
-            [a_out],
-        ))?;
-
-        let solved = builder.solve()?;
-        let solution = solved.solution();
-        assert!(
-            solution.pod_count >= 1 && solution.pod_count <= 3,
-            "Expected 1-3 PODs, got {}",
             solution.pod_count
         );
 
@@ -1692,7 +1527,7 @@ mod tests {
     }
 
     #[test]
-    fn test_frontier_chain_default_params_k2() -> Result<()> {
+    fn test_custom_pred_chain_default_params() -> Result<()> {
         // Default params: max_priv=40, max_custom_pred_verifications=8.
         // Chain of 45 custom preds + 1 contains = 46 statements.
         // ceil(46/40) = 2 PODs from slot pressure. Also hits custom pred
@@ -1711,7 +1546,7 @@ mod tests {
         let solution = solved.solution();
 
         eprintln!(
-            "frontier default k2: pod_count={} time={:.1}ms",
+            "custom_pred_chain: pod_count={} time={:.1}ms",
             solution.pod_count,
             elapsed.as_secs_f64() * 1000.0
         );
@@ -1733,7 +1568,7 @@ mod tests {
     }
 
     #[test]
-    fn test_frontier_complex_multi_resource() -> Result<()> {
+    fn test_multi_resource_with_external_pods() -> Result<()> {
         // Complex scenario: two signed dicts (external PODs), contains checks,
         // two custom predicate branches that merge, cross-branch transitive_eq.
         //
@@ -1830,7 +1665,7 @@ mod tests {
         let solution = solved.solution();
 
         eprintln!(
-            "frontier complex: pod_count={} time={:.1}ms statements={}",
+            "multi_resource: pod_count={} time={:.1}ms statements={}",
             solution.pod_count,
             elapsed.as_secs_f64() * 1000.0,
             solution
@@ -1860,7 +1695,7 @@ mod tests {
     }
 
     #[test]
-    fn test_frontier_complex_jumbo() -> Result<()> {
+    fn test_four_branch_scale() -> Result<()> {
         // Jumbo test: 4 branches x 40 custom predicates = 160 verifications.
         // With limit 8/pod -> ceil(160/8) = 20 PODs minimum.
         // Each branch rooted at a distinct DictContains (merkle proof cost).
@@ -1907,7 +1742,7 @@ mod tests {
         let solution = solved.solution();
 
         eprintln!(
-            "frontier jumbo: pod_count={} time={:.1}ms statements={}",
+            "four_branch_scale: pod_count={} time={:.1}ms statements={}",
             solution.pod_count,
             elapsed.as_secs_f64() * 1000.0,
             solution
@@ -1935,10 +1770,10 @@ mod tests {
     }
 
     #[test]
-    fn test_frontier_chain_default_params_k5() -> Result<()> {
+    fn test_long_custom_pred_chain() -> Result<()> {
         // Default params, chain of 100 custom preds.
         // ceil(100/8) = 13 PODs from custom pred verifications alone.
-        // Tests that the frontier solver handles larger k quickly.
+        // Tests that the solver handles larger k quickly.
         let params = Params::default();
         let vd_set = &*MOCK_VD_SET;
 
@@ -1952,7 +1787,7 @@ mod tests {
         let solution = solved.solution();
 
         eprintln!(
-            "frontier default k5+: pod_count={} time={:.1}ms",
+            "long_custom_pred_chain: pod_count={} time={:.1}ms",
             solution.pod_count,
             elapsed.as_secs_f64() * 1000.0
         );
