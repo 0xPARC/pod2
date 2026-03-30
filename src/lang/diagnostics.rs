@@ -287,6 +287,17 @@ fn render_validation_error(
         ValidationError::NoRequestBlock => {
             render_title_only(renderer, "requests must contain a REQUEST block")
         }
+
+        ValidationError::SelfReferentialPredicateLiteralNotAllowedInRequests { span } => {
+            render_with_optional_span(
+                renderer,
+                source,
+                path,
+                "self-referential predicate literal not allowed in requests",
+                span.as_ref(),
+                "not allowed here",
+            )
+        }
     }
 }
 

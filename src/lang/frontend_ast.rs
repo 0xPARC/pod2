@@ -116,6 +116,8 @@ pub enum StatementTmplArg {
     Literal(LiteralValue),
     Wildcard(Identifier),
     AnchoredKey(AnchoredKey),
+    /// Hash of a same-module predicate, resolved at batch finalization time.
+    SelfPredicateHash(Identifier),
 }
 
 /// Anchored key: Var["key"] or Var.key
@@ -168,6 +170,13 @@ pub enum LiteralValue {
     Array(LiteralArray),
     Set(LiteralSet),
     Dict(LiteralDict),
+    /// Hash of a native predicate (resolved immediately).
+    NativePredicateHash(Identifier),
+    /// Hash of an external module's predicate (resolved immediately).
+    ExternalPredicateHash {
+        module: Identifier,
+        predicate: Identifier,
+    },
 }
 
 /// Integer literal
@@ -391,6 +400,9 @@ impl fmt::Display for StatementTmplArg {
             StatementTmplArg::Literal(lit) => write!(f, "{}", lit),
             StatementTmplArg::Wildcard(id) => write!(f, "{}", id),
             StatementTmplArg::AnchoredKey(ak) => write!(f, "{}", ak),
+            StatementTmplArg::SelfPredicateHash(id) => {
+                write!(f, "@self_predicate({})", id)
+            }
         }
     }
 }
@@ -422,6 +434,12 @@ impl fmt::Display for LiteralValue {
             LiteralValue::Array(a) => write!(f, "{}", a),
             LiteralValue::Set(s) => write!(f, "{}", s),
             LiteralValue::Dict(d) => write!(f, "{}", d),
+            LiteralValue::NativePredicateHash(id) => {
+                write!(f, "@native_predicate({})", id)
+            }
+            LiteralValue::ExternalPredicateHash {
+                module, predicate, ..
+            } => write!(f, "@external_predicate({}, {})", module, predicate),
         }
     }
 }
@@ -769,6 +787,10 @@ pub mod parse {
         let inner = pair.into_inner().next().unwrap();
 
         match inner.as_rule() {
+            Rule::predicate_hash_self => {
+                let id = parse_identifier(inner.into_inner().next().unwrap());
+                Ok(StatementTmplArg::SelfPredicateHash(id))
+            }
             Rule::literal_value => Ok(StatementTmplArg::Literal(parse_literal_value(inner)?)),
             Rule::identifier => Ok(StatementTmplArg::Wildcard(parse_identifier(inner))),
             Rule::anchored_key => Ok(StatementTmplArg::AnchoredKey(parse_anchored_key(inner)?)),
@@ -823,6 +845,16 @@ pub mod parse {
             Rule::literal_array => Ok(LiteralValue::Array(parse_literal_array(inner)?)),
             Rule::literal_set => Ok(LiteralValue::Set(parse_literal_set(inner)?)),
             Rule::literal_dict => Ok(LiteralValue::Dict(parse_literal_dict(inner)?)),
+            Rule::predicate_hash_native => {
+                let id = parse_identifier(inner.into_inner().next().unwrap());
+                Ok(LiteralValue::NativePredicateHash(id))
+            }
+            Rule::predicate_hash_external => {
+                let mut parts = inner.into_inner();
+                let module = parse_identifier(parts.next().unwrap());
+                let predicate = parse_identifier(parts.next().unwrap());
+                Ok(LiteralValue::ExternalPredicateHash { module, predicate })
+            }
             _ => unreachable!("Unexpected literal value rule: {:?}", inner.as_rule()),
         }
     }
@@ -1104,6 +1136,7 @@ mod tests {
                         AnchoredKeyPath::Dot(id) => id.span = None,
                     }
                 }
+                StatementTmplArg::SelfPredicateHash(id) => id.span = None,
             }
         }
     }
@@ -1138,6 +1171,13 @@ mod tests {
                     pair.key.span = None;
                     clear_literal_spans(&mut pair.value);
                 }
+            }
+            LiteralValue::NativePredicateHash(id) => id.span = None,
+            LiteralValue::ExternalPredicateHash {
+                module, predicate, ..
+            } => {
+                module.span = None;
+                predicate.span = None;
             }
         }
     }
