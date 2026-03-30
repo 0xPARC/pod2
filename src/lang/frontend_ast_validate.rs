@@ -614,10 +614,11 @@ impl Validator {
     ) -> Result<(), ValidationError> {
         // @self_predicate only makes sense inside module predicate definitions
         if wildcard_context.is_none() {
-            return Err(ValidationError::UndefinedPredicate {
-                name: id.name.clone(),
-                span: id.span,
-            });
+            return Err(
+                ValidationError::SelfReferentialPredicateLiteralNotAllowedInRequests {
+                    span: id.span,
+                },
+            );
         }
         // Must refer to a custom predicate defined in this module (not intro/imported)
         match self.symbols.predicates.get(&id.name) {

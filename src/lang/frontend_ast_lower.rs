@@ -225,11 +225,9 @@ pub fn lower_literal_with_context(
             })?;
             let pred = match pred_or_wc {
                 crate::frontend::PredicateOrWildcard::Predicate(p) => p,
-                crate::frontend::PredicateOrWildcard::Wildcard(_) => {
-                    return Err(LoweringError::PredicateNotFound {
-                        name: format!("{}::{}", module.name, predicate.name),
-                    });
-                }
+                _ => unreachable!(
+                    "`resolve_predicate_ref` always returns `PredicateOrWildcard::Predicate` on `PredicateRef::Qualified`"
+                )
             };
             Ok(Value::from(pred.hash()))
         }
