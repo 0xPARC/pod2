@@ -54,8 +54,8 @@ use crate::{
     measure_gates_begin, measure_gates_end,
     middleware::{
         CustomPredicate, CustomPredicateBatch, CustomPredicateRef, NativeOperation,
-        NativePredicate, Params, PredicatePrefix, RawValue, Statement, ToFields, Value, F,
-        HASH_SIZE,
+        NativePredicate, Params, PredicatePrefix, RawValue, Statement, ToFields, Value,
+        BASE_PARAMS, F, HASH_SIZE,
     },
 };
 //
@@ -69,12 +69,18 @@ pub const PI_OFFSET_VDSROOT: usize = 4;
 
 pub const NUM_PUBLIC_INPUTS: usize = 8;
 
-const MAX_VALUE_ARGS: usize = 4;
+const MAX_VALUE_ARGS: usize = 5;
 
 struct StatementArgCache {
     rhs: ValueTarget,
     lhs: StatementArgTarget,
     valid: BoolTarget,
+    pred_is_none: BoolTarget,
+    is_reference: BoolTarget,
+    // if `is_reference` then this is the AnchoredKey found in the Contains statement
+    reference: StatementArgTarget,
+    // if `is_reference` then this is the value found in the Contains statement
+    value: ValueTarget,
 }
 
 struct StatementCache {
@@ -117,9 +123,9 @@ impl StatementCache {
 
             let is_reference = builder.and(pred_is_contains, ref_is_value);
             let valid = builder.or(is_literal, is_reference);
-            let rhs_literal = st.args[i].as_value();
-            let rhs_reference = op_args[i].args[2].as_value();
-            let rhs = builder.select_value(pred_is_none, rhs_literal, rhs_reference);
+            let rhs_from_literal = st.args[i].as_value();
+            let rhs_from_reference = op_args[i].args[2].as_value();
+            let rhs = builder.select_value(pred_is_none, rhs_from_literal, rhs_from_reference);
             let lhs_literal = &st.args[i];
             let lhs_reference = StatementArgTarget::anchored_key(
                 builder,
@@ -127,7 +133,15 @@ impl StatementCache {
                 &op_args[i].args[1].as_value(),
             );
             let lhs = builder.select_statement_arg(pred_is_none, lhs_literal, &lhs_reference);
-            StatementArgCache { rhs, lhs, valid }
+            StatementArgCache {
+                rhs,
+                lhs,
+                valid,
+                pred_is_none,
+                is_reference,
+                reference: lhs_reference,
+                value: rhs_from_reference,
+            }
         });
         let mut first_n_equations_valid = [equations[0].valid; MAX_VALUE_ARGS];
         for i in 1..MAX_VALUE_ARGS {
@@ -145,7 +159,7 @@ impl StatementCache {
     ///
     /// If the operation argument is a statement of type  `None`, then the value
     /// should be the corresponding argument of the current statement.
-    /// If the operation argument is a statement of type `Equals`, then the value
+    /// If the operation argument is a statement of type `Contains`, then the value
     /// should be the argument at index 1 of that statement.
     /// If the function successfully interprets the arguments as values,
     /// returns `True` along with those values.  Otherwise, returns `False`
@@ -442,6 +456,7 @@ fn verify_operation_circuit(
             verify_sum_of_circuit(params, builder, st, &op.op_type, &cache),
             verify_product_of_circuit(params, builder, st, &op.op_type, &cache),
             verify_max_of_circuit(params, builder, st, &op.op_type, &cache),
+            verify_replace_value_by_entry_circuit(params, builder, st, &op.op_type, &cache),
         ]);
     }
     // Skip these if there are no resolved aux entries
@@ -1216,6 +1231,47 @@ fn verify_max_of_circuit(
     let st_ok = builder.is_equal_flattenable(st, &expected_statement);
 
     let ok = builder.all([op_code_ok, arg_types_ok, arg1_check, st_ok]);
+    measure_gates_end!(builder, measure);
+    ok
+}
+
+fn verify_replace_value_by_entry_circuit(
+    params: &Params,
+    builder: &mut CircuitBuilder,
+    st: &StatementTarget,
+    op_type: &OperationTypeTarget,
+    cache: &StatementCache,
+) -> BoolTarget {
+    let measure = measure_gates_begin!(builder, "OpReplaceValueByEntry");
+    let op_code_ok = op_type.has_native(builder, NativeOperation::ReplaceValueByEntry);
+
+    let st_in = &cache.op_args[BASE_PARAMS.max_statement_args];
+
+    let mut args = Vec::new();
+    let mut args_ok = builder._true();
+    for (arg_in, entry_cache) in zip_eq(&st_in.args, &cache.equations) {
+        // if the op_arg is None, keep the original argument, if it's a Contains swap the value by
+        // the reference Entry while checking that the value in Contains matches the original
+        // argument.
+        let arg = builder.select_flattenable(
+            params,
+            entry_cache.pred_is_none,
+            arg_in,
+            &entry_cache.reference,
+        );
+        args.push(arg);
+        let arg_ref_ok = {
+            let arg_in_is_value = builder.statement_arg_is_value(arg_in);
+            let value_eq = builder.is_equal_flattenable(&arg_in.as_value(), &entry_cache.value);
+            builder.all([entry_cache.is_reference, arg_in_is_value, value_eq])
+        };
+        let arg_ok = builder.or(entry_cache.pred_is_none, arg_ref_ok);
+        args_ok = builder.and(args_ok, arg_ok);
+    }
+    let expected_statement = StatementTarget::new(*st_in.pred_hash(), args);
+    let st_ok = builder.is_equal_flattenable(st, &expected_statement);
+
+    let ok = builder.all([op_code_ok, args_ok, st_ok]);
     measure_gates_end!(builder, measure);
     ok
 }
@@ -2043,7 +2099,7 @@ mod tests {
         middleware::{
             hash_values, AnchoredKey, Hash, Key, OperationType, Predicate, PredicateOrWildcard,
             RawValue, StatementArg, StatementTmpl, StatementTmplArg, ValueRef, Wildcard,
-            EMPTY_VALUE,
+            BASE_PARAMS, EMPTY_VALUE,
         },
     };
 
@@ -3033,6 +3089,33 @@ mod tests {
         );
         let prev_statements = vec![Statement::None.into()];
         operation_verify(st, op, prev_statements, Aux::signed_by(signed_by))
+    }
+
+    #[test]
+    fn test_operation_replace_value_by_entry() -> Result<()> {
+        let d = dict!({"a" => 42, "b" => 33});
+
+        // 0: None
+        // 1: Lt(5, 42)
+        let st_in: mainpod::Statement = Statement::lt(5, 42).into();
+        // 2: Contains(d, "a", 42)
+        let st_entry: mainpod::Statement = Statement::contains(d.clone(), "a", 42).into();
+
+        let st_out: mainpod::Statement =
+            Statement::lt(5, ValueRef::Key(AnchoredKey::from((&d, "a")))).into();
+        let mut op_args: Vec<_> = iter::repeat(OperationArg::None)
+            .take(BASE_PARAMS.max_statement_args + 1)
+            .collect();
+        op_args[1] = OperationArg::Index(2);
+        op_args[BASE_PARAMS.max_statement_args] = OperationArg::Index(1);
+        let op = mainpod::Operation(
+            OperationType::Native(NativeOperation::ReplaceValueByEntry),
+            op_args,
+            OperationAux::None,
+        );
+
+        let prev_statements = vec![Statement::None.into(), st_in, st_entry];
+        operation_verify(st_out, op, prev_statements, Aux::default())
     }
 
     fn helper_statement_arg_from_template(

@@ -449,36 +449,33 @@ impl Operation {
     fn check_replace_value_by_entry(
         entries: &[Statement],
         st_in: &Statement,
-        st_out: &Statement,
+        expected_st_out: &Statement,
     ) -> Result<bool> {
-        if st_in.predicate() != st_out.predicate() {
-            return Ok(false);
-        }
         if entries.len() != BASE_PARAMS.max_statement_args {
             return Ok(false);
         }
-        let entries_ok = iter::zip(entries, zip_eq(st_in.args(), st_out.args()))
-            .map(
-                |(entry, (st_arg_in, st_arg_out))| match (entry, st_arg_in, st_arg_out) {
-                    (Statement::None, arg_in, arg_out) => arg_in == arg_out,
-                    (
-                        Statement::Contains(
-                            ValueRef::Literal(root),
-                            ValueRef::Literal(key),
-                            ValueRef::Literal(v),
-                        ),
-                        StatementArg::Literal(v_in),
-                        StatementArg::Key(ak_out),
-                    ) => {
-                        root.raw() == ak_out.root.raw()
-                            && key.raw() == ak_out.key.raw()
-                            && v.raw() == v_in.raw()
-                    }
-                    _ => false,
-                },
-            )
-            .all(|ok| ok);
-        return Ok(entries_ok);
+        let args = iter::zip(st_in.args(), entries)
+            .map(|(arg_in, entry)| match (arg_in, entry) {
+                (arg_in, Statement::None) => Ok(arg_in),
+                (
+                    StatementArg::Literal(v_in),
+                    Statement::Contains(
+                        ValueRef::Literal(root),
+                        ValueRef::Literal(key),
+                        ValueRef::Literal(v),
+                    ),
+                ) if v == &v_in => Ok(StatementArg::Key(AnchoredKey::new(
+                    Hash::from(root.raw()),
+                    Key::from(key.as_str().ok_or_else(|| Error::custom("not a string"))?),
+                ))),
+                _ => Err(Error::custom(
+                    "invalid statement argument in ReplaceValueByEntry",
+                )),
+            })
+            .collect::<Result<Vec<_>>>()?;
+
+        let st_out = Statement::from_args(st_in.predicate(), args)?;
+        return Ok(&st_out == expected_st_out);
     }
 
     /// Checks the given operation against a statement.

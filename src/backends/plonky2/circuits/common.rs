@@ -103,6 +103,20 @@ pub struct StatementArgTarget {
     pub elements: [Target; STATEMENT_ARG_F_LEN],
 }
 
+impl Flattenable for StatementArgTarget {
+    fn flatten(&self) -> Vec<Target> {
+        self.elements.to_vec()
+    }
+    fn from_flattened(_params: &Params, vs: &[Target]) -> Self {
+        Self {
+            elements: vs.try_into().expect("STATEMENT_ARG_F_LEN elements"),
+        }
+    }
+    fn size(_params: &Params) -> usize {
+        STATEMENT_ARG_F_LEN
+    }
+}
+
 impl StatementArgTarget {
     pub fn set_targets(&self, pw: &mut PartialWitness<F>, arg: &StatementArg) -> Result<()> {
         Ok(pw.set_target_arr(&self.elements, &arg.to_fields())?)
