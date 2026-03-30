@@ -446,6 +446,41 @@ impl Operation {
         Ok(sig.verify(pk, msg.raw()))
     }
 
+    fn check_replace_value_by_entry(
+        entries: &[Statement],
+        st_in: &Statement,
+        st_out: &Statement,
+    ) -> Result<bool> {
+        if st_in.predicate() != st_out.predicate() {
+            return Ok(false);
+        }
+        if entries.len() != BASE_PARAMS.max_statement_args {
+            return Ok(false);
+        }
+        let entries_ok = iter::zip(entries, zip_eq(st_in.args(), st_out.args()))
+            .map(
+                |(entry, (st_arg_in, st_arg_out))| match (entry, st_arg_in, st_arg_out) {
+                    (Statement::None, arg_in, arg_out) => arg_in == arg_out,
+                    (
+                        Statement::Contains(
+                            ValueRef::Literal(root),
+                            ValueRef::Literal(key),
+                            ValueRef::Literal(v),
+                        ),
+                        StatementArg::Literal(v_in),
+                        StatementArg::Key(ak_out),
+                    ) => {
+                        root.raw() == ak_out.root.raw()
+                            && key.raw() == ak_out.key.raw()
+                            && v.raw() == v_in.raw()
+                    }
+                    _ => false,
+                },
+            )
+            .all(|ok| ok);
+        return Ok(entries_ok);
+    }
+
     /// Checks the given operation against a statement.
     pub fn check(&self, params: &Params, output_statement: &Statement) -> Result<bool> {
         use Statement::*;
@@ -569,6 +604,9 @@ impl Operation {
                     .map(|(arg_v, arg_s)| Ok(val(arg_v, arg_s)?))
                     .collect::<Result<Vec<Value>>>()?;
                 check_custom_pred(params, cpr, args, &resolved_s_args).map(|_| true)?
+            }
+            (Self::ReplaceValueByEntry(entries, st_in), st_out) => {
+                Self::check_replace_value_by_entry(entries, st_in, st_out)?
             }
             _ => return Err(deduction_err()),
         };

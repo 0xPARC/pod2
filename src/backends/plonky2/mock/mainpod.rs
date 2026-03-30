@@ -459,8 +459,9 @@ pub mod tests {
             .priv_op(frontend::Operation::dict_contains(d.clone(), "a", 42))
             .unwrap();
         let st = builder.priv_op(frontend::Operation::lt(5, 42)).unwrap();
+        // Transform `Lt(5, 42)` into `Lt(5, d.a)` by using `DictContains(d, "a", 42)`
         builder
-            .priv_op(frontend::Operation::replace_value_by_entry(
+            .pub_op(frontend::Operation::replace_value_by_entry(
                 vec![None, Some((&d, "a"))],
                 st,
             ))
@@ -469,5 +470,16 @@ pub mod tests {
         let prover = MockProver {};
         let pod = builder.prove(&prover).unwrap();
         pod.pod.verify().unwrap();
+
+        assert_eq!(
+            middleware::Statement::Lt(
+                middleware::ValueRef::Literal(Value::from(5)),
+                middleware::ValueRef::Key(middleware::AnchoredKey {
+                    root: d.commitment(),
+                    key: middleware::Key::from("a")
+                })
+            ),
+            pod.public_statements[0]
+        );
     }
 }

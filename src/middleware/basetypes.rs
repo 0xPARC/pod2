@@ -169,6 +169,12 @@ pub struct Hash(
     pub [F; HASH_SIZE],
 );
 
+impl Hash {
+    pub fn raw(self) -> RawValue {
+        RawValue::from(self)
+    }
+}
+
 impl From<Hash> for HashOut {
     fn from(hash: Hash) -> HashOut {
         HashOut { elements: hash.0 }
