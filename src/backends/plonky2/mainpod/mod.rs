@@ -853,7 +853,7 @@ pub mod tests {
         lang::load_module,
         middleware::{
             self, containers::Set, CustomPredicateRef, NativePredicate as NP, Signer as _,
-            DEFAULT_VD_LIST, DEFAULT_VD_SET,
+            BASE_PARAMS, DEFAULT_VD_LIST, DEFAULT_VD_SET,
         },
     };
 
@@ -1017,7 +1017,7 @@ pub mod tests {
             max_input_pods_public_statements: 2,
             max_statements: 5,
             max_public_statements: 2,
-            max_operation_args: 5,
+            max_operation_args: BASE_PARAMS.max_statement_args + 1,
             max_custom_predicates: 2,
             max_custom_predicate_verifications: 2,
             max_custom_predicate_wildcards: 3,
@@ -1082,7 +1082,7 @@ pub mod tests {
             max_input_pods: 0,
             max_statements: 9,
             max_public_statements: 4,
-            max_operation_args: 5,
+            max_operation_args: BASE_PARAMS.max_statement_args + 1,
             max_custom_predicate_wildcards: 4,
             max_custom_predicate_verifications: 2,
             max_merkle_proofs_containers: 3,
@@ -1152,7 +1152,7 @@ pub mod tests {
             max_input_pods: 0,
             max_statements: 6,
             max_public_statements: 2,
-            max_operation_args: 5,
+            max_operation_args: BASE_PARAMS.max_statement_args + 1,
             max_custom_predicate_wildcards: 4,
             max_custom_predicate_verifications: 2,
             max_merkle_proofs_containers: 0,
