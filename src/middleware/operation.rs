@@ -1,6 +1,6 @@
 use std::{fmt, iter};
 
-use itertools::{zip_eq, Itertools};
+use itertools::Itertools;
 use log::error;
 use plonky2::field::types::Field;
 use serde::{Deserialize, Serialize};
@@ -475,7 +475,7 @@ impl Operation {
             .collect::<Result<Vec<_>>>()?;
 
         let st_out = Statement::from_args(st_in.predicate(), args)?;
-        return Ok(&st_out == expected_st_out);
+        Ok(&st_out == expected_st_out)
     }
 
     /// Checks the given operation against a statement.
@@ -597,10 +597,16 @@ impl Operation {
             (Self::Custom(CustomPredicateRef { batch, index }, args), Custom(cpr, s_args))
                 if batch == &cpr.batch && index == &cpr.index =>
             {
-                let resolved_s_args = zip_eq(s_args.iter(), args.iter())
-                    .map(|(arg_v, arg_s)| Ok(val(arg_v, arg_s)?))
-                    .collect::<Result<Vec<Value>>>()?;
-                check_custom_pred(params, cpr, args, &resolved_s_args).map(|_| true)?
+                // The custom operation outputs statements with literal arguments.  They can be
+                // replaced by references later with ReplaceValueByEntry.
+                let s_args = s_args
+                    .iter()
+                    .map(|arg| match arg {
+                        ValueRef::Literal(v) => Ok(v.clone()),
+                        _ => Err(deduction_err()),
+                    })
+                    .collect::<Result<Vec<_>>>()?;
+                check_custom_pred(params, cpr, args, &s_args).map(|_| true)?
             }
             (Self::ReplaceValueByEntry(entries, st_in), st_out) => {
                 Self::check_replace_value_by_entry(entries, st_in, st_out)?
@@ -773,7 +779,7 @@ pub(crate) fn check_custom_pred(
     params: &Params,
     custom_pred_ref: &CustomPredicateRef,
     args: &[Statement],
-    resolved_s_args: &[Value],
+    s_args: &[Value],
 ) -> Result<()> {
     let pred = custom_pred_ref.predicate();
     if pred.statements.len() != args.len() {
@@ -784,21 +790,21 @@ pub(crate) fn check_custom_pred(
             args.len(),
         ));
     }
-    if pred.args_len != resolved_s_args.len() {
+    if pred.args_len != s_args.len() {
         return Err(Error::diff_amount(
             "custom predicate statement".to_string(),
             "args".to_string(),
             pred.args_len,
-            resolved_s_args.len(),
+            s_args.len(),
         ));
     }
 
     // Check that the resolved wildcards match the statement arguments.
-    let wc_values = match wildcard_values_from_op_st(params, pred, args, resolved_s_args) {
+    let wc_values = match wildcard_values_from_op_st(params, pred, args, s_args) {
         Ok(wc_values) => wc_values,
         Err(Error::Inner { inner, backtrace }) => match *inner {
             MiddlewareInnerError::InvalidWildcardAssignment(wc, v, prev)
-                if wc.index <= resolved_s_args.len() =>
+                if wc.index <= s_args.len() =>
             {
                 return Err(Error::mismatched_wildcard_value_and_statement_arg(
                     v,

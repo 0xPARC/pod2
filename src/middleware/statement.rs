@@ -480,7 +480,7 @@ impl Statement {
             (Custom(cpr), _) => {
                 let v_args = args
                     .iter()
-                    .map(|x| Ok(x.try_into()?))
+                    .map(|x| x.try_into())
                     .collect::<Result<Vec<ValueRef>>>()?;
                 Self::Custom(cpr, v_args)
             }

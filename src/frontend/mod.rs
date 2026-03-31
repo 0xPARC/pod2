@@ -577,7 +577,7 @@ impl MainPodBuilder {
                         }
                         let st = match args.pop().expect("valid vec len") {
                             OperationArg::Statement(st) => st,
-                            _ => return Err(Error::custom(format!("expected statement"))),
+                            _ => return Err(Error::custom("expected statement")),
                         };
                         let new_st_args = iter::zip(st.args().into_iter(), args)
                             .map(|(st_arg, arg)| match (st_arg, arg) {
@@ -590,7 +590,7 @@ impl MainPodBuilder {
                                         ValueRef::Literal(v),
                                     )),
                                 ) if st_arg_v == v => root_key_to_ak(&root, &key)
-                                    .map(|ak| (StatementArg::Key(ak)))
+                                    .map(StatementArg::Key)
                                     .ok_or_else(native_arg_error),
                                 _ => Err(Error::custom("unexpected operation argument")),
                             })

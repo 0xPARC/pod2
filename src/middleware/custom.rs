@@ -423,7 +423,7 @@ impl fmt::Display for CustomPredicate {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, JsonSchema)]
+#[derive(Clone, PartialEq, Eq, Serialize, JsonSchema)]
 enum CustomPredicateBatchData {
     Full {
         #[serde(skip)]
@@ -434,6 +434,20 @@ enum CustomPredicateBatchData {
     Opaque {
         id: Hash,
     },
+}
+
+// Explicit implementation of Debug to skip the merkle tree
+impl fmt::Debug for CustomPredicateBatchData {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match &self {
+            Self::Full { mt, predicates } => f
+                .debug_struct("Full")
+                .field("id", &mt.root())
+                .field("predicates", &predicates)
+                .finish(),
+            Self::Opaque { id } => f.debug_struct("Opaque").field("id", &id).finish(),
+        }
+    }
 }
 
 // TODO: Rename Batch for Module everywhere in the code base

@@ -135,12 +135,6 @@ pub enum ValidationError {
         span: Option<Span>,
     },
 
-    #[error("Invalid argument type for {predicate}: anchored keys not allowed")]
-    InvalidArgumentType {
-        predicate: String,
-        span: Option<Span>,
-    },
-
     #[error("Duplicate wildcard in predicate arguments: {name}")]
     DuplicateWildcard { name: String, span: Option<Span> },
 

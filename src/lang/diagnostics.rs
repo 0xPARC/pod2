@@ -174,18 +174,6 @@ fn render_validation_error(
             "second REQUEST here",
         ),
 
-        ValidationError::InvalidArgumentType { predicate, span } => {
-            let title = format!("invalid argument type for `{}`", predicate);
-            render_with_optional_span(
-                renderer,
-                source,
-                path,
-                &title,
-                span.as_ref(),
-                "anchored keys not allowed here",
-            )
-        }
-
         ValidationError::DuplicateWildcard { name, span } => {
             let title = format!("duplicate wildcard: {}", name);
             render_with_optional_span(

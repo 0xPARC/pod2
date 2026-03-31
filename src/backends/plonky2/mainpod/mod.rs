@@ -1,9 +1,9 @@
 pub mod operation;
-use crate::middleware::{wildcard_values_from_op_st, PodType, EMPTY_VALUE};
+use crate::middleware::{wildcard_values_from_op_st, PodType};
 pub mod statement;
 use std::iter;
 
-use itertools::{izip, Itertools};
+use itertools::{zip_eq, Itertools};
 use num_bigint::BigUint;
 pub use operation::*;
 use plonky2::{hash::poseidon::PoseidonHash, plonk::config::Hasher};
@@ -39,7 +39,7 @@ use crate::{
     middleware::{
         self, value_from_op, CustomPredicateRef, Error as MiddlewareError, Hash, MainPodInputs,
         MainPodProver, NativeOperation, OperationType, Params, Pod, RawValue, StatementArg,
-        ToFields, VDSet, Value,
+        ToFields, VDSet, Value, ValueRef,
     },
     timed,
 };
@@ -95,32 +95,28 @@ pub(crate) fn extract_custom_predicates(
 pub(crate) fn extract_custom_predicate_verifications(
     params: &Params,
     aux_list: &mut [OperationAux],
-    mid_operations: &[middleware::Operation],
-    operations: &[Operation],
-    statements: &[Statement],
+    operations: &[middleware::Operation],
+    statements: &[middleware::Statement],
     custom_predicates: &[CustomPredicateRef],
 ) -> Result<Vec<CustomPredicateVerification>> {
     let mut table = Vec::new();
-    for (i, (mid_op, op, st)) in
-        izip!(mid_operations.iter(), operations.iter(), statements.iter()).enumerate()
-    {
-        if let middleware::Operation::Custom(cpr, sts) = &mid_op {
-            if let middleware::Predicate::Custom(st_cpr) = &st.0 {
+    for (i, (op, st)) in zip_eq(operations.iter(), statements.iter()).enumerate() {
+        if let middleware::Operation::Custom(cpr, sts) = op {
+            if let middleware::Statement::Custom(st_cpr, st_args) = st {
                 assert_eq!(cpr, st_cpr);
-                let op_args = &op.1;
-                let resolved_st_args: Vec<Value> = op_args
+                // The custom operation outputs statements with literal arguments.  They can be
+                // replaced by references later with ReplaceValueByEntry.
+                let st_args = st_args
                     .iter()
                     .map(|arg| match arg {
-                        OperationArg::None => Value::from(EMPTY_VALUE),
-                        // Statement is Contains(0: root, 1: key, 2: value)
-                        OperationArg::Index(i) => statements[*i].1[2]
-                            .literal()
-                            .expect("literal value")
-                            .clone(),
+                        ValueRef::Literal(v) => Ok(v.clone()),
+                        _ => Err(Error::custom(
+                            "cusotm operation cannot output entries as arguments",
+                        )),
                     })
-                    .collect();
+                    .collect::<Result<Vec<_>>>()?;
                 let wildcard_values =
-                    wildcard_values_from_op_st(params, cpr.predicate(), sts, &resolved_st_args)
+                    wildcard_values_from_op_st(params, cpr.predicate(), sts, &st_args)
                         .expect("resolved wildcards");
                 let sts = sts.iter().map(|s| Statement::from(s.clone())).collect();
                 let custom_predicate_table_index = custom_predicates
@@ -150,51 +146,6 @@ pub(crate) fn extract_custom_predicate_verifications(
     }
     Ok(table)
 }
-
-// /// Extracts all custom predicate operations with all the data required to verify them.
-// pub(crate) fn _extract_custom_predicate_verifications(
-//     params: &Params,
-//     aux_list: &mut [OperationAux],
-//     operations: &[middleware::Operation],
-//     statements: &[middleware::Statement],
-//     custom_predicates: &[CustomPredicateRef],
-// ) -> Result<Vec<CustomPredicateVerification>> {
-//     let mut table = Vec::new();
-//     for (i, (op, st)) in zip_eq(operations.iter(), statements.iter()).enumerate() {
-//         if let middleware::Operation::Custom(cpr, sts) = op {
-//             if let middleware::Statement::Custom(st_cpr, st_args) = st {
-//                 assert_eq!(cpr, st_cpr);
-//                 let wildcard_values =
-//                     wildcard_values_from_op_st(params, cpr.predicate(), sts, st_args)
-//                         .expect("resolved wildcards");
-//                 let sts = sts.iter().map(|s| Statement::from(s.clone())).collect();
-//                 let custom_predicate_table_index = custom_predicates
-//                     .iter()
-//                     .enumerate()
-//                     .find_map(|(i, table_cpr)| (table_cpr == cpr).then_some(i))
-//                     .expect("find the custom predicate from the extracted unique list");
-//                 aux_list[i] = OperationAux::CustomPredVerifyIndex(table.len());
-//                 table.push(CustomPredicateVerification {
-//                     custom_predicate_table_index,
-//                     custom_predicate: cpr.clone(),
-//                     args: wildcard_values,
-//                     op_args: sts,
-//                 });
-//             } else {
-//                 panic!("Custom operation paired with non-custom statement");
-//             }
-//         }
-//     }
-//
-//     if table.len() > params.max_custom_predicate_verifications {
-//         return Err(Error::custom(format!(
-//             "The number of required custom predicate verifications ({}) exceeds the maximum number ({}).",
-//             table.len(),
-//             params.max_custom_predicate_verifications
-//         )));
-//     }
-//     Ok(table)
-// }
 
 /// Extracts Merkle proofs from Contains/NotContains ops.
 pub(crate) fn extract_merkle_proofs(
@@ -558,13 +509,13 @@ impl MainPodProver for Prover {
         let merkle_proofs =
             extract_merkle_proofs(params, &mut aux_list, inputs.operations, inputs.statements)?;
         let custom_predicates = extract_custom_predicates(params, inputs.operations)?;
-        // let custom_predicate_verifications = extract_custom_predicate_verifications(
-        //     params,
-        //     &mut aux_list,
-        //     inputs.operations,
-        //     inputs.statements,
-        //     &custom_predicates,
-        // )?;
+        let custom_predicate_verifications = extract_custom_predicate_verifications(
+            params,
+            &mut aux_list,
+            inputs.operations,
+            inputs.statements,
+            &custom_predicates,
+        )?;
         let public_key_of_sks =
             extract_public_key_of(params, &mut aux_list, inputs.operations, inputs.statements)?;
         let signed_bys =
@@ -582,14 +533,6 @@ impl MainPodProver for Prover {
         )?;
         let operations = process_public_statements_operations(params, &statements, operations)?;
 
-        let custom_predicate_verifications = extract_custom_predicate_verifications(
-            params,
-            &mut aux_list,
-            inputs.operations,
-            &operations,
-            &statements,
-            &custom_predicates,
-        )?;
         let custom_predicates_with_mpt_proofs = custom_predicates
             .into_iter()
             .map(|cpr| {
@@ -1271,5 +1214,99 @@ pub mod tests {
         builder.insert(true, (st, op)).unwrap();
         let prover = Prover {};
         builder.prove(&prover).unwrap();
+    }
+
+    #[test]
+    fn test_replace_value_by_entry() {
+        let params = middleware::Params::default();
+        let vd_set = &*DEFAULT_VD_SET;
+        let mut builder = MainPodBuilder::new(&params, vd_set);
+        let d = dict!({"a" => 42, "b" => 33});
+        builder
+            .priv_op(frontend::Operation::dict_contains(d.clone(), "a", 42))
+            .unwrap();
+        let st = builder.priv_op(frontend::Operation::lt(5, 42)).unwrap();
+        // Transform `Lt(5, 42)` into `Lt(5, d.a)` by using `DictContains(d, "a", 42)`
+        builder
+            .pub_op(frontend::Operation::replace_value_by_entry(
+                vec![None, Some((&d, "a"))],
+                st,
+            ))
+            .unwrap();
+
+        // Mock
+        let prover = MockProver {};
+        let pod = builder.prove(&prover).unwrap();
+        pod.pod.verify().unwrap();
+        assert_eq!(
+            middleware::Statement::Lt(
+                middleware::ValueRef::Literal(Value::from(5)),
+                middleware::ValueRef::Key(middleware::AnchoredKey {
+                    root: d.commitment(),
+                    key: middleware::Key::from("a")
+                })
+            ),
+            pod.public_statements[0]
+        );
+
+        // Real
+        let prover = Prover {};
+        let pod = builder.prove(&prover).unwrap();
+        pod.pod.verify().unwrap()
+    }
+
+    #[test]
+    fn test_entry_custom_statement_arg() {
+        let params = middleware::Params::default();
+        let vd_set = &*DEFAULT_VD_SET;
+        let input = r#"
+            PredA(x) = AND(
+                Lt(x, 100)
+            )
+
+            PredB(d) = AND(
+                PredA(d.x)
+            )
+        "#;
+        let module = load_module(input, "my_mod", &params, &[]).expect("lang parse");
+        let pred_a = module.batch.predicate_ref_by_name("PredA").unwrap();
+        let pred_b = module.batch.predicate_ref_by_name("PredB").unwrap();
+
+        let mut builder = MainPodBuilder::new(&params, vd_set);
+        let d = dict!({"x" => 42, "y" => 33});
+
+        let st_lt = builder.priv_op(frontend::Operation::lt(42, 100)).unwrap();
+        let st_a = builder
+            .priv_op(frontend::Operation::custom(pred_a, [st_lt]))
+            .unwrap();
+        builder
+            .priv_op(frontend::Operation::dict_contains(d.clone(), "x", 42))
+            .unwrap();
+        // Transform `PredA(42)` into `PredA(d.x)` by using `DictContains(d, "x", 42)`
+        let st_a1 = builder
+            .priv_op(frontend::Operation::replace_value_by_entry(
+                vec![Some((&d, "x"))],
+                st_a,
+            ))
+            .unwrap();
+
+        builder
+            .pub_op(frontend::Operation::custom(pred_b.clone(), [st_a1]))
+            .unwrap();
+
+        // Mock
+        let prover = MockProver {};
+        let pod = builder.prove(&prover).unwrap();
+        pod.pod.verify().unwrap();
+        let expected = middleware::Statement::Custom(
+            pred_b,
+            vec![middleware::ValueRef::Literal(Value::from(d))],
+        );
+        assert_eq!(expected, pod.public_statements[0]);
+
+        // Real
+        let prover = Prover {};
+        let pod = builder.prove(&prover).unwrap();
+        pod.pod.verify().unwrap()
     }
 }

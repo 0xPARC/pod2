@@ -376,12 +376,11 @@ pub mod tests {
     use super::*;
     use crate::{
         backends::plonky2::{primitives::ec::schnorr::SecretKey, signer::Signer},
-        dict,
         examples::{
             great_boy_pod_full_flow, tickets_pod_full_flow, zu_kyc_pod_builder, zu_kyc_pod_request,
             zu_kyc_sign_dict_builders, MOCK_VD_SET,
         },
-        frontend::{self, MainPodBuilder},
+        frontend::{self},
         middleware,
         middleware::{Signer as _, Value},
     };
@@ -447,40 +446,5 @@ pub mod tests {
         pod.verify()?;
 
         Ok(())
-    }
-
-    // TODO: Remove in favor of the same test in mainpod which tests mock and real
-    #[test]
-    fn test_replace_value_by_entry() {
-        let params = middleware::Params::default();
-        let vd_set = &*MOCK_VD_SET;
-        let mut builder = MainPodBuilder::new(&params, vd_set);
-        let d = dict!({"a" => 42, "b" => 33});
-        builder
-            .priv_op(frontend::Operation::dict_contains(d.clone(), "a", 42))
-            .unwrap();
-        let st = builder.priv_op(frontend::Operation::lt(5, 42)).unwrap();
-        // Transform `Lt(5, 42)` into `Lt(5, d.a)` by using `DictContains(d, "a", 42)`
-        builder
-            .pub_op(frontend::Operation::replace_value_by_entry(
-                vec![None, Some((&d, "a"))],
-                st,
-            ))
-            .unwrap();
-
-        let prover = MockProver {};
-        let pod = builder.prove(&prover).unwrap();
-        pod.pod.verify().unwrap();
-
-        assert_eq!(
-            middleware::Statement::Lt(
-                middleware::ValueRef::Literal(Value::from(5)),
-                middleware::ValueRef::Key(middleware::AnchoredKey {
-                    root: d.commitment(),
-                    key: middleware::Key::from("a")
-                })
-            ),
-            pod.public_statements[0]
-        );
     }
 }
