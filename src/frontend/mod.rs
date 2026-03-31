@@ -571,7 +571,7 @@ impl MainPodBuilder {
                         let mut args = args.to_vec();
                         if args.len() != BASE_PARAMS.max_statement_args + 1 {
                             return Err(Error::custom(format!(
-                                "ReplaceValueByEntry requires exactly {} args byt {} were found",
+                                "ReplaceValueByEntry requires exactly {} args but {} were found",
                                 BASE_PARAMS.max_statement_args + 1,
                                 args.len()
                             )));

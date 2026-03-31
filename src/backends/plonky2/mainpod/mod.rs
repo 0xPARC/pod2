@@ -111,7 +111,7 @@ pub(crate) fn extract_custom_predicate_verifications(
                     .map(|arg| match arg {
                         ValueRef::Literal(v) => Ok(v.clone()),
                         _ => Err(Error::custom(
-                            "cusotm operation cannot output entries as arguments",
+                            "custom operation cannot output entries as arguments",
                         )),
                     })
                     .collect::<Result<Vec<_>>>()?;
@@ -517,6 +517,17 @@ impl MainPodProver for Prover {
             inputs.statements,
             &custom_predicates,
         )?;
+        let custom_predicates_with_mpt_proofs = custom_predicates
+            .into_iter()
+            .map(|cpr| {
+                let (_, mtp) = cpr
+                    .batch
+                    .mt()
+                    .prove(&Value::from(cpr.index as i64).raw())
+                    .expect("index by construction exists");
+                (cpr, mtp)
+            })
+            .collect_vec();
         let public_key_of_sks =
             extract_public_key_of(params, &mut aux_list, inputs.operations, inputs.statements)?;
         let signed_bys =
@@ -533,18 +544,6 @@ impl MainPodProver for Prover {
             inputs.operations,
         )?;
         let operations = process_public_statements_operations(params, &statements, operations)?;
-
-        let custom_predicates_with_mpt_proofs = custom_predicates
-            .into_iter()
-            .map(|cpr| {
-                let (_, mtp) = cpr
-                    .batch
-                    .mt()
-                    .prove(&Value::from(cpr.index as i64).raw())
-                    .expect("index by construction exists");
-                (cpr, mtp)
-            })
-            .collect_vec();
 
         // get the id out of the public statements
         let sts_hash = calculate_statements_hash(&public_statements);

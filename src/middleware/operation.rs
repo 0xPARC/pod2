@@ -393,7 +393,7 @@ impl Operation {
                     let mut args = args.to_vec();
                     if args.len() != BASE_PARAMS.max_statement_args + 1 {
                         return Err(Error::custom(format!(
-                            "ReplaceValueByEntry requires exactly {} args byt {} were found",
+                            "ReplaceValueByEntry requires exactly {} args but {} were found",
                             BASE_PARAMS.max_statement_args + 1,
                             args.len()
                         )));
@@ -716,7 +716,6 @@ pub fn wildcard_values_from_op_st(
     params: &Params,
     pred: &CustomPredicate,
     op_args: &[Statement],
-    // entry_map: &HashMap<(Hash, Hash), Value>,
     resolved_st_args: &[Value],
 ) -> Result<Vec<Value>> {
     let mut wildcard_map = resolved_st_args
