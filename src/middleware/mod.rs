@@ -813,7 +813,7 @@ impl Default for Params {
         Self {
             max_input_pods: 2,
             max_input_pods_public_statements: 8,
-            max_statements: 48,
+            max_statements: 46,
             max_public_statements: 8,
             max_operation_args: BASE_PARAMS.max_statement_args + 1,
             max_custom_predicates: 8,

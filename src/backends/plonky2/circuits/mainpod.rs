@@ -949,7 +949,7 @@ fn verify_lt_lteq_from_entries_circuit(
     op_type: &OperationTypeTarget,
     cache: &StatementCache,
 ) -> BoolTarget {
-    let measure = measure_gates_begin!(builder, "OpLtLteqFromEntries");
+    let measure = measure_gates_begin!(builder, "OpLtEqFromEntries");
     let zero = ValueTarget::zero(builder);
     let one = ValueTarget::one(builder);
 
