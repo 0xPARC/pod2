@@ -52,7 +52,7 @@ use itertools::Itertools;
 use super::Result;
 use crate::{
     frontend::multi_pod::{
-        cost::{AnchoredKeyId, CustomBatchId, StatementCost},
+        cost::{CustomPredicateId, StatementCost},
         deps::{DependencyGraph, ExternalDependency, StatementSource},
     },
     middleware::{Hash, Params},
@@ -95,7 +95,6 @@ struct DependencyStats {
 struct SolveDebugContext {
     dep_stats: DependencyStats,
     batch_memberships: usize,
-    anchored_key_memberships: usize,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -105,10 +104,8 @@ struct ModelSizeEstimate {
     vars_public_external: usize,
     vars_pod_used: usize,
     vars_batch_used: usize,
-    vars_anchored_key_used: usize,
     vars_uses_input: usize,
     vars_uses_external: usize,
-    vars_content_group_used: usize,
     vars_total: usize,
     c1_coverage: usize,
     c2_output_public: usize,
@@ -120,7 +117,6 @@ struct ModelSizeEstimate {
     c6_pre_content_group: usize,
     c6_resource_limits: usize,
     c7_batch_cardinality: usize,
-    c7b_anchored_key_tracking: usize,
     c8a_internal_inputs: usize,
     c8b_external_dep_inputs: usize,
     c8c_external_forward_inputs: usize,
@@ -141,8 +137,6 @@ impl ModelSizeEstimate {
         debug_ctx: &SolveDebugContext,
     ) -> Self {
         let n = input.num_statements;
-        let num_groups = input.statement_content_groups.len();
-        let num_anchored_keys = input.all_anchored_keys.len();
         let triangular_k = target_pods * target_pods.saturating_sub(1) / 2;
 
         let vars_prove = n * target_pods;
@@ -150,19 +144,15 @@ impl ModelSizeEstimate {
         let vars_public_external = external_premises_len * target_pods;
         let vars_pod_used = target_pods;
         let vars_batch_used = all_batches_len * target_pods;
-        let vars_anchored_key_used = num_anchored_keys * target_pods;
         let vars_uses_input = triangular_k;
         let vars_uses_external = external_pods_len * target_pods;
-        let vars_content_group_used = num_groups * target_pods;
         let vars_total = vars_prove
             + vars_public
             + vars_public_external
             + vars_pod_used
             + vars_batch_used
-            + vars_anchored_key_used
             + vars_uses_input
-            + vars_uses_external
-            + vars_content_group_used;
+            + vars_uses_external;
 
         let c1_coverage = n;
         let c2_output_public = input.output_public_indices.len();
@@ -171,12 +161,10 @@ impl ModelSizeEstimate {
         let c4_pod_existence = n * target_pods;
         let c5_internal_dependencies = debug_ctx.dep_stats.internal_edges * target_pods;
         let c5_external_dependencies = debug_ctx.dep_stats.external_edges * target_pods;
-        let c6_pre_content_group = (n * target_pods) + (num_groups * target_pods);
+        let c6_pre_content_group = n * target_pods;
         let c6_resource_limits = 7 * target_pods;
         let c7_batch_cardinality =
             (debug_ctx.batch_memberships * target_pods) + (all_batches_len * target_pods);
-        let c7b_anchored_key_tracking =
-            (debug_ctx.anchored_key_memberships * target_pods) + (num_anchored_keys * target_pods);
         let c8a_internal_inputs = debug_ctx.dep_stats.internal_edges * triangular_k;
         let c8b_external_dep_inputs = debug_ctx.dep_stats.external_edges * triangular_k;
         let c8c_external_forward_inputs = external_premises_len * triangular_k;
@@ -194,7 +182,6 @@ impl ModelSizeEstimate {
             + c6_pre_content_group
             + c6_resource_limits
             + c7_batch_cardinality
-            + c7b_anchored_key_tracking
             + c8a_internal_inputs
             + c8b_external_dep_inputs
             + c8c_external_forward_inputs
@@ -209,10 +196,8 @@ impl ModelSizeEstimate {
             vars_public_external,
             vars_pod_used,
             vars_batch_used,
-            vars_anchored_key_used,
             vars_uses_input,
             vars_uses_external,
-            vars_content_group_used,
             vars_total,
             c1_coverage,
             c2_output_public,
@@ -224,7 +209,6 @@ impl ModelSizeEstimate {
             c6_pre_content_group,
             c6_resource_limits,
             c7_batch_cardinality,
-            c7b_anchored_key_tracking,
             c8a_internal_inputs,
             c8b_external_dep_inputs,
             c8c_external_forward_inputs,
@@ -300,6 +284,7 @@ pub struct MultiPodSolution {
 }
 
 /// Input to the MILP solver.
+#[derive(Debug)]
 pub struct SolverInput<'a> {
     /// Number of statements.
     pub num_statements: usize,
@@ -318,28 +303,6 @@ pub struct SolverInput<'a> {
 
     /// Maximum number of PODs the solver will consider.
     pub max_pods: usize,
-
-    /// All unique anchored keys referenced by any statement.
-    ///
-    /// Each unique (dict, key) pair that is used as an anchored key reference
-    /// in any operation. When a Contains statement with literal values is used
-    /// as an argument, it creates an anchored key reference.
-    pub all_anchored_keys: &'a [AnchoredKeyId],
-
-    /// For each anchored key, the statement index that produces it (if any).
-    ///
-    /// When a Contains statement with literal (dict, key, value) args is explicitly
-    /// added, it "produces" that anchored key. If the producer is in the same POD
-    /// as statements using the anchored key, no auto-insertion is needed.
-    /// `anchored_key_producers[i]` corresponds to `all_anchored_keys[i]`.
-    pub anchored_key_producers: &'a [Option<usize>],
-
-    /// Statement content groups for deduplication.
-    ///
-    /// Each inner Vec contains statement indices that have identical content.
-    /// When multiple statements with the same content are proved in the same POD,
-    /// they only use one statement slot (the POD deduplicates identical statements).
-    pub statement_content_groups: &'a [Vec<usize>],
 }
 
 /// Solve the MILP problem to find optimal POD packing.
@@ -386,11 +349,11 @@ pub fn solve(input: &SolverInput) -> Result<MultiPodSolution> {
         )));
     }
 
-    // Collect all unique custom batch IDs used
-    let all_batches: Vec<CustomBatchId> = input
+    // Collect all unique custom predicate IDs used
+    let all_custom_predicates: Vec<CustomPredicateId> = input
         .costs
         .iter()
-        .flat_map(|c| c.custom_batch_ids.iter().cloned())
+        .flat_map(|c| c.custom_predicates_ids.iter().cloned())
         .unique()
         .collect();
 
@@ -417,18 +380,19 @@ pub fn solve(input: &SolverInput) -> Result<MultiPodSolution> {
     }
 
     let dep_stats = dependency_stats(input.deps);
-    let batch_memberships: usize = input.costs.iter().map(|c| c.custom_batch_ids.len()).sum();
-    let anchored_key_memberships: usize = input.costs.iter().map(|c| c.anchored_keys.len()).sum();
+    let batch_memberships: usize = input
+        .costs
+        .iter()
+        .map(|c| c.custom_predicates_ids.len())
+        .sum();
     let debug_ctx = SolveDebugContext {
         dep_stats,
         batch_memberships,
-        anchored_key_memberships,
     };
 
     if log::log_enabled!(log::Level::Debug) {
         let resource_totals = ResourceTotals::from_costs(input.costs);
-        let lb_statement_groups =
-            lower_bound_from_total(input.statement_content_groups.len(), max_stmts_per_pod);
+        let lb_statement_groups = lower_bound_from_total(input.num_statements, max_stmts_per_pod);
         let lb_merkle = lower_bound_from_total(
             resource_totals.merkle_proofs,
             input.params.max_merkle_proofs_containers,
@@ -463,14 +427,12 @@ pub fn solve(input: &SolverInput) -> Result<MultiPodSolution> {
             .expect("non-empty lower-bound candidate list");
 
         log::debug!(
-            "MILP summary: statements={} output_public={} content_groups={} anchored_keys={} \
-             batches={} deps_internal_edges={} deps_external_edges={} external_input_pods={} \
+            "MILP summary: statements={} output_public={} \
+             custom_predicates={} deps_internal_edges={} deps_external_edges={} external_input_pods={} \
              external_premises={} search_min_pods={} max_pods={}",
             n,
             num_output_public,
-            input.statement_content_groups.len(),
-            input.all_anchored_keys.len(),
-            all_batches.len(),
+            all_custom_predicates.len(),
             dep_stats.internal_edges,
             dep_stats.external_edges,
             external_pods.len(),
@@ -481,14 +443,13 @@ pub fn solve(input: &SolverInput) -> Result<MultiPodSolution> {
         log::debug!(
             "MILP resource totals: merkle_proofs={} merkle_state_transitions={} \
              custom_pred_verifications={} signed_by={} public_key_of={} \
-             batch_memberships={} anchored_key_memberships={}",
+             batch_memberships={}",
             resource_totals.merkle_proofs,
             resource_totals.merkle_state_transitions,
             resource_totals.custom_pred_verifications,
             resource_totals.signed_by,
             resource_totals.public_key_of,
             batch_memberships,
-            anchored_key_memberships
         );
         log::debug!(
             "MILP lower bounds (pods): statements_raw={} statements_dedup={} merkle_proofs={} \
@@ -513,7 +474,7 @@ pub fn solve(input: &SolverInput) -> Result<MultiPodSolution> {
         if let Some(solution) = try_solve_with_pods(
             input,
             target_pods,
-            &all_batches,
+            &all_custom_predicates,
             &external_pods,
             &external_premises,
             &debug_ctx,
@@ -540,7 +501,7 @@ pub fn solve(input: &SolverInput) -> Result<MultiPodSolution> {
 fn try_solve_with_pods(
     input: &SolverInput,
     target_pods: usize,
-    all_batches: &[CustomBatchId],
+    all_custom_predicates: &[CustomPredicateId],
     external_pods: &[Hash],
     external_premises: &[ExternalDependency],
     debug_ctx: &SolveDebugContext,
@@ -574,21 +535,8 @@ fn try_solve_with_pods(
         .map(|_| vars.add(variable().binary()))
         .collect();
 
-    // batch_used[b][p] - custom batch b is used in POD p
-    let batch_used: Vec<Vec<Variable>> = (0..all_batches.len())
-        .map(|_| {
-            (0..target_pods)
-                .map(|_| vars.add(variable().binary()))
-                .collect()
-        })
-        .collect();
-
-    // anchored_key_used[ak][p] - anchored key ak is used in POD p
-    // When a statement references an anchored key (via a Contains statement argument),
-    // that POD must have a Contains statement for that (dict, key) pair.
-    // MainPodBuilder::add_entries_contains auto-inserts these, and we must account
-    // for them in the statement count.
-    let anchored_key_used: Vec<Vec<Variable>> = (0..input.all_anchored_keys.len())
+    // custom_predicates[b][p] - custom predicate b is used in POD p
+    let custom_predicate_used: Vec<Vec<Variable>> = (0..all_custom_predicates.len())
         .map(|_| {
             (0..target_pods)
                 .map(|_| vars.add(variable().binary()))
@@ -633,31 +581,19 @@ fn try_solve_with_pods(
         .map(|(i, ext)| (ext.clone(), i))
         .collect();
 
-    // content_group_used[g][p] - content group g has at least one statement proved in POD p
-    // When multiple statements have identical content, they share a slot in the POD.
-    // This variable tracks whether at least one statement from each content group is proved.
-    let num_groups = input.statement_content_groups.len();
-    let content_group_used: Vec<Vec<Variable>> = (0..num_groups)
-        .map(|_| {
-            (0..target_pods)
-                .map(|_| vars.add(variable().binary()))
-                .collect()
-        })
-        .collect();
-
     if log::log_enabled!(log::Level::Debug) {
         let estimate = ModelSizeEstimate::for_target_pods(
             input,
             target_pods,
-            all_batches.len(),
+            all_custom_predicates.len(),
             external_pods.len(),
             external_premises.len(),
             debug_ctx,
         );
         log::debug!(
             "MILP(k={}) model estimate vars_total={} [prove={} public={} pod_used={} \
-             public_external={} batch_used={} anchored_key_used={} uses_input={} \
-             uses_external={} content_group_used={}]",
+             public_external={} batch_used={} uses_input={} \
+             uses_external={}]",
             target_pods,
             estimate.vars_total,
             estimate.vars_prove,
@@ -665,14 +601,12 @@ fn try_solve_with_pods(
             estimate.vars_pod_used,
             estimate.vars_public_external,
             estimate.vars_batch_used,
-            estimate.vars_anchored_key_used,
             estimate.vars_uses_input,
             estimate.vars_uses_external,
-            estimate.vars_content_group_used
         );
         log::debug!(
             "MILP(k={}) model estimate constraints_total={} [c1={} c2={} c2b={} c3={} c4={} \
-             c5i={} c5e={} c6_pre={} c6_limits={} c7={} c7b={} c8a={} c8b={} c8c={} \
+             c5i={} c5e={} c6_pre={} c6_limits={} c7={} c8a={} c8b={} c8c={} \
              c8d={} c9={} c10={} c10b={}]",
             target_pods,
             estimate.constraints_total,
@@ -686,7 +620,6 @@ fn try_solve_with_pods(
             estimate.c6_pre_content_group,
             estimate.c6_resource_limits,
             estimate.c7_batch_cardinality,
-            estimate.c7b_anchored_key_tracking,
             estimate.c8a_internal_inputs,
             estimate.c8b_external_dep_inputs,
             estimate.c8c_external_forward_inputs,
@@ -798,35 +731,11 @@ fn try_solve_with_pods(
         }
     }
 
-    // Constraint 6: Resource limits per POD
-    //
-    // 6a-pre: Content group tracking for statement deduplication
-    // When multiple statement indices have identical content, they share a single slot in the POD.
-    // content_group_used[g][p] = 1 iff at least one statement from group g is proved in POD p.
-    for (g, group) in input.statement_content_groups.iter().enumerate() {
-        for p in 0..target_pods {
-            // Lower bound: if any statement in the group is proved, the group is used
-            for &s in group {
-                model.add_constraint(constraint!(content_group_used[g][p] >= prove[s][p]));
-            }
-            // Upper bound: if no statements in the group are proved, the group is not used
-            let group_prove_sum: Expression = group.iter().map(|&s| prove[s][p]).sum();
-            model.add_constraint(constraint!(content_group_used[g][p] <= group_prove_sum));
-        }
-    }
-
     for p in 0..target_pods {
-        // 6a: Unique statement count (unique content groups + anchored key Contains)
-        // Statements with identical content share a slot, so we count content groups, not indices.
-        // Anchored key Contains statements are auto-inserted by MainPodBuilder when needed.
-        // The total must not exceed max_priv_statements (= max_statements - max_public_statements).
-        let unique_stmt_sum: Expression = (0..num_groups).map(|g| content_group_used[g][p]).sum();
-        let anchored_key_sum: Expression = (0..input.all_anchored_keys.len())
-            .map(|ak| anchored_key_used[ak][p])
-            .sum();
+        // 6a: Statement count
+        let stmt_sum: Expression = (0..n).map(|g| prove[g][p]).sum();
         model.add_constraint(constraint!(
-            unique_stmt_sum + anchored_key_sum
-                <= (input.params.max_priv_statements() as f64) * pod_used[p]
+            stmt_sum <= (input.params.max_priv_statements() as f64) * pod_used[p]
         ));
 
         // 6b: Public statement count (internal public statements + forwarded external premises)
@@ -885,67 +794,31 @@ fn try_solve_with_pods(
     }
 
     // Constraint 7: Batch cardinality
-    // batch_used[b][p] >= prove[s][p] for all s that use batch b (batch is used if any statement uses it)
-    // batch_used[b][p] <= sum of prove[s][p] for all s using batch b (batch is 0 if no statements use it)
-    for (b, batch_id) in all_batches.iter().enumerate() {
+    // custom_predicate_used[b][p] >= prove[s][p] for all s that use custom predicate b (custom
+    // predicate is used if any statement uses it)
+    // custom_predicate_used[b][p] <= sum of prove[s][p] for all s using custom predicate b (custom
+    // predicate is 0 if no statements use it)
+    for (b, predicate_id) in all_custom_predicates.iter().enumerate() {
         for p in 0..target_pods {
             let mut sum: Expression = 0.into();
             for s in 0..n {
-                if input.costs[s].custom_batch_ids.contains(batch_id) {
-                    model.add_constraint(constraint!(batch_used[b][p] >= prove[s][p]));
+                if input.costs[s].custom_predicates_ids.contains(predicate_id) {
+                    model.add_constraint(constraint!(custom_predicate_used[b][p] >= prove[s][p]));
                     sum += prove[s][p];
                 }
             }
-            model.add_constraint(constraint!(batch_used[b][p] <= sum));
+            model.add_constraint(constraint!(custom_predicate_used[b][p] <= sum));
         }
     }
 
-    // Constraint 7b: Anchored key tracking
-    //
-    // anchored_key_used[ak][p] = 1 when auto-insertion of a Contains is needed for anchored key ak in POD p.
-    // This happens when: some statement using ak is in POD p, AND the producing Contains is NOT in POD p.
-    //
-    // If a Contains statement explicitly produces ak (anchored_key_producers[ak] = Some(prod_idx)):
-    //   - Lower: anchored_key_used[ak][p] >= prove[s][p] - prove[prod_idx][p] for all s using ak
-    //   - Upper: anchored_key_used[ak][p] <= 1 - prove[prod_idx][p]
-    //   This ensures overhead is 0 when the producer is in the same POD.
-    //
-    // If no Contains produces ak (anchored_key_producers[ak] = None):
-    //   - Lower: anchored_key_used[ak][p] >= prove[s][p] for all s using ak
-    //   - Upper: anchored_key_used[ak][p] <= sum of prove[s][p] for all s using ak
-    //   Auto-insertion is always needed when any user is present.
-    for (ak_idx, ak) in input.all_anchored_keys.iter().enumerate() {
-        let producer = input.anchored_key_producers[ak_idx];
-
-        for p in 0..target_pods {
-            let mut user_sum: Expression = 0.into();
-            for s in 0..n {
-                if input.costs[s].anchored_keys.contains(ak) {
-                    if let Some(prod_idx) = producer {
-                        // Producer exists: only count overhead if producer not in this POD
-                        model.add_constraint(constraint!(
-                            anchored_key_used[ak_idx][p] >= prove[s][p] - prove[prod_idx][p]
-                        ));
-                    } else {
-                        // No producer: always need auto-insertion if user is present
-                        model.add_constraint(constraint!(
-                            anchored_key_used[ak_idx][p] >= prove[s][p]
-                        ));
-                    }
-                    user_sum += prove[s][p];
-                }
-            }
-
-            if let Some(prod_idx) = producer {
-                // If producer is in POD, no auto-insertion needed (overhead = 0)
-                model.add_constraint(constraint!(
-                    anchored_key_used[ak_idx][p] <= 1 - prove[prod_idx][p]
-                ));
-            } else {
-                // No producer: overhead is bounded by whether any user is present
-                model.add_constraint(constraint!(anchored_key_used[ak_idx][p] <= user_sum));
-            }
-        }
+    // Custom predicate count per POD
+    for p in 0..target_pods {
+        let custom_predicate_sum: Expression = (0..all_custom_predicates.len())
+            .map(|b| custom_predicate_used[b][p])
+            .sum();
+        model.add_constraint(constraint!(
+            custom_predicate_sum <= (input.params.max_custom_predicates as f64) * pod_used[p]
+        ));
     }
 
     // Constraint 8a: Internal input POD tracking using uses_input.
@@ -1147,9 +1020,6 @@ mod tests {
             output_public_indices: &[],
             params: &params,
             max_pods: 20,
-            all_anchored_keys: &[],
-            anchored_key_producers: &[],
-            statement_content_groups: &[],
         };
 
         let result = solve(&input);
@@ -1195,7 +1065,6 @@ mod tests {
         };
 
         let costs = vec![StatementCost::default(), StatementCost::default()];
-        let statement_content_groups = vec![vec![0], vec![1]];
         let output_public = vec![1];
 
         let input = SolverInput {
@@ -1205,9 +1074,6 @@ mod tests {
             output_public_indices: &output_public,
             params: &params,
             max_pods: 4,
-            all_anchored_keys: &[],
-            anchored_key_producers: &[],
-            statement_content_groups: &statement_content_groups,
         };
 
         let solution = solve(&input).expect("solver should find a feasible forwarding layout");

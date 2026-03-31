@@ -532,7 +532,6 @@ impl Validator {
         stmt: &StatementTmpl,
         wildcard_context: Option<(&str, &WildcardScope)>,
     ) -> Result<(), ValidationError> {
-        // Native predicates can have anchored keys
         for arg in &stmt.args {
             match arg {
                 StatementTmplArg::Wildcard(id) => {
@@ -557,11 +556,90 @@ impl Validator {
                         }
                     }
                 }
-                StatementTmplArg::Literal(_) => {}
+                StatementTmplArg::Literal(lit) => {
+                    self.validate_literal_value(lit)?;
+                }
+                StatementTmplArg::SelfPredicateHash(id) => {
+                    self.validate_self_predicate_hash(id, wildcard_context)?;
+                }
             }
         }
 
         Ok(())
+    }
+
+    /// Validate a @self_predicate reference: the name must be a custom predicate in this module.
+    fn validate_self_predicate_hash(
+        &self,
+        id: &Identifier,
+        wildcard_context: Option<(&str, &WildcardScope)>,
+    ) -> Result<(), ValidationError> {
+        // @self_predicate only makes sense inside module predicate definitions
+        if wildcard_context.is_none() {
+            return Err(
+                ValidationError::SelfReferentialPredicateLiteralNotAllowedInRequests {
+                    span: id.span,
+                },
+            );
+        }
+        // Must refer to a custom predicate defined in this module (not intro/imported)
+        match self.symbols.predicates.get(&id.name) {
+            Some(info) if matches!(info.kind, PredicateKind::Custom { .. }) => Ok(()),
+            _ => Err(ValidationError::UndefinedPredicate {
+                name: id.name.clone(),
+                span: id.span,
+            }),
+        }
+    }
+
+    /// Recursively validate a literal value, checking predicate hash references.
+    fn validate_literal_value(&self, lit: &LiteralValue) -> Result<(), ValidationError> {
+        match lit {
+            LiteralValue::NativePredicateHash(id) => {
+                if NativePredicate::from_str(&id.name).is_err() {
+                    return Err(ValidationError::UndefinedPredicate {
+                        name: id.name.clone(),
+                        span: id.span,
+                    });
+                }
+                Ok(())
+            }
+            LiteralValue::ExternalPredicateHash { module, predicate } => {
+                if let Some(imported) = self.symbols.imported_modules.get(&module.name) {
+                    if !imported.predicate_index.contains_key(&predicate.name) {
+                        return Err(ValidationError::UndefinedPredicate {
+                            name: format!("{}::{}", module.name, predicate.name),
+                            span: predicate.span,
+                        });
+                    }
+                } else {
+                    return Err(ValidationError::ModuleNotFound {
+                        name: module.name.clone(),
+                        span: module.span,
+                    });
+                }
+                Ok(())
+            }
+            LiteralValue::Array(a) => {
+                for elem in &a.elements {
+                    self.validate_literal_value(elem)?;
+                }
+                Ok(())
+            }
+            LiteralValue::Set(s) => {
+                for elem in &s.elements {
+                    self.validate_literal_value(elem)?;
+                }
+                Ok(())
+            }
+            LiteralValue::Dict(d) => {
+                for pair in &d.pairs {
+                    self.validate_literal_value(&pair.value)?;
+                }
+                Ok(())
+            }
+            _ => Ok(()),
+        }
     }
 }
 

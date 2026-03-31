@@ -115,8 +115,9 @@ pub(crate) fn extract_custom_predicate_verifications(
                         )),
                     })
                     .collect::<Result<Vec<_>>>()?;
+                let normalized_pred = cpr.normalized_predicate();
                 let wildcard_values =
-                    wildcard_values_from_op_st(params, cpr.predicate(), sts, &st_args)
+                    wildcard_values_from_op_st(params, &normalized_pred, sts, &st_args)
                         .expect("resolved wildcards");
                 let sts = sts.iter().map(|s| Statement::from(s.clone())).collect();
                 let custom_predicate_table_index = custom_predicates
@@ -1109,7 +1110,7 @@ pub mod tests {
             &[stb0.clone(), stb1.clone()],
         )?;
         let _ = cpb_builder.predicate_or("pred_or", &["dict"], &["secret_dict"], &[stb0, stb1])?;
-        let cpb = cpb_builder.finish();
+        let cpb = cpb_builder.finish()?;
 
         let cpb_and = CustomPredicateRef::new(cpb.clone(), 0);
         let _cpb_or = CustomPredicateRef::new(cpb.clone(), 1);
@@ -1138,6 +1139,63 @@ pub mod tests {
         let pod = pod_builder.prove(&prover)?;
         crate::measure_gates_print!();
 
+        let pod = (pod.pod as Box<dyn Any>).downcast::<MainPod>().unwrap();
+
+        Ok(pod.verify()?)
+    }
+
+    #[test]
+    fn test_main_self_predicate_hash() -> frontend::Result<()> {
+        use frontend::BuilderArg;
+
+        let params = Params {
+            max_signed_by: 0,
+            max_input_pods: 0,
+            max_statements: 6,
+            max_public_statements: 2,
+            max_operation_args: 5,
+            max_custom_predicate_wildcards: 4,
+            max_custom_predicate_verifications: 2,
+            max_merkle_proofs_containers: 0,
+            max_merkle_tree_state_transition_proofs_containers: 0,
+            ..Default::default()
+        };
+        let mut vds = DEFAULT_VD_LIST.clone();
+        vds.push(rec_main_pod_circuit_data(&params).1.verifier_only.clone());
+        let vd_set = VDSet::new(&vds);
+
+        // Build a batch: pred_A references pred_B's hash, pred_B references pred_A's hash
+        let mut cpb = CustomPredicateBatchBuilder::new(params.clone(), "batch".into());
+        let stb_a = STB::new_from_pred(NP::Equal)
+            .arg("x")
+            .arg(BuilderArg::SelfPredicateHash("pred_B".into()));
+        cpb.predicate_and("pred_A", &["x"], &[], &[stb_a])?;
+
+        let stb_b = STB::new_from_pred(NP::Equal)
+            .arg("x")
+            .arg(BuilderArg::SelfPredicateHash("pred_A".into()));
+        cpb.predicate_and("pred_B", &["x"], &[], &[stb_b])?;
+
+        let batch = cpb.finish()?;
+
+        let pred_a_ref = CustomPredicateRef::new(batch.clone(), 0);
+        let pred_b_ref = CustomPredicateRef::new(batch.clone(), 1);
+        let pred_b_hash = middleware::Value::from(middleware::Predicate::Custom(pred_b_ref).hash());
+
+        // Build a POD using pred_A: Equal(pred_b_hash, pred_b_hash)
+        let mut pod_builder = MainPodBuilder::new(&params, &vd_set);
+        let eq_st =
+            pod_builder.priv_op(frontend::Operation::eq(pred_b_hash.clone(), pred_b_hash))?;
+        pod_builder.pub_op(frontend::Operation::custom(pred_a_ref, [eq_st]))?;
+
+        // Mock
+        let prover = MockProver {};
+        let pod = pod_builder.prove(&prover)?;
+        assert!(pod.pod.verify().is_ok());
+
+        // Real
+        let prover = Prover {};
+        let pod = pod_builder.prove(&prover)?;
         let pod = (pod.pod as Box<dyn Any>).downcast::<MainPod>().unwrap();
 
         Ok(pod.verify()?)
@@ -1211,7 +1269,8 @@ pub mod tests {
                 .map(middleware::ValueRef::from)
                 .collect(),
         );
-        builder.insert(true, (st, op)).unwrap();
+        builder.insert((st.clone(), op)).unwrap();
+        builder.reveal(&st).unwrap();
         let prover = Prover {};
         builder.prove(&prover).unwrap();
     }

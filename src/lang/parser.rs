@@ -137,6 +137,9 @@ mod tests {
         assert_inner(&Rule::anchored_key, "someVar[\"key\"]");
         assert_inner(&Rule::literal_value, "true");
         assert_inner(&Rule::literal_value, "PublicKey(abc)");
+        assert_inner(&Rule::predicate_hash_self, "@self_predicate(foo)");
+        assert_inner(&Rule::literal_value, "@native_predicate(Equal)");
+        assert_inner(&Rule::literal_value, "@external_predicate(mod_a, pred_b)");
     }
 
     #[test]
@@ -207,6 +210,33 @@ mod tests {
             "{ \"raw_val\": Raw(0x0000000000000000000000000000000000000000000000000000000000000000) } ",
         );
         assert_fails(Rule::literal_dict, "{ name: \"Alice\" }"); // Key must be string literal with quotes
+
+        // Predicate hash literals
+        assert_parses(Rule::predicate_hash_native, "@native_predicate(Equal)");
+        assert_parses(Rule::predicate_hash_native, "@native_predicate(Lt)");
+        assert_parses(
+            Rule::predicate_hash_external,
+            "@external_predicate(my_module, my_pred)",
+        );
+        assert_parses(Rule::predicate_hash_self, "@self_predicate(local_pred)");
+
+        // Predicate hashes inside containers (native and external only)
+        assert_parses(
+            Rule::literal_array,
+            "[1, @native_predicate(Equal), @external_predicate(m, p)]",
+        );
+        assert_parses(
+            Rule::literal_set,
+            "#[@native_predicate(Equal), @native_predicate(Lt)]",
+        );
+        assert_parses(
+            Rule::literal_dict,
+            "{ \"pred\": @external_predicate(m, p) }",
+        );
+
+        // @self_predicate is NOT a literal_value, so it cannot appear inside containers
+        assert_fails(Rule::test_literal_value, "@self_predicate(local_pred)");
+        assert_fails(Rule::literal_array, "[@self_predicate(foo)]");
     }
 
     #[test]

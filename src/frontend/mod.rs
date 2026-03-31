@@ -138,7 +138,7 @@ pub struct MainPodBuilder {
     pub operations: Vec<Operation>,
     pub public_statements: Vec<Statement>,
     // Internal state
-    dict_contains: Vec<(Value, Value)>, // (root, key)
+    contains: Vec<(RawValue, RawValue)>, // (root, key)
 }
 
 impl fmt::Display for MainPodBuilder {
@@ -172,10 +172,16 @@ impl MainPodBuilder {
             statements: Vec::new(),
             operations: Vec::new(),
             public_statements: Vec::new(),
-            dict_contains: Vec::new(),
+            contains: Vec::new(),
         }
     }
+    pub fn stmt_len(&self) -> usize {
+        self.statements.len()
+    }
     pub fn add_pod(&mut self, pod: MainPod) -> Result<()> {
+        for st in &pod.public_statements {
+            self.track_contains(st);
+        }
         self.input_pods.push(pod);
         match self.input_pods.len() > self.params.max_input_pods {
             true => Err(Error::too_many_input_pods(
@@ -185,31 +191,26 @@ impl MainPodBuilder {
             _ => Ok(()),
         }
     }
-    pub fn insert(&mut self, public: bool, st_op: (Statement, Operation)) -> Result<()> {
-        // TODO: Do error handling instead of panic
-        let (st, op) = st_op;
 
-        // If we're adding a Contains statement with literal arguments (an Entry), track it in
-        // `dict_contains` to avoid adding it again via `Self::add_entries_contains`.
+    // If we're adding a Contains statement with literal arguments (an Entry), track it in
+    // `dict_contains` to avoid adding it again via `Self::add_entries_contains`.
+    fn track_contains(&mut self, st: &Statement) {
         if let Statement::Contains(
             ValueRef::Literal(dict),
             ValueRef::Literal(key),
             ValueRef::Literal(_),
         ) = &st
         {
-            let root_key = (dict.clone(), key.clone());
-            self.dict_contains.push(root_key);
+            let root_key = (dict.raw(), key.raw());
+            self.contains.push(root_key);
         }
+    }
 
-        if public {
-            self.public_statements.push(st.clone());
-        }
-        if self.public_statements.len() > self.params.max_public_statements {
-            return Err(Error::too_many_public_statements(
-                self.public_statements.len(),
-                self.params.max_public_statements,
-            ));
-        }
+    pub fn insert(&mut self, st_op: (Statement, Operation)) -> Result<()> {
+        // TODO: Do error handling instead of panic
+        let (st, op) = st_op;
+        self.track_contains(&st);
+
         self.statements.push(st);
         self.operations.push(op);
         if self.statements.len() > self.params.max_statements {
@@ -405,7 +406,7 @@ impl MainPodBuilder {
     }
 
     fn op_statement(
-        &mut self,
+        &self,
         wildcard_values: Vec<(usize, Value)>,
         op: Operation,
     ) -> Result<Statement> {
@@ -610,7 +611,7 @@ impl MainPodBuilder {
                 }
             }
             OperationType::Custom(cpr) => {
-                let pred = &cpr.batch.predicates()[cpr.index];
+                let pred = cpr.normalized_predicate();
                 if pred.statements.len() != op.1.len() {
                     return Err(Error::custom(format!(
                         "Custom predicate operation needs {} statements but has {}.",
@@ -638,7 +639,7 @@ impl MainPodBuilder {
                     }
                     wildcard_map[index] = Some(value);
                 }
-                fill_wildcard_values(pred, &args, &mut wildcard_map)?;
+                fill_wildcard_values(&pred, &args, &mut wildcard_map)?;
                 let v_default = Value::from(0);
                 let st_args: Vec<_> = wildcard_map
                     .into_iter()
@@ -653,7 +654,7 @@ impl MainPodBuilder {
     }
 
     /// For every operation that has Entry statements as arguments we add a Contains statement to
-    /// open the dictionary.
+    /// open the dictionary (unless such Contains already exists).
     fn add_entries_contains(&mut self, op: &Operation) -> Result<()> {
         for arg in &op.1 {
             if let OperationArg::Statement(Statement::Contains(
@@ -662,9 +663,9 @@ impl MainPodBuilder {
                 ValueRef::Literal(v),
             )) = arg
             {
-                let root_key = (dict.clone(), key.clone());
-                if !self.dict_contains.contains(&root_key) {
-                    self.dict_contains.push(root_key);
+                let root_key = (dict.raw(), key.raw());
+                if !self.contains.contains(&root_key) {
+                    self.contains.push(root_key);
                     self.priv_op(Operation::dict_contains(dict, key, v))?;
                 }
             }
@@ -682,13 +683,28 @@ impl MainPodBuilder {
         self.add_entries_contains(&op)?;
         let op = Self::fill_in_aux(Self::lower_op(op)?)?;
         let st = self.op_statement(wildcard_values, op.clone())?;
-        self.insert(public, (st, op))?;
+        // Skip adding the statement and operation if it already exists
+        if !self.statements.contains(&st) {
+            self.insert((st.clone(), op))?;
+        }
+        if public {
+            self.reveal(&st)?;
+        }
 
-        Ok(self.statements[self.statements.len() - 1].clone())
+        Ok(st)
     }
 
-    pub fn reveal(&mut self, st: &Statement) {
-        self.public_statements.push(st.clone());
+    pub fn reveal(&mut self, st: &Statement) -> Result<()> {
+        if !self.public_statements.contains(st) {
+            self.public_statements.push(st.clone());
+        }
+        if self.public_statements.len() > self.params.max_public_statements {
+            return Err(Error::too_many_public_statements(
+                self.public_statements.len(),
+                self.params.max_public_statements,
+            ));
+        }
+        Ok(())
     }
 
     pub fn prove(&self, prover: &dyn MainPodProver) -> Result<MainPod> {
@@ -1383,11 +1399,9 @@ pub mod tests {
             OperationAux::None,
         );
         builder
-            .insert(false, (value_of_a.clone(), op_contains.clone()))
+            .insert((value_of_a.clone(), op_contains.clone()))
             .unwrap();
-        builder
-            .insert(false, (value_of_b.clone(), op_contains))
-            .unwrap();
+        builder.insert((value_of_b.clone(), op_contains)).unwrap();
         let st = Statement::equal(
             AnchoredKey::from((&local, "a")),
             AnchoredKey::from((&local, "b")),
@@ -1400,7 +1414,7 @@ pub mod tests {
             ],
             OperationAux::None,
         );
-        builder.insert(false, (st, op)).unwrap();
+        builder.insert((st, op)).unwrap();
 
         let prover = MockProver {};
         let pod = builder.prove(&prover).unwrap();

@@ -123,7 +123,7 @@ fn collect_wildcards_from_statement(stmt: &StatementTmpl) -> HashSet<String> {
             StatementTmplArg::AnchoredKey(ak) => {
                 wildcards.insert(ak.root.name.clone());
             }
-            StatementTmplArg::Literal(_) => {}
+            StatementTmplArg::Literal(_) | StatementTmplArg::SelfPredicateHash(_) => {}
         }
     }
 

@@ -43,8 +43,10 @@ impl DB for MemDB {
         let mut values = self.values.write().expect("lock not poisoned");
         let value_raw = value.raw();
         if let Some(old_value) = values.get(&value_raw) {
-            // If we had a non-raw value stored never overwrite it with a raw value
-            if !old_value.is_raw() && value.is_raw() {
+            let old_is_raw = old_value.is_raw();
+            // If we had a non-RawValue stored don't overwrite it (specially not with a
+            // RawValue).   Also skip redundant RawValue overwrite.
+            if !old_is_raw || value.is_raw() {
                 return Ok(());
             }
         }

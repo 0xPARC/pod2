@@ -159,6 +159,9 @@ pub enum ValidationError {
     #[error("Modules must contain at least one predicate definition")]
     NoPredicatesInModule,
 
+    #[error("Self-referential predicate literal not allowed in requests")]
+    SelfReferentialPredicateLiteralNotAllowedInRequests { span: Option<Span> },
+
     #[error("Requests must contain a REQUEST block")]
     NoRequestBlock,
 }
