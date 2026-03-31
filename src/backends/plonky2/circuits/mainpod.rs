@@ -202,7 +202,7 @@ fn verify_operation_public_statement_circuit(
     // TODO: Clean this up.
     let measure_resolve_op_args = measure_gates_begin!(builder, "ResolveOpArgs");
     // None takes 0 arguments, Copy takes 1, so we reduce the number of random accesses that the
-    // StatementCache requries.
+    // StatementCache requires.
     let cache = StatementCachePub::new(params, 1, builder, op, st, prev_statements);
     measure_gates_end!(builder, measure_resolve_op_args);
 

@@ -1749,7 +1749,7 @@ impl CircuitBuilderPod<F, D> for CircuitBuilder {
         let num_chunks = array.len().div_ceil(CHUNK_LEN);
         for chunk in array.chunks(CHUNK_LEN) {
             let mut index_chunk = i.low;
-            // I we have several chunks and the last one is smaller (it's index needs less than 6
+            // If we have several chunks and the last one is smaller (it's index needs less than 6
             // bits), make it zero except when it's used so that the range check over the index
             // passes.
             if chunk.len() <= CHUNK_LEN / 2 && num_chunks > 1 {
