@@ -4,7 +4,7 @@
 use std::{
     collections::{HashMap, HashSet},
     convert::From,
-    fmt,
+    fmt, iter,
 };
 
 use itertools::Itertools;
@@ -15,9 +15,10 @@ pub use serialization::SerializedMainPod;
 use crate::middleware::{
     self, check_custom_pred,
     containers::{Container, Dictionary},
-    fill_wildcard_values, hash_op, max_op, prod_op, sum_op, AnchoredKey, Hash, Key, MainPodInputs,
-    MainPodProver, NativeOperation, OperationAux, OperationType, Params, PublicKey, RawValue,
-    Signature, Signer, Statement, StatementArg, VDSet, Value, ValueRef, EMPTY_VALUE,
+    fill_wildcard_values, hash_op, max_op, prod_op, root_key_to_ak, sum_op, AnchoredKey, Hash, Key,
+    MainPodInputs, MainPodProver, NativeOperation, OperationAux, OperationType, Params, PublicKey,
+    RawValue, Signature, Signer, Statement, StatementArg, VDSet, Value, ValueRef, BASE_PARAMS,
+    EMPTY_VALUE,
 };
 
 mod custom;
@@ -566,6 +567,37 @@ impl MainPodBuilder {
                         // TODO: validate proof
                         Statement::ContainerDelete(r1, r2, r3)
                     }
+                    (ReplaceValueWithEntry, &args, _) => {
+                        let mut args = args.to_vec();
+                        if args.len() != BASE_PARAMS.max_statement_args + 1 {
+                            return Err(Error::custom(format!(
+                                "ReplaceValueWithEntry requires exactly {} args but {} were found",
+                                BASE_PARAMS.max_statement_args + 1,
+                                args.len()
+                            )));
+                        }
+                        let st = match args.pop().expect("valid vec len") {
+                            OperationArg::Statement(st) => st,
+                            _ => return Err(Error::custom("expected statement")),
+                        };
+                        let new_st_args = iter::zip(st.args().into_iter(), args)
+                            .map(|(st_arg, arg)| match (st_arg, arg) {
+                                (st_arg, OperationArg::Statement(Statement::None)) => Ok(st_arg),
+                                (
+                                    StatementArg::Literal(st_arg_v),
+                                    OperationArg::Statement(Statement::Contains(
+                                        ValueRef::Literal(root),
+                                        ValueRef::Literal(key),
+                                        ValueRef::Literal(v),
+                                    )),
+                                ) if st_arg_v == v => root_key_to_ak(&root, &key)
+                                    .map(StatementArg::Key)
+                                    .ok_or_else(native_arg_error),
+                                _ => Err(Error::custom("unexpected operation argument")),
+                            })
+                            .collect::<Result<Vec<_>>>()?;
+                        Statement::from_args(st.predicate(), new_st_args)?
+                    }
                     (t, _, _) => {
                         if t.is_syntactic_sugar() {
                             return Err(Error::custom(format!(
@@ -615,7 +647,7 @@ impl MainPodBuilder {
                     .map(|v| v.unwrap_or_else(|| v_default.clone()))
                     .collect();
                 check_custom_pred(&self.params, &cpr, &args, &st_args)?;
-                Statement::Custom(cpr, st_args)
+                Statement::Custom(cpr, st_args.into_iter().map(ValueRef::Literal).collect())
             }
         };
         Ok(st)

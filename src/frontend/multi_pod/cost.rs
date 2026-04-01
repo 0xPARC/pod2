@@ -111,7 +111,8 @@ impl StatementCost {
                     // Syntactic sugar variants (lowered before proving)
                     | NativeOperation::GtEqFromEntries
                     | NativeOperation::GtFromEntries
-                    | NativeOperation::GtToNotEqual => {}
+                    | NativeOperation::GtToNotEqual
+                    | NativeOperation::ReplaceValueWithEntry => {}
                 }
             }
             OperationType::Custom(cpr) => {

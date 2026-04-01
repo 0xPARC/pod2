@@ -768,6 +768,8 @@ pub struct BaseParams {
     /// in a custom predicate
     pub max_custom_predicate_arity: usize,
     pub max_depth_custom_batch_mt: usize,
+    // This value depends on `max_custom_predicate_arity`
+    pub max_operation_args: usize,
 }
 
 pub const BASE_PARAMS: BaseParams = BaseParams {
@@ -775,6 +777,7 @@ pub const BASE_PARAMS: BaseParams = BaseParams {
     max_statement_args: 5,
     max_custom_predicate_arity: 5,
     max_depth_custom_batch_mt: 16, // up to 65k (2^16) custom predicates in a batch
+    max_operation_args: 5 + 1,
 };
 
 /// Params: non dynamic parameters that define the circuit.
@@ -785,7 +788,6 @@ pub struct Params {
     pub max_input_pods_public_statements: usize,
     pub max_statements: usize,
     pub max_public_statements: usize,
-    pub max_operation_args: usize,
     // max number of different custom predicates that can be used in a MainPod
     pub max_custom_predicates: usize,
     // max number of operations using custom predicates that can be verified in the MainPod
@@ -815,7 +817,6 @@ impl Default for Params {
             max_input_pods_public_statements: 8,
             max_statements: 48,
             max_public_statements: 8,
-            max_operation_args: 5,
             max_custom_predicates: 8,
             max_custom_predicate_verifications: 8,
             max_custom_predicate_wildcards: 8,

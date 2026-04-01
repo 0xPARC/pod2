@@ -1,10 +1,10 @@
-use std::fmt;
+use std::{fmt, iter};
 
 use crate::{
     frontend::SignedDict,
     middleware::{
         containers::Dictionary, root_key_to_ak, CustomPredicateRef, NativeOperation, OperationAux,
-        OperationType, Signature, Statement, Value, ValueRef,
+        OperationType, Signature, Statement, Value, ValueRef, BASE_PARAMS,
     },
 };
 
@@ -219,6 +219,24 @@ impl Operation {
     op_impl_oa!(set_insert, SetInsertFromEntries, 3);
     op_impl_oa!(set_delete, SetDeleteFromEntries, 3);
     op_impl_oa!(array_update, ArrayUpdateFromEntries, 4);
+    pub fn replace_value_with_entry(args: Vec<Option<(&Dictionary, &str)>>, st: Statement) -> Self {
+        assert!(args.len() <= BASE_PARAMS.max_statement_args);
+        let args = args
+            .into_iter()
+            .chain(iter::repeat(None))
+            .take(BASE_PARAMS.max_statement_args)
+            .map(|a| match a {
+                None => OperationArg::Statement(Statement::None),
+                Some((dict, key)) => OperationArg::from((dict, key)),
+            })
+            .chain(iter::once(OperationArg::Statement(st)))
+            .collect();
+        Self(
+            OperationType::Native(NativeOperation::ReplaceValueWithEntry),
+            args,
+            OperationAux::None,
+        )
+    }
     pub fn signed_by(
         msg: impl Into<OperationArg>,
         pk: impl Into<OperationArg>,

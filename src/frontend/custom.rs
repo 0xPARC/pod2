@@ -316,7 +316,9 @@ mod tests {
         backends::plonky2::mock::mainpod::MockProver,
         examples::{custom::eth_dos_batch, MOCK_VD_SET},
         frontend::{MainPodBuilder, Operation},
-        middleware::{self, containers::Set, CustomPredicateRef, Params, PodType, DEFAULT_VD_SET},
+        middleware::{
+            self, containers::Set, CustomPredicateRef, Params, PodType, ValueRef, DEFAULT_VD_SET,
+        },
     };
 
     #[test]
@@ -507,7 +509,7 @@ mod tests {
             .find(|s| matches!(s, middleware::Statement::Custom(_, _)))
             .expect("should have a custom statement");
         if let middleware::Statement::Custom(_, args) = custom_st {
-            assert_eq!(args[0], pred_b_hash);
+            assert_eq!(args[0], ValueRef::Literal(pred_b_hash));
         }
 
         Ok(())

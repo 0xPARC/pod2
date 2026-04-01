@@ -1,5 +1,5 @@
 pub mod operation;
-use crate::middleware::{wildcard_values_from_op_st, PodType};
+use crate::middleware::{wildcard_values_from_op_st, PodType, BASE_PARAMS};
 pub mod statement;
 use std::iter;
 
@@ -39,7 +39,7 @@ use crate::{
     middleware::{
         self, value_from_op, CustomPredicateRef, Error as MiddlewareError, Hash, MainPodInputs,
         MainPodProver, NativeOperation, OperationType, Params, Pod, RawValue, StatementArg,
-        ToFields, VDSet, Value,
+        ToFields, VDSet, Value, ValueRef,
     },
     timed,
 };
@@ -104,9 +104,20 @@ pub(crate) fn extract_custom_predicate_verifications(
         if let middleware::Operation::Custom(cpr, sts) = op {
             if let middleware::Statement::Custom(st_cpr, st_args) = st {
                 assert_eq!(cpr, st_cpr);
+                // The custom operation outputs statements with literal arguments.  They can be
+                // replaced by references later with ReplaceValueWithEntry.
+                let st_args = st_args
+                    .iter()
+                    .map(|arg| match arg {
+                        ValueRef::Literal(v) => Ok(v.clone()),
+                        _ => Err(Error::custom(
+                            "custom operation cannot output entries as arguments",
+                        )),
+                    })
+                    .collect::<Result<Vec<_>>>()?;
                 let normalized_pred = cpr.normalized_predicate();
                 let wildcard_values =
-                    wildcard_values_from_op_st(params, &normalized_pred, sts, st_args)
+                    wildcard_values_from_op_st(params, &normalized_pred, sts, &st_args)
                         .expect("resolved wildcards");
                 let sts = sts.iter().map(|s| Statement::from(s.clone())).collect();
                 let custom_predicate_table_index = custom_predicates
@@ -329,8 +340,8 @@ pub fn pad_statement(s: &mut Statement) {
     fill_pad(&mut s.1, StatementArg::None, Params::max_statement_args())
 }
 
-fn pad_operation_args(params: &Params, args: &mut Vec<OperationArg>) {
-    fill_pad(args, OperationArg::None, params.max_operation_args)
+fn pad_operation_args(args: &mut Vec<OperationArg>) {
+    fill_pad(args, OperationArg::None, BASE_PARAMS.max_operation_args)
 }
 
 /// Returns the statements from the given MainPodInputs, padding to the respective max lengths
@@ -428,7 +439,7 @@ pub(crate) fn process_private_statements_operations(
             .map(|mid_arg| find_op_arg(statements, mid_arg))
             .collect::<Result<Vec<_>>>()?;
 
-        pad_operation_args(params, &mut args);
+        pad_operation_args(&mut args);
         operations.push(Operation(op.op_type(), args, *aux));
     }
     Ok(operations)
@@ -459,7 +470,11 @@ pub(crate) fn process_public_statements_operations(
                 OperationAux::None,
             )
         };
-        fill_pad(&mut op.1, OperationArg::None, params.max_operation_args);
+        fill_pad(
+            &mut op.1,
+            OperationArg::None,
+            BASE_PARAMS.max_operation_args,
+        );
         operations.push(op);
     }
     Ok(operations)
@@ -469,6 +484,7 @@ pub struct Prover {}
 
 impl MainPodProver for Prover {
     fn prove(&self, params: &Params, inputs: MainPodInputs) -> Result<Box<dyn Pod>> {
+        assert_eq!(inputs.statements.len(), inputs.operations.len());
         // Pad input recursive pods with empty pods if necessary
         let empty_pod = if inputs.pods.len() == params.max_input_pods {
             // We don't need padding so we skip creating an EmptyPod
@@ -1005,7 +1021,6 @@ pub mod tests {
             max_input_pods_public_statements: 2,
             max_statements: 5,
             max_public_statements: 2,
-            max_operation_args: 5,
             max_custom_predicates: 2,
             max_custom_predicate_verifications: 2,
             max_custom_predicate_wildcards: 3,
@@ -1070,7 +1085,6 @@ pub mod tests {
             max_input_pods: 0,
             max_statements: 9,
             max_public_statements: 4,
-            max_operation_args: 5,
             max_custom_predicate_wildcards: 4,
             max_custom_predicate_verifications: 2,
             max_merkle_proofs_containers: 3,
@@ -1140,7 +1154,6 @@ pub mod tests {
             max_input_pods: 0,
             max_statements: 6,
             max_public_statements: 2,
-            max_operation_args: 5,
             max_custom_predicate_wildcards: 4,
             max_custom_predicate_verifications: 2,
             max_merkle_proofs_containers: 0,
@@ -1251,11 +1264,108 @@ pub mod tests {
         );
         let st = middleware::Statement::Custom(
             cpr,
-            [1, 1, 2].into_iter().map(middleware::Value::from).collect(),
+            [1, 1, 2]
+                .into_iter()
+                .map(middleware::ValueRef::from)
+                .collect(),
         );
         builder.insert((st.clone(), op)).unwrap();
         builder.reveal(&st).unwrap();
         let prover = Prover {};
         builder.prove(&prover).unwrap();
+    }
+
+    #[test]
+    fn test_replace_value_with_entry() {
+        let params = middleware::Params::default();
+        let vd_set = &*DEFAULT_VD_SET;
+        let mut builder = MainPodBuilder::new(&params, vd_set);
+        let d = dict!({"a" => 42, "b" => 33});
+        builder
+            .priv_op(frontend::Operation::dict_contains(d.clone(), "a", 42))
+            .unwrap();
+        let st = builder.priv_op(frontend::Operation::lt(5, 42)).unwrap();
+        // Transform `Lt(5, 42)` into `Lt(5, d.a)` by using `DictContains(d, "a", 42)`
+        builder
+            .pub_op(frontend::Operation::replace_value_with_entry(
+                vec![None, Some((&d, "a"))],
+                st,
+            ))
+            .unwrap();
+
+        // Mock
+        let prover = MockProver {};
+        let pod = builder.prove(&prover).unwrap();
+        pod.pod.verify().unwrap();
+        assert_eq!(
+            middleware::Statement::Lt(
+                middleware::ValueRef::Literal(Value::from(5)),
+                middleware::ValueRef::Key(middleware::AnchoredKey {
+                    root: d.commitment(),
+                    key: middleware::Key::from("a")
+                })
+            ),
+            pod.public_statements[0]
+        );
+
+        // Real
+        let prover = Prover {};
+        let pod = builder.prove(&prover).unwrap();
+        pod.pod.verify().unwrap()
+    }
+
+    #[test]
+    fn test_entry_custom_statement_arg() {
+        let params = middleware::Params::default();
+        let vd_set = &*DEFAULT_VD_SET;
+        let input = r#"
+            PredA(x) = AND(
+                Lt(x, 100)
+            )
+
+            PredB(d) = AND(
+                PredA(d.x)
+            )
+        "#;
+        let module = load_module(input, "my_mod", &params, &[]).expect("lang parse");
+        let pred_a = module.batch.predicate_ref_by_name("PredA").unwrap();
+        let pred_b = module.batch.predicate_ref_by_name("PredB").unwrap();
+
+        let mut builder = MainPodBuilder::new(&params, vd_set);
+        let d = dict!({"x" => 42, "y" => 33});
+
+        let st_lt = builder.priv_op(frontend::Operation::lt(42, 100)).unwrap();
+        let st_a = builder
+            .priv_op(frontend::Operation::custom(pred_a, [st_lt]))
+            .unwrap();
+        builder
+            .priv_op(frontend::Operation::dict_contains(d.clone(), "x", 42))
+            .unwrap();
+        // Transform `PredA(42)` into `PredA(d.x)` by using `DictContains(d, "x", 42)`
+        let st_a1 = builder
+            .priv_op(frontend::Operation::replace_value_with_entry(
+                vec![Some((&d, "x"))],
+                st_a,
+            ))
+            .unwrap();
+
+        builder
+            .pub_op(frontend::Operation::custom(pred_b.clone(), [st_a1]))
+            .unwrap();
+
+        // Mock
+        let prover = MockProver {};
+        let pod = builder.prove(&prover).unwrap();
+        pod.pod.verify().unwrap();
+        let expected = middleware::Statement::Custom(
+            pred_b,
+            vec![middleware::ValueRef::Literal(Value::from(d))],
+        );
+        assert_eq!(expected, pod.public_statements[0]);
+
+        // Real
+        let prover = Prover {};
+        let pod = builder.prove(&prover).unwrap();
+        pod.pod.verify().unwrap()
     }
 }

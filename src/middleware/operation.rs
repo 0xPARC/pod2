@@ -14,7 +14,7 @@ use crate::{
         hash_values, AnchoredKey, CustomPredicate, CustomPredicateRef, Error, Hash, Key,
         MiddlewareInnerError, NativePredicate, Params, Predicate, PredicateOrWildcard, Result,
         Statement, StatementArg, StatementTmpl, StatementTmplArg, ToFields, Value, ValueRef,
-        Wildcard, F,
+        Wildcard, BASE_PARAMS, F,
     },
 };
 
@@ -89,6 +89,7 @@ pub enum NativeOperation {
     ContainerInsertFromEntries = 16,
     ContainerUpdateFromEntries = 17,
     ContainerDeleteFromEntries = 18,
+    ReplaceValueWithEntry = 19,
 
     // Syntactic sugar operations.  These operations are not supported by the backend.  The
     // frontend compiler is responsible of translating these operations into the operations above.
@@ -164,6 +165,7 @@ impl OperationType {
                 NativeOperation::ContainerDeleteFromEntries => {
                     Some(Predicate::Native(NativePredicate::ContainerDelete))
                 }
+                NativeOperation::ReplaceValueWithEntry => None,
                 no => unreachable!("Unexpected syntactic sugar op {:?}", no),
             },
             OperationType::Custom(cpr) => Some(Predicate::Custom(cpr.clone())),
@@ -219,6 +221,10 @@ pub enum Operation {
         /*  key    */ Statement,
         /*  proof  */ MerkleTreeStateTransitionProof,
     ),
+    ReplaceValueWithEntry(
+        /* Contains/None len=max_statement_args */ Vec<Statement>,
+        /* to copy */ Statement,
+    ),
     Custom(CustomPredicateRef, Vec<Statement>),
 }
 
@@ -270,6 +276,7 @@ impl Operation {
                 OT::Native(ContainerUpdateFromEntries)
             }
             Self::ContainerDeleteFromEntries(_, _, _, _) => OT::Native(ContainerDeleteFromEntries),
+            Self::ReplaceValueWithEntry(_, _) => OT::Native(ReplaceValueWithEntry),
             Self::Custom(cpr, _) => OT::Custom(cpr.clone()),
         }
     }
@@ -295,6 +302,11 @@ impl Operation {
             Self::ContainerInsertFromEntries(s1, s2, s3, s4, _pf) => vec![s1, s2, s3, s4],
             Self::ContainerUpdateFromEntries(s1, s2, s3, s4, _pf) => vec![s1, s2, s3, s4],
             Self::ContainerDeleteFromEntries(s1, s2, s3, _pf) => vec![s1, s2, s3],
+            Self::ReplaceValueWithEntry(args, s) => {
+                let mut sts = args;
+                sts.push(s);
+                sts
+            }
             Self::Custom(_, args) => args,
         }
     }
@@ -377,6 +389,18 @@ impl Operation {
                     &[s1, s2, s3],
                     OA::MerkleTreeStateTransitionProof(pf),
                 ) => Self::ContainerDeleteFromEntries(s1.clone(), s2.clone(), s3.clone(), pf),
+                (NO::ReplaceValueWithEntry, args, OA::None) => {
+                    let mut args = args.to_vec();
+                    if args.len() != BASE_PARAMS.max_statement_args + 1 {
+                        return Err(Error::custom(format!(
+                            "ReplaceValueWithEntry requires exactly {} args but {} were found",
+                            BASE_PARAMS.max_statement_args + 1,
+                            args.len()
+                        )));
+                    }
+                    let st = args.pop().expect("valid vec len");
+                    Self::ReplaceValueWithEntry(args, st)
+                }
                 _ => Err(Error::custom(format!(
                     "Ill-formed operation {:?} with {} arguments {:?} and aux {:?}.",
                     op_code,
@@ -420,6 +444,38 @@ impl Operation {
     pub(crate) fn check_signed_by(msg: &Value, pk: &Value, sig: &Signature) -> Result<bool> {
         let pk = ok_or_type_err(pk.as_public_key(), pk, "PublicKey")?;
         Ok(sig.verify(pk, msg.raw()))
+    }
+
+    fn check_replace_value_with_entry(
+        entries: &[Statement],
+        st_in: &Statement,
+        expected_st_out: &Statement,
+    ) -> Result<bool> {
+        if entries.len() != BASE_PARAMS.max_statement_args {
+            return Ok(false);
+        }
+        let args = iter::zip(st_in.args(), entries)
+            .map(|(arg_in, entry)| match (arg_in, entry) {
+                (arg_in, Statement::None) => Ok(arg_in),
+                (
+                    StatementArg::Literal(v_in),
+                    Statement::Contains(
+                        ValueRef::Literal(root),
+                        ValueRef::Literal(key),
+                        ValueRef::Literal(v),
+                    ),
+                ) if v == &v_in => Ok(StatementArg::Key(AnchoredKey::new(
+                    Hash::from(root.raw()),
+                    Key::from(key.as_str().ok_or_else(|| Error::custom("not a string"))?),
+                ))),
+                _ => Err(Error::custom(
+                    "invalid statement argument in ReplaceValueWithEntry",
+                )),
+            })
+            .collect::<Result<Vec<_>>>()?;
+
+        let st_out = Statement::from_args(st_in.predicate(), args)?;
+        Ok(&st_out == expected_st_out)
     }
 
     /// Checks the given operation against a statement.
@@ -541,7 +597,19 @@ impl Operation {
             (Self::Custom(CustomPredicateRef { batch, index }, args), Custom(cpr, s_args))
                 if batch == &cpr.batch && index == &cpr.index =>
             {
-                check_custom_pred(params, cpr, args, s_args).map(|_| true)?
+                // The custom operation outputs statements with literal arguments.  They can be
+                // replaced by references later with ReplaceValueWithEntry.
+                let s_args = s_args
+                    .iter()
+                    .map(|arg| match arg {
+                        ValueRef::Literal(v) => Ok(v.clone()),
+                        _ => Err(deduction_err()),
+                    })
+                    .collect::<Result<Vec<_>>>()?;
+                check_custom_pred(params, cpr, args, &s_args).map(|_| true)?
+            }
+            (Self::ReplaceValueWithEntry(entries, st_in), st_out) => {
+                Self::check_replace_value_with_entry(entries, st_in, st_out)?
             }
             _ => return Err(deduction_err()),
         };
@@ -648,9 +716,9 @@ pub fn wildcard_values_from_op_st(
     params: &Params,
     pred: &CustomPredicate,
     op_args: &[Statement],
-    st_args: &[Value],
+    resolved_st_args: &[Value],
 ) -> Result<Vec<Value>> {
-    let mut wildcard_map = st_args
+    let mut wildcard_map = resolved_st_args
         .iter()
         .map(|v| Some(v.clone()))
         .chain(core::iter::repeat(None))

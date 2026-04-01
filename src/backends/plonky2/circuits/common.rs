@@ -37,8 +37,8 @@ use crate::{
         hash_fields, CustomPredicate, CustomPredicateRef, NativeOperation, NativePredicate,
         OperationType, Params, Predicate, PredicateOrWildcard, PredicateOrWildcardPrefix,
         PredicatePrefix, RawValue, StatementArg, StatementTmpl, StatementTmplArg,
-        StatementTmplArgPrefix, ToFields, Value, EMPTY_VALUE, F, HASH_SIZE, STATEMENT_ARG_F_LEN,
-        VALUE_SIZE,
+        StatementTmplArgPrefix, ToFields, Value, BASE_PARAMS, EMPTY_VALUE, F, HASH_SIZE,
+        STATEMENT_ARG_F_LEN, VALUE_SIZE,
     },
 };
 
@@ -101,6 +101,20 @@ impl ValueTarget {
 pub struct StatementArgTarget {
     #[serde(with = "serde_arrays")]
     pub elements: [Target; STATEMENT_ARG_F_LEN],
+}
+
+impl Flattenable for StatementArgTarget {
+    fn flatten(&self) -> Vec<Target> {
+        self.elements.to_vec()
+    }
+    fn from_flattened(_params: &Params, vs: &[Target]) -> Self {
+        Self {
+            elements: vs.try_into().expect("STATEMENT_ARG_F_LEN elements"),
+        }
+    }
+    fn size(_params: &Params) -> usize {
+        STATEMENT_ARG_F_LEN
+    }
 }
 
 impl StatementArgTarget {
@@ -318,7 +332,7 @@ impl OperationTarget {
             .args()
             .iter()
             .chain(iter::repeat(&OperationArg::None))
-            .take(params.max_operation_args)
+            .take(BASE_PARAMS.max_operation_args)
             .enumerate()
         {
             self.args[i].set_targets(pw, arg.as_usize())?;
@@ -328,7 +342,7 @@ impl OperationTarget {
 
     fn size(params: &Params) -> usize {
         OperationTypeTarget::size(params)
-            + params.max_operation_args * IndexTarget::size(params)
+            + BASE_PARAMS.max_operation_args * IndexTarget::size(params)
             + IndexTarget::size(params)
     }
 }
@@ -868,7 +882,7 @@ impl CustomPredicateVerifyEntryTarget {
             args: (0..params.max_custom_predicate_wildcards)
                 .map(|_| builder.add_virtual_value())
                 .collect(),
-            op_args: (0..params.max_operation_args)
+            op_args: (0..BASE_PARAMS.max_operation_args)
                 .map(|_| builder.add_virtual_statement(false))
                 .collect(),
         }
@@ -898,7 +912,7 @@ impl CustomPredicateVerifyEntryTarget {
             cpv.op_args
                 .iter()
                 .chain(iter::repeat(&pad_op_arg))
-                .take(params.max_operation_args),
+                .take(BASE_PARAMS.max_operation_args),
         ) {
             op_arg_target.set_targets(pw, op_arg)?
         }
@@ -941,7 +955,7 @@ impl Flattenable for CustomPredicateVerifyQueryTarget {
                 .expect("len = operation_type_size"),
         };
         let (pos, size) = (pos + size, StatementTarget::size(params));
-        let op_args = (0..params.max_operation_args)
+        let op_args = (0..BASE_PARAMS.max_operation_args)
             .map(|i| {
                 StatementTarget::from_flattened(params, &vs[pos + i * size..pos + (1 + i) * size])
             })
@@ -953,7 +967,7 @@ impl Flattenable for CustomPredicateVerifyQueryTarget {
         }
     }
     fn size(params: &Params) -> usize {
-        StatementTarget::size(params) * (1 + params.max_operation_args)
+        StatementTarget::size(params) * (1 + BASE_PARAMS.max_operation_args)
             + OperationTarget::size(params)
     }
 }
@@ -1425,7 +1439,7 @@ impl CircuitBuilderPod<F, D> for CircuitBuilder {
     fn add_virtual_operation(&mut self, params: &Params) -> OperationTarget {
         OperationTarget {
             op_type: self.add_virtual_operation_type(),
-            args: (0..params.max_operation_args)
+            args: (0..BASE_PARAMS.max_operation_args)
                 .map(|_| IndexTarget::new_virtual(params.statement_table_size(), self))
                 .collect(),
             aux_index: IndexTarget::new_virtual(OperationAux::table_size(params), self),
@@ -1735,7 +1749,7 @@ impl CircuitBuilderPod<F, D> for CircuitBuilder {
         let num_chunks = array.len().div_ceil(CHUNK_LEN);
         for chunk in array.chunks(CHUNK_LEN) {
             let mut index_chunk = i.low;
-            // I we have several chunks and the last one is smaller (it's index needs less than 6
+            // If we have several chunks and the last one is smaller (it's index needs less than 6
             // bits), make it zero except when it's used so that the range check over the index
             // passes.
             if chunk.len() <= CHUNK_LEN / 2 && num_chunks > 1 {

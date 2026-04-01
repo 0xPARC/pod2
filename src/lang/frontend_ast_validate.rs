@@ -522,7 +522,7 @@ impl Validator {
         }
 
         // Validate arguments
-        self.validate_statement_args(stmt, pred_info.as_ref(), wildcard_context)?;
+        self.validate_statement_args(stmt, wildcard_context)?;
 
         Ok(())
     }
@@ -530,75 +530,37 @@ impl Validator {
     fn validate_statement_args(
         &self,
         stmt: &StatementTmpl,
-        pred_info: Option<&PredicateInfo>,
         wildcard_context: Option<(&str, &WildcardScope)>,
     ) -> Result<(), ValidationError> {
-        // For custom predicates, only wildcards and literals are allowed
-        if matches!(
-            pred_info.map(|i| &i.kind),
-            Some(PredicateKind::Custom { .. })
-                | Some(PredicateKind::BatchImported { .. })
-                | Some(PredicateKind::ModuleImported { .. })
-        ) {
-            for arg in &stmt.args {
-                match arg {
-                    StatementTmplArg::AnchoredKey(_) => {
-                        return Err(ValidationError::InvalidArgumentType {
-                            predicate: stmt.predicate.predicate_name().to_string(),
-                            span: stmt.span,
-                        });
-                    }
-                    StatementTmplArg::Wildcard(id) => {
-                        if let Some((pred_name, scope)) = wildcard_context {
-                            if !scope.wildcards.contains_key(&id.name) {
-                                return Err(ValidationError::UndefinedWildcard {
-                                    name: id.name.clone(),
-                                    pred_name: pred_name.to_string(),
-                                    span: id.span,
-                                });
-                            }
+        for arg in &stmt.args {
+            match arg {
+                StatementTmplArg::Wildcard(id) => {
+                    if let Some((pred_name, scope)) = wildcard_context {
+                        if !scope.wildcards.contains_key(&id.name) {
+                            return Err(ValidationError::UndefinedWildcard {
+                                name: id.name.clone(),
+                                pred_name: pred_name.to_string(),
+                                span: id.span,
+                            });
                         }
-                    }
-                    StatementTmplArg::Literal(lit) => {
-                        self.validate_literal_value(lit)?;
-                    }
-                    StatementTmplArg::SelfPredicateHash(id) => {
-                        self.validate_self_predicate_hash(id, wildcard_context)?;
                     }
                 }
-            }
-        } else {
-            // Native predicates can have anchored keys
-            for arg in &stmt.args {
-                match arg {
-                    StatementTmplArg::Wildcard(id) => {
-                        if let Some((pred_name, scope)) = wildcard_context {
-                            if !scope.wildcards.contains_key(&id.name) {
-                                return Err(ValidationError::UndefinedWildcard {
-                                    name: id.name.clone(),
-                                    pred_name: pred_name.to_string(),
-                                    span: id.span,
-                                });
-                            }
+                StatementTmplArg::AnchoredKey(ak) => {
+                    if let Some((pred_name, scope)) = wildcard_context {
+                        if !scope.wildcards.contains_key(&ak.root.name) {
+                            return Err(ValidationError::UndefinedWildcard {
+                                name: ak.root.name.clone(),
+                                pred_name: pred_name.to_string(),
+                                span: ak.root.span,
+                            });
                         }
                     }
-                    StatementTmplArg::AnchoredKey(ak) => {
-                        if let Some((pred_name, scope)) = wildcard_context {
-                            if !scope.wildcards.contains_key(&ak.root.name) {
-                                return Err(ValidationError::UndefinedWildcard {
-                                    name: ak.root.name.clone(),
-                                    pred_name: pred_name.to_string(),
-                                    span: ak.root.span,
-                                });
-                            }
-                        }
-                    }
-                    StatementTmplArg::Literal(lit) => {
-                        self.validate_literal_value(lit)?;
-                    }
-                    StatementTmplArg::SelfPredicateHash(id) => {
-                        self.validate_self_predicate_hash(id, wildcard_context)?;
-                    }
+                }
+                StatementTmplArg::Literal(lit) => {
+                    self.validate_literal_value(lit)?;
+                }
+                StatementTmplArg::SelfPredicateHash(id) => {
+                    self.validate_self_predicate_hash(id, wildcard_context)?;
                 }
             }
         }
@@ -839,10 +801,7 @@ mod tests {
             module_hash
         );
         let result = parse_and_validate_request(&input, &available_modules);
-        assert!(matches!(
-            result,
-            Err(ValidationError::InvalidArgumentType { .. })
-        ));
+        assert!(result.is_ok());
     }
 
     #[test]

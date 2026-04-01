@@ -380,7 +380,8 @@ pub mod tests {
             great_boy_pod_full_flow, tickets_pod_full_flow, zu_kyc_pod_builder, zu_kyc_pod_request,
             zu_kyc_sign_dict_builders, MOCK_VD_SET,
         },
-        frontend, middleware,
+        frontend::{self},
+        middleware,
         middleware::{Signer as _, Value},
     };
 

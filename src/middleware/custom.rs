@@ -436,7 +436,7 @@ impl fmt::Display for CustomPredicate {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, JsonSchema)]
+#[derive(Clone, PartialEq, Eq, Serialize, JsonSchema)]
 enum CustomPredicateBatchData {
     Full {
         #[serde(skip)]
@@ -447,6 +447,20 @@ enum CustomPredicateBatchData {
     Opaque {
         id: Hash,
     },
+}
+
+// Explicit implementation of Debug to skip the merkle tree
+impl fmt::Debug for CustomPredicateBatchData {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match &self {
+            Self::Full { mt, predicates } => f
+                .debug_struct("Full")
+                .field("id", &mt.root())
+                .field("predicates", &predicates)
+                .finish(),
+            Self::Opaque { id } => f.debug_struct("Opaque").field("id", &id).finish(),
+        }
+    }
 }
 
 // TODO: Rename Batch for Module everywhere in the code base
@@ -630,7 +644,7 @@ mod tests {
         middleware::{
             AnchoredKey, CustomPredicate, CustomPredicateBatch, CustomPredicateRef, Key,
             NativePredicate, Operation, Params, Predicate, Statement, StatementTmpl,
-            StatementTmplArg,
+            StatementTmplArg, ValueRef,
         },
     };
 
@@ -652,6 +666,9 @@ mod tests {
     }
     fn names(names: &[&str]) -> Vec<String> {
         names.iter().map(|s| s.to_string()).collect()
+    }
+    fn value_ref(v: impl Into<ValueRef>) -> ValueRef {
+        v.into()
     }
 
     #[allow(clippy::upper_case_acronyms)]
@@ -701,7 +718,7 @@ mod tests {
         });
         let custom_statement = Statement::Custom(
             CustomPredicateRef::new(cust_pred_batch.clone(), 0),
-            vec![Value::from(d0.clone())],
+            vec![value_ref(d0.clone())],
         );
 
         let custom_deduction = Operation::Custom(
@@ -833,7 +850,7 @@ mod tests {
         // Example statement
         let ethdos_example = Statement::Custom(
             CustomPredicateRef::new(eth_dos_distance_batch.clone(), 2),
-            vec![Value::from("Alice"), Value::from("Bob"), Value::from(7)],
+            vec![value_ref("Alice"), value_ref("Bob"), value_ref(7)],
         );
 
         // Copies should work.
@@ -842,7 +859,7 @@ mod tests {
         // This could arise as the inductive step.
         let ethdos_ind_example = Statement::Custom(
             CustomPredicateRef::new(eth_dos_distance_batch.clone(), 1),
-            vec![Value::from("Alice"), Value::from("Bob"), Value::from(7)],
+            vec![value_ref("Alice"), value_ref("Bob"), value_ref(7)],
         );
 
         assert!(Operation::Custom(
@@ -857,12 +874,12 @@ mod tests {
         let ethdos_facts = vec![
             Statement::Custom(
                 CustomPredicateRef::new(eth_dos_distance_batch.clone(), 2),
-                vec![Value::from("Alice"), Value::from("Charlie"), Value::from(6)],
+                vec![value_ref("Alice"), value_ref("Charlie"), value_ref(6)],
             ),
             Statement::sum_of(Value::from(7), Value::from(6), Value::from(1)),
             Statement::Custom(
                 CustomPredicateRef::new(eth_friend_batch.clone(), 0),
-                vec![Value::from("Charlie"), Value::from("Bob")],
+                vec![value_ref("Charlie"), value_ref("Bob")],
             ),
         ];
 
@@ -959,7 +976,10 @@ mod tests {
         let op_args = vec![Statement::equal(some_value.clone(), pred_a_hash.clone())];
 
         // The output statement
-        let output_st = Statement::Custom(pred_b_ref.clone(), vec![some_value.clone()]);
+        let output_st = Statement::Custom(
+            pred_b_ref.clone(),
+            vec![ValueRef::Literal(some_value.clone())],
+        );
 
         // This should pass
         assert!(Operation::Custom(pred_b_ref.clone(), op_args).check(&params, &output_st)?);
@@ -1024,12 +1044,18 @@ mod tests {
 
         // Verify pred_A: Equal(pred_b_hash, pred_b_hash) should pass
         let op_a = vec![Statement::equal(pred_b_hash.clone(), pred_b_hash.clone())];
-        let st_a = Statement::Custom(pred_a_ref.clone(), vec![pred_b_hash.clone()]);
+        let st_a = Statement::Custom(
+            pred_a_ref.clone(),
+            vec![ValueRef::Literal(pred_b_hash.clone())],
+        );
         assert!(Operation::Custom(pred_a_ref, op_a).check(&params, &st_a)?);
 
         // Verify pred_B: Equal(pred_a_hash, pred_a_hash) should pass
         let op_b = vec![Statement::equal(pred_a_hash.clone(), pred_a_hash.clone())];
-        let st_b = Statement::Custom(pred_b_ref.clone(), vec![pred_a_hash.clone()]);
+        let st_b = Statement::Custom(
+            pred_b_ref.clone(),
+            vec![ValueRef::Literal(pred_a_hash.clone())],
+        );
         assert!(Operation::Custom(pred_b_ref, op_b).check(&params, &st_b)?);
 
         Ok(())
