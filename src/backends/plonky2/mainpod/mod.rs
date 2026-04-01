@@ -1,5 +1,5 @@
 pub mod operation;
-use crate::middleware::{wildcard_values_from_op_st, PodType};
+use crate::middleware::{wildcard_values_from_op_st, PodType, BASE_PARAMS};
 pub mod statement;
 use std::iter;
 
@@ -340,8 +340,8 @@ pub fn pad_statement(s: &mut Statement) {
     fill_pad(&mut s.1, StatementArg::None, Params::max_statement_args())
 }
 
-fn pad_operation_args(params: &Params, args: &mut Vec<OperationArg>) {
-    fill_pad(args, OperationArg::None, params.max_operation_args)
+fn pad_operation_args(args: &mut Vec<OperationArg>) {
+    fill_pad(args, OperationArg::None, BASE_PARAMS.max_operation_args)
 }
 
 /// Returns the statements from the given MainPodInputs, padding to the respective max lengths
@@ -439,7 +439,7 @@ pub(crate) fn process_private_statements_operations(
             .map(|mid_arg| find_op_arg(statements, mid_arg))
             .collect::<Result<Vec<_>>>()?;
 
-        pad_operation_args(params, &mut args);
+        pad_operation_args(&mut args);
         operations.push(Operation(op.op_type(), args, *aux));
     }
     Ok(operations)
@@ -470,7 +470,11 @@ pub(crate) fn process_public_statements_operations(
                 OperationAux::None,
             )
         };
-        fill_pad(&mut op.1, OperationArg::None, params.max_operation_args);
+        fill_pad(
+            &mut op.1,
+            OperationArg::None,
+            BASE_PARAMS.max_operation_args,
+        );
         operations.push(op);
     }
     Ok(operations)
@@ -853,7 +857,7 @@ pub mod tests {
         lang::load_module,
         middleware::{
             self, containers::Set, CustomPredicateRef, NativePredicate as NP, Signer as _,
-            BASE_PARAMS, DEFAULT_VD_LIST, DEFAULT_VD_SET,
+            DEFAULT_VD_LIST, DEFAULT_VD_SET,
         },
     };
 
@@ -1017,7 +1021,6 @@ pub mod tests {
             max_input_pods_public_statements: 2,
             max_statements: 5,
             max_public_statements: 2,
-            max_operation_args: BASE_PARAMS.max_statement_args + 1,
             max_custom_predicates: 2,
             max_custom_predicate_verifications: 2,
             max_custom_predicate_wildcards: 3,
@@ -1082,7 +1085,6 @@ pub mod tests {
             max_input_pods: 0,
             max_statements: 9,
             max_public_statements: 4,
-            max_operation_args: BASE_PARAMS.max_statement_args + 1,
             max_custom_predicate_wildcards: 4,
             max_custom_predicate_verifications: 2,
             max_merkle_proofs_containers: 3,
@@ -1152,7 +1154,6 @@ pub mod tests {
             max_input_pods: 0,
             max_statements: 6,
             max_public_statements: 2,
-            max_operation_args: BASE_PARAMS.max_statement_args + 1,
             max_custom_predicate_wildcards: 4,
             max_custom_predicate_verifications: 2,
             max_merkle_proofs_containers: 0,

@@ -578,7 +578,6 @@ mod tests {
             max_input_pods: 3,
             max_statements: 31,
             max_public_statements: 10,
-            max_operation_args: 5,
             max_custom_predicate_wildcards: 12,
             ..Default::default()
         };

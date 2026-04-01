@@ -111,7 +111,6 @@ impl<const MAX_EQS: usize> StatementCache<MAX_EQS> {
                 .map(|i| builder.vec_ref(params, prev_statements, i))
                 .collect::<Vec<_>>()
         };
-        assert!(params.max_operation_args >= MAX_VALUE_ARGS);
         assert!(Params::max_statement_args() >= MAX_VALUE_ARGS);
         let equations = array::from_fn(|i| {
             let pred_is_none = op_args[i].has_native_type(builder, NativePredicate::None);
@@ -444,7 +443,7 @@ fn verify_operation_circuit(
     let measure_resolve_op_args = measure_gates_begin!(builder, "ResolveOpArgs");
     let cache = StatementCachePriv::new(
         params,
-        params.max_operation_args,
+        BASE_PARAMS.max_operation_args,
         builder,
         op,
         st,
@@ -1506,7 +1505,7 @@ fn make_custom_statement_circuit(
 ) -> Result<(StatementTarget, OperationTypeTarget)> {
     let measure = measure_gates_begin!(builder, "CustomOpVerify");
     // Some sanity checks
-    assert_eq!(params.max_operation_args, op_args.len());
+    assert_eq!(BASE_PARAMS.max_operation_args, op_args.len());
     assert_eq!(params.max_custom_predicate_wildcards, args.len());
 
     let (batch_id, index) = (custom_predicate.id, custom_predicate.index);
@@ -1540,7 +1539,6 @@ fn make_custom_statement_circuit(
         .collect();
     // expected_sts.len() == params.max_custom_predicate_arity
     // op_args.len() == params.max_operation_args;
-    assert!(Params::max_custom_predicate_arity() <= params.max_operation_args);
 
     let sts_eq: Vec<_> = expected_sts
         .iter()
@@ -3331,7 +3329,7 @@ mod tests {
         expected_st: Option<Statement>,
     ) -> Result<()> {
         // Pad
-        for _ in op_args.len()..params.max_operation_args {
+        for _ in op_args.len()..BASE_PARAMS.max_operation_args {
             op_args.push(Statement::None);
         }
         for _ in args.len()..params.max_custom_predicate_wildcards {

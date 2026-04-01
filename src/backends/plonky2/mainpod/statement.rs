@@ -100,8 +100,11 @@ impl TryFrom<Statement> for middleware::Statement {
             Predicate::Custom(cpr) => {
                 let args: Vec<ValueRef> = proper_args
                     .into_iter()
-                    // ValueRef from StatementArg gives Err on None, which is used for padding
-                    .filter_map(|arg| arg.try_into().ok())
+                    .filter_map(|arg| match arg {
+                        StatementArg::Literal(v) => Some(ValueRef::Literal(v)),
+                        StatementArg::Key(k) => Some(ValueRef::Key(k)),
+                        StatementArg::None => None,
+                    })
                     .collect();
                 S::Custom(cpr, args)
             }
