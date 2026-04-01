@@ -476,7 +476,7 @@ fn verify_operation_circuit(
             verify_sum_of_circuit(params, builder, st, &op.op_type, &cache),
             verify_product_of_circuit(params, builder, st, &op.op_type, &cache),
             verify_max_of_circuit(params, builder, st, &op.op_type, &cache),
-            verify_replace_value_by_entry_circuit(params, builder, st, &op.op_type, &cache),
+            verify_replace_value_with_entry_circuit(params, builder, st, &op.op_type, &cache),
         ]);
     }
     // Skip these if there are no resolved aux entries
@@ -1255,15 +1255,15 @@ fn verify_max_of_circuit(
     ok
 }
 
-fn verify_replace_value_by_entry_circuit(
+fn verify_replace_value_with_entry_circuit(
     params: &Params,
     builder: &mut CircuitBuilder,
     st: &StatementTarget,
     op_type: &OperationTypeTarget,
     cache: &StatementCachePriv,
 ) -> BoolTarget {
-    let measure = measure_gates_begin!(builder, "OpReplaceValueByEntry");
-    let op_code_ok = op_type.has_native(builder, NativeOperation::ReplaceValueByEntry);
+    let measure = measure_gates_begin!(builder, "OpReplaceValueWithEntry");
+    let op_code_ok = op_type.has_native(builder, NativeOperation::ReplaceValueWithEntry);
 
     let st_in = &cache.op_args[BASE_PARAMS.max_statement_args];
 
@@ -3145,7 +3145,7 @@ mod tests {
     }
 
     #[test]
-    fn test_operation_replace_value_by_entry() -> Result<()> {
+    fn test_operation_replace_value_with_entry() -> Result<()> {
         let d = dict!({"a" => 42, "b" => 33});
 
         // 0: None
@@ -3162,7 +3162,7 @@ mod tests {
         op_args[1] = OperationArg::Index(2);
         op_args[BASE_PARAMS.max_statement_args] = OperationArg::Index(1);
         let op = mainpod::Operation(
-            OperationType::Native(NativeOperation::ReplaceValueByEntry),
+            OperationType::Native(NativeOperation::ReplaceValueWithEntry),
             op_args,
             OperationAux::None,
         );

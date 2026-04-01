@@ -105,7 +105,7 @@ pub(crate) fn extract_custom_predicate_verifications(
             if let middleware::Statement::Custom(st_cpr, st_args) = st {
                 assert_eq!(cpr, st_cpr);
                 // The custom operation outputs statements with literal arguments.  They can be
-                // replaced by references later with ReplaceValueByEntry.
+                // replaced by references later with ReplaceValueWithEntry.
                 let st_args = st_args
                     .iter()
                     .map(|arg| match arg {
@@ -1276,7 +1276,7 @@ pub mod tests {
     }
 
     #[test]
-    fn test_replace_value_by_entry() {
+    fn test_replace_value_with_entry() {
         let params = middleware::Params::default();
         let vd_set = &*DEFAULT_VD_SET;
         let mut builder = MainPodBuilder::new(&params, vd_set);
@@ -1287,7 +1287,7 @@ pub mod tests {
         let st = builder.priv_op(frontend::Operation::lt(5, 42)).unwrap();
         // Transform `Lt(5, 42)` into `Lt(5, d.a)` by using `DictContains(d, "a", 42)`
         builder
-            .pub_op(frontend::Operation::replace_value_by_entry(
+            .pub_op(frontend::Operation::replace_value_with_entry(
                 vec![None, Some((&d, "a"))],
                 st,
             ))
@@ -1343,7 +1343,7 @@ pub mod tests {
             .unwrap();
         // Transform `PredA(42)` into `PredA(d.x)` by using `DictContains(d, "x", 42)`
         let st_a1 = builder
-            .priv_op(frontend::Operation::replace_value_by_entry(
+            .priv_op(frontend::Operation::replace_value_with_entry(
                 vec![Some((&d, "x"))],
                 st_a,
             ))

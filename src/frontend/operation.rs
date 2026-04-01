@@ -219,7 +219,7 @@ impl Operation {
     op_impl_oa!(set_insert, SetInsertFromEntries, 3);
     op_impl_oa!(set_delete, SetDeleteFromEntries, 3);
     op_impl_oa!(array_update, ArrayUpdateFromEntries, 4);
-    pub fn replace_value_by_entry(args: Vec<Option<(&Dictionary, &str)>>, st: Statement) -> Self {
+    pub fn replace_value_with_entry(args: Vec<Option<(&Dictionary, &str)>>, st: Statement) -> Self {
         assert!(args.len() <= BASE_PARAMS.max_statement_args);
         let args = args
             .into_iter()
@@ -232,7 +232,7 @@ impl Operation {
             .chain(iter::once(OperationArg::Statement(st)))
             .collect();
         Self(
-            OperationType::Native(NativeOperation::ReplaceValueByEntry),
+            OperationType::Native(NativeOperation::ReplaceValueWithEntry),
             args,
             OperationAux::None,
         )

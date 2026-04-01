@@ -567,11 +567,11 @@ impl MainPodBuilder {
                         // TODO: validate proof
                         Statement::ContainerDelete(r1, r2, r3)
                     }
-                    (ReplaceValueByEntry, &args, _) => {
+                    (ReplaceValueWithEntry, &args, _) => {
                         let mut args = args.to_vec();
                         if args.len() != BASE_PARAMS.max_statement_args + 1 {
                             return Err(Error::custom(format!(
-                                "ReplaceValueByEntry requires exactly {} args but {} were found",
+                                "ReplaceValueWithEntry requires exactly {} args but {} were found",
                                 BASE_PARAMS.max_statement_args + 1,
                                 args.len()
                             )));

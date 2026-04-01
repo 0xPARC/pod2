@@ -89,7 +89,7 @@ pub enum NativeOperation {
     ContainerInsertFromEntries = 16,
     ContainerUpdateFromEntries = 17,
     ContainerDeleteFromEntries = 18,
-    ReplaceValueByEntry = 19,
+    ReplaceValueWithEntry = 19,
 
     // Syntactic sugar operations.  These operations are not supported by the backend.  The
     // frontend compiler is responsible of translating these operations into the operations above.
@@ -165,7 +165,7 @@ impl OperationType {
                 NativeOperation::ContainerDeleteFromEntries => {
                     Some(Predicate::Native(NativePredicate::ContainerDelete))
                 }
-                NativeOperation::ReplaceValueByEntry => None,
+                NativeOperation::ReplaceValueWithEntry => None,
                 no => unreachable!("Unexpected syntactic sugar op {:?}", no),
             },
             OperationType::Custom(cpr) => Some(Predicate::Custom(cpr.clone())),
@@ -221,7 +221,7 @@ pub enum Operation {
         /*  key    */ Statement,
         /*  proof  */ MerkleTreeStateTransitionProof,
     ),
-    ReplaceValueByEntry(
+    ReplaceValueWithEntry(
         /* Contains/None len=max_statement_args */ Vec<Statement>,
         /* to copy */ Statement,
     ),
@@ -276,7 +276,7 @@ impl Operation {
                 OT::Native(ContainerUpdateFromEntries)
             }
             Self::ContainerDeleteFromEntries(_, _, _, _) => OT::Native(ContainerDeleteFromEntries),
-            Self::ReplaceValueByEntry(_, _) => OT::Native(ReplaceValueByEntry),
+            Self::ReplaceValueWithEntry(_, _) => OT::Native(ReplaceValueWithEntry),
             Self::Custom(cpr, _) => OT::Custom(cpr.clone()),
         }
     }
@@ -302,7 +302,7 @@ impl Operation {
             Self::ContainerInsertFromEntries(s1, s2, s3, s4, _pf) => vec![s1, s2, s3, s4],
             Self::ContainerUpdateFromEntries(s1, s2, s3, s4, _pf) => vec![s1, s2, s3, s4],
             Self::ContainerDeleteFromEntries(s1, s2, s3, _pf) => vec![s1, s2, s3],
-            Self::ReplaceValueByEntry(args, s) => {
+            Self::ReplaceValueWithEntry(args, s) => {
                 let mut sts = args;
                 sts.push(s);
                 sts
@@ -389,17 +389,17 @@ impl Operation {
                     &[s1, s2, s3],
                     OA::MerkleTreeStateTransitionProof(pf),
                 ) => Self::ContainerDeleteFromEntries(s1.clone(), s2.clone(), s3.clone(), pf),
-                (NO::ReplaceValueByEntry, args, OA::None) => {
+                (NO::ReplaceValueWithEntry, args, OA::None) => {
                     let mut args = args.to_vec();
                     if args.len() != BASE_PARAMS.max_statement_args + 1 {
                         return Err(Error::custom(format!(
-                            "ReplaceValueByEntry requires exactly {} args but {} were found",
+                            "ReplaceValueWithEntry requires exactly {} args but {} were found",
                             BASE_PARAMS.max_statement_args + 1,
                             args.len()
                         )));
                     }
                     let st = args.pop().expect("valid vec len");
-                    Self::ReplaceValueByEntry(args, st)
+                    Self::ReplaceValueWithEntry(args, st)
                 }
                 _ => Err(Error::custom(format!(
                     "Ill-formed operation {:?} with {} arguments {:?} and aux {:?}.",
@@ -446,7 +446,7 @@ impl Operation {
         Ok(sig.verify(pk, msg.raw()))
     }
 
-    fn check_replace_value_by_entry(
+    fn check_replace_value_with_entry(
         entries: &[Statement],
         st_in: &Statement,
         expected_st_out: &Statement,
@@ -469,7 +469,7 @@ impl Operation {
                     Key::from(key.as_str().ok_or_else(|| Error::custom("not a string"))?),
                 ))),
                 _ => Err(Error::custom(
-                    "invalid statement argument in ReplaceValueByEntry",
+                    "invalid statement argument in ReplaceValueWithEntry",
                 )),
             })
             .collect::<Result<Vec<_>>>()?;
@@ -598,7 +598,7 @@ impl Operation {
                 if batch == &cpr.batch && index == &cpr.index =>
             {
                 // The custom operation outputs statements with literal arguments.  They can be
-                // replaced by references later with ReplaceValueByEntry.
+                // replaced by references later with ReplaceValueWithEntry.
                 let s_args = s_args
                     .iter()
                     .map(|arg| match arg {
@@ -608,8 +608,8 @@ impl Operation {
                     .collect::<Result<Vec<_>>>()?;
                 check_custom_pred(params, cpr, args, &s_args).map(|_| true)?
             }
-            (Self::ReplaceValueByEntry(entries, st_in), st_out) => {
-                Self::check_replace_value_by_entry(entries, st_in, st_out)?
+            (Self::ReplaceValueWithEntry(entries, st_in), st_out) => {
+                Self::check_replace_value_with_entry(entries, st_in, st_out)?
             }
             _ => return Err(deduction_err()),
         };

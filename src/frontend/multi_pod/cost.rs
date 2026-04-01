@@ -112,7 +112,7 @@ impl StatementCost {
                     | NativeOperation::GtEqFromEntries
                     | NativeOperation::GtFromEntries
                     | NativeOperation::GtToNotEqual
-                    | NativeOperation::ReplaceValueByEntry => {}
+                    | NativeOperation::ReplaceValueWithEntry => {}
                 }
             }
             OperationType::Custom(cpr) => {
