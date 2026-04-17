@@ -59,10 +59,12 @@ use crate::{
 
 mod cost;
 mod deps;
+pub mod diagnostics;
 mod solver;
 
 use cost::StatementCost;
 use deps::{DependencyGraph, StatementSource};
+pub use diagnostics::{ResourceSummary, SolutionBreakdown};
 pub use solver::MultiPodSolution;
 
 /// Error type for multi-POD operations.
@@ -198,6 +200,22 @@ impl SolvedMultiPod {
     /// Get the solver's solution (POD assignments).
     pub fn solution(&self) -> &MultiPodSolution {
         &self.solution
+    }
+
+    /// Compute a post-solve per-POD resource utilization breakdown.
+    pub fn solution_breakdown(&self) -> SolutionBreakdown {
+        let costs: Vec<StatementCost> = self
+            .operations
+            .iter()
+            .map(StatementCost::from_operation)
+            .collect();
+        SolutionBreakdown::from_solution(
+            &costs,
+            &self.solution.pod_statements,
+            self.solution.pod_count,
+            self.statements.len(),
+            &self.params,
+        )
     }
 
     /// Build and prove all PODs.
@@ -513,6 +531,20 @@ impl MultiPodBuilder {
     /// Get the number of statements.
     pub fn stmt_len(&self) -> usize {
         self.builder.stmt_len()
+    }
+
+    /// Compute a pre-solve resource summary showing aggregate demand vs. per-POD limits.
+    ///
+    /// This is useful for understanding which resource category is the bottleneck
+    /// before running the solver, especially when debugging solver performance issues.
+    pub fn resource_summary(&self) -> ResourceSummary {
+        let costs: Vec<StatementCost> = self
+            .builder
+            .operations
+            .iter()
+            .map(StatementCost::from_operation)
+            .collect();
+        ResourceSummary::from_costs(&costs, &self.params)
     }
 
     /// Solve the packing problem and return a solved builder ready for proving.
