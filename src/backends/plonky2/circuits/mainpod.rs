@@ -38,7 +38,8 @@ use crate::{
             ec::{
                 bits::{BigUInt320Target, CircuitBuilderBits},
                 curve::{
-                    CircuitBuilderElliptic, Point, PointTarget, WitnessWriteCurve, GROUP_ORDER,
+                    CircuitBuilderElliptic, CircuitBuilderSignature, Point, PointTarget,
+                    WitnessWriteCurve, GROUP_ORDER,
                 },
                 schnorr::{CircuitBuilderSchnorr, SecretKey, SignatureTarget, WitnessWriteSchnorr},
             },
@@ -320,9 +321,10 @@ fn build_operation_aux_table_circuit(
     }
 
     // PublicKeyOf: verify the derivation from a Schnorr secret key to public key
+    let invgenerator = builder.constant_point(Point::generator().inverse());
+    let zero_bits: [BoolTarget; 320] = array::from_fn(|_| builder._false());
     for sk in public_key_of_sks {
         let measure = measure_gates_begin!(builder, "PublicKeyOf");
-        let invgenerator = builder.constant_point(Point::generator().inverse());
         let group_orderm1 = &*GROUP_ORDER - BigUint::one();
         let group_orderm1target = builder.constant_biguint320(&group_orderm1);
         let compare_ok = list_le_circuit(
@@ -333,7 +335,9 @@ fn build_operation_aux_table_circuit(
         );
         builder.assert_one(compare_ok.target);
         // public_key = g^-secret key
-        let pk = builder.multiply_point(&sk.bits, &invgenerator);
+        // Use the windowed ECAddXuGate (3-bit windows, 107 iterations) instead of the
+        // naive multiply_point (1-bit double-and-add, 320 iterations) for fewer gates.
+        let pk = builder.linear_combination_point_gen(&zero_bits, &sk.bits, &invgenerator);
         let sk_hash = builder.hash_n_to_hash_no_pad::<PoseidonHash>(sk.limbs.to_vec());
         let pk_hash = builder.hash_n_to_hash_no_pad::<PoseidonHash>(
             pk.x.components.into_iter().chain(pk.u.components).collect(),
