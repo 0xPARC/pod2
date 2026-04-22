@@ -5,170 +5,16 @@
 //!   Shows which resource category is the bottleneck (requires the most PODs).
 //! - [`SolutionBreakdown`]: Post-solve per-POD utilization showing how full each POD is.
 
-use std::fmt;
+use std::{collections::BTreeSet, fmt};
 
 use super::cost::StatementCost;
 use crate::middleware::Params;
 
-/// A single resource category's demand vs. limit.
-#[derive(Clone, Debug)]
-pub struct ResourceRow {
-    /// Human-readable name of the resource.
-    pub name: &'static str,
-    /// Total demand across all statements.
-    pub total: usize,
-    /// Per-POD limit from Params.
-    pub limit: usize,
-    /// Minimum PODs needed for this resource alone: ceil(total / limit).
-    /// `None` if limit is 0 and total > 0 (infeasible).
-    pub min_pods: Option<usize>,
-}
-
-/// Pre-solve aggregate resource summary.
+/// A single resource category's usage vs. per-POD limit.
 ///
-/// Shows total resource demand across all operations and the minimum PODs
-/// each resource category would require independently.
-#[derive(Clone, Debug)]
-pub struct ResourceSummary {
-    pub rows: Vec<ResourceRow>,
-    pub num_statements: usize,
-}
-
-impl ResourceSummary {
-    /// Compute a resource summary from per-statement costs and params.
-    pub fn from_costs(costs: &[StatementCost], params: &Params) -> Self {
-        let max_priv = params.max_priv_statements();
-
-        let mut merkle_proofs = 0usize;
-        let mut merkle_state_transitions = 0usize;
-        let mut custom_pred_verifications = 0usize;
-        let mut signed_by = 0usize;
-        let mut public_key_of = 0usize;
-        let mut all_custom_predicate_ids = std::collections::BTreeSet::new();
-
-        for c in costs {
-            merkle_proofs += c.merkle_proofs;
-            merkle_state_transitions += c.merkle_state_transitions;
-            custom_pred_verifications += c.custom_pred_verifications;
-            signed_by += c.signed_by;
-            public_key_of += c.public_key_of;
-            all_custom_predicate_ids.extend(c.custom_predicates_ids.iter().cloned());
-        }
-
-        let n = costs.len();
-        let rows = vec![
-            ResourceRow {
-                name: "private statements",
-                total: n,
-                limit: max_priv,
-                min_pods: lower_bound(n, max_priv),
-            },
-            ResourceRow {
-                name: "merkle proofs",
-                total: merkle_proofs,
-                limit: params.max_merkle_proofs_containers,
-                min_pods: lower_bound(merkle_proofs, params.max_merkle_proofs_containers),
-            },
-            ResourceRow {
-                name: "merkle state transitions",
-                total: merkle_state_transitions,
-                limit: params.max_merkle_tree_state_transition_proofs_containers,
-                min_pods: lower_bound(
-                    merkle_state_transitions,
-                    params.max_merkle_tree_state_transition_proofs_containers,
-                ),
-            },
-            ResourceRow {
-                name: "custom pred verifications",
-                total: custom_pred_verifications,
-                limit: params.max_custom_predicate_verifications,
-                min_pods: lower_bound(
-                    custom_pred_verifications,
-                    params.max_custom_predicate_verifications,
-                ),
-            },
-            ResourceRow {
-                name: "signed_by",
-                total: signed_by,
-                limit: params.max_signed_by,
-                min_pods: lower_bound(signed_by, params.max_signed_by),
-            },
-            ResourceRow {
-                name: "public_key_of",
-                total: public_key_of,
-                limit: params.max_public_key_of,
-                min_pods: lower_bound(public_key_of, params.max_public_key_of),
-            },
-            ResourceRow {
-                name: "distinct custom predicates",
-                total: all_custom_predicate_ids.len(),
-                limit: params.max_custom_predicates,
-                min_pods: lower_bound(all_custom_predicate_ids.len(), params.max_custom_predicates),
-            },
-        ];
-
-        Self {
-            rows,
-            num_statements: n,
-        }
-    }
-
-    /// The resource category requiring the most PODs (the bottleneck).
-    /// Returns `None` only if there are no statements.
-    pub fn bottleneck(&self) -> Option<&ResourceRow> {
-        self.rows
-            .iter()
-            .filter(|r| r.total > 0)
-            .max_by_key(|r| r.min_pods.unwrap_or(usize::MAX))
-    }
-}
-
-impl fmt::Display for ResourceSummary {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        writeln!(f, "Resource Summary ({} statements)", self.num_statements)?;
-        writeln!(
-            f,
-            "  {:<30} {:>5}   {:>9}   {:>8}",
-            "Category", "Total", "Limit/POD", "Min PODs"
-        )?;
-
-        let bottleneck_name = self.bottleneck().map(|r| r.name);
-
-        for row in &self.rows {
-            let min_pods_str = match row.min_pods {
-                Some(n) => format!("{}", n),
-                None => "inf".to_string(),
-            };
-            let marker = if Some(row.name) == bottleneck_name && row.total > 0 {
-                "  <<<"
-            } else {
-                ""
-            };
-            writeln!(
-                f,
-                "  {:<30} {:>5}   {:>9}   {:>8}{}",
-                row.name, row.total, row.limit, min_pods_str, marker
-            )?;
-        }
-
-        Ok(())
-    }
-}
-
-/// Per-POD resource utilization in a solved solution.
-#[derive(Clone, Debug)]
-pub struct PodUtilization {
-    /// POD index.
-    pub pod_idx: usize,
-    /// Whether this is the output POD (last).
-    pub is_output: bool,
-    /// Number of statements in this POD.
-    pub num_statements: usize,
-    /// Resource usage vs. limits for each category.
-    pub resources: Vec<UtilizationRow>,
-}
-
-/// A single resource's usage in one POD.
+/// Used both for pre-solve aggregate demand (in [`ResourceSummary`]) where
+/// `used` is the total across all statements, and for post-solve per-POD
+/// breakdown (in [`PodUtilization`]) where `used` is the POD's consumption.
 #[derive(Clone, Debug)]
 pub struct UtilizationRow {
     pub name: &'static str,
@@ -189,6 +35,154 @@ impl UtilizationRow {
             self.used as f64 / self.limit as f64
         }
     }
+
+    /// Minimum PODs needed for this resource alone: `ceil(used / limit)`.
+    /// `None` if `limit` is 0 and `used > 0` (infeasible).
+    pub fn min_pods(&self) -> Option<usize> {
+        lower_bound(self.used, self.limit)
+    }
+}
+
+/// Aggregate resource usage over a set of statement costs into per-category rows.
+///
+/// Single source of truth for the resource categories and their corresponding
+/// `Params` limits. Used both for pre-solve totals and per-POD breakdowns.
+fn aggregate_rows<'a>(
+    costs: impl IntoIterator<Item = &'a StatementCost>,
+    params: &Params,
+) -> (Vec<UtilizationRow>, usize) {
+    let mut num_stmts = 0usize;
+    let mut merkle_proofs = 0usize;
+    let mut merkle_state_transitions = 0usize;
+    let mut custom_pred_verifications = 0usize;
+    let mut signed_by = 0usize;
+    let mut public_key_of = 0usize;
+    let mut custom_pred_ids = BTreeSet::new();
+
+    for c in costs {
+        num_stmts += 1;
+        merkle_proofs += c.merkle_proofs;
+        merkle_state_transitions += c.merkle_state_transitions;
+        custom_pred_verifications += c.custom_pred_verifications;
+        signed_by += c.signed_by;
+        public_key_of += c.public_key_of;
+        custom_pred_ids.extend(c.custom_predicates_ids.iter().cloned());
+    }
+
+    let rows = vec![
+        UtilizationRow {
+            name: "private statements",
+            used: num_stmts,
+            limit: params.max_priv_statements(),
+        },
+        UtilizationRow {
+            name: "merkle proofs",
+            used: merkle_proofs,
+            limit: params.max_merkle_proofs_containers,
+        },
+        UtilizationRow {
+            name: "merkle state transitions",
+            used: merkle_state_transitions,
+            limit: params.max_merkle_tree_state_transition_proofs_containers,
+        },
+        UtilizationRow {
+            name: "custom pred verifications",
+            used: custom_pred_verifications,
+            limit: params.max_custom_predicate_verifications,
+        },
+        UtilizationRow {
+            name: "signed_by",
+            used: signed_by,
+            limit: params.max_signed_by,
+        },
+        UtilizationRow {
+            name: "public_key_of",
+            used: public_key_of,
+            limit: params.max_public_key_of,
+        },
+        UtilizationRow {
+            name: "distinct custom predicates",
+            used: custom_pred_ids.len(),
+            limit: params.max_custom_predicates,
+        },
+    ];
+
+    (rows, num_stmts)
+}
+
+/// Pre-solve aggregate resource summary.
+///
+/// Shows total resource demand across all operations and the minimum PODs
+/// each resource category would require independently.
+#[derive(Clone, Debug)]
+pub struct ResourceSummary {
+    pub rows: Vec<UtilizationRow>,
+    pub num_statements: usize,
+}
+
+impl ResourceSummary {
+    /// Compute a resource summary from per-statement costs and params.
+    pub fn from_costs(costs: &[StatementCost], params: &Params) -> Self {
+        let (rows, num_statements) = aggregate_rows(costs.iter(), params);
+        Self {
+            rows,
+            num_statements,
+        }
+    }
+
+    /// The resource category requiring the most PODs (the bottleneck).
+    /// Returns `None` only if there are no statements.
+    pub fn bottleneck(&self) -> Option<&UtilizationRow> {
+        self.rows
+            .iter()
+            .filter(|r| r.used > 0)
+            .max_by_key(|r| r.min_pods().unwrap_or(usize::MAX))
+    }
+}
+
+impl fmt::Display for ResourceSummary {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        writeln!(f, "Resource Summary ({} statements)", self.num_statements)?;
+        writeln!(
+            f,
+            "  {:<30} {:>5}   {:>9}   {:>8}",
+            "Category", "Total", "Limit/POD", "Min PODs"
+        )?;
+
+        let bottleneck_name = self.bottleneck().map(|r| r.name);
+
+        for row in &self.rows {
+            let min_pods_str = match row.min_pods() {
+                Some(n) => format!("{}", n),
+                None => "inf".to_string(),
+            };
+            let marker = if Some(row.name) == bottleneck_name && row.used > 0 {
+                "  <<<"
+            } else {
+                ""
+            };
+            writeln!(
+                f,
+                "  {:<30} {:>5}   {:>9}   {:>8}{}",
+                row.name, row.used, row.limit, min_pods_str, marker
+            )?;
+        }
+
+        Ok(())
+    }
+}
+
+/// Per-POD resource utilization in a solved solution.
+#[derive(Clone, Debug)]
+pub struct PodUtilization {
+    /// POD index.
+    pub pod_idx: usize,
+    /// Whether this is the output POD (last).
+    pub is_output: bool,
+    /// Number of statements in this POD.
+    pub num_statements: usize,
+    /// Resource usage vs. limits for each category.
+    pub resources: Vec<UtilizationRow>,
 }
 
 /// Post-solve per-POD resource breakdown.
@@ -209,71 +203,15 @@ impl SolutionBreakdown {
         num_statements: usize,
         params: &Params,
     ) -> Self {
-        let max_priv = params.max_priv_statements();
-
         let pods = (0..pod_count)
             .map(|pod_idx| {
                 let stmts = &pod_statements[pod_idx];
-
-                let mut merkle_proofs = 0usize;
-                let mut merkle_state_transitions = 0usize;
-                let mut custom_pred_verifications = 0usize;
-                let mut signed_by = 0usize;
-                let mut public_key_of = 0usize;
-                let mut custom_pred_ids = std::collections::BTreeSet::new();
-
-                for &s in stmts {
-                    let c = &costs[s];
-                    merkle_proofs += c.merkle_proofs;
-                    merkle_state_transitions += c.merkle_state_transitions;
-                    custom_pred_verifications += c.custom_pred_verifications;
-                    signed_by += c.signed_by;
-                    public_key_of += c.public_key_of;
-                    custom_pred_ids.extend(c.custom_predicates_ids.iter().cloned());
-                }
-
-                let resources = vec![
-                    UtilizationRow {
-                        name: "private statements",
-                        used: stmts.len(),
-                        limit: max_priv,
-                    },
-                    UtilizationRow {
-                        name: "merkle proofs",
-                        used: merkle_proofs,
-                        limit: params.max_merkle_proofs_containers,
-                    },
-                    UtilizationRow {
-                        name: "merkle state transitions",
-                        used: merkle_state_transitions,
-                        limit: params.max_merkle_tree_state_transition_proofs_containers,
-                    },
-                    UtilizationRow {
-                        name: "custom pred verifications",
-                        used: custom_pred_verifications,
-                        limit: params.max_custom_predicate_verifications,
-                    },
-                    UtilizationRow {
-                        name: "signed_by",
-                        used: signed_by,
-                        limit: params.max_signed_by,
-                    },
-                    UtilizationRow {
-                        name: "public_key_of",
-                        used: public_key_of,
-                        limit: params.max_public_key_of,
-                    },
-                    UtilizationRow {
-                        name: "distinct custom predicates",
-                        used: custom_pred_ids.len(),
-                        limit: params.max_custom_predicates,
-                    },
-                ];
-
+                let (resources, num_stmts) =
+                    aggregate_rows(stmts.iter().map(|&s| &costs[s]), params);
                 PodUtilization {
                     pod_idx,
                     is_output: pod_idx == pod_count - 1,
-                    num_statements: stmts.len(),
+                    num_statements: num_stmts,
                     resources,
                 }
             })
@@ -325,13 +263,13 @@ impl fmt::Display for SolutionBreakdown {
     }
 }
 
-fn lower_bound(total: usize, limit: usize) -> Option<usize> {
-    if total == 0 {
+fn lower_bound(used: usize, limit: usize) -> Option<usize> {
+    if used == 0 {
         Some(0)
     } else if limit == 0 {
         None
     } else {
-        Some(total.div_ceil(limit))
+        Some(used.div_ceil(limit))
     }
 }
 
@@ -383,7 +321,7 @@ mod tests {
         // All categories need 1 pod, so bottleneck is whichever has the highest min_pods.
         // They're all 1, so the first with total > 0 wins in max_by_key (stable).
         let bottleneck = summary.bottleneck().unwrap();
-        assert_eq!(bottleneck.min_pods, Some(1));
+        assert_eq!(bottleneck.min_pods(), Some(1));
 
         // Verify display doesn't panic
         let display = format!("{}", summary);
@@ -414,7 +352,7 @@ mod tests {
 
         assert_eq!(bottleneck.name, "signed_by");
         // 6 / 2 = 3 pods
-        assert_eq!(bottleneck.min_pods, Some(3));
+        assert_eq!(bottleneck.min_pods(), Some(3));
     }
 
     #[test]
@@ -445,7 +383,7 @@ mod tests {
 
         assert_eq!(bottleneck.name, "distinct custom predicates");
         // 3 distinct predicates / 1 per pod = 3 pods
-        assert_eq!(bottleneck.min_pods, Some(3));
+        assert_eq!(bottleneck.min_pods(), Some(3));
     }
 
     #[test]
