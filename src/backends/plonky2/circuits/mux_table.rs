@@ -127,6 +127,20 @@ pub struct TableGetGenerator {
     get_tagged_entry: Vec<Target>,
 }
 
+impl TableGetGenerator {
+    pub fn new(
+        index: IndexTarget,
+        tagged_entries: Vec<Vec<Target>>,
+        get_tagged_entry: Vec<Target>,
+    ) -> Self {
+        Self {
+            index,
+            tagged_entries,
+            get_tagged_entry,
+        }
+    }
+}
+
 impl<F: RichField + Extendable<D>, const D: usize> SimpleGenerator<F, D> for TableGetGenerator {
     fn id(&self) -> String {
         "TableGetGenerator".to_string()
