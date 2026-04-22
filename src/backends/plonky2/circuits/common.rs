@@ -224,6 +224,10 @@ impl StatementTarget {
         Self::new_with_pred(builder, params, pred, args)
     }
 
+    pub fn hash(&self, builder: &mut CircuitBuilder) -> HashOutTarget {
+        builder.hash_n_to_hash_no_pad::<PoseidonHash>(self.flatten())
+    }
+
     pub fn set_targets(&self, pw: &mut PartialWitness<F>, st: &Statement) -> Result<()> {
         if let Some(pred) = &self.pred {
             pred.set_targets(pw, &st.predicate())?;
@@ -318,10 +322,6 @@ impl OperationTypeTarget {
 
     pub fn set_targets(&self, pw: &mut PartialWitness<F>, op_type: &OperationType) -> Result<()> {
         Ok(pw.set_target_arr(&self.elements, &op_type.to_fields())?)
-    }
-
-    fn size(_params: &Params) -> usize {
-        Params::operation_type_size()
     }
 }
 
@@ -921,58 +921,6 @@ impl CustomPredicateVerifyEntryTarget {
     }
 }
 
-/// Query for the custom predicate verification table
-#[derive(Clone, Serialize, Deserialize)]
-pub struct CustomPredicateVerifyQueryTarget {
-    pub statement: StatementTarget,
-    pub op_type: OperationTypeTarget,
-    pub op_args: Vec<StatementTarget>,
-}
-
-impl CustomPredicateVerifyQueryTarget {
-    pub fn hash(&self, builder: &mut CircuitBuilder) -> HashOutTarget {
-        builder.hash_n_to_hash_no_pad::<PoseidonHash>(self.flatten())
-    }
-}
-
-impl Flattenable for CustomPredicateVerifyQueryTarget {
-    fn flatten(&self) -> Vec<Target> {
-        self.statement
-            .flatten()
-            .iter()
-            .chain(self.op_type.elements.iter())
-            .cloned()
-            .chain(self.op_args.iter().flat_map(|op_arg| op_arg.flatten()))
-            .collect()
-    }
-    fn from_flattened(params: &Params, vs: &[Target]) -> Self {
-        assert_eq!(vs.len(), Self::size(params));
-        let (pos, size) = (0, StatementTarget::size(params));
-        let statement = StatementTarget::from_flattened(params, &vs[pos..pos + size]);
-        let (pos, size) = (pos + size, OperationTypeTarget::size(params));
-        let op_type = OperationTypeTarget {
-            elements: vs[pos..pos + size]
-                .try_into()
-                .expect("len = operation_type_size"),
-        };
-        let (pos, size) = (pos + size, StatementTarget::size(params));
-        let op_args = (0..BASE_PARAMS.max_operation_args)
-            .map(|i| {
-                StatementTarget::from_flattened(params, &vs[pos + i * size..pos + (1 + i) * size])
-            })
-            .collect();
-        Self {
-            statement,
-            op_type,
-            op_args,
-        }
-    }
-    fn size(params: &Params) -> usize {
-        StatementTarget::size(params) * (1 + BASE_PARAMS.max_operation_args)
-            + OperationTypeTarget::size(params)
-    }
-}
-
 /// Trait for target structs that may be converted to and from vectors
 /// of targets.
 pub trait Flattenable {
@@ -1376,14 +1324,16 @@ pub trait CircuitBuilderPod<F: RichField + Extendable<D>, const D: usize> {
     /// materializes the selected row via a witness generator and constrains its hash. Cheaper than
     /// `vec_ref` when each entry has many fields, since random access runs only over the 4-field
     /// hashes. The caller is responsible for precomputing `ts_flattened` and `ts_hashes` once and
-    /// reusing the same slices across multiple lookups.
+    /// reusing the same slices across multiple lookups. Returns the materialized row alongside
+    /// the selected hash (already constrained equal to the row's hash) so callers that need to
+    /// re-use the hash downstream can avoid re-computing it.
     fn vec_ref_projected<T: Flattenable>(
         &mut self,
         params: &Params,
         ts_flattened: &[Vec<Target>],
         ts_hashes: &[HashOutTarget],
         i: &IndexTarget,
-    ) -> T;
+    ) -> (T, HashOutTarget);
     fn select_flattenable<T: Flattenable>(
         &mut self,
         params: &Params,
@@ -1828,7 +1778,7 @@ impl CircuitBuilderPod<F, D> for CircuitBuilder {
         ts_flattened: &[Vec<Target>],
         ts_hashes: &[HashOutTarget],
         i: &IndexTarget,
-    ) -> T {
+    ) -> (T, HashOutTarget) {
         assert_eq!(ts_flattened.len(), ts_hashes.len());
         let selected_hash = self.vec_ref(params, ts_hashes, i);
         let selected_flattened = self.add_virtual_targets(T::size(params));
@@ -1841,7 +1791,7 @@ impl CircuitBuilderPod<F, D> for CircuitBuilder {
             ts_flattened.to_vec(),
             selected_flattened,
         ));
-        result
+        (result, selected_hash)
     }
 
     fn vec_ref_small<T: Flattenable>(&mut self, params: &Params, ts: &[T], i: Target) -> T {

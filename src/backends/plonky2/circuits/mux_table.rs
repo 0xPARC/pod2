@@ -1,15 +1,11 @@
 use std::iter;
 
-use itertools::Itertools;
 use plonky2::{
-    field::{extension::Extendable, types::Field},
-    hash::{
-        hash_types::{HashOutTarget, RichField},
-        poseidon::{PoseidonHash, PoseidonPermutation},
-    },
+    field::extension::Extendable,
+    hash::hash_types::{HashOut, HashOutTarget, RichField},
     iop::{
         generator::{GeneratedValues, SimpleGenerator},
-        target::{BoolTarget, Target},
+        target::Target,
         witness::{PartitionWitness, Witness, WitnessWrite},
     },
     plonk::circuit_data::CommonCircuitData,
@@ -19,104 +15,54 @@ use plonky2::{
 use crate::{
     backends::plonky2::{
         basetypes::CircuitBuilder,
-        circuits::{
-            common::{CircuitBuilderPod, Flattenable, IndexTarget},
-            hash::{hash_from_state_circuit, precompute_hash_state},
-        },
+        circuits::common::{CircuitBuilderPod, IndexTarget},
     },
     measure_gates_begin, measure_gates_end,
-    middleware::{Params, F},
+    middleware::Params,
 };
 
-// This structure allows multiplexing multiple tables into one by using tags.  The table entries
-// are computed by hashing the concatenation of the tag with the flattened target, with zero
-// padding to normalize the size of all flattened entries.  We use zero-padding on then reverse the
-// array so that smaller entries can skip the initial hashes by using the precomputed hash state of
-// the prefixed zeroes.
-// The table offers an indexing API that returns a flattened entry that includes the "unhashing",
-// this allows doing a single lookup for different possible tagged entries at the same time.
+// A table of aux query hashes addressed by index. Each operation hashes its query inputs into a
+// single `HashOutTarget` (with a domain-separation kind folded in, so hashes from different op
+// kinds can't be confused) and pushes it here; a verify circuit looks up a row by index and
+// compares it against the hash it recomputes from the operation's inputs.
 pub struct MuxTableTarget {
     params: Params,
-    max_flattened_entry_len: usize,
-    hashed_tagged_entries: Vec<HashOutTarget>,
-    tagged_entries: Vec<Vec<Target>>,
+    entries: Vec<HashOutTarget>,
 }
 
 impl MuxTableTarget {
-    pub fn new(params: &Params, max_flattened_entry_len: usize) -> Self {
+    /// Create a table seeded with the sentinel row at index 0. The sentinel hashes to zero, which
+    /// no real query hash can equal, so an operation with no aux data points at index 0 and never
+    /// matches a verify circuit. Real rows are pushed after it, starting at index 1.
+    pub fn new(builder: &mut CircuitBuilder, params: &Params) -> Self {
         Self {
             params: params.clone(),
-            max_flattened_entry_len,
-            hashed_tagged_entries: Vec::new(),
-            tagged_entries: Vec::new(),
+            entries: vec![builder.constant_hash(HashOut::ZERO)],
         }
     }
 
     #[allow(clippy::len_without_is_empty)]
     pub fn len(&self) -> usize {
-        self.hashed_tagged_entries.len()
+        self.entries.len()
     }
 
-    pub fn push<T: Flattenable>(&mut self, builder: &mut CircuitBuilder, tag: u32, entry: &T) {
-        let flattened_entry = entry.flatten();
-        self.push_flattened(builder, tag, &flattened_entry);
+    pub fn push(&mut self, query_hash: HashOutTarget) {
+        self.entries.push(query_hash);
     }
 
-    pub fn push_flattened(
-        &mut self,
+    pub fn get(&self, builder: &mut CircuitBuilder, index: &IndexTarget) -> HashOutTarget {
+        let measure = measure_gates_begin!(builder, "GetAuxTblEntry");
+        let entry = builder.vec_ref(&self.params, &self.entries, index);
+        measure_gates_end!(builder, measure);
+        entry
+    }
+
+    pub fn lookup(
+        &self,
         builder: &mut CircuitBuilder,
-        tag: u32,
-        flattened_entry: &[Target],
-    ) {
-        let measure = measure_gates_begin!(builder, "HashTaggedTblEntry");
-        assert!(flattened_entry.len() <= self.max_flattened_entry_len);
-        let flattened = [&[builder.constant(F(tag as u64))], flattened_entry].concat();
-        self.tagged_entries.push(flattened.clone());
-
-        let tagged_entry_max_len = 1 + self.max_flattened_entry_len;
-        let front_pad_elts = iter::repeat(F::ZERO)
-            .take(tagged_entry_max_len - flattened.len())
-            .collect_vec();
-
-        let (perm, front_pad_elts_rem) =
-            precompute_hash_state::<F, PoseidonPermutation<F>>(&front_pad_elts);
-
-        let rev_flattened = flattened.iter().rev().copied();
-        // Precompute the Poseidon state for the initial padding chunks
-        let inputs = front_pad_elts_rem
-            .iter()
-            .map(|v| builder.constant(*v))
-            .chain(rev_flattened)
-            .collect_vec();
-        let hash =
-            hash_from_state_circuit::<PoseidonHash, PoseidonPermutation<F>>(builder, perm, &inputs);
-
-        measure_gates_end!(builder, measure);
-        self.hashed_tagged_entries.push(hash);
-    }
-
-    pub fn get(&self, builder: &mut CircuitBuilder, index: &IndexTarget) -> TableEntryTarget {
-        let measure = measure_gates_begin!(builder, "GetTaggedTblEntry");
-        let entry_hash = builder.vec_ref(&self.params, &self.hashed_tagged_entries, index);
-
-        let mut rev_resolved_tagged_flattened =
-            builder.add_virtual_targets(1 + self.max_flattened_entry_len);
-        let query_hash =
-            builder.hash_n_to_hash_no_pad::<PoseidonHash>(rev_resolved_tagged_flattened.clone());
-        builder.connect_flattenable(&entry_hash, &query_hash);
-        rev_resolved_tagged_flattened.reverse();
-        let resolved_tagged_flattened = rev_resolved_tagged_flattened;
-
-        builder.add_simple_generator(TableGetGenerator::new(
-            index.clone(),
-            self.tagged_entries.clone(),
-            resolved_tagged_flattened.clone(),
-        ));
-        measure_gates_end!(builder, measure);
-        TableEntryTarget {
-            params: self.params.clone(),
-            tagged_flattened_entry: resolved_tagged_flattened,
-        }
+        index: &IndexTarget,
+    ) -> Option<HashOutTarget> {
+        (self.len() > 1).then(|| self.get(builder, index))
     }
 }
 
@@ -202,25 +148,5 @@ impl<F: RichField + Extendable<D>, const D: usize> SimpleGenerator<F, D> for Tab
             entries,
             revealed_entry,
         })
-    }
-}
-
-pub struct TableEntryTarget {
-    params: Params,
-    tagged_flattened_entry: Vec<Target>,
-}
-
-impl TableEntryTarget {
-    pub fn as_type<T: Flattenable>(
-        &self,
-        builder: &mut CircuitBuilder,
-        tag: u32,
-    ) -> (BoolTarget, T) {
-        let tag_target = self.tagged_flattened_entry[0];
-        let flattened_entry = &self.tagged_flattened_entry[1..];
-        let entry = T::from_flattened(&self.params, &flattened_entry[..T::size(&self.params)]);
-        let tag_expect = builder.constant(F(tag as u64));
-        let tag_ok = builder.is_equal(tag_expect, tag_target);
-        (tag_ok, entry)
     }
 }
