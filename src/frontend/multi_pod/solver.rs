@@ -54,6 +54,8 @@ use crate::{
     frontend::multi_pod::{
         cost::{CustomPredicateId, StatementCost},
         deps::{DependencyGraph, ExternalDependency, StatementSource},
+        layout::{abstract_from_solution, synth_deps_from_key, Layout, LayoutKey},
+        DEFAULT_MAX_PODS,
     },
     middleware::{Hash, Params},
 };
@@ -303,6 +305,36 @@ pub struct SolverInput<'a> {
 
     /// Maximum number of PODs the solver will consider.
     pub max_pods: usize,
+}
+
+/// Solve the MILP for a [`LayoutKey`] alone, producing a reusable [`Layout`].
+///
+/// Runs the solver against a synthetic dependency graph reconstructed from the
+/// key (using positional external pod hashes and statements). The resulting
+/// [`AbstractSolution`] is structural — concrete external hashes and premises
+/// are reattached at apply time. Always solves with [`DEFAULT_MAX_PODS`] so the
+/// cached layout is broadly reusable; consumers with a tighter `max_pods`
+/// validate the layout's `pod_count` at apply time.
+///
+/// Panics if the key represents an infeasible problem. This is intended as the
+/// `build_fn` for `cache::get`, whose signature does not allow `Result`. Keys
+/// produced from real builders that already solved successfully are guaranteed
+/// feasible.
+pub fn solve_from_key(key: &LayoutKey) -> Layout {
+    let deps = synth_deps_from_key(key);
+    let input = SolverInput {
+        num_statements: key.costs.len(),
+        costs: &key.costs,
+        deps: &deps,
+        output_public_indices: &key.output_public_indices,
+        params: &key.params,
+        max_pods: DEFAULT_MAX_PODS,
+    };
+    let solution = solve(&input).expect("LayoutKey from a real builder must be solvable");
+    Layout {
+        key: key.clone(),
+        solution: abstract_from_solution(&solution),
+    }
 }
 
 /// Solve the MILP problem to find optimal POD packing.

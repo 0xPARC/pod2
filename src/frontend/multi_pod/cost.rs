@@ -5,6 +5,8 @@
 
 use std::collections::BTreeSet;
 
+use serde::{Deserialize, Serialize};
+
 use crate::{
     frontend::Operation,
     middleware::{CustomPredicateRef, Hash, NativeOperation, OperationType, Predicate},
@@ -14,7 +16,7 @@ use crate::{
 ///
 /// Uses the predicate's cryptographic hash as identifier. Two predicates with the same
 /// hash are considered identical for resource counting purposes.
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct CustomPredicateId(pub Hash);
 
 impl From<&CustomPredicateRef> for CustomPredicateId {
@@ -26,7 +28,7 @@ impl From<&CustomPredicateRef> for CustomPredicateId {
 /// Resource costs for a single statement/operation.
 ///
 /// Each field corresponds to a resource with a per-POD limit in `Params`.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct StatementCost {
     /// Number of merkle proofs used (for Contains/NotContains).
     /// Limit: `params.max_merkle_proofs_containers`
