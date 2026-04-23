@@ -46,6 +46,11 @@ pub struct LayoutKey {
     pub params: Params,
     pub num_external_pods: usize,
     pub num_external_premises: usize,
+    /// Search bound used at solve time. Included so that a layout solved with
+    /// a bigger `max_pods` isn't reused for a builder with a tighter one (the
+    /// cached pod_count might not fit), and so cache-stored infeasibility is
+    /// only authoritative at the `max_pods` it was solved against.
+    pub max_pods: usize,
 }
 
 /// The solver's assignment with positional (rather than concrete) external
@@ -75,6 +80,7 @@ impl LayoutKey {
         deps: &DependencyGraph,
         output_public_indices: &[usize],
         params: &Params,
+        max_pods: usize,
     ) -> Self {
         let canonical = canonicalize_externals(deps);
 
@@ -103,6 +109,7 @@ impl LayoutKey {
             params: params.clone(),
             num_external_pods: canonical.pods.len(),
             num_external_premises: canonical.premises.len(),
+            max_pods,
         }
     }
 }

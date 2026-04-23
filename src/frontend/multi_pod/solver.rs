@@ -58,7 +58,6 @@ use crate::{
             abstract_from_solution, canonicalize_externals, synthetic_deps_from_key, Layout,
             LayoutKey,
         },
-        DEFAULT_MAX_PODS,
     },
     middleware::{Hash, Params},
 };
@@ -313,10 +312,8 @@ pub struct SolverInput<'a> {
 /// Build a [`Layout`] for a [`LayoutKey`] by running the MILP against a
 /// synthetic dependency graph. Returns the solver's error message as `Err`
 /// rather than panicking, so the cache layer (whose `build_fn` signature is
-/// `fn(&P) -> T`) can persist infeasibility too. `solve_cached` propagates
-/// cached errors instead of repeatedly hammering the solver. Always uses
-/// [`DEFAULT_MAX_PODS`] so cached layouts are broadly reusable; tighter
-/// `max_pods` is enforced at apply time.
+/// `fn(&P) -> T`) can persist infeasibility too; `solve_cached` propagates
+/// cached errors instead of repeatedly hammering the solver.
 pub fn solve_from_key(key: &LayoutKey) -> std::result::Result<Layout, String> {
     let deps = synthetic_deps_from_key(key);
     let input = SolverInput {
@@ -325,7 +322,7 @@ pub fn solve_from_key(key: &LayoutKey) -> std::result::Result<Layout, String> {
         deps: &deps,
         output_public_indices: &key.output_public_indices,
         params: &key.params,
-        max_pods: DEFAULT_MAX_PODS,
+        max_pods: key.max_pods,
     };
     solve(&input)
         .map(|solution| Layout {

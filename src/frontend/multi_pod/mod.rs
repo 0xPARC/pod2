@@ -196,6 +196,7 @@ pub struct SolvedMultiPod {
     operations_wildcard_values: HashMap<usize, Vec<(usize, Value)>>,
     solution: MultiPodSolution,
     deps: DependencyGraph,
+    layout_key: LayoutKey,
 }
 
 impl SolvedMultiPod {
@@ -208,18 +209,8 @@ impl SolvedMultiPod {
     /// Apply via [`MultiPodBuilder::apply_layout`] or
     /// [`MultiPodBuilder::solve_cached`] to skip the solver.
     pub fn layout(&self) -> Layout {
-        let key = LayoutKey::from_inputs(
-            &self
-                .operations
-                .iter()
-                .map(StatementCost::from_operation)
-                .collect::<Vec<_>>(),
-            &self.deps,
-            &self.output_public_indices,
-            &self.params,
-        );
         Layout {
-            key,
+            key: self.layout_key.clone(),
             solution: layout::abstract_from_solution(&self.solution),
         }
     }
@@ -584,7 +575,13 @@ impl MultiPodBuilder {
             &self.builder.operations,
             &external_pod_statements,
         );
-        LayoutKey::from_inputs(&costs, &deps, &self.output_public_indices, &self.params)
+        LayoutKey::from_inputs(
+            &costs,
+            &deps,
+            &self.output_public_indices,
+            &self.params,
+            self.options.max_pods,
+        )
     }
 
     /// Solve the packing problem and return a solved builder ready for proving.
@@ -604,10 +601,10 @@ impl MultiPodBuilder {
     }
 
     /// Solve via the layout cache. Subsequent calls with the same
-    /// [`LayoutKey`] skip the MILP solver and reuse the cached assignment.
-    /// With the `disk_cache` feature the cache persists across runs (keyed
-    /// additionally by git commit); with `mem_cache` it persists for the
-    /// process lifetime.
+    /// [`LayoutKey`] (which includes [`Options::max_pods`]) skip the MILP
+    /// solver and reuse the cached assignment. With the `disk_cache` feature
+    /// the cache persists across runs (keyed additionally by git commit);
+    /// with `mem_cache` it persists for the process lifetime.
     ///
     /// Robust against cache failures: a cache subsystem error (read failure,
     /// CBOR deserialize error) or a key-mismatched entry (e.g. corrupted on
@@ -632,20 +629,6 @@ impl MultiPodBuilder {
 
         let layout = match &*entry {
             Ok(layout) => layout,
-            Err(_) if prep.max_pods > DEFAULT_MAX_PODS => {
-                // The cache build runs solve_from_key with DEFAULT_MAX_PODS.
-                // A cached infeasibility doesn't apply when the caller has
-                // more headroom than the cache build used, so fall back to a
-                // direct solve. This path is uncached (we'd have to key on
-                // max_pods to cache it, which would fragment the keyspace).
-                log::info!(
-                    "multi-pod layout cache stored infeasibility at max_pods={}, but caller \
-                     has max_pods={}; falling back to direct solve",
-                    DEFAULT_MAX_PODS,
-                    prep.max_pods
-                );
-                return prep.solve();
-            }
             Err(msg) => {
                 return Err(Error::Solver(format!(
                     "cached layout solve was infeasible for this shape: {}",
@@ -714,6 +697,7 @@ impl BuilderPrep {
             &self.deps,
             &self.output_public_indices,
             &self.params,
+            self.max_pods,
         )
     }
 
@@ -727,7 +711,8 @@ impl BuilderPrep {
             max_pods: self.max_pods,
         };
         let solution = solver::solve(&input)?;
-        Ok(self.into_solved(solution))
+        let key = self.layout_key();
+        Ok(self.into_solved(solution, key))
     }
 
     /// Apply a layout without re-validating that its key matches `self`.
@@ -746,10 +731,10 @@ impl BuilderPrep {
             canonical.pods.clone(),
             canonical.premises.clone(),
         );
-        Ok(self.into_solved(solution))
+        Ok(self.into_solved(solution, layout.key.clone()))
     }
 
-    fn into_solved(self, solution: MultiPodSolution) -> SolvedMultiPod {
+    fn into_solved(self, solution: MultiPodSolution, layout_key: LayoutKey) -> SolvedMultiPod {
         SolvedMultiPod {
             params: self.params,
             vd_set: self.vd_set,
@@ -760,6 +745,7 @@ impl BuilderPrep {
             operations_wildcard_values: self.operations_wildcard_values,
             solution,
             deps: self.deps,
+            layout_key,
         }
     }
 }
@@ -1956,6 +1942,34 @@ mod tests {
         assert_eq!(
             key_a, key_b,
             "two builders with the same shape must produce the same LayoutKey"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_layout_key_differs_when_max_pods_differs() -> Result<()> {
+        // max_pods is part of the key so cached layouts solved at one bound
+        // aren't (silently) reused at a tighter bound that the cached
+        // pod_count might exceed.
+        let params = Params {
+            max_statements: 4,
+            max_public_statements: 2,
+            ..Params::default()
+        };
+        let vd_set = &*MOCK_VD_SET;
+
+        let mut builder_a =
+            MultiPodBuilder::new_with_options(&params, vd_set, Options { max_pods: 5 });
+        builder_a.pub_op(FrontendOp::eq(1, 1))?;
+
+        let mut builder_b =
+            MultiPodBuilder::new_with_options(&params, vd_set, Options { max_pods: 20 });
+        builder_b.pub_op(FrontendOp::eq(1, 1))?;
+
+        assert_ne!(
+            builder_a.layout_key(),
+            builder_b.layout_key(),
+            "Options::max_pods must be part of the LayoutKey"
         );
         Ok(())
     }
