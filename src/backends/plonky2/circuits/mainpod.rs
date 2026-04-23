@@ -2778,6 +2778,37 @@ mod tests {
     }
 
     #[test]
+    fn test_operation_verify_sumof_non_monotonic_repeated_indices() -> Result<()> {
+        let local = dict!({
+            "a" => 3,
+            "noise" => 99,
+            "sum" => 6,
+        });
+        let st_a: mainpod::Statement = Statement::contains(local.clone(), "a", 3).into();
+        let st_noise: mainpod::Statement = Statement::contains(local.clone(), "noise", 99).into();
+        let st_sum: mainpod::Statement = Statement::contains(local.clone(), "sum", 6).into();
+
+        let st: mainpod::Statement = Statement::sum_of(
+            AnchoredKey::from((&local, "sum")),
+            AnchoredKey::from((&local, "a")),
+            AnchoredKey::from((&local, "a")),
+        )
+        .into();
+        let op = mainpod::Operation(
+            OperationType::Native(NativeOperation::SumOf),
+            vec![
+                // Non-monotonic and repeated indices to stress random-access resolution.
+                OperationArg::Index(2),
+                OperationArg::Index(0),
+                OperationArg::Index(0),
+            ],
+            OperationAux::None,
+        );
+        let prev_statements = vec![st_a, st_noise, st_sum];
+        operation_verify(st, op, prev_statements, Aux::default())
+    }
+
+    #[test]
     fn test_operation_verify_productof() -> Result<()> {
         I64_TEST_PAIRS
             .into_iter()
