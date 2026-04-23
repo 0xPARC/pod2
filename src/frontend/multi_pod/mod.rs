@@ -2002,34 +2002,158 @@ mod tests {
         Ok(())
     }
 
-    #[cfg(any(feature = "mem_cache", feature = "disk_cache"))]
+    /// Build two distinct external PODs (each with one public statement) plus
+    /// a multi-pod problem that copies from each, forcing the solver to
+    /// distribute external inputs across PODs. Returns (multi-builder, both
+    /// external pod statements). Used by the external-pods cache reuse test.
+    fn build_two_ext_pods_and_multi(
+        params: &Params,
+        vd_set: &VDSet,
+        a_seed: i64,
+        b_seed: i64,
+    ) -> Result<(MultiPodBuilder, Statement, Statement)> {
+        let prover = MockProver {};
+
+        let mut a = MainPodBuilder::new(params, vd_set);
+        a.pub_op(FrontendOp::eq(a_seed, a_seed))?;
+        let ext_a = a.prove(&prover)?;
+        let stmt_a = ext_a
+            .pod
+            .pub_statements()
+            .into_iter()
+            .find(|s| !s.is_none())
+            .expect("ext_a public");
+
+        let mut b = MainPodBuilder::new(params, vd_set);
+        b.pub_op(FrontendOp::eq(b_seed, b_seed))?;
+        let ext_b = b.prove(&prover)?;
+        let stmt_b = ext_b
+            .pod
+            .pub_statements()
+            .into_iter()
+            .find(|s| !s.is_none())
+            .expect("ext_b public");
+
+        let mut builder = MultiPodBuilder::new(params, vd_set);
+        builder.add_pod(ext_a)?;
+        builder.add_pod(ext_b)?;
+        builder.priv_op(FrontendOp::copy(stmt_a.clone()))?;
+        builder.priv_op(FrontendOp::eq(a_seed + 1, a_seed + 1))?;
+        builder.priv_op(FrontendOp::copy(stmt_b.clone()))?;
+        builder.priv_op(FrontendOp::eq(b_seed + 1, b_seed + 1))?;
+        builder.pub_op(FrontendOp::eq(0, 0))?;
+        Ok((builder, stmt_a, stmt_b))
+    }
+
     #[test]
-    fn test_solve_cached_round_trip() -> Result<()> {
-        // solve_cached should produce the same assignment as solve, and a
-        // second call (cache hit) should return the same layout.
+    fn test_layout_applies_with_different_external_pods() -> Result<()> {
+        // The trickiest part of layout reuse is the canonical ordering of
+        // external pods: the cache build uses synthetic positional hashes,
+        // but apply_layout has to rebuild the same ordering from the new
+        // builder's actual input pods. This test forces both worlds to align
+        // by solving with one set of external pods and applying with a
+        // structurally identical but differently-valued set.
         let params = Params {
             max_statements: 4,
             max_public_statements: 2,
+            max_input_pods: 1,
+            max_input_pods_public_statements: 4,
             ..Params::default()
         };
         let vd_set = &*MOCK_VD_SET;
         let prover = MockProver {};
 
-        let direct = build_chain_with_value(&params, vd_set, 7)?.solve()?;
-        let cached_first = build_chain_with_value(&params, vd_set, 7)?.solve_cached()?;
+        let (builder_a, _, _) = build_two_ext_pods_and_multi(&params, vd_set, 100, 200)?;
+        let solved_a = builder_a.solve()?;
+        let layout = solved_a.layout();
+
+        let (builder_b, _, _) = build_two_ext_pods_and_multi(&params, vd_set, 700, 800)?;
+        let solved_b = builder_b.apply_layout(&layout)?;
+        assert_eq!(
+            solved_a.solution().pod_statements,
+            solved_b.solution().pod_statements,
+            "applied layout should reproduce the original POD assignment"
+        );
+
+        let result = solved_b.prove(&prover)?;
+        for (i, pod) in result.pods.iter().enumerate() {
+            pod.pod
+                .verify()
+                .unwrap_or_else(|_| panic!("POD {} verification failed", i));
+        }
+        Ok(())
+    }
+
+    #[cfg(any(feature = "mem_cache", feature = "disk_cache"))]
+    #[test]
+    fn test_diamond_custom_predicate_through_solve_cached() -> Result<()> {
+        // Exercises the cache reuse path with a non-trivial custom-predicate
+        // shape (diamond, multiple wildcards, multi-arg predicate) — the kind
+        // of scenario downstream consumers like txlib actually build.
+        let params = Params {
+            max_statements: 6,
+            max_public_statements: 3,
+            max_input_pods: 4,
+            max_input_pods_public_statements: 20,
+            max_custom_predicate_verifications: 10,
+            ..Params::default()
+        };
+        let vd_set = &*MOCK_VD_SET;
+        let prover = MockProver {};
+
+        fn build_diamond(params: &Params, vd_set: &VDSet, k: i64) -> Result<MultiPodBuilder> {
+            let module = load_module(
+                r#"
+                pred_b(X) = AND(Contains(X, "k", 1))
+                pred_c(X) = AND(Contains(X, "k", 1))
+                pred_a(X, Y) = AND(
+                    pred_b(X)
+                    pred_c(Y)
+                )
+                "#,
+                "test",
+                params,
+                &[],
+            )
+            .expect("load module");
+            let batch = &module.batch;
+
+            let mut builder = MultiPodBuilder::new(params, vd_set);
+            let dict = dict!({"k" => 1});
+            let contains = builder.priv_op(FrontendOp::dict_contains(dict, "k", 1))?;
+            let b_out = builder.priv_op(FrontendOp::custom(
+                batch.predicate_ref_by_name("pred_b").unwrap(),
+                [contains.clone()],
+            ))?;
+            let c_out = builder.priv_op(FrontendOp::custom(
+                batch.predicate_ref_by_name("pred_c").unwrap(),
+                [contains],
+            ))?;
+            // Sibling statement varying across instances; the dependency
+            // structure (and thus the LayoutKey) stays constant.
+            builder.priv_op(FrontendOp::eq(k, k))?;
+            let _a_out = builder.pub_op(FrontendOp::custom(
+                batch.predicate_ref_by_name("pred_a").unwrap(),
+                [b_out, c_out],
+            ))?;
+            Ok(builder)
+        }
+
+        let direct = build_diamond(&params, vd_set, 100)?.solve()?;
+        let cached_first = build_diamond(&params, vd_set, 100)?.solve_cached()?;
+        let cached_second = build_diamond(&params, vd_set, 999)?.solve_cached()?;
+
         assert_eq!(
             direct.solution().pod_statements,
             cached_first.solution().pod_statements,
+            "cached solve should match direct solve",
         );
-
-        // A second cached solve with different values reuses the cache.
-        let cached_second = build_chain_with_value(&params, vd_set, 13)?.solve_cached()?;
         assert_eq!(
-            direct.solution().pod_statements,
+            cached_first.solution().pod_statements,
             cached_second.solution().pod_statements,
+            "cache hit on second call should reuse the same layout",
         );
 
-        // The cached path still produces verifiable PODs.
         let result = cached_second.prove(&prover)?;
         for (i, pod) in result.pods.iter().enumerate() {
             pod.pod
