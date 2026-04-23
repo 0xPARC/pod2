@@ -1,26 +1,16 @@
 //! Reusable layouts for multi-POD packing.
 //!
-//! Solving the MILP is the expensive part of the multi-POD pipeline. For a fixed
-//! set of operations and resource limits, the optimal layout (which statements go
-//! in which POD, which are public, etc.) depends only on the *structure* of the
-//! problem, not on the concrete values. So a layout computed once can be reused
-//! for any future invocation that has the same structural shape.
+//! Solving the MILP is the expensive part of the multi-POD pipeline, but its
+//! output depends only on the *structure* of the problem, not the concrete
+//! values. So a layout computed once can be reused for any future invocation
+//! with the same shape, e.g. a transaction type that always has the same
+//! operation graph but different inputs.
 //!
-//! # Types
-//!
-//! - [`LayoutKey`]: the structural shape — operation costs, abstract dependency
-//!   edges, public indices, params, and external pod count. Two problems with the
-//!   same key always produce the same solver layout.
-//! - [`Layout`]: the cached output — an [`AbstractSolution`] together with the key
-//!   it was solved for.
-//!
-//! # Caching
-//!
-//! [`LayoutKey`] is `Serialize`/`Deserialize`, so it plugs directly into the
-//! existing `cache::get` machinery (mem cache or disk cache, gated by features).
-//! See [`crate::frontend::multi_pod::MultiPodBuilder::solve_cached`].
+//! [`LayoutKey`] is `Serialize`, so it plugs into the existing `cache::get`
+//! machinery (mem cache or disk cache, gated by features). See
+//! [`crate::frontend::multi_pod::MultiPodBuilder::solve_cached`].
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 
 use serde::{Deserialize, Serialize};
 
@@ -30,25 +20,25 @@ use super::{
     solver::MultiPodSolution,
     Result,
 };
-use crate::middleware::{Hash, Params, Statement, Value, ValueRef};
+use crate::middleware::{Hash, Params, RawValue, Statement, Value, ValueRef};
 
-/// A dependency edge expressed without reference to concrete values.
-///
-/// Internal deps reference another statement by index. External deps reference
-/// the source external pod and premise by their canonical (first-appearance)
-/// position, not by hash or statement value.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum AbstractDep {
     Internal(usize),
     External { pod: usize, premise: usize },
 }
 
-/// Structural shape of a multi-POD problem. Acts as the cache key for layouts.
+/// Structural shape of a multi-POD problem; the cache key for layouts.
 ///
-/// Two builders with identical `LayoutKey`s will always produce the same solver
-/// layout, regardless of the concrete `Statement` values, dict contents, or
-/// external pod hashes involved.
+/// Two builders with equal `LayoutKey`s always produce the same solver output,
+/// regardless of concrete values, dict contents, or external pod hashes.
+/// Marked `#[non_exhaustive]` so callers must obtain instances via
+/// [`MultiPodBuilder::layout_key`] (or by deserializing) rather than struct
+/// literals, which keeps the field invariants in this module's hands.
+///
+/// [`MultiPodBuilder::layout_key`]: super::MultiPodBuilder::layout_key
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct LayoutKey {
     pub costs: Vec<StatementCost>,
     pub dep_edges: Vec<Vec<AbstractDep>>,
@@ -58,12 +48,10 @@ pub struct LayoutKey {
     pub num_external_premises: usize,
 }
 
-/// The solver's assignment, expressed without concrete external pod hashes.
-///
-/// Identical in structure to [`MultiPodSolution`] except that external references
-/// are positional indices (matching the canonical ordering of external pods and
-/// premises in the dependency graph).
+/// The solver's assignment with positional (rather than concrete) external
+/// references, so it can be reattached to any builder of the same shape.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct AbstractSolution {
     pub pod_count: usize,
     pub statement_to_pods: Vec<Vec<usize>>,
@@ -74,19 +62,14 @@ pub struct AbstractSolution {
     pub pod_public_external_premises: Vec<BTreeSet<usize>>,
 }
 
-/// A reusable layout: the cache key paired with the solver's output.
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct Layout {
     pub key: LayoutKey,
     pub solution: AbstractSolution,
 }
 
 impl LayoutKey {
-    /// Derive a key from the structural inputs of a solve.
-    ///
-    /// The canonical ordering of external pods and premises is by first
-    /// appearance in `deps.statement_deps`, matching what the solver does
-    /// internally.
     pub(super) fn from_inputs(
         costs: &[StatementCost],
         deps: &DependencyGraph,
@@ -124,24 +107,21 @@ impl LayoutKey {
     }
 }
 
-/// Canonical ordering of external pods and premises within a dependency graph.
-///
-/// Both are ordered by first appearance during left-to-right traversal of
-/// `deps.statement_deps`. This matches the ordering the solver builds
-/// internally, so positional indices line up across both worlds.
+/// External pods and premises ordered by first appearance in the dependency
+/// graph. The solver builds this same ordering internally, so positional
+/// indices line up between cached layouts and live solver runs.
 pub(super) struct CanonicalExternals<'a> {
     pub pods: Vec<Hash>,
     pub premises: Vec<ExternalDependency>,
-    pub pod_idx: std::collections::HashMap<Hash, usize>,
-    pub premise_idx: std::collections::HashMap<&'a ExternalDependency, usize>,
+    pub pod_idx: HashMap<Hash, usize>,
+    pub premise_idx: HashMap<&'a ExternalDependency, usize>,
 }
 
 pub(super) fn canonicalize_externals(deps: &DependencyGraph) -> CanonicalExternals<'_> {
     let mut pods: Vec<Hash> = Vec::new();
-    let mut pod_idx: std::collections::HashMap<Hash, usize> = std::collections::HashMap::new();
+    let mut pod_idx: HashMap<Hash, usize> = HashMap::new();
     let mut premises: Vec<ExternalDependency> = Vec::new();
-    let mut premise_idx: std::collections::HashMap<&ExternalDependency, usize> =
-        std::collections::HashMap::new();
+    let mut premise_idx: HashMap<&ExternalDependency, usize> = HashMap::new();
 
     for edges in &deps.statement_deps {
         for src in edges {
@@ -166,7 +146,6 @@ pub(super) fn canonicalize_externals(deps: &DependencyGraph) -> CanonicalExterna
     }
 }
 
-/// Project a concrete [`MultiPodSolution`] into the abstract form for caching.
 pub(super) fn abstract_from_solution(solution: &MultiPodSolution) -> AbstractSolution {
     AbstractSolution {
         pod_count: solution.pod_count,
@@ -179,8 +158,6 @@ pub(super) fn abstract_from_solution(solution: &MultiPodSolution) -> AbstractSol
     }
 }
 
-/// Inflate an [`AbstractSolution`] into a [`MultiPodSolution`] using the
-/// concrete external pod hashes and premises observed in the new builder.
 pub(super) fn solution_from_abstract(
     abs: &AbstractSolution,
     external_pod_hashes: Vec<Hash>,
@@ -199,16 +176,14 @@ pub(super) fn solution_from_abstract(
     }
 }
 
-/// Reconstruct a [`DependencyGraph`] from a [`LayoutKey`], using synthetic
-/// external pod hashes and statements.
-///
-/// The synthetic values are deterministic functions of the positional indices,
-/// so they preserve the canonical ordering the solver expects. They never leak
-/// outside the solver — only used for the MILP run that produces the layout.
-pub(super) fn synth_deps_from_key(key: &LayoutKey) -> DependencyGraph {
-    let synth_pods: Vec<Hash> = (0..key.num_external_pods).map(synth_pod_hash).collect();
-    let synth_premises: Vec<Statement> = (0..key.num_external_premises)
-        .map(synth_premise_statement)
+/// Reconstruct a `DependencyGraph` from the abstract dep edges, using
+/// synthetic external pod hashes and statements. The synthetic values are
+/// deterministic functions of the positional indices so the solver's
+/// canonical ordering will match the layout's.
+pub(super) fn synthetic_deps_from_key(key: &LayoutKey) -> DependencyGraph {
+    let pods: Vec<Hash> = (0..key.num_external_pods).map(synthetic_pod_hash).collect();
+    let premises: Vec<Statement> = (0..key.num_external_premises)
+        .map(synthetic_premise_statement)
         .collect();
 
     let statement_deps = key
@@ -221,8 +196,8 @@ pub(super) fn synth_deps_from_key(key: &LayoutKey) -> DependencyGraph {
                     AbstractDep::Internal(i) => StatementSource::Internal(*i),
                     AbstractDep::External { pod, premise } => {
                         StatementSource::External(ExternalDependency {
-                            pod_hash: synth_pods[*pod],
-                            statement: synth_premises[*premise].clone(),
+                            pod_hash: pods[*pod],
+                            statement: premises[*premise].clone(),
                         })
                     }
                 })
@@ -233,18 +208,15 @@ pub(super) fn synth_deps_from_key(key: &LayoutKey) -> DependencyGraph {
     DependencyGraph { statement_deps }
 }
 
-fn synth_pod_hash(pod_idx: usize) -> Hash {
-    use crate::middleware::RawValue;
+fn synthetic_pod_hash(pod_idx: usize) -> Hash {
     Hash::from(RawValue::from(pod_idx as i64))
 }
 
-fn synth_premise_statement(premise_idx: usize) -> Statement {
+fn synthetic_premise_statement(premise_idx: usize) -> Statement {
     let v = Value::from(premise_idx as i64);
     Statement::Equal(ValueRef::Literal(v.clone()), ValueRef::Literal(v))
 }
 
-/// Validate that `actual` matches `expected`. Used by `apply_layout` to confirm
-/// the cached layout is applicable to the new builder's shape.
 pub(super) fn check_key_match(expected: &LayoutKey, actual: &LayoutKey) -> Result<()> {
     if expected == actual {
         Ok(())

@@ -54,7 +54,10 @@ use crate::{
     frontend::multi_pod::{
         cost::{CustomPredicateId, StatementCost},
         deps::{DependencyGraph, ExternalDependency, StatementSource},
-        layout::{abstract_from_solution, synth_deps_from_key, Layout, LayoutKey},
+        layout::{
+            abstract_from_solution, canonicalize_externals, synthetic_deps_from_key, Layout,
+            LayoutKey,
+        },
         DEFAULT_MAX_PODS,
     },
     middleware::{Hash, Params},
@@ -307,21 +310,15 @@ pub struct SolverInput<'a> {
     pub max_pods: usize,
 }
 
-/// Solve the MILP for a [`LayoutKey`] alone, producing a reusable [`Layout`].
-///
-/// Runs the solver against a synthetic dependency graph reconstructed from the
-/// key (using positional external pod hashes and statements). The resulting
-/// [`AbstractSolution`] is structural — concrete external hashes and premises
-/// are reattached at apply time. Always solves with [`DEFAULT_MAX_PODS`] so the
-/// cached layout is broadly reusable; consumers with a tighter `max_pods`
-/// validate the layout's `pod_count` at apply time.
-///
-/// Panics if the key represents an infeasible problem. This is intended as the
-/// `build_fn` for `cache::get`, whose signature does not allow `Result`. Keys
-/// produced from real builders that already solved successfully are guaranteed
-/// feasible.
-pub fn solve_from_key(key: &LayoutKey) -> Layout {
-    let deps = synth_deps_from_key(key);
+/// Build a [`Layout`] for a [`LayoutKey`] by running the MILP against a
+/// synthetic dependency graph. Returns the solver's error message as `Err`
+/// rather than panicking, so the cache layer (whose `build_fn` signature is
+/// `fn(&P) -> T`) can persist infeasibility too. `solve_cached` propagates
+/// cached errors instead of repeatedly hammering the solver. Always uses
+/// [`DEFAULT_MAX_PODS`] so cached layouts are broadly reusable; tighter
+/// `max_pods` is enforced at apply time.
+pub fn solve_from_key(key: &LayoutKey) -> std::result::Result<Layout, String> {
+    let deps = synthetic_deps_from_key(key);
     let input = SolverInput {
         num_statements: key.costs.len(),
         costs: &key.costs,
@@ -330,11 +327,12 @@ pub fn solve_from_key(key: &LayoutKey) -> Layout {
         params: &key.params,
         max_pods: DEFAULT_MAX_PODS,
     };
-    let solution = solve(&input).expect("LayoutKey from a real builder must be solvable");
-    Layout {
-        key: key.clone(),
-        solution: abstract_from_solution(&solution),
-    }
+    solve(&input)
+        .map(|solution| Layout {
+            key: key.clone(),
+            solution: abstract_from_solution(&solution),
+        })
+        .map_err(|e| e.to_string())
 }
 
 /// Solve the MILP problem to find optimal POD packing.
@@ -389,27 +387,9 @@ pub fn solve(input: &SolverInput) -> Result<MultiPodSolution> {
         .unique()
         .collect();
 
-    // Collect all unique external POD hashes and external premises referenced by dependencies.
-    let mut external_pods: Vec<Hash> = Vec::new();
-    let mut external_pod_to_idx: HashMap<Hash, usize> = HashMap::new();
-    let mut external_premises: Vec<ExternalDependency> = Vec::new();
-    let mut external_premise_to_idx: HashMap<ExternalDependency, usize> = HashMap::new();
-    for deps in &input.deps.statement_deps {
-        for dep in deps {
-            if let StatementSource::External(ext) = dep {
-                if let std::collections::hash_map::Entry::Vacant(e) =
-                    external_pod_to_idx.entry(ext.pod_hash)
-                {
-                    e.insert(external_pods.len());
-                    external_pods.push(ext.pod_hash);
-                }
-                if !external_premise_to_idx.contains_key(ext) {
-                    external_premise_to_idx.insert(ext.clone(), external_premises.len());
-                    external_premises.push(ext.clone());
-                }
-            }
-        }
-    }
+    let canonical = canonicalize_externals(input.deps);
+    let external_pods = canonical.pods;
+    let external_premises = canonical.premises;
 
     let dep_stats = dependency_stats(input.deps);
     let batch_memberships: usize = input

@@ -204,12 +204,9 @@ impl SolvedMultiPod {
         &self.solution
     }
 
-    /// Extract a reusable [`Layout`] from this solved problem.
-    ///
-    /// The layout captures the structural shape ([`LayoutKey`]) and the solver's
-    /// assignment, with concrete external pod hashes abstracted into positional
-    /// indices. Apply via [`MultiPodBuilder::apply_layout`] on a future builder
-    /// with the same shape to skip the solver entirely.
+    /// Extract a reusable [`Layout`] for any future builder of the same shape.
+    /// Apply via [`MultiPodBuilder::apply_layout`] or
+    /// [`MultiPodBuilder::solve_cached`] to skip the solver.
     pub fn layout(&self) -> Layout {
         let key = LayoutKey::from_inputs(
             &self
@@ -591,74 +588,80 @@ impl MultiPodBuilder {
     }
 
     /// Solve the packing problem and return a solved builder ready for proving.
-    ///
-    /// This runs the MILP solver to find the optimal POD assignment.
-    /// Consumes the builder and returns a [`SolvedMultiPod`] that can be proved.
     pub fn solve(self) -> Result<SolvedMultiPod> {
-        let prep = self.prepare();
-
-        let input = solver::SolverInput {
-            num_statements: prep.statements.len(),
-            costs: &prep.costs,
-            deps: &prep.deps,
-            output_public_indices: &prep.output_public_indices,
-            params: &prep.params,
-            max_pods: prep.max_pods,
-        };
-
-        let solution = solver::solve(&input)?;
-
-        Ok(prep.into_solved(solution))
+        self.prepare().solve()
     }
 
     /// Apply a previously-computed [`Layout`] to this builder, skipping the
-    /// solver entirely.
-    ///
-    /// Validates that the builder's structural shape matches the layout's
-    /// [`LayoutKey`]. Returns an error if the shapes differ or if the cached
-    /// layout requires more PODs than [`Options::max_pods`] allows.
+    /// solver. Errors if the builder's shape doesn't match the layout's
+    /// [`LayoutKey`], or if the cached layout's `pod_count` exceeds
+    /// [`Options::max_pods`].
     pub fn apply_layout(self, layout: &Layout) -> Result<SolvedMultiPod> {
         let prep = self.prepare();
-
-        let actual_key = LayoutKey::from_inputs(
-            &prep.costs,
-            &prep.deps,
-            &prep.output_public_indices,
-            &prep.params,
-        );
+        let actual_key = prep.layout_key();
         layout::check_key_match(&layout.key, &actual_key)?;
-
-        if layout.solution.pod_count > prep.max_pods {
-            return Err(Error::Solver(format!(
-                "cached layout requires {} PODs, but Options::max_pods is {}",
-                layout.solution.pod_count, prep.max_pods
-            )));
-        }
-
-        let canonical = layout::canonicalize_externals(&prep.deps);
-        let solution = layout::solution_from_abstract(
-            &layout.solution,
-            canonical.pods.clone(),
-            canonical.premises.clone(),
-        );
-
-        Ok(prep.into_solved(solution))
+        prep.apply_layout(layout)
     }
 
-    /// Solve via the layout cache: look up a cached [`Layout`] keyed by this
-    /// builder's [`LayoutKey`], or run the solver once and cache the result.
+    /// Solve via the layout cache. Subsequent calls with the same
+    /// [`LayoutKey`] skip the MILP solver and reuse the cached assignment.
+    /// With the `disk_cache` feature the cache persists across runs (keyed
+    /// additionally by git commit); with `mem_cache` it persists for the
+    /// process lifetime.
     ///
-    /// With the `disk_cache` feature, the cached layout persists across runs
-    /// (keyed additionally by git commit). With `mem_cache`, it persists for
-    /// the process lifetime. Subsequent calls with the same shape skip the
-    /// MILP solver entirely.
+    /// Robust against cache failures: a cache subsystem error (read failure,
+    /// CBOR deserialize error) or a key-mismatched entry (e.g. corrupted on
+    /// disk) is logged and falls back to a direct solve, so callers always
+    /// get either a valid solution or a typed solver error - never a panic
+    /// from the cache layer.
     #[cfg(any(feature = "mem_cache", feature = "disk_cache"))]
     pub fn solve_cached(self) -> Result<SolvedMultiPod> {
-        let layout = crate::cache::get("multi_pod_layout", &self.layout_key(), |key| {
-            solver::solve_from_key(key)
-        })
-        .expect("cache ok");
-        self.apply_layout(&layout)
+        let prep = self.prepare();
+        let key = prep.layout_key();
+
+        let entry = match crate::cache::get("multi_pod_layout", &key, solver::solve_from_key) {
+            Ok(entry) => entry,
+            Err(e) => {
+                log::warn!(
+                    "multi-pod layout cache unavailable ({}); falling back to direct solve",
+                    e
+                );
+                return prep.solve();
+            }
+        };
+
+        let layout = match &*entry {
+            Ok(layout) => layout,
+            Err(_) if prep.max_pods > DEFAULT_MAX_PODS => {
+                // The cache build runs solve_from_key with DEFAULT_MAX_PODS.
+                // A cached infeasibility doesn't apply when the caller has
+                // more headroom than the cache build used, so fall back to a
+                // direct solve. This path is uncached (we'd have to key on
+                // max_pods to cache it, which would fragment the keyspace).
+                log::info!(
+                    "multi-pod layout cache stored infeasibility at max_pods={}, but caller \
+                     has max_pods={}; falling back to direct solve",
+                    DEFAULT_MAX_PODS,
+                    prep.max_pods
+                );
+                return prep.solve();
+            }
+            Err(msg) => {
+                return Err(Error::Solver(format!(
+                    "cached layout solve was infeasible for this shape: {}",
+                    msg
+                )));
+            }
+        };
+
+        if layout.key != key {
+            log::warn!(
+                "multi-pod layout cache returned a key-mismatched entry; falling back to direct solve"
+            );
+            return prep.solve();
+        }
+
+        prep.apply_layout(layout)
     }
 
     fn prepare(self) -> BuilderPrep {
@@ -705,6 +708,47 @@ struct BuilderPrep {
 }
 
 impl BuilderPrep {
+    fn layout_key(&self) -> LayoutKey {
+        LayoutKey::from_inputs(
+            &self.costs,
+            &self.deps,
+            &self.output_public_indices,
+            &self.params,
+        )
+    }
+
+    fn solve(self) -> Result<SolvedMultiPod> {
+        let input = solver::SolverInput {
+            num_statements: self.statements.len(),
+            costs: &self.costs,
+            deps: &self.deps,
+            output_public_indices: &self.output_public_indices,
+            params: &self.params,
+            max_pods: self.max_pods,
+        };
+        let solution = solver::solve(&input)?;
+        Ok(self.into_solved(solution))
+    }
+
+    /// Apply a layout without re-validating that its key matches `self`.
+    /// `MultiPodBuilder::apply_layout` performs that check; `solve_cached`
+    /// skips it because the key was just derived from `self`.
+    fn apply_layout(self, layout: &Layout) -> Result<SolvedMultiPod> {
+        if layout.solution.pod_count > self.max_pods {
+            return Err(Error::Solver(format!(
+                "cached layout requires {} PODs, but Options::max_pods is {}",
+                layout.solution.pod_count, self.max_pods
+            )));
+        }
+        let canonical = layout::canonicalize_externals(&self.deps);
+        let solution = layout::solution_from_abstract(
+            &layout.solution,
+            canonical.pods.clone(),
+            canonical.premises.clone(),
+        );
+        Ok(self.into_solved(solution))
+    }
+
     fn into_solved(self, solution: MultiPodSolution) -> SolvedMultiPod {
         SolvedMultiPod {
             params: self.params,
@@ -1978,6 +2022,34 @@ mod tests {
                 .verify()
                 .unwrap_or_else(|_| panic!("POD {} verification failed", i));
         }
+        Ok(())
+    }
+
+    #[test]
+    fn test_solve_from_key_returns_err_for_infeasible_shape() -> Result<()> {
+        // Build a shape that needs more PODs than DEFAULT_MAX_PODS allows.
+        // solve_from_key must return Err rather than panicking, since the cache
+        // layer's build_fn signature has no Result and we don't want a corrupt
+        // or otherwise infeasible cached key to crash the process.
+        let params = Params {
+            max_statements: 2,
+            max_public_statements: 1,
+            ..Params::default()
+        };
+        let vd_set = &*MOCK_VD_SET;
+
+        let mut builder = MultiPodBuilder::new(&params, vd_set);
+        builder.pub_op(FrontendOp::eq(0, 0))?;
+        for i in 1..=(DEFAULT_MAX_PODS as i64 + 1) {
+            builder.priv_op(FrontendOp::eq(i, i))?;
+        }
+
+        let key = builder.layout_key();
+        let result = super::solver::solve_from_key(&key);
+        assert!(
+            result.is_err(),
+            "expected solve_from_key to return Err for an infeasible shape"
+        );
         Ok(())
     }
 }
