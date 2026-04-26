@@ -25,7 +25,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     backends::plonky2::{
         basetypes::{CircuitBuilder, CommonCircuitData, D},
-        circuits::mainpod::CustomPredicateVerification,
+        circuits::{mainpod::CustomPredicateVerification, mux_table::TableGetGenerator},
         error::Result,
         mainpod::{Operation, OperationArg, OperationAux, Statement},
         primitives::merkletree::{
@@ -1362,6 +1362,18 @@ pub trait CircuitBuilderPod<F: RichField + Extendable<D>, const D: usize> {
     fn vec_ref<T: Flattenable>(&mut self, params: &Params, ts: &[T], i: &IndexTarget) -> T;
     /// Like `vec_ref` but only supports arrays up to 64 elements and the index is a simple `Target`
     fn vec_ref_small<T: Flattenable>(&mut self, params: &Params, ts: &[T], i: Target) -> T;
+    /// Like `vec_ref` but for wide rows: random-accesses a precomputed hash of each entry, then
+    /// materializes the selected row via a witness generator and constrains its hash. Cheaper than
+    /// `vec_ref` when each entry has many fields, since random access runs only over the 4-field
+    /// hashes. The caller is responsible for precomputing `ts_flattened` and `ts_hashes` once and
+    /// reusing the same slices across multiple lookups.
+    fn vec_ref_projected<T: Flattenable>(
+        &mut self,
+        params: &Params,
+        ts_flattened: &[Vec<Target>],
+        ts_hashes: &[HashOutTarget],
+        i: &IndexTarget,
+    ) -> T;
     fn select_flattenable<T: Flattenable>(
         &mut self,
         params: &Params,
@@ -1764,12 +1776,6 @@ impl CircuitBuilderPod<F, D> for CircuitBuilder {
         self.random_access(i.high, chunk_res)
     }
 
-    // TODO: Implement a version of vec_ref for types `T` which are big and support hashing.
-    // The idea would be the following: Take the array `ts` and hash each element.  Then do the
-    // random access on the hash result.  Finally "unhash" to recover the resolved element.
-    // We don't want to hash each element from the array each time, so we should cache the hashed
-    // result.  For that we can create a wrapper over `T: Flattenable` that caches the hash, and
-    // then do `ts: &[HashCache<T>]`.
     fn vec_ref<T: Flattenable>(&mut self, params: &Params, ts: &[T], i: &IndexTarget) -> T {
         let matrix_row_ref = |builder: &mut CircuitBuilder, m: &[Vec<Target>], i| {
             let num_rows = m.len();
@@ -1791,6 +1797,28 @@ impl CircuitBuilderPod<F, D> for CircuitBuilder {
 
         let flattened_ts = ts.iter().map(|t| t.flatten()).collect::<Vec<_>>();
         T::from_flattened(params, &matrix_row_ref(self, &flattened_ts, i))
+    }
+
+    fn vec_ref_projected<T: Flattenable>(
+        &mut self,
+        params: &Params,
+        ts_flattened: &[Vec<Target>],
+        ts_hashes: &[HashOutTarget],
+        i: &IndexTarget,
+    ) -> T {
+        assert_eq!(ts_flattened.len(), ts_hashes.len());
+        let selected_hash = self.vec_ref(params, ts_hashes, i);
+        let selected_flattened = self.add_virtual_targets(T::size(params));
+        let selected_flattened_hash =
+            self.hash_n_to_hash_no_pad::<PoseidonHash>(selected_flattened.clone());
+        self.connect_hashes(selected_hash, selected_flattened_hash);
+        let result = T::from_flattened(params, &selected_flattened);
+        self.add_simple_generator(TableGetGenerator::new(
+            i.clone(),
+            ts_flattened.to_vec(),
+            selected_flattened,
+        ));
+        result
     }
 
     fn vec_ref_small<T: Flattenable>(&mut self, params: &Params, ts: &[T], i: Target) -> T {

@@ -107,11 +107,11 @@ impl MuxTableTarget {
         rev_resolved_tagged_flattened.reverse();
         let resolved_tagged_flattened = rev_resolved_tagged_flattened;
 
-        builder.add_simple_generator(TableGetGenerator {
-            index: index.clone(),
-            tagged_entries: self.tagged_entries.clone(),
-            get_tagged_entry: resolved_tagged_flattened.clone(),
-        });
+        builder.add_simple_generator(TableGetGenerator::new(
+            index.clone(),
+            self.tagged_entries.clone(),
+            resolved_tagged_flattened.clone(),
+        ));
         measure_gates_end!(builder, measure);
         TableEntryTarget {
             params: self.params.clone(),
@@ -123,20 +123,16 @@ impl MuxTableTarget {
 #[derive(Debug, Clone, Default)]
 pub struct TableGetGenerator {
     index: IndexTarget,
-    tagged_entries: Vec<Vec<Target>>,
-    get_tagged_entry: Vec<Target>,
+    entries: Vec<Vec<Target>>,
+    revealed_entry: Vec<Target>,
 }
 
 impl TableGetGenerator {
-    pub fn new(
-        index: IndexTarget,
-        tagged_entries: Vec<Vec<Target>>,
-        get_tagged_entry: Vec<Target>,
-    ) -> Self {
+    pub fn new(index: IndexTarget, entries: Vec<Vec<Target>>, revealed_entry: Vec<Target>) -> Self {
         Self {
             index,
-            tagged_entries,
-            get_tagged_entry,
+            entries,
+            revealed_entry,
         }
     }
 }
@@ -149,7 +145,7 @@ impl<F: RichField + Extendable<D>, const D: usize> SimpleGenerator<F, D> for Tab
     fn dependencies(&self) -> Vec<Target> {
         [self.index.low, self.index.high]
             .into_iter()
-            .chain(self.tagged_entries.iter().flatten().copied())
+            .chain(self.entries.iter().flatten().copied())
             .collect()
     }
 
@@ -162,12 +158,12 @@ impl<F: RichField + Extendable<D>, const D: usize> SimpleGenerator<F, D> for Tab
         let index_high = witness.get_target(self.index.high);
         let index = (index_low + index_high * F::from_canonical_usize(1 << 6)).to_canonical_u64();
 
-        let entry = witness.get_targets(&self.tagged_entries[index as usize]);
+        let entry = witness.get_targets(&self.entries[index as usize]);
 
-        for (target, value) in self.get_tagged_entry.iter().zip(
+        for (target, value) in self.revealed_entry.iter().zip(
             entry
                 .iter()
-                .chain(iter::repeat(&F::ZERO).take(self.get_tagged_entry.len())),
+                .chain(iter::repeat(&F::ZERO).take(self.revealed_entry.len())),
         ) {
             out_buffer.set_target(*target, *value)?;
         }
@@ -180,12 +176,12 @@ impl<F: RichField + Extendable<D>, const D: usize> SimpleGenerator<F, D> for Tab
         dst.write_target(self.index.low)?;
         dst.write_target(self.index.high)?;
 
-        dst.write_usize(self.tagged_entries.len())?;
-        for tagged_entry in &self.tagged_entries {
-            dst.write_target_vec(tagged_entry)?;
+        dst.write_usize(self.entries.len())?;
+        for entry in &self.entries {
+            dst.write_target_vec(entry)?;
         }
 
-        dst.write_target_vec(&self.get_tagged_entry)
+        dst.write_target_vec(&self.revealed_entry)
     }
 
     fn deserialize(src: &mut Buffer, _common_data: &CommonCircuitData<F, D>) -> IoResult<Self> {
@@ -195,16 +191,16 @@ impl<F: RichField + Extendable<D>, const D: usize> SimpleGenerator<F, D> for Tab
             high: src.read_target()?,
         };
         let len = src.read_usize()?;
-        let mut tagged_entries = Vec::with_capacity(len);
+        let mut entries = Vec::with_capacity(len);
         for _ in 0..len {
-            tagged_entries.push(src.read_target_vec()?);
+            entries.push(src.read_target_vec()?);
         }
-        let get_tagged_entry = src.read_target_vec()?;
+        let revealed_entry = src.read_target_vec()?;
 
         Ok(Self {
             index,
-            tagged_entries,
-            get_tagged_entry,
+            entries,
+            revealed_entry,
         })
     }
 }

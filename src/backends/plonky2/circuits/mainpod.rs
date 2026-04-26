@@ -29,7 +29,7 @@ use crate::{
                 StatementTarget, StatementTmplArgTarget, StatementTmplTarget, ValueTarget,
             },
             hash::{hash_from_state_circuit, precompute_hash_state},
-            mux_table::{MuxTableTarget, TableEntryTarget, TableGetGenerator},
+            mux_table::{MuxTableTarget, TableEntryTarget},
         },
         emptypod::EmptyPod,
         error::Result,
@@ -90,30 +90,6 @@ struct StatementCache<const MAX_EQS: usize> {
     op_args: Vec<StatementTarget>,
 }
 
-/// Resolves a row from `ts` by random-accessing a projected hash table and then unhashing the
-/// selected row with a witness generator. This is cheaper than random-accessing each column of a
-/// wide row.
-fn vec_ref_projected<T: Flattenable>(
-    params: &Params,
-    builder: &mut CircuitBuilder,
-    ts: &[T],
-    ts_hashes: &[HashOutTarget],
-    i: &crate::backends::plonky2::circuits::common::IndexTarget,
-) -> T {
-    assert_eq!(ts.len(), ts_hashes.len());
-    let selected_hash = builder.vec_ref(params, ts_hashes, i);
-    let selected_flattened = builder.add_virtual_targets(T::size(params));
-    let selected_flattened_hash =
-        builder.hash_n_to_hash_no_pad::<PoseidonHash>(selected_flattened.clone());
-    builder.connect_hashes(selected_hash, selected_flattened_hash);
-    builder.add_simple_generator(TableGetGenerator::new(
-        i.clone(),
-        ts.iter().map(|entry| entry.flatten()).collect(),
-        selected_flattened.clone(),
-    ));
-    T::from_flattened(params, &selected_flattened)
-}
-
 impl<const MAX_EQS: usize> StatementCache<MAX_EQS> {
     fn new(
         params: &Params,
@@ -121,22 +97,26 @@ impl<const MAX_EQS: usize> StatementCache<MAX_EQS> {
         builder: &mut CircuitBuilder,
         op: &OperationTarget,
         st: &StatementTarget,
-        prev_statements: &[StatementTarget],
+        prev_statement_flatteneds: &[Vec<Target>],
         prev_statement_hashes: &[HashOutTarget],
     ) -> Self {
-        let op_args = if prev_statements.is_empty() {
+        let op_args = if prev_statement_flatteneds.is_empty() {
             (0..max_operation_args)
                 .map(|_| StatementTarget::new_native(builder, params, NativePredicate::None, &[]))
                 .collect_vec()
         } else {
-            assert_eq!(prev_statements.len(), prev_statement_hashes.len());
             // `op.args` is a vector of arrays of length 1, so `.flatten()` is just
             // converting a length 1 array into a scalar.
             op.args
                 .iter()
                 .take(max_operation_args)
                 .map(|i| {
-                    vec_ref_projected(params, builder, prev_statements, prev_statement_hashes, i)
+                    builder.vec_ref_projected(
+                        params,
+                        prev_statement_flatteneds,
+                        prev_statement_hashes,
+                        i,
+                    )
                 })
                 .collect::<Vec<_>>()
         };
@@ -221,7 +201,7 @@ fn verify_operation_public_statement_circuit(
     builder: &mut CircuitBuilder,
     st: &StatementTarget,
     op: &OperationTarget,
-    prev_statements: &[StatementTarget],
+    prev_statement_flatteneds: &[Vec<Target>],
     prev_statement_hashes: &[HashOutTarget],
 ) -> Result<()> {
     let measure = measure_gates_begin!(builder, "OpVerifyPub");
@@ -238,7 +218,7 @@ fn verify_operation_public_statement_circuit(
         builder,
         op,
         st,
-        prev_statements,
+        prev_statement_flatteneds,
         prev_statement_hashes,
     );
     measure_gates_end!(builder, measure_resolve_op_args);
@@ -471,7 +451,7 @@ fn verify_operation_circuit(
     builder: &mut CircuitBuilder,
     st: &StatementTarget,
     op: &OperationTarget,
-    prev_statements: &[StatementTarget],
+    prev_statement_flatteneds: &[Vec<Target>],
     prev_statement_hashes: &[HashOutTarget],
     aux_table: &MuxTableTarget,
 ) -> Result<()> {
@@ -489,7 +469,7 @@ fn verify_operation_circuit(
         builder,
         op,
         st,
-        prev_statements,
+        prev_statement_flatteneds,
         prev_statement_hashes,
     );
     measure_gates_end!(builder, measure_resolve_op_args);
@@ -1876,15 +1856,17 @@ fn verify_main_pod_circuit(
     // 2. Calculate the Pod Id from the public statements
     let sts_hash = calculate_statements_hash_circuit(builder, pub_statements);
 
-    // Precompute statement hashes once, then resolve operation args using projected lookups.
-    let statement_hashes = statements
+    // Precompute flattened statements and their hashes once, then resolve operation args using
+    // projected lookups. Reusing the flattened forms avoids re-flattening per op-arg lookup.
+    let statement_flatteneds: Vec<Vec<Target>> = statements.iter().map(|st| st.flatten()).collect();
+    let statement_hashes = statement_flatteneds
         .iter()
-        .map(|st| builder.hash_n_to_hash_no_pad::<PoseidonHash>(st.flatten()))
+        .map(|flat| builder.hash_n_to_hash_no_pad::<PoseidonHash>(flat.clone()))
         .collect_vec();
 
     // 5. Verify input statements
     for (i, (st, op)) in izip!(&main_pod.input_statements, &main_pod.operations).enumerate() {
-        let prev_statements = &statements[..input_statements_offset + i];
+        let prev_statement_flatteneds = &statement_flatteneds[..input_statements_offset + i];
         let prev_statement_hashes = &statement_hashes[..input_statements_offset + i];
         if i < public_statements_offset {
             verify_operation_circuit(
@@ -1892,7 +1874,7 @@ fn verify_main_pod_circuit(
                 builder,
                 st,
                 op,
-                prev_statements,
+                prev_statement_flatteneds,
                 prev_statement_hashes,
                 &aux_table,
             )?;
@@ -1902,7 +1884,7 @@ fn verify_main_pod_circuit(
                 builder,
                 st,
                 op,
-                prev_statements,
+                prev_statement_flatteneds,
                 prev_statement_hashes,
             )?;
         }
@@ -2282,9 +2264,13 @@ mod tests {
         let prev_statements_target: Vec<_> = (0..prev_statements.len())
             .map(|_| builder.add_virtual_statement(false))
             .collect();
-        let prev_statement_hashes_target: Vec<_> = prev_statements_target
+        let prev_statement_flatteneds_target: Vec<Vec<Target>> = prev_statements_target
             .iter()
-            .map(|st| builder.hash_n_to_hash_no_pad::<PoseidonHash>(st.flatten()))
+            .map(|st| st.flatten())
+            .collect();
+        let prev_statement_hashes_target: Vec<_> = prev_statement_flatteneds_target
+            .iter()
+            .map(|flat| builder.hash_n_to_hash_no_pad::<PoseidonHash>(flat.clone()))
             .collect();
 
         let merkle_proofs_target: Vec<_> = aux
@@ -2334,7 +2320,7 @@ mod tests {
             &mut builder,
             &st_target,
             &op_target,
-            &prev_statements_target,
+            &prev_statement_flatteneds_target,
             &prev_statement_hashes_target,
             &aux_table,
         )?;
