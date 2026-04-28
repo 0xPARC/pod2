@@ -59,6 +59,9 @@ pub const SELF_ID_HASH: Hash = Hash([F(0x5), F(0xe), F(0x1), F(0xf)]);
 pub const EMPTY_HASH: Hash = Hash([F::ZERO, F::ZERO, F::ZERO, F::ZERO]);
 
 #[derive(Clone, Copy, Debug, Default, Hash, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+// use pod2:: prefix to help ValueSerializer recognize RawValue
+// most serializers will ignore the name
+#[serde(rename = "pod2::RawValue")]
 pub struct RawValue(
     #[serde(
         serialize_with = "serialize_value_tuple",

@@ -244,7 +244,7 @@ impl Serialize for SecretKey {
         S: Serializer,
     {
         let sk_b64 = serialize_bytes(&self.as_bytes());
-        serializer.serialize_str(&sk_b64)
+        serializer.serialize_newtype_struct("pod2::SecretKey", &sk_b64)
     }
 }
 

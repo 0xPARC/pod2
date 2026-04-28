@@ -161,7 +161,7 @@ impl Serialize for Point {
         S: Serializer,
     {
         let point_b58 = format!("{}", self);
-        serializer.serialize_str(&point_b58)
+        serializer.serialize_newtype_struct("pod2::Point", &point_b58)
     }
 }
 
