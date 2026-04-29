@@ -12,7 +12,10 @@ use crate::{
     backends::plonky2::{
         basetypes::C,
         circuits::common::tests::I64_TEST_PAIRS,
-        mainpod::{OperationArg, OperationAux, Size},
+        mainpod::{
+            extract_custom_predicate_verifications, extract_custom_predicates, OperationArg,
+            OperationAux, Size,
+        },
         primitives::{
             ec::schnorr::SecretKey,
             merkletree::{MerkleClaimAndProof, MerkleTree, MerkleTreeStateTransitionProof},
@@ -1626,6 +1629,444 @@ fn test_normalize_st_tmpl_self_predicate_hash() -> Result<()> {
     let data = builder.build::<C>();
     let proof = data.prove(pw)?;
     data.verify(proof)?;
+
+    Ok(())
+}
+
+fn custom_pred_verify_hash_table_lookup(index: usize, expected_hash: HashOut) -> Result<()> {
+    let params = Params::default();
+    let config = CircuitConfig::standard_recursion_config();
+    let mut builder = CircuitBuilder::new(config);
+
+    let mut custom_pred_verify_hashes = MuxTableTarget::new(&params, HashOutTarget::size(&params));
+    let hash0 = builder.constant_hash(HashOut {
+        elements: [F(11), F(12), F(13), F(14)],
+    });
+    let hash1 = builder.constant_hash(HashOut {
+        elements: [F(21), F(22), F(23), F(24)],
+    });
+    custom_pred_verify_hashes.push_flattened(
+        &mut builder,
+        OperationAuxTableTag::CustomPredVerify as u32,
+        &hash0.elements,
+    );
+    custom_pred_verify_hashes.push_flattened(
+        &mut builder,
+        OperationAuxTableTag::CustomPredVerify as u32,
+        &hash1.elements,
+    );
+
+    let index_target = IndexTarget::new_virtual(2, &mut builder);
+    let resolved_hash_entry = custom_pred_verify_hashes.get(&mut builder, &index_target);
+    let (aux_tag_ok, resolved_query_hash) = resolved_hash_entry
+        .as_type::<HashOutTarget>(&mut builder, OperationAuxTableTag::CustomPredVerify as u32);
+    let expected_hash_target = builder.constant_hash(expected_hash);
+    builder.assert_one(aux_tag_ok.target);
+    builder.connect_hashes(resolved_query_hash, expected_hash_target);
+
+    let mut pw = PartialWitness::<F>::new();
+    index_target.set_targets(&mut pw, index)?;
+    let data = builder.build::<C>();
+    let proof = data.prove(pw)?;
+    data.verify(proof)?;
+    Ok(())
+}
+
+#[test]
+fn test_custom_pred_verify_hash_table_index_selection() {
+    let hash0 = HashOut {
+        elements: [F(11), F(12), F(13), F(14)],
+    };
+    custom_pred_verify_hash_table_lookup(0, hash0).unwrap();
+    assert!(custom_pred_verify_hash_table_lookup(1, hash0).is_err());
+}
+
+/// Drives `verify_custom_circuit` against a custom_pred_verify_hashes table whose
+/// only real entry stores the hash of `(stored_st, stored_op_type, stored_op_args)`.
+/// The verify-side query is `(verify_st, verify_op_type, verify_op_args)` and points
+/// at row `aux_index_value`. The proof should succeed iff both queries agree and the
+/// index lands on the real row.
+fn helper_verify_custom_mutation(
+    stored_st: &Statement,
+    stored_op_type: &OperationType,
+    stored_op_args: &[Statement],
+    verify_st: &Statement,
+    verify_op_type: &OperationType,
+    verify_op_args: &[Statement],
+    aux_index_value: usize,
+) -> Result<()> {
+    let params = Params::default();
+    let pad = |v: &[Statement]| {
+        assert!(v.len() <= BASE_PARAMS.max_operation_args);
+        let mut padded = v.to_vec();
+        while padded.len() < BASE_PARAMS.max_operation_args {
+            padded.push(Statement::None);
+        }
+        padded
+    };
+    let stored_op_args = pad(stored_op_args);
+    let verify_op_args = pad(verify_op_args);
+
+    let config = CircuitConfig::standard_recursion_config();
+    let mut builder = CircuitBuilder::new(config);
+
+    let stored_st_target = builder.add_virtual_statement(false);
+    let stored_op_type_target = builder.add_virtual_operation_type();
+    let stored_op_args_target: Vec<_> = (0..BASE_PARAMS.max_operation_args)
+        .map(|_| builder.add_virtual_statement(false))
+        .collect();
+    let stored_hash = CustomPredicateVerifyQueryTarget {
+        statement: stored_st_target.clone(),
+        op_type: stored_op_type_target.clone(),
+        op_args: stored_op_args_target.clone(),
+    }
+    .hash(&mut builder);
+
+    let mut tbl = MuxTableTarget::new(&params, HashOutTarget::size(&params));
+    tbl.push_flattened(&mut builder, OperationAuxTableTag::None as u32, &[]);
+    tbl.push(
+        &mut builder,
+        OperationAuxTableTag::CustomPredVerify as u32,
+        &stored_hash,
+    );
+
+    let verify_st_target = builder.add_virtual_statement(false);
+    let verify_op_type_target = builder.add_virtual_operation_type();
+    let verify_op_args_target: Vec<_> = (0..BASE_PARAMS.max_operation_args)
+        .map(|_| builder.add_virtual_statement(false))
+        .collect();
+    let aux_index = IndexTarget::new_virtual(2, &mut builder);
+
+    let ok = verify_custom_circuit(
+        &mut builder,
+        &verify_st_target,
+        &verify_op_type_target,
+        &aux_index,
+        &verify_op_args_target,
+        &tbl,
+    );
+    builder.assert_one(ok.target);
+
+    let mut pw = PartialWitness::<F>::new();
+    stored_st_target.set_targets(&mut pw, &stored_st.clone().into())?;
+    stored_op_type_target.set_targets(&mut pw, stored_op_type)?;
+    for (t, s) in stored_op_args_target.iter().zip(stored_op_args.iter()) {
+        t.set_targets(&mut pw, &s.clone().into())?;
+    }
+    verify_st_target.set_targets(&mut pw, &verify_st.clone().into())?;
+    verify_op_type_target.set_targets(&mut pw, verify_op_type)?;
+    for (t, s) in verify_op_args_target.iter().zip(verify_op_args.iter()) {
+        t.set_targets(&mut pw, &s.clone().into())?;
+    }
+    aux_index.set_targets(&mut pw, aux_index_value)?;
+
+    let data = builder.build::<C>();
+    let proof = data.prove(pw)?;
+    data.verify(proof)?;
+    Ok(())
+}
+
+/// Builds the test predicate `p(id, secret_id) = AND(Equal(id["score"], 42),
+/// Equal(secret_id["key"], id["score"]))` and returns the public ref to predicate 0.
+fn make_score_key_predicate(params: &Params) -> frontend::Result<CustomPredicateRef> {
+    use NativePredicate as NP;
+    use StatementTmplBuilder as STB;
+    let mut cpb = CustomPredicateBatchBuilder::new(params.clone(), "batch".into());
+    let stb0 = STB::new_from_pred(NP::Equal)
+        .arg(("id", "score"))
+        .arg(literal(42));
+    let stb1 = STB::new_from_pred(NP::Equal)
+        .arg(("secret_id", "key"))
+        .arg(("id", "score"));
+    cpb.predicate_and("p", &["id"], &["secret_id"], &[stb0, stb1])?;
+    let batch = cpb.finish()?;
+    Ok(CustomPredicateRef::new(batch, 0))
+}
+
+#[test]
+fn test_verify_custom_circuit_hash_binding() -> frontend::Result<()> {
+    let params = Params::default();
+    let cp = make_score_key_predicate(&params)?;
+
+    let dict = Hash([F(1), F(2), F(3), F(4)]);
+    let secret_dict = Hash([F(6), F(7), F(8), F(9)]);
+    let op_args = vec![
+        Statement::equal(AnchoredKey::new(dict, Key::from("score")), Value::from(42)),
+        Statement::equal(
+            AnchoredKey::new(secret_dict, Key::from("key")),
+            AnchoredKey::new(dict, Key::from("score")),
+        ),
+    ];
+    let st = Statement::Custom(cp.clone(), vec![value_ref(Value::from(dict)), value_ref(0)]);
+    let op_type = OperationType::Custom(cp);
+
+    // Positive: identical inputs at the real row.
+    helper_verify_custom_mutation(&st, &op_type, &op_args, &st, &op_type, &op_args, 1).unwrap();
+
+    // aux_index points at the None row -> aux_tag_ok must fail.
+    assert!(
+        helper_verify_custom_mutation(&st, &op_type, &op_args, &st, &op_type, &op_args, 0).is_err()
+    );
+
+    // Swap two op_args -> hash includes positions, must fail.
+    let mut swapped = op_args.clone();
+    swapped.swap(0, 1);
+    assert!(
+        helper_verify_custom_mutation(&st, &op_type, &op_args, &st, &op_type, &swapped, 1).is_err()
+    );
+
+    // Mutate one op_arg's literal -> hash diverges, must fail.
+    let mut bad_arg = op_args.clone();
+    bad_arg[0] = Statement::equal(
+        AnchoredKey::new(dict, Key::from("score")),
+        Value::from(0xbad),
+    );
+    assert!(
+        helper_verify_custom_mutation(&st, &op_type, &op_args, &st, &op_type, &bad_arg, 1).is_err()
+    );
+
+    // Mutate the statement -> hash diverges, must fail.
+    assert!(helper_verify_custom_mutation(
+        &st,
+        &op_type,
+        &op_args,
+        &Statement::None,
+        &op_type,
+        &op_args,
+        1,
+    )
+    .is_err());
+
+    Ok(())
+}
+
+/// Drives `verify_operation_circuit` against a real custom-predicate aux scenario.
+/// Builds the predicates table and the split aux tables via the production
+/// `build_operation_aux_table_circuit`. Tests vary `aux` to point the operation at
+/// different rows in the aux table.
+#[allow(clippy::too_many_arguments)]
+fn helper_verify_operation_through_aux_table(
+    params: &Params,
+    custom_predicates: &[CustomPredicateRef],
+    custom_predicate_verifications: &[CustomPredicateVerification],
+    st: mainpod::Statement,
+    op_type: OperationType,
+    op_args_indices: Vec<OperationArg>,
+    prev_statements: Vec<mainpod::Statement>,
+    aux: OperationAux,
+) -> Result<()> {
+    assert_eq!(custom_predicates.len(), params.max_custom_predicates);
+    assert_eq!(
+        custom_predicate_verifications.len(),
+        params.max_custom_predicate_verifications
+    );
+
+    let config = CircuitConfig::standard_recursion_config();
+    let mut builder = CircuitBuilder::new(config);
+
+    let st_target = builder.add_virtual_statement(false);
+    let op_target = builder.add_virtual_operation(params);
+    let prev_statements_target: Vec<_> = (0..prev_statements.len())
+        .map(|_| builder.add_virtual_statement(false))
+        .collect();
+    let prev_statement_flatteneds_target: Vec<Vec<Target>> = prev_statements_target
+        .iter()
+        .map(|st| st.flatten())
+        .collect();
+    let prev_statement_hashes_target: Vec<_> = prev_statement_flatteneds_target
+        .iter()
+        .map(|flat| builder.hash_n_to_hash_no_pad::<PoseidonHash>(flat.clone()))
+        .collect();
+
+    let custom_predicates_target: Vec<_> = (0..params.max_custom_predicates)
+        .map(|_| CustomPredicateInBatchTarget::new_virtual(&mut builder))
+        .collect();
+    let custom_predicate_verifications_target: Vec<_> = (0..params
+        .max_custom_predicate_verifications)
+        .map(|_| CustomPredicateVerifyEntryTarget::new_virtual(params, &mut builder))
+        .collect();
+
+    let custom_predicate_table =
+        build_custom_predicate_table_circuit(params, &mut builder, &custom_predicates_target)?;
+
+    // Construct an AuxTableInputTargets that has only the custom_predicate_verifications populated;
+    // the other capacities are zero in this test's params, so the other vectors stay empty.
+    let aux_table_input = AuxTableInputTargets {
+        merkle_proofs: MerkleProofsTarget::new_virtual(params, &mut builder),
+        merkle_transition_proofs: MerkleTransitionProofsTarget::new_virtual(params, &mut builder),
+        open_input_statements: (0..params.max_open_input_statements)
+            .map(|_| OpenInputStatementTarget::new_virtual(&mut builder))
+            .collect(),
+        public_key_of_sks: (0..params.max_public_key_of)
+            .map(|_| builder.add_virtual_biguint320_target())
+            .collect(),
+        signed_bys: (0..params.max_signed_by)
+            .map(|_| SignedByTarget::new_virtual(&mut builder))
+            .collect(),
+        custom_predicate_verifications: custom_predicate_verifications_target.clone(),
+    };
+
+    let aux_tables = build_operation_aux_table_circuit(
+        params,
+        &mut builder,
+        &custom_predicate_table,
+        &[],
+        &aux_table_input,
+    )?;
+
+    verify_operation_circuit(
+        params,
+        &mut builder,
+        &st_target,
+        &op_target,
+        &prev_statement_flatteneds_target,
+        &prev_statement_hashes_target,
+        &aux_tables,
+    )?;
+
+    let op = mainpod::Operation(op_type, op_args_indices, aux);
+
+    let mut pw = PartialWitness::<F>::new();
+    st_target.set_targets(&mut pw, &st)?;
+    op_target.set_targets(&mut pw, params, &op)?;
+    for (t, s) in prev_statements_target.iter().zip(prev_statements.iter()) {
+        t.set_targets(&mut pw, s)?;
+    }
+    for (cp_target, cpr) in custom_predicates_target
+        .iter()
+        .zip(custom_predicates.iter())
+    {
+        let mtp = cpr
+            .batch
+            .mt()
+            .prove(&Value::from(cpr.index as i64).raw())
+            .expect("predicate index exists in batch MT")
+            .1;
+        cp_target.set_targets(&mut pw, cpr, &mtp)?;
+    }
+    for (cpv_target, cpv) in custom_predicate_verifications_target
+        .iter()
+        .zip(custom_predicate_verifications.iter())
+    {
+        cpv_target.set_targets(&mut pw, params, cpv)?;
+    }
+
+    let data = builder.build::<C>();
+    let proof = data.prove(pw)?;
+    data.verify(proof)?;
+    Ok(())
+}
+
+#[test]
+fn test_verify_operation_custom_aux_index_binding() -> frontend::Result<()> {
+    let params = Params {
+        max_input_pods: 0,
+        max_open_input_statements: 0,
+        max_custom_predicates: 1,
+        max_custom_predicate_verifications: 2,
+        max_custom_predicate_wildcards: 4,
+        max_public_key_of: 0,
+        max_signed_by: 0,
+        containers: middleware::ParamsContainers {
+            state: middleware::ParamsMerkleProofs {
+                max_small: 0,
+                max_medium: 0,
+            },
+            transition: middleware::ParamsMerkleProofs {
+                max_small: 0,
+                max_medium: 0,
+            },
+            ..middleware::ParamsContainers::default()
+        },
+        ..Params::default()
+    };
+    let cp = make_score_key_predicate(&params)?;
+
+    // Two distinct scenarios that both validate the predicate, so each produces a different
+    // CustomPredVerify row in the aux table (different op_args -> different stored hash).
+    let scenario = |id_seed: F, secret_seed: F| -> (Statement, Vec<Statement>) {
+        let id = Hash([id_seed, F(2), F(3), F(4)]);
+        let secret = Hash([secret_seed, F(7), F(8), F(9)]);
+        let op_args = vec![
+            Statement::equal(AnchoredKey::new(id, Key::from("score")), Value::from(42)),
+            Statement::equal(
+                AnchoredKey::new(secret, Key::from("key")),
+                AnchoredKey::new(id, Key::from("score")),
+            ),
+        ];
+        let st = Statement::Custom(cp.clone(), vec![value_ref(Value::from(id))]);
+        (st, op_args)
+    };
+    let (st_a, op_args_a) = scenario(F(1), F(6));
+    let (st_b, op_args_b) = scenario(F(11), F(16));
+
+    // Use the production extraction routines so the test exercises the same wildcard
+    // derivation and aux-index assignment as MainPodBuilder.
+    let mid_ops = vec![
+        crate::middleware::Operation::Custom(cp.clone(), op_args_a.clone()),
+        crate::middleware::Operation::Custom(cp.clone(), op_args_b),
+    ];
+    let mid_sts = vec![st_a.clone(), st_b];
+    let custom_predicates = extract_custom_predicates(&params, &mid_ops)?;
+    let mut aux_list = vec![OperationAux::None; mid_ops.len()];
+    let custom_predicate_verifications = extract_custom_predicate_verifications(
+        &params,
+        &mut aux_list,
+        &mid_ops,
+        &mid_sts,
+        &custom_predicates,
+    )?;
+
+    // prev_statements[0] = Statement::None so that op_arg padding (OperationArg::None,
+    // which resolves to Index(0)) matches the Statement::None padding inside the cpv entry.
+    let prev_statements: Vec<mainpod::Statement> = std::iter::once(Statement::None)
+        .chain(op_args_a.iter().cloned())
+        .map(|s| s.into())
+        .collect();
+    let st_a_mp: mainpod::Statement = st_a.into();
+    let op_type = OperationType::Custom(cp);
+    let op_args_indices = vec![OperationArg::Index(1), OperationArg::Index(2)];
+
+    // Positive: aux points at the real custom row.
+    helper_verify_operation_through_aux_table(
+        &params,
+        &custom_predicates,
+        &custom_predicate_verifications,
+        st_a_mp.clone(),
+        op_type.clone(),
+        op_args_indices.clone(),
+        prev_statements.clone(),
+        OperationAux::CustomPredVerifyIndex(0),
+    )
+    .unwrap();
+
+    // Mutation: aux points at the leading None row (non-custom slot).
+    // The custom_pred_verify_hashes entry there has the None tag, so aux_tag_ok fails.
+    assert!(helper_verify_operation_through_aux_table(
+        &params,
+        &custom_predicates,
+        &custom_predicate_verifications,
+        st_a_mp.clone(),
+        op_type.clone(),
+        op_args_indices.clone(),
+        prev_statements.clone(),
+        OperationAux::None,
+    )
+    .is_err());
+
+    // Mutation: aux points at the other custom row, whose stored hash binds different op_args.
+    // aux_tag_ok passes, query_ok fails.
+    assert!(helper_verify_operation_through_aux_table(
+        &params,
+        &custom_predicates,
+        &custom_predicate_verifications,
+        st_a_mp,
+        op_type,
+        op_args_indices,
+        prev_statements,
+        OperationAux::CustomPredVerifyIndex(1),
+    )
+    .is_err());
 
     Ok(())
 }

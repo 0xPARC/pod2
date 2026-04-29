@@ -373,22 +373,14 @@ fn append_container_proofs_operation_aux_table_circuit(
         verify_merkle_state_transition_circuit(builder, merkle_transition_proof);
         let entry = MerkleTreeStateTransitionClaimTarget::from(merkle_transition_proof.clone());
 
-        tables.push_general(
-            builder,
-            OperationAuxTableTag::MerkleTransitionProof,
-            &entry,
-        );
+        tables.push_general(builder, OperationAuxTableTag::MerkleTransitionProof, &entry);
     }
     // Medium Merkle state transition proofs: verify op proof (insert/update/delete)
     for merkle_transition_proof in &merkle_transition_proofs.medium {
         verify_merkle_state_transition_circuit(builder, merkle_transition_proof);
         let entry = MerkleTreeStateTransitionClaimTarget::from(merkle_transition_proof.clone());
 
-        tables.push_general(
-            builder,
-            OperationAuxTableTag::MerkleTransitionProof,
-            &entry,
-        );
+        tables.push_general(builder, OperationAuxTableTag::MerkleTransitionProof, &entry);
     }
 }
 
