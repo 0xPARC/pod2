@@ -52,6 +52,8 @@ use std::{
     fmt,
 };
 
+use serde::{Deserialize, Serialize};
+
 use crate::{
     frontend::{MainPod, MainPodBuilder, Operation},
     middleware::{Hash, MainPodProver, Params, Statement, VDSet, Value},
@@ -60,14 +62,95 @@ use crate::{
 mod cost;
 mod deps;
 pub mod diagnostics;
-mod layout;
 mod solver;
 
 use cost::StatementCost;
-use deps::{DependencyGraph, StatementSource};
+use deps::{DependencyGraph, ExternalDependency, StatementSource};
 pub use diagnostics::{ResourceSummary, SolutionBreakdown};
-pub use layout::{Layout, LayoutKey};
-pub use solver::MultiPodSolution;
+pub use solver::{AbstractDep, InputShape, OutputShape};
+
+/// Side table pairing an [`OutputShape`]'s positional indices with the
+/// concrete pod hashes and external premises they refer to. The solver
+/// itself never sees concrete data; the build layer holds this index and
+/// uses it to reattach concrete hashes/premises after the solver returns.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ExternalIndex {
+    pods: Vec<Hash>,
+    premises: Vec<ExternalDependency>,
+}
+
+/// A reusable solver result: the input shape it was solved for paired with
+/// the resulting output shape. The pair is enough to skip the solver on a
+/// future builder of the same shape.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct Layout {
+    pub shape: InputShape,
+    pub solution: OutputShape,
+}
+
+/// Build the symbolic [`InputShape`] and the concrete [`ExternalIndex`] that
+/// matches it. External pods and premises are indexed by first appearance in
+/// `deps`, so two builders with the same dependency structure produce equal
+/// `InputShape`s and position-compatible `ExternalIndex`es.
+fn build_shape_and_index<'a>(
+    costs: Vec<StatementCost>,
+    deps: &'a DependencyGraph,
+    output_public_indices: Vec<usize>,
+    params: &Params,
+    max_pods: usize,
+) -> (InputShape, ExternalIndex) {
+    let mut pods: Vec<Hash> = Vec::new();
+    let mut pod_idx: HashMap<Hash, usize> = HashMap::new();
+    let mut premises: Vec<ExternalDependency> = Vec::new();
+    // Keyed by reference to avoid an O(edges) ExternalDependency clone storm
+    // on the (common) repeated-premise case. Each premise is cloned exactly
+    // once, into `premises`.
+    let mut premise_idx: HashMap<&'a ExternalDependency, usize> = HashMap::new();
+    let mut premise_pod: Vec<usize> = Vec::new();
+
+    let dep_edges: Vec<Vec<AbstractDep>> = deps
+        .statement_deps
+        .iter()
+        .map(|edges| {
+            edges
+                .iter()
+                .map(|src| match src {
+                    StatementSource::Internal(i) => AbstractDep::Internal(*i),
+                    StatementSource::External(ext) => {
+                        let pod = *pod_idx.entry(ext.pod_hash).or_insert_with(|| {
+                            let idx = pods.len();
+                            pods.push(ext.pod_hash);
+                            idx
+                        });
+                        let premise = if let Some(&idx) = premise_idx.get(ext) {
+                            idx
+                        } else {
+                            let idx = premises.len();
+                            premises.push(ext.clone());
+                            premise_pod.push(pod);
+                            premise_idx.insert(ext, idx);
+                            idx
+                        };
+                        AbstractDep::External { pod, premise }
+                    }
+                })
+                .collect()
+        })
+        .collect();
+
+    let shape = InputShape {
+        costs,
+        dep_edges,
+        output_public_indices,
+        params: params.clone(),
+        num_external_pods: pods.len(),
+        premise_pod,
+        max_pods,
+    };
+    let index = ExternalIndex { pods, premises };
+    (shape, index)
+}
 
 /// Error type for multi-POD operations.
 #[derive(Debug, thiserror::Error)]
@@ -192,16 +275,15 @@ pub struct SolvedMultiPod {
     input_pods: Vec<MainPod>,
     statements: Vec<Statement>,
     operations: Vec<Operation>,
-    output_public_indices: Vec<usize>,
     operations_wildcard_values: HashMap<usize, Vec<(usize, Value)>>,
-    solution: MultiPodSolution,
-    deps: DependencyGraph,
-    layout_key: LayoutKey,
+    solution: OutputShape,
+    external_index: ExternalIndex,
+    shape: InputShape,
 }
 
 impl SolvedMultiPod {
     /// Get the solver's solution (POD assignments).
-    pub fn solution(&self) -> &MultiPodSolution {
+    pub fn solution(&self) -> &OutputShape {
         &self.solution
     }
 
@@ -210,8 +292,8 @@ impl SolvedMultiPod {
     /// [`MultiPodBuilder::solve_cached`] to skip the solver.
     pub fn layout(&self) -> Layout {
         Layout {
-            key: self.layout_key.clone(),
-            solution: layout::abstract_from_solution(&self.solution),
+            shape: self.shape.clone(),
+            solution: self.solution.clone(),
         }
     }
 
@@ -302,7 +384,7 @@ impl SolvedMultiPod {
         // For the output pod, make statements public in the original order.
         // Intermediate pods use the solver-selected public set.
         if pod_idx == solution.pod_count - 1 {
-            for idx in &self.output_public_indices {
+            for idx in &self.shape.output_public_indices {
                 builder.reveal(&self.statements[*idx])?;
             }
         } else {
@@ -314,7 +396,7 @@ impl SolvedMultiPod {
         // Forward external premises only when the solver selected them as public
         // for this POD. These do not require local proving in this POD.
         for ext_premise_idx in &solution.pod_public_external_premises[pod_idx] {
-            let ext_premise = &solution.external_premises[*ext_premise_idx];
+            let ext_premise = &self.external_index.premises[*ext_premise_idx];
             builder.reveal(&ext_premise.statement)?;
         }
 
@@ -333,7 +415,7 @@ impl SolvedMultiPod {
         let mut external_pods: BTreeSet<usize> = BTreeSet::new();
 
         for external_idx in &solution.pod_external_inputs[pod_idx] {
-            let pod_hash = solution.external_pod_hashes[*external_idx];
+            let pod_hash = self.external_index.pods[*external_idx];
             let idx = self
                 .input_pods
                 .iter()
@@ -407,16 +489,15 @@ impl fmt::Display for SolvedMultiPod {
                 let is_public = public_stmts.contains(&stmt_idx);
                 let visibility = if is_public { "public" } else { "private" };
 
-                // Show dependencies for this statement
-                let deps = &self.deps.statement_deps[stmt_idx];
+                let deps = &self.shape.dep_edges[stmt_idx];
                 let dep_str = if deps.is_empty() {
                     String::new()
                 } else {
                     let dep_parts: Vec<String> = deps
                         .iter()
                         .map(|d| match d {
-                            StatementSource::Internal(i) => format!("stmt[{}]", i),
-                            StatementSource::External(_) => "ext".to_string(),
+                            AbstractDep::Internal(i) => format!("stmt[{}]", i),
+                            AbstractDep::External { .. } => "ext".to_string(),
                         })
                         .collect();
                     format!(" ← {}", dep_parts.join(", "))
@@ -560,9 +641,10 @@ impl MultiPodBuilder {
         ResourceSummary::from_costs(&costs, &self.params)
     }
 
-    /// Compute the [`LayoutKey`] this builder would solve for, without running
-    /// the solver. Useful for cache lookups, debugging, or comparing shapes.
-    pub fn layout_key(&self) -> LayoutKey {
+    /// Compute the symbolic [`InputShape`] this builder would solve for,
+    /// without running the solver. Useful for cache lookups, debugging, or
+    /// comparing shapes.
+    pub fn input_shape(&self) -> InputShape {
         let costs: Vec<StatementCost> = self
             .builder
             .operations
@@ -575,13 +657,14 @@ impl MultiPodBuilder {
             &self.builder.operations,
             &external_pod_statements,
         );
-        LayoutKey::from_inputs(
-            &costs,
+        let (shape, _) = build_shape_and_index(
+            costs,
             &deps,
-            &self.output_public_indices,
+            self.output_public_indices.clone(),
             &self.params,
             self.options.max_pods,
-        )
+        );
+        shape
     }
 
     /// Solve the packing problem and return a solved builder ready for proving.
@@ -591,44 +674,52 @@ impl MultiPodBuilder {
 
     /// Apply a previously-computed [`Layout`] to this builder, skipping the
     /// solver. Errors if the builder's shape doesn't match the layout's
-    /// [`LayoutKey`], or if the cached layout's `pod_count` exceeds
+    /// [`InputShape`], or if the cached output's `pod_count` exceeds
     /// [`Options::max_pods`].
     pub fn apply_layout(self, layout: &Layout) -> Result<SolvedMultiPod> {
         let prep = self.prepare();
-        let actual_key = prep.layout_key();
-        layout::check_key_match(&layout.key, &actual_key)?;
-        prep.apply_layout(layout)
+        if prep.shape != layout.shape {
+            return Err(Error::Custom(format!(
+                "layout shape mismatch: cached layout was solved for a different problem shape \
+                 (expected {} statements / {} ext pods / {} premises, got {} / {} / {})",
+                layout.shape.num_statements(),
+                layout.shape.num_external_pods,
+                layout.shape.num_external_premises(),
+                prep.shape.num_statements(),
+                prep.shape.num_external_pods,
+                prep.shape.num_external_premises(),
+            )));
+        }
+        prep.apply_solution(layout.solution.clone())
     }
 
     /// Solve via the layout cache. Subsequent calls with the same
-    /// [`LayoutKey`] (which includes [`Options::max_pods`]) skip the MILP
+    /// [`InputShape`] (which includes [`Options::max_pods`]) skip the MILP
     /// solver and reuse the cached assignment. With the `disk_cache` feature
     /// the cache persists across runs (keyed additionally by git commit);
     /// with `mem_cache` it persists for the process lifetime.
     ///
     /// Robust against cache failures: a cache subsystem error (read failure,
-    /// CBOR deserialize error) or a key-mismatched entry (e.g. corrupted on
-    /// disk) is logged and falls back to a direct solve, so callers always
-    /// get either a valid solution or a typed solver error - never a panic
-    /// from the cache layer.
-    #[cfg(any(feature = "mem_cache", feature = "disk_cache"))]
+    /// CBOR deserialize error) is logged and falls back to a direct solve,
+    /// so callers always get either a valid solution or a typed solver error
+    /// - never a panic from the cache layer.
     pub fn solve_cached(self) -> Result<SolvedMultiPod> {
         let prep = self.prepare();
-        let key = prep.layout_key();
 
-        let entry = match crate::cache::get("multi_pod_layout", &key, solver::solve_from_key) {
-            Ok(entry) => entry,
-            Err(e) => {
-                log::warn!(
-                    "multi-pod layout cache unavailable ({}); falling back to direct solve",
-                    e
-                );
-                return prep.solve();
-            }
-        };
+        let entry =
+            match crate::cache::get("multi_pod_layout", &prep.shape, solver::solve_for_cache) {
+                Ok(entry) => entry,
+                Err(e) => {
+                    log::warn!(
+                        "multi-pod layout cache unavailable ({}); falling back to direct solve",
+                        e
+                    );
+                    return prep.solve();
+                }
+            };
 
-        let layout = match &*entry {
-            Ok(layout) => layout,
+        let solution = match &*entry {
+            Ok(solution) => solution,
             Err(msg) => {
                 return Err(Error::Solver(format!(
                     "cached layout solve was infeasible for this shape: {}",
@@ -637,14 +728,7 @@ impl MultiPodBuilder {
             }
         };
 
-        if layout.key != key {
-            log::warn!(
-                "multi-pod layout cache returned a key-mismatched entry; falling back to direct solve"
-            );
-            return prep.solve();
-        }
-
-        prep.apply_layout(layout)
+        prep.apply_solution(solution.clone())
     }
 
     fn prepare(self) -> BuilderPrep {
@@ -659,94 +743,66 @@ impl MultiPodBuilder {
             .collect();
         let external_pod_statements = build_external_statement_map(&self.input_pods);
         let deps = DependencyGraph::build(&statements, &operations, &external_pod_statements);
+        let (shape, external_index) = build_shape_and_index(
+            costs,
+            &deps,
+            self.output_public_indices,
+            &self.params,
+            self.options.max_pods,
+        );
 
         BuilderPrep {
             params: self.params,
             vd_set: self.vd_set,
             input_pods: self.input_pods,
-            output_public_indices: self.output_public_indices,
             operations_wildcard_values: self.operations_wildcard_values,
             statements,
             operations,
-            costs,
-            deps,
-            max_pods: self.options.max_pods,
+            shape,
+            external_index,
         }
     }
 }
 
 /// Owned, unpacked builder state shared between `solve`, `solve_cached`, and
-/// `apply_layout`.
+/// `apply_layout`. Holds the symbolic [`InputShape`] (for the solver) plus
+/// the [`ExternalIndex`] (for reattaching concrete pod hashes/premises after
+/// the solver returns).
 struct BuilderPrep {
     params: Params,
     vd_set: VDSet,
     input_pods: Vec<MainPod>,
-    output_public_indices: Vec<usize>,
     operations_wildcard_values: HashMap<usize, Vec<(usize, Value)>>,
     statements: Vec<Statement>,
     operations: Vec<Operation>,
-    costs: Vec<StatementCost>,
-    deps: DependencyGraph,
-    max_pods: usize,
+    shape: InputShape,
+    external_index: ExternalIndex,
 }
 
 impl BuilderPrep {
-    fn layout_key(&self) -> LayoutKey {
-        LayoutKey::from_inputs(
-            &self.costs,
-            &self.deps,
-            &self.output_public_indices,
-            &self.params,
-            self.max_pods,
-        )
-    }
-
     fn solve(self) -> Result<SolvedMultiPod> {
-        let input = solver::SolverInput {
-            num_statements: self.statements.len(),
-            costs: &self.costs,
-            deps: &self.deps,
-            output_public_indices: &self.output_public_indices,
-            params: &self.params,
-            max_pods: self.max_pods,
-        };
-        let solution = solver::solve(&input)?;
-        let key = self.layout_key();
-        Ok(self.into_solved(solution, key))
+        let solution = solver::solve(&self.shape)?;
+        self.apply_solution(solution)
     }
 
-    /// Apply a layout without re-validating that its key matches `self`.
-    /// `MultiPodBuilder::apply_layout` performs that check; `solve_cached`
-    /// skips it because the key was just derived from `self`.
-    fn apply_layout(self, layout: &Layout) -> Result<SolvedMultiPod> {
-        if layout.solution.pod_count > self.max_pods {
+    fn apply_solution(self, solution: OutputShape) -> Result<SolvedMultiPod> {
+        if solution.pod_count > self.shape.max_pods {
             return Err(Error::Solver(format!(
                 "cached layout requires {} PODs, but Options::max_pods is {}",
-                layout.solution.pod_count, self.max_pods
+                solution.pod_count, self.shape.max_pods
             )));
         }
-        let canonical = layout::canonicalize_externals(&self.deps);
-        let solution = layout::solution_from_abstract(
-            &layout.solution,
-            canonical.pods.clone(),
-            canonical.premises.clone(),
-        );
-        Ok(self.into_solved(solution, layout.key.clone()))
-    }
-
-    fn into_solved(self, solution: MultiPodSolution, layout_key: LayoutKey) -> SolvedMultiPod {
-        SolvedMultiPod {
+        Ok(SolvedMultiPod {
             params: self.params,
             vd_set: self.vd_set,
             input_pods: self.input_pods,
             statements: self.statements,
             operations: self.operations,
-            output_public_indices: self.output_public_indices,
             operations_wildcard_values: self.operations_wildcard_values,
             solution,
-            deps: self.deps,
-            layout_key,
-        }
+            external_index: self.external_index,
+            shape: self.shape,
+        })
     }
 }
 
@@ -1929,7 +1985,7 @@ mod tests {
     }
 
     #[test]
-    fn test_layout_key_matches_for_same_shape_different_values() -> Result<()> {
+    fn test_input_shape_matches_for_same_shape_different_values() -> Result<()> {
         let params = Params {
             max_statements: 4,
             max_public_statements: 2,
@@ -1937,18 +1993,18 @@ mod tests {
         };
         let vd_set = &*MOCK_VD_SET;
 
-        let key_a = build_chain_with_value(&params, vd_set, 1)?.layout_key();
-        let key_b = build_chain_with_value(&params, vd_set, 999)?.layout_key();
+        let shape_a = build_chain_with_value(&params, vd_set, 1)?.input_shape();
+        let shape_b = build_chain_with_value(&params, vd_set, 999)?.input_shape();
         assert_eq!(
-            key_a, key_b,
-            "two builders with the same shape must produce the same LayoutKey"
+            shape_a, shape_b,
+            "two builders with the same shape must produce the same InputShape"
         );
         Ok(())
     }
 
     #[test]
-    fn test_layout_key_differs_when_max_pods_differs() -> Result<()> {
-        // max_pods is part of the key so cached layouts solved at one bound
+    fn test_input_shape_differs_when_max_pods_differs() -> Result<()> {
+        // max_pods is part of the shape so cached layouts solved at one bound
         // aren't (silently) reused at a tighter bound that the cached
         // pod_count might exceed.
         let params = Params {
@@ -1967,9 +2023,9 @@ mod tests {
         builder_b.pub_op(FrontendOp::eq(1, 1))?;
 
         assert_ne!(
-            builder_a.layout_key(),
-            builder_b.layout_key(),
-            "Options::max_pods must be part of the LayoutKey"
+            builder_a.input_shape(),
+            builder_b.input_shape(),
+            "Options::max_pods must be part of the InputShape"
         );
         Ok(())
     }
@@ -2084,7 +2140,6 @@ mod tests {
         Ok(())
     }
 
-    #[cfg(any(feature = "mem_cache", feature = "disk_cache"))]
     #[test]
     fn test_diamond_custom_predicate_through_solve_cached() -> Result<()> {
         // Exercises the cache reuse path with a non-trivial custom-predicate
@@ -2130,7 +2185,7 @@ mod tests {
                 [contains],
             ))?;
             // Sibling statement varying across instances; the dependency
-            // structure (and thus the LayoutKey) stays constant.
+            // structure (and thus the InputShape) stays constant.
             builder.priv_op(FrontendOp::eq(k, k))?;
             let _a_out = builder.pub_op(FrontendOp::custom(
                 batch.predicate_ref_by_name("pred_a").unwrap(),
@@ -2164,11 +2219,11 @@ mod tests {
     }
 
     #[test]
-    fn test_solve_from_key_returns_err_for_infeasible_shape() -> Result<()> {
+    fn test_solve_for_cache_returns_err_for_infeasible_shape() -> Result<()> {
         // Build a shape that needs more PODs than DEFAULT_MAX_PODS allows.
-        // solve_from_key must return Err rather than panicking, since the cache
+        // solve_for_cache must return Err rather than panicking, since the cache
         // layer's build_fn signature has no Result and we don't want a corrupt
-        // or otherwise infeasible cached key to crash the process.
+        // or otherwise infeasible cached shape to crash the process.
         let params = Params {
             max_statements: 2,
             max_public_statements: 1,
@@ -2182,11 +2237,11 @@ mod tests {
             builder.priv_op(FrontendOp::eq(i, i))?;
         }
 
-        let key = builder.layout_key();
-        let result = super::solver::solve_from_key(&key);
+        let shape = builder.input_shape();
+        let result = super::solver::solve_for_cache(&shape);
         assert!(
             result.is_err(),
-            "expected solve_from_key to return Err for an infeasible shape"
+            "expected solve_for_cache to return Err for an infeasible shape"
         );
         Ok(())
     }
