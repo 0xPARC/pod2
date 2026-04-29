@@ -28,7 +28,7 @@ impl From<&CustomPredicateRef> for CustomPredicateId {
 /// Resource costs for a single statement/operation.
 ///
 /// Each field corresponds to a resource with a per-POD limit in `Params`.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct StatementCost {
     /// Number of merkle proofs used (for Contains/NotContains).
     /// Limit: `params.max_merkle_proofs_containers`

@@ -48,7 +48,7 @@
 //! [`MainPodBuilder`]: crate::frontend::MainPodBuilder
 
 use std::{
-    collections::{BTreeSet, HashMap},
+    collections::{BTreeSet, HashMap, HashSet},
     fmt,
 };
 
@@ -56,7 +56,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     frontend::{MainPod, MainPodBuilder, Operation},
-    middleware::{Hash, MainPodProver, Params, Statement, VDSet, Value},
+    middleware::{hash_fields, Hash, MainPodProver, Params, Statement, ToFields, VDSet, Value},
 };
 
 mod cost;
@@ -82,6 +82,10 @@ struct ExternalIndex {
 /// A reusable solver result: the input shape it was solved for paired with
 /// the resulting output shape. The pair is enough to skip the solver on a
 /// future builder of the same shape.
+///
+/// Both `shape` and `solution` use canonical statement positions (see
+/// [`build_shape_and_index`]); `apply_layout` translates back into the
+/// caller's original numbering when materialising a [`SolvedMultiPod`].
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct Layout {
@@ -90,66 +94,342 @@ pub struct Layout {
 }
 
 /// Build the symbolic [`InputShape`] and the concrete [`ExternalIndex`] that
-/// matches it. External pods and premises are indexed by first appearance in
-/// `deps`, so two builders with the same dependency structure produce equal
-/// `InputShape`s and position-compatible `ExternalIndex`es.
-fn build_shape_and_index<'a>(
+/// matches it, plus the permutation that maps canonical statement positions
+/// back to the caller's original positions.
+///
+/// Externals are indexed by content (sorted pod hash and statement hash);
+/// statements are indexed by topological order with a structural-key
+/// tiebreak. The result is invariant under reordering of structurally
+/// equivalent statements: two builders that produce the same logical
+/// dependency graph hash to the same `InputShape` even if they added
+/// `priv_op`s in different orders.
+///
+/// The permutation `perm[canonical_pos] = original_pos` is what the build
+/// layer uses to translate a canonical [`OutputShape`] back into the
+/// caller's original statement indexing.
+fn build_shape_and_index(
     costs: Vec<StatementCost>,
-    deps: &'a DependencyGraph,
-    output_public_indices: Vec<usize>,
+    deps: &DependencyGraph,
+    output_public_indices: &[usize],
     params: &Params,
     max_pods: usize,
-) -> (InputShape, ExternalIndex) {
-    let mut pods: Vec<Hash> = Vec::new();
-    let mut pod_idx: HashMap<Hash, usize> = HashMap::new();
-    let mut premises: Vec<ExternalDependency> = Vec::new();
-    // Keyed by reference to avoid an O(edges) ExternalDependency clone storm
-    // on the (common) repeated-premise case. Each premise is cloned exactly
-    // once, into `premises`.
-    let mut premise_idx: HashMap<&'a ExternalDependency, usize> = HashMap::new();
-    let mut premise_pod: Vec<usize> = Vec::new();
+) -> (InputShape, ExternalIndex, Vec<usize>) {
+    let externals = canonicalize_externals(deps);
+    let perm = canonicalize_statement_order(deps, &costs, output_public_indices, &externals);
+    let inv_perm = invert_permutation(&perm);
 
-    let dep_edges: Vec<Vec<AbstractDep>> = deps
-        .statement_deps
+    // Move costs into canonical order without per-element clones of the
+    // BTreeSet inside StatementCost.
+    let mut taken: Vec<Option<StatementCost>> = costs.into_iter().map(Some).collect();
+    let canonical_costs: Vec<StatementCost> = perm
         .iter()
-        .map(|edges| {
-            edges
+        .map(|&o| {
+            taken[o]
+                .take()
+                .expect("perm is a permutation, each index visited once")
+        })
+        .collect();
+
+    let canonical_dep_edges: Vec<Vec<AbstractDep>> = perm
+        .iter()
+        .map(|&o| {
+            deps.statement_deps[o]
                 .iter()
                 .map(|src| match src {
-                    StatementSource::Internal(i) => AbstractDep::Internal(*i),
-                    StatementSource::External(ext) => {
-                        let pod = *pod_idx.entry(ext.pod_hash).or_insert_with(|| {
-                            let idx = pods.len();
-                            pods.push(ext.pod_hash);
-                            idx
-                        });
-                        let premise = if let Some(&idx) = premise_idx.get(ext) {
-                            idx
-                        } else {
-                            let idx = premises.len();
-                            premises.push(ext.clone());
-                            premise_pod.push(pod);
-                            premise_idx.insert(ext, idx);
-                            idx
-                        };
-                        AbstractDep::External { pod, premise }
-                    }
+                    StatementSource::Internal(d) => AbstractDep::Internal(inv_perm[*d]),
+                    StatementSource::External(ext) => AbstractDep::External {
+                        pod: externals.pod_idx[&ext.pod_hash],
+                        premise: externals.premise_idx[ext],
+                    },
                 })
                 .collect()
         })
         .collect();
+    let canonical_output_public: Vec<usize> =
+        output_public_indices.iter().map(|&p| inv_perm[p]).collect();
 
     let shape = InputShape {
-        costs,
-        dep_edges,
-        output_public_indices,
+        costs: canonical_costs,
+        dep_edges: canonical_dep_edges,
+        output_public_indices: canonical_output_public,
         params: params.clone(),
-        num_external_pods: pods.len(),
-        premise_pod,
+        num_external_pods: externals.pods.len(),
+        premise_pod: externals.premise_pod,
         max_pods,
     };
-    let index = ExternalIndex { pods, premises };
-    (shape, index)
+    let index = ExternalIndex {
+        pods: externals.pods,
+        premises: externals.premises,
+    };
+    (shape, index, perm)
+}
+
+/// Canonical ordering of distinct external pods and premises plus the
+/// lookup maps the dep-graph translation needs.
+struct CanonicalExternals {
+    pods: Vec<Hash>,
+    premises: Vec<ExternalDependency>,
+    /// `premise_pod[u]` is the canonical pod index of premise `u`.
+    premise_pod: Vec<usize>,
+    pod_idx: HashMap<Hash, usize>,
+    premise_idx: HashMap<ExternalDependency, usize>,
+}
+
+/// Sort distinct external pods by [`Hash`] and distinct external premises by
+/// `(pod_hash, hash_fields(statement))`.
+fn canonicalize_externals(deps: &DependencyGraph) -> CanonicalExternals {
+    let mut seen: HashSet<ExternalDependency> = HashSet::new();
+    let mut premises: Vec<ExternalDependency> = Vec::new();
+    for edges in &deps.statement_deps {
+        for src in edges {
+            if let StatementSource::External(ext) = src {
+                if seen.insert(ext.clone()) {
+                    premises.push(ext.clone());
+                }
+            }
+        }
+    }
+
+    // Precompute sort keys so each premise is hashed once, not O(log n) times
+    // by sort_by_key.
+    let mut keyed: Vec<((Hash, Hash), ExternalDependency)> = premises
+        .into_iter()
+        .map(|ext| {
+            let key = (ext.pod_hash, hash_fields(&ext.statement.to_fields()));
+            (key, ext)
+        })
+        .collect();
+    keyed.sort_by(|a, b| a.0.cmp(&b.0));
+    let premises: Vec<ExternalDependency> = keyed.into_iter().map(|(_, ext)| ext).collect();
+
+    // Pods fall out of the premise ordering: dedupe-by-key the sorted premise
+    // list, picking up first-occurrence pod hashes.
+    let mut pods: Vec<Hash> = Vec::new();
+    let mut pod_idx: HashMap<Hash, usize> = HashMap::new();
+    let mut premise_pod: Vec<usize> = Vec::with_capacity(premises.len());
+    for ext in &premises {
+        let idx = *pod_idx.entry(ext.pod_hash).or_insert_with(|| {
+            let i = pods.len();
+            pods.push(ext.pod_hash);
+            i
+        });
+        premise_pod.push(idx);
+    }
+
+    let premise_idx: HashMap<ExternalDependency, usize> = premises
+        .iter()
+        .enumerate()
+        .map(|(i, p)| (p.clone(), i))
+        .collect();
+
+    CanonicalExternals {
+        pods,
+        premises,
+        premise_pod,
+        pod_idx,
+        premise_idx,
+    }
+}
+
+/// Topological sort with a structural-key tiebreak. Returns
+/// `perm[canonical_pos] = original_pos`.
+///
+/// Public statements are tiebroken by their reveal-order index so the cache
+/// key is sensitive to "the same publics revealed in the same order" but
+/// invariant under reordering of structurally equivalent privates.
+fn canonicalize_statement_order(
+    deps: &DependencyGraph,
+    costs: &[StatementCost],
+    output_public_indices: &[usize],
+    externals: &CanonicalExternals,
+) -> Vec<usize> {
+    let n = costs.len();
+
+    // Per-node static fragments of the structural key. These don't change as
+    // canonicalization progresses, so we compute them once.
+    let public_reveal_idx: Vec<Option<usize>> = {
+        let mut v = vec![None; n];
+        for (i, &p) in output_public_indices.iter().enumerate() {
+            v[p] = Some(i);
+        }
+        v
+    };
+    let ext_signatures: Vec<Vec<(usize, usize)>> = (0..n)
+        .map(|s| {
+            let mut sigs: Vec<(usize, usize)> = deps.statement_deps[s]
+                .iter()
+                .filter_map(|src| match src {
+                    StatementSource::External(ext) => {
+                        Some((externals.pod_idx[&ext.pod_hash], externals.premise_idx[ext]))
+                    }
+                    _ => None,
+                })
+                .collect();
+            sigs.sort();
+            sigs
+        })
+        .collect();
+
+    let mut consumers: Vec<Vec<usize>> = vec![Vec::new(); n];
+    let mut remaining_in_degree: Vec<usize> = vec![0; n];
+    for (s, edges) in deps.statement_deps.iter().enumerate() {
+        for src in edges {
+            if let StatementSource::Internal(d) = src {
+                consumers[*d].push(s);
+                remaining_in_degree[s] += 1;
+            }
+        }
+    }
+
+    let mut canonical_pos_of: Vec<Option<usize>> = vec![None; n];
+    let mut perm: Vec<usize> = Vec::with_capacity(n);
+    let mut ready: Vec<usize> = (0..n).filter(|&s| remaining_in_degree[s] == 0).collect();
+
+    // Scratch buffers for the only key fragment that depends on already-picked
+    // nodes; reused across iterations to avoid per-comparison allocation.
+    let mut cand_int: Vec<usize> = Vec::with_capacity(n);
+    let mut best_int: Vec<usize> = Vec::with_capacity(n);
+
+    while !ready.is_empty() {
+        // Indistinguishable peers (identical structural key) fall through to
+        // original position as a final tiebreak. Two builders that share a
+        // logical graph but ordered indistinguishable peers differently may
+        // pick different originals here, but the resulting canonical
+        // InputShape is unchanged because those slots are by definition
+        // observationally equivalent.
+        fill_internal_canonical(
+            &deps.statement_deps[ready[0]],
+            &canonical_pos_of,
+            &mut best_int,
+        );
+        let mut best = 0usize;
+        for i in 1..ready.len() {
+            let s = ready[i];
+            let b = ready[best];
+            fill_internal_canonical(&deps.statement_deps[s], &canonical_pos_of, &mut cand_int);
+            let cand_key = (
+                public_reveal_idx[s],
+                &costs[s],
+                &ext_signatures[s],
+                &cand_int,
+                s,
+            );
+            let best_key = (
+                public_reveal_idx[b],
+                &costs[b],
+                &ext_signatures[b],
+                &best_int,
+                b,
+            );
+            if cand_key < best_key {
+                best = i;
+                std::mem::swap(&mut cand_int, &mut best_int);
+            }
+        }
+        let next = ready.swap_remove(best);
+
+        let canonical = perm.len();
+        perm.push(next);
+        canonical_pos_of[next] = Some(canonical);
+
+        for &c in &consumers[next] {
+            remaining_in_degree[c] -= 1;
+            if remaining_in_degree[c] == 0 {
+                ready.push(c);
+            }
+        }
+    }
+
+    assert_eq!(
+        perm.len(),
+        n,
+        "canonicalization missed a statement (cycle?)"
+    );
+    perm
+}
+
+/// `inv[perm[i]] = i`.
+fn invert_permutation(perm: &[usize]) -> Vec<usize> {
+    let mut inv = vec![0usize; perm.len()];
+    for (canonical, &original) in perm.iter().enumerate() {
+        inv[original] = canonical;
+    }
+    inv
+}
+
+fn fill_internal_canonical(
+    deps: &[StatementSource],
+    canonical_pos_of: &[Option<usize>],
+    out: &mut Vec<usize>,
+) {
+    out.clear();
+    for src in deps {
+        if let StatementSource::Internal(d) = src {
+            if let Some(c) = canonical_pos_of[*d] {
+                out.push(c);
+            }
+        }
+    }
+    out.sort_unstable();
+}
+
+/// Relabel an [`OutputShape`]'s statement positions. `inner[from] = to`
+/// rewrites each statement reference; the outer per-statement Vec is
+/// permuted in place so that the resulting `statement_to_pods[to] =
+/// input.statement_to_pods[from]`.
+fn relabel_output(s: OutputShape, inner: &[usize]) -> OutputShape {
+    let n = inner.len();
+    let OutputShape {
+        pod_count,
+        statement_to_pods,
+        pod_statements,
+        pod_public_statements,
+        pod_internal_inputs,
+        pod_external_inputs,
+        pod_public_external_premises,
+    } = s;
+
+    let mut s2p_new: Vec<Vec<usize>> = (0..n).map(|_| Vec::new()).collect();
+    for (from, vec) in statement_to_pods.into_iter().enumerate() {
+        s2p_new[inner[from]] = vec;
+    }
+    let pod_statements: Vec<Vec<usize>> = pod_statements
+        .into_iter()
+        .map(|mut stmts| {
+            for x in stmts.iter_mut() {
+                *x = inner[*x];
+            }
+            stmts
+        })
+        .collect();
+    let pod_public_statements: Vec<BTreeSet<usize>> = pod_public_statements
+        .into_iter()
+        .map(|set| set.into_iter().map(|x| inner[x]).collect())
+        .collect();
+
+    OutputShape {
+        pod_count,
+        statement_to_pods: s2p_new,
+        pod_statements,
+        pod_public_statements,
+        pod_internal_inputs,
+        pod_external_inputs,
+        pod_public_external_premises,
+    }
+}
+
+/// Translate a canonical [`OutputShape`] into the caller's original
+/// statement indexing.
+fn unpermute_output(canonical: OutputShape, perm: &[usize]) -> OutputShape {
+    relabel_output(canonical, perm)
+}
+
+/// Translate an original-indexed [`OutputShape`] back into canonical
+/// indexing. Used by [`SolvedMultiPod::layout`] to materialise the
+/// cache-keyed canonical form on demand.
+fn permute_output(original: OutputShape, perm: &[usize]) -> OutputShape {
+    let inv = invert_permutation(perm);
+    relabel_output(original, &inv)
 }
 
 /// Error type for multi-POD operations.
@@ -268,6 +548,10 @@ pub struct MultiPodBuilder {
 ///
 /// Created by [`MultiPodBuilder::solve`]. Call [`prove`](Self::prove) to build
 /// and prove all PODs, or inspect the [`solution`](Self::solution) first.
+///
+/// `solution` is in the caller's original statement indexing (the canonical
+/// solver output is un-permuted in `apply_solution`). `shape` is the
+/// canonical [`InputShape`] used as the cache key.
 #[derive(Debug)]
 pub struct SolvedMultiPod {
     params: Params,
@@ -276,9 +560,17 @@ pub struct SolvedMultiPod {
     statements: Vec<Statement>,
     operations: Vec<Operation>,
     operations_wildcard_values: HashMap<usize, Vec<(usize, Value)>>,
+    /// User-original reveal order. Drives the order in which public
+    /// statements are added to the output POD; not part of the cache key.
+    output_public_indices: Vec<usize>,
+    /// User-facing solution: pod assignments expressed in the caller's
+    /// original statement positions.
     solution: OutputShape,
     external_index: ExternalIndex,
     shape: InputShape,
+    /// `perm[canonical_pos] = original_pos`. Lets [`Display`] surface dep
+    /// edges in the caller's original numbering.
+    perm: Vec<usize>,
 }
 
 impl SolvedMultiPod {
@@ -293,7 +585,7 @@ impl SolvedMultiPod {
     pub fn layout(&self) -> Layout {
         Layout {
             shape: self.shape.clone(),
-            solution: self.solution.clone(),
+            solution: permute_output(self.solution.clone(), &self.perm),
         }
     }
 
@@ -384,7 +676,7 @@ impl SolvedMultiPod {
         // For the output pod, make statements public in the original order.
         // Intermediate pods use the solver-selected public set.
         if pod_idx == solution.pod_count - 1 {
-            for idx in &self.shape.output_public_indices {
+            for idx in &self.output_public_indices {
                 builder.reveal(&self.statements[*idx])?;
             }
         } else {
@@ -434,6 +726,7 @@ impl fmt::Display for SolvedMultiPod {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let solution = &self.solution;
         let output_pod_idx = solution.pod_count.saturating_sub(1);
+        let inv_perm = invert_permutation(&self.perm);
 
         // Header
         writeln!(
@@ -489,14 +782,14 @@ impl fmt::Display for SolvedMultiPod {
                 let is_public = public_stmts.contains(&stmt_idx);
                 let visibility = if is_public { "public" } else { "private" };
 
-                let deps = &self.shape.dep_edges[stmt_idx];
+                let deps = &self.shape.dep_edges[inv_perm[stmt_idx]];
                 let dep_str = if deps.is_empty() {
                     String::new()
                 } else {
                     let dep_parts: Vec<String> = deps
                         .iter()
                         .map(|d| match d {
-                            AbstractDep::Internal(i) => format!("stmt[{}]", i),
+                            AbstractDep::Internal(c) => format!("stmt[{}]", self.perm[*c]),
                             AbstractDep::External { .. } => "ext".to_string(),
                         })
                         .collect();
@@ -657,10 +950,10 @@ impl MultiPodBuilder {
             &self.builder.operations,
             &external_pod_statements,
         );
-        let (shape, _) = build_shape_and_index(
+        let (shape, _, _) = build_shape_and_index(
             costs,
             &deps,
-            self.output_public_indices.clone(),
+            &self.output_public_indices,
             &self.params,
             self.options.max_pods,
         );
@@ -743,10 +1036,10 @@ impl MultiPodBuilder {
             .collect();
         let external_pod_statements = build_external_statement_map(&self.input_pods);
         let deps = DependencyGraph::build(&statements, &operations, &external_pod_statements);
-        let (shape, external_index) = build_shape_and_index(
+        let (shape, external_index, perm) = build_shape_and_index(
             costs,
             &deps,
-            self.output_public_indices,
+            &self.output_public_indices,
             &self.params,
             self.options.max_pods,
         );
@@ -758,16 +1051,21 @@ impl MultiPodBuilder {
             operations_wildcard_values: self.operations_wildcard_values,
             statements,
             operations,
+            output_public_indices: self.output_public_indices,
             shape,
             external_index,
+            perm,
         }
     }
 }
 
 /// Owned, unpacked builder state shared between `solve`, `solve_cached`, and
-/// `apply_layout`. Holds the symbolic [`InputShape`] (for the solver) plus
-/// the [`ExternalIndex`] (for reattaching concrete pod hashes/premises after
-/// the solver returns).
+/// `apply_layout`. Holds the canonical [`InputShape`] (for the solver and
+/// cache key), the [`ExternalIndex`] (for reattaching concrete pod
+/// hashes/premises), the permutation (for translating canonical
+/// [`OutputShape`]s back to the caller's original statement indexing), and
+/// the user's reveal-order `output_public_indices` (used by the build path
+/// to preserve reveal order in the output POD).
 struct BuilderPrep {
     params: Params,
     vd_set: VDSet,
@@ -775,8 +1073,10 @@ struct BuilderPrep {
     operations_wildcard_values: HashMap<usize, Vec<(usize, Value)>>,
     statements: Vec<Statement>,
     operations: Vec<Operation>,
+    output_public_indices: Vec<usize>,
     shape: InputShape,
     external_index: ExternalIndex,
+    perm: Vec<usize>,
 }
 
 impl BuilderPrep {
@@ -785,13 +1085,14 @@ impl BuilderPrep {
         self.apply_solution(solution)
     }
 
-    fn apply_solution(self, solution: OutputShape) -> Result<SolvedMultiPod> {
-        if solution.pod_count > self.shape.max_pods {
+    fn apply_solution(self, canonical_solution: OutputShape) -> Result<SolvedMultiPod> {
+        if canonical_solution.pod_count > self.shape.max_pods {
             return Err(Error::Solver(format!(
                 "cached layout requires {} PODs, but Options::max_pods is {}",
-                solution.pod_count, self.shape.max_pods
+                canonical_solution.pod_count, self.shape.max_pods
             )));
         }
+        let solution = unpermute_output(canonical_solution, &self.perm);
         Ok(SolvedMultiPod {
             params: self.params,
             vd_set: self.vd_set,
@@ -799,9 +1100,11 @@ impl BuilderPrep {
             statements: self.statements,
             operations: self.operations,
             operations_wildcard_values: self.operations_wildcard_values,
+            output_public_indices: self.output_public_indices,
             solution,
             external_index: self.external_index,
             shape: self.shape,
+            perm: self.perm,
         })
     }
 }
@@ -2027,6 +2330,122 @@ mod tests {
             builder_b.input_shape(),
             "Options::max_pods must be part of the InputShape"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn test_input_shape_invariant_under_private_reorder() -> Result<()> {
+        // Two builders with the same logical graph but different orders for
+        // unrelated `priv_op`s must produce equal InputShapes.
+        let params = Params {
+            max_statements: 6,
+            max_public_statements: 2,
+            ..Params::default()
+        };
+        let vd_set = &*MOCK_VD_SET;
+
+        // Builder A: three independent privates added in order [p1, p2, p3], then the
+        // public output.
+        let mut a = MultiPodBuilder::new(&params, vd_set);
+        a.priv_op(FrontendOp::eq(1, 1))?;
+        a.priv_op(FrontendOp::eq(2, 2))?;
+        a.priv_op(FrontendOp::eq(3, 3))?;
+        a.pub_op(FrontendOp::eq(99, 99))?;
+
+        // Builder B: same privates in reverse order.
+        let mut b = MultiPodBuilder::new(&params, vd_set);
+        b.priv_op(FrontendOp::eq(3, 3))?;
+        b.priv_op(FrontendOp::eq(2, 2))?;
+        b.priv_op(FrontendOp::eq(1, 1))?;
+        b.pub_op(FrontendOp::eq(99, 99))?;
+
+        assert_eq!(
+            a.input_shape(),
+            b.input_shape(),
+            "permuting unrelated private operations must not change InputShape"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_input_shape_distinguishes_different_dep_structure() -> Result<()> {
+        // Sanity: two builders that differ in dependency *structure* (not just
+        // ordering) must produce different InputShapes.
+        let params = Params {
+            max_statements: 4,
+            max_public_statements: 2,
+            ..Params::default()
+        };
+        let vd_set = &*MOCK_VD_SET;
+
+        // Builder A: three independent statements.
+        let mut a = MultiPodBuilder::new(&params, vd_set);
+        a.priv_op(FrontendOp::eq(1, 1))?;
+        a.priv_op(FrontendOp::eq(2, 2))?;
+        a.pub_op(FrontendOp::eq(3, 3))?;
+
+        // Builder B: three statements where the public copies a private.
+        let mut b = MultiPodBuilder::new(&params, vd_set);
+        let stmt = b.priv_op(FrontendOp::eq(1, 1))?;
+        b.priv_op(FrontendOp::eq(2, 2))?;
+        b.pub_op(FrontendOp::copy(stmt))?;
+
+        assert_ne!(
+            a.input_shape(),
+            b.input_shape(),
+            "different dep structures must produce different InputShapes"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_solve_cached_hits_across_private_reorder() -> Result<()> {
+        // Two builders with permuted private ops should hit the same cache
+        // entry. We can't observe the cache directly, but we can check that
+        // both produce the same canonical layout (extracted via .layout())
+        // and that solve_cached succeeds for both.
+        let params = Params {
+            max_statements: 6,
+            max_public_statements: 2,
+            ..Params::default()
+        };
+        let vd_set = &*MOCK_VD_SET;
+        let prover = MockProver {};
+
+        let mut a = MultiPodBuilder::new(&params, vd_set);
+        a.priv_op(FrontendOp::eq(11, 11))?;
+        a.priv_op(FrontendOp::eq(22, 22))?;
+        a.priv_op(FrontendOp::eq(33, 33))?;
+        a.pub_op(FrontendOp::eq(99, 99))?;
+        let solved_a = a.solve_cached()?;
+
+        let mut b = MultiPodBuilder::new(&params, vd_set);
+        b.priv_op(FrontendOp::eq(33, 33))?;
+        b.priv_op(FrontendOp::eq(11, 11))?;
+        b.priv_op(FrontendOp::eq(22, 22))?;
+        b.pub_op(FrontendOp::eq(99, 99))?;
+        let solved_b = b.solve_cached()?;
+
+        assert_eq!(
+            solved_a.layout().shape,
+            solved_b.layout().shape,
+            "cache key must be invariant under private-op reordering"
+        );
+        assert_eq!(
+            solved_a.layout().solution,
+            solved_b.layout().solution,
+            "cached canonical solution must be reused across permuted builders"
+        );
+
+        // Both should still prove and verify.
+        for solved in [solved_a, solved_b] {
+            let result = solved.prove(&prover)?;
+            for (i, pod) in result.pods.iter().enumerate() {
+                pod.pod
+                    .verify()
+                    .unwrap_or_else(|_| panic!("POD {} verification failed", i));
+            }
+        }
         Ok(())
     }
 
