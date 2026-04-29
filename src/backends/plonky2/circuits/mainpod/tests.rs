@@ -156,7 +156,7 @@ fn operation_verify(
         signed_bys: signed_by_targets,
         custom_predicate_verifications: Vec::new(),
     };
-    let aux_table =
+    let aux_tables =
         build_operation_aux_table_circuit(&params, &mut builder, &[], &[], &aux_table_inputs)?;
 
     verify_operation_circuit(
@@ -166,7 +166,7 @@ fn operation_verify(
         &op_target,
         &prev_statement_flatteneds_target,
         &prev_statement_hashes_target,
-        &aux_table,
+        &aux_tables,
     )?;
 
     let mut pw = PartialWitness::<F>::new();

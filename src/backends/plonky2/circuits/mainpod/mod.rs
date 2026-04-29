@@ -23,7 +23,7 @@ use crate::{
             common::{
                 CircuitBuilderPod, CustomPredicateEntryTarget, CustomPredicateInBatchTarget,
                 CustomPredicateTarget, CustomPredicateVerifyEntryTarget,
-                CustomPredicateVerifyQueryTarget, Flattenable, InputPodEntryTarget,
+                CustomPredicateVerifyQueryTarget, Flattenable, IndexTarget, InputPodEntryTarget,
                 MerkleClaimTarget, MerkleTreeStateTransitionClaimTarget, OperationTarget,
                 OperationTypeTarget, PredicateHashOrWildcardTarget, PredicateTarget,
                 StatementArgTarget, StatementTarget, StatementTmplArgTarget, StatementTmplTarget,
@@ -201,13 +201,56 @@ enum OperationAuxTableTag {
     SignedBy = 6,
 }
 
+/// Two index-aligned aux tables: the wide `general` table for non-custom claims, and a narrow
+/// `custom_pred_verify_hashes` table that holds only the hash of each custom predicate
+/// verification query. Splitting custom queries out of the general table shrinks the dominant
+/// per-row width from `CustomPredicateVerifyQueryTarget::size()` to the next-largest payload.
+struct OperationAuxTables {
+    general: MuxTableTarget,
+    custom_pred_verify_hashes: MuxTableTarget,
+}
+
+impl OperationAuxTables {
+    fn push_general<T: Flattenable>(
+        &mut self,
+        builder: &mut CircuitBuilder,
+        tag: OperationAuxTableTag,
+        entry: &T,
+    ) {
+        self.general.push(builder, tag as u32, entry);
+        self.custom_pred_verify_hashes.push_flattened(
+            builder,
+            OperationAuxTableTag::None as u32,
+            &[],
+        );
+    }
+
+    fn push_custom_hash(&mut self, builder: &mut CircuitBuilder, hash: &HashOutTarget) {
+        self.custom_pred_verify_hashes.push(
+            builder,
+            OperationAuxTableTag::CustomPredVerify as u32,
+            hash,
+        );
+        self.general
+            .push_flattened(builder, OperationAuxTableTag::None as u32, &[]);
+    }
+
+    fn push_none(&mut self, builder: &mut CircuitBuilder) {
+        self.general
+            .push_flattened(builder, OperationAuxTableTag::None as u32, &[]);
+        self.custom_pred_verify_hashes.push_flattened(
+            builder,
+            OperationAuxTableTag::None as u32,
+            &[],
+        );
+    }
+}
+
 fn max_operation_aux_entry_len(params: &Params) -> usize {
     [
         (params.containers.state_ops.max_total() > 0).then(|| MerkleClaimTarget::size(params)),
         (params.containers.transition_ops.max_total() > 0)
             .then(|| MerkleTreeStateTransitionClaimTarget::size(params)),
-        (params.max_custom_predicate_verification_ops > 0)
-            .then(|| CustomPredicateVerifyQueryTarget::size(params)),
         (params.max_open_input_statement_ops > 0).then(|| StatementTarget::size(params)),
         (params.max_public_key_ops > 0).then(|| SecKeyPubKeyTarget::size(params)),
         (params.max_signed_by_ops > 0).then(|| MsgPubKeyTarget::size(params)),
@@ -306,7 +349,7 @@ impl OpenInputStatementTarget {
 
 fn append_container_proofs_operation_aux_table_circuit(
     builder: &mut CircuitBuilder,
-    table: &mut MuxTableTarget,
+    tables: &mut OperationAuxTables,
     merkle_proofs: &MerkleProofsTarget,
     merkle_transition_proofs: &MerkleTransitionProofsTarget,
 ) {
@@ -315,14 +358,14 @@ fn append_container_proofs_operation_aux_table_circuit(
         verify_merkle_proof_existence_circuit(builder, merkle_proof);
         let entry = MerkleClaimTarget::from_proof_existence(builder, merkle_proof.clone());
 
-        table.push(builder, OperationAuxTableTag::MerkleProof as u32, &entry);
+        tables.push_general(builder, OperationAuxTableTag::MerkleProof, &entry);
     }
     // Medium MerkleProofs: verify container merkle proofs (inclusion/non-inclusion)
     for merkle_proof in &merkle_proofs.medium {
         verify_merkle_proof_circuit(builder, merkle_proof);
         let entry = MerkleClaimTarget::from(merkle_proof.clone());
 
-        table.push(builder, OperationAuxTableTag::MerkleProof as u32, &entry);
+        tables.push_general(builder, OperationAuxTableTag::MerkleProof, &entry);
     }
 
     // Small Merkle state transition proofs: verify op proof (only update)
@@ -330,9 +373,9 @@ fn append_container_proofs_operation_aux_table_circuit(
         verify_merkle_state_transition_circuit(builder, merkle_transition_proof);
         let entry = MerkleTreeStateTransitionClaimTarget::from(merkle_transition_proof.clone());
 
-        table.push(
+        tables.push_general(
             builder,
-            OperationAuxTableTag::MerkleTransitionProof as u32,
+            OperationAuxTableTag::MerkleTransitionProof,
             &entry,
         );
     }
@@ -341,9 +384,9 @@ fn append_container_proofs_operation_aux_table_circuit(
         verify_merkle_state_transition_circuit(builder, merkle_transition_proof);
         let entry = MerkleTreeStateTransitionClaimTarget::from(merkle_transition_proof.clone());
 
-        table.push(
+        tables.push_general(
             builder,
-            OperationAuxTableTag::MerkleTransitionProof as u32,
+            OperationAuxTableTag::MerkleTransitionProof,
             &entry,
         );
     }
@@ -352,7 +395,7 @@ fn append_container_proofs_operation_aux_table_circuit(
 fn append_open_input_statements_aux_table_circuit(
     params: &Params,
     builder: &mut CircuitBuilder,
-    table: &mut MuxTableTarget,
+    tables: &mut OperationAuxTables,
     input_pod_table: &[InputPodEntryTarget],
     open_input_statements: &[OpenInputStatementTarget],
 ) {
@@ -389,11 +432,7 @@ fn append_open_input_statements_aux_table_circuit(
             is_intro,
             &pod.vd_hash,
         );
-        table.push(
-            builder,
-            OperationAuxTableTag::OpenInputStatement as u32,
-            &st,
-        );
+        tables.push_general(builder, OperationAuxTableTag::OpenInputStatement, &st);
         measure_gates_end!(builder, measure);
     }
 }
@@ -405,7 +444,7 @@ fn build_operation_aux_table_circuit(
     custom_predicate_table: &[HashOutTarget],
     input_pod_table: &[InputPodEntryTarget],
     input: &AuxTableInputTargets,
-) -> Result<MuxTableTarget> {
+) -> Result<OperationAuxTables> {
     let measure = measure_gates_begin!(builder, "BuildOpAuxTbl");
     assert_eq!(
         params.max_custom_predicate_verification_ops,
@@ -420,14 +459,17 @@ fn build_operation_aux_table_circuit(
         input.merkle_proofs.medium.len()
     );
     let max_entry_len = max_operation_aux_entry_len(params);
-    let mut table = MuxTableTarget::new(params, max_entry_len);
+    let mut tables = OperationAuxTables {
+        general: MuxTableTarget::new(params, max_entry_len),
+        custom_pred_verify_hashes: MuxTableTarget::new(params, HashOutTarget::size(params)),
+    };
 
     // None
-    table.push_flattened(builder, OperationAuxTableTag::None as u32, &[]);
+    tables.push_none(builder);
 
     append_container_proofs_operation_aux_table_circuit(
         builder,
-        &mut table,
+        &mut tables,
         &input.merkle_proofs,
         &input.merkle_transition_proofs,
     );
@@ -435,12 +477,13 @@ fn build_operation_aux_table_circuit(
     append_open_input_statements_aux_table_circuit(
         params,
         builder,
-        &mut table,
+        &mut tables,
         input_pod_table,
         &input.open_input_statements,
     );
 
-    // CustomPredVerify: verify custom predicate statements verification against operations
+    // CustomPredVerify: hash the verification query and store it in the dedicated narrow table;
+    // the general table gets a None entry at the same index to keep both tables aligned.
     for entry in &input.custom_predicate_verifications {
         let measure = measure_gates_begin!(builder, "CustomPredVerify");
         // Verify the custom predicate operation
@@ -466,11 +509,8 @@ fn build_operation_aux_table_circuit(
             op_type,                        // output
             op_args: entry.op_args.clone(), // input
         };
-        table.push(
-            builder,
-            OperationAuxTableTag::CustomPredVerify as u32,
-            &query,
-        );
+        let query_hash = query.hash(builder);
+        tables.push_custom_hash(builder, &query_hash);
         measure_gates_end!(builder, measure);
     }
 
@@ -499,7 +539,7 @@ fn build_operation_aux_table_circuit(
 
         let entry: SecKeyPubKeyTarget = HashPairTarget(sk_hash, pk_hash);
 
-        table.push(builder, OperationAuxTableTag::PublicKeyOf as u32, &entry);
+        tables.push_general(builder, OperationAuxTableTag::PublicKeyOf, &entry);
         measure_gates_end!(builder, measure);
     }
 
@@ -527,12 +567,16 @@ fn build_operation_aux_table_circuit(
         );
         let entry: MsgPubKeyTarget = HashPairTarget(HashOutTarget::from(signed_by.msg), pk_hash);
 
-        table.push(builder, OperationAuxTableTag::SignedBy as u32, &entry);
+        tables.push_general(builder, OperationAuxTableTag::SignedBy, &entry);
         measure_gates_end!(builder, measure);
     }
 
+    let expected_table_size = mainpod::OperationAux::table_size(params);
+    assert_eq!(tables.general.len(), expected_table_size);
+    assert_eq!(tables.custom_pred_verify_hashes.len(), expected_table_size);
+
     measure_gates_end!(builder, measure);
-    Ok(table)
+    Ok(tables)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -543,7 +587,7 @@ fn verify_operation_circuit(
     op: &OperationTarget,
     prev_statement_flatteneds: &[Vec<Target>],
     prev_statement_hashes: &[HashOutTarget],
-    aux_table: &MuxTableTarget,
+    aux_tables: &OperationAuxTables,
 ) -> Result<()> {
     let measure = measure_gates_begin!(builder, "OpVerifyPriv");
     let _true = builder._true();
@@ -570,7 +614,8 @@ fn verify_operation_circuit(
 
     // The aux table always has a fixed zero entry, so we check if there are more than 1 entries to
     // trigger the unhashing.
-    let resolved_aux = (aux_table.len() > 1).then(|| aux_table.get(builder, &op.aux_index));
+    let resolved_aux =
+        (aux_tables.general.len() > 1).then(|| aux_tables.general.get(builder, &op.aux_index));
 
     // Op checks to carry out. Each 'verify_X_circuit' should be thought of as operation check
     // restricted to the op of type X, where the returned target is `false` if the input targets
@@ -661,15 +706,6 @@ fn verify_operation_circuit(
                 ),
             ]);
         }
-        if params.max_custom_predicate_verification_ops > 0 {
-            op_checks.push(verify_custom_circuit(
-                builder,
-                st,
-                &op.op_type,
-                &resolved_aux,
-                &cache.op_args,
-            ));
-        }
         if params.max_open_input_statement_ops > 0 {
             op_checks.extend_from_slice(&[verify_open_input_statement_circuit(
                 builder,
@@ -678,6 +714,17 @@ fn verify_operation_circuit(
                 &resolved_aux,
             )]);
         }
+    }
+    // Custom predicate verifications use the dedicated hash table and need no general aux row.
+    if params.max_custom_predicate_verification_ops > 0 {
+        op_checks.push(verify_custom_circuit(
+            builder,
+            st,
+            &op.op_type,
+            &op.aux_index,
+            &cache.op_args,
+            &aux_tables.custom_pred_verify_hashes,
+        ));
     }
 
     let ok = builder.any(op_checks);
@@ -1000,23 +1047,22 @@ fn verify_custom_circuit(
     builder: &mut CircuitBuilder,
     st: &StatementTarget,
     op_type: &OperationTypeTarget,
-    aux: &TableEntryTarget,
+    aux_index: &IndexTarget,
     resolved_op_args: &[StatementTarget],
+    custom_pred_verify_hashes: &MuxTableTarget,
 ) -> BoolTarget {
     let measure = measure_gates_begin!(builder, "OpCustom");
-    let (aux_tag_ok, resolved_query) = aux.as_type::<CustomPredicateVerifyQueryTarget>(
-        builder,
-        OperationAuxTableTag::CustomPredVerify as u32,
-    );
+    let resolved_hash_entry = custom_pred_verify_hashes.get(builder, aux_index);
+    let (aux_tag_ok, resolved_query_hash) = resolved_hash_entry
+        .as_type::<HashOutTarget>(builder, OperationAuxTableTag::CustomPredVerify as u32);
 
-    let query_ok = builder.is_equal_flattenable(
-        &resolved_query,
-        &CustomPredicateVerifyQueryTarget {
-            statement: st.clone(),
-            op_type: op_type.clone(),
-            op_args: resolved_op_args.to_vec(),
-        },
-    );
+    let query = CustomPredicateVerifyQueryTarget {
+        statement: st.clone(),
+        op_type: op_type.clone(),
+        op_args: resolved_op_args.to_vec(),
+    };
+    let query_hash = query.hash(builder);
+    let query_ok = builder.is_equal_flattenable(&resolved_query_hash, &query_hash);
     let ok = builder.all([aux_tag_ok, query_ok]);
     measure_gates_end!(builder, measure);
     ok
@@ -1894,7 +1940,7 @@ fn verify_main_pod_circuit(
     let custom_predicate_table =
         build_custom_predicate_table_circuit(params, builder, &main_pod.custom_predicates)?;
 
-    let aux_table = build_operation_aux_table_circuit(
+    let aux_tables = build_operation_aux_table_circuit(
         params,
         builder,
         &custom_predicate_table,
@@ -1953,7 +1999,7 @@ fn verify_main_pod_circuit(
             op,
             prev_statement_flatteneds,
             prev_statement_hashes,
-            &aux_table,
+            &aux_tables,
         )?;
         let measure = measure_gates_begin!(builder, "PubSt");
         let st_hash = statement_hashes[i];
