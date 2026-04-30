@@ -134,6 +134,18 @@ pub struct StatementTmpl {
     pub span: Option<Span>,
 }
 
+impl StatementTmpl {
+    /// Names of all wildcards referenced by this statement's arguments,
+    /// in argument order with duplicates included.
+    pub fn wildcard_names(&self) -> impl Iterator<Item = &str> {
+        self.args.iter().filter_map(|arg| match arg {
+            StatementTmplArg::Wildcard(id) => Some(id.name.as_str()),
+            StatementTmplArg::AnchoredKey(ak) => Some(ak.root.name.as_str()),
+            StatementTmplArg::Literal(_) | StatementTmplArg::SelfPredicateHash(_) => None,
+        })
+    }
+}
+
 /// Reference to a predicate (local or qualified with module name)
 #[derive(Debug, Clone, PartialEq)]
 pub enum PredicateRef {
