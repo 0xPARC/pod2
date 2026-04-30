@@ -628,7 +628,7 @@ mod tests {
 
         // Split the predicate
         let mut split_results = Vec::new();
-        for pred in predicates {
+        for pred in &predicates {
             let result = split_predicate_if_needed(pred, &params).expect("Split failed");
             split_results.push(result);
         }

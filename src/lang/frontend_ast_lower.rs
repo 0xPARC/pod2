@@ -554,7 +554,7 @@ impl<'a> Lowerer<'a> {
         let mut split_results = Vec::new();
         for mut pred in predicates {
             self.rewrite_typed_dot_access(&mut pred);
-            let result = frontend_ast_split::split_predicate_if_needed(pred, self.params)?;
+            let result = frontend_ast_split::split_predicate_if_needed(&pred, self.params)?;
             split_results.push(result);
         }
 
