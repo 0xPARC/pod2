@@ -399,6 +399,16 @@ pub enum SplittingError {
         max_allowed: usize,
         suggestion: Option<Box<RefactorSuggestion>>,
     },
+
+    #[error("Could not split predicate '{predicate}' into a chain: no feasible partition exists with up to {max_links} links. \
+             The predicate's wildcard structure may be too dense for any chain to fit within max_statement_args ({max_statement_args}) \
+             and max_custom_predicate_wildcards ({max_wildcards}) per link.")]
+    Infeasible {
+        predicate: String,
+        max_links: usize,
+        max_statement_args: usize,
+        max_wildcards: usize,
+    },
 }
 
 impl From<ParseError> for LangError {

@@ -528,21 +528,9 @@ impl<'a> Lowerer<'a> {
         names: &mut Vec<String>,
         seen: &mut HashSet<String>,
     ) {
-        for arg in &stmt.args {
-            match arg {
-                StatementTmplArg::Wildcard(id) => {
-                    if !seen.contains(&id.name) {
-                        seen.insert(id.name.clone());
-                        names.push(id.name.clone());
-                    }
-                }
-                StatementTmplArg::AnchoredKey(ak) => {
-                    if !seen.contains(&ak.root.name) {
-                        seen.insert(ak.root.name.clone());
-                        names.push(ak.root.name.clone());
-                    }
-                }
-                StatementTmplArg::Literal(_) | StatementTmplArg::SelfPredicateHash(_) => {}
+        for name in stmt.wildcard_names() {
+            if seen.insert(name.to_string()) {
+                names.push(name.to_string());
             }
         }
     }
