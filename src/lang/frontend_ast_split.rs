@@ -16,7 +16,7 @@
 //! - Reserves a chain-call slot on every non-last link.
 //!
 //! We try `K = K_min, K_min+1, ...` and stop at the first feasible K. The
-//! objective is a tiny `Σ (n-1-s) · i · assign[s][i]` tiebreaker that biases
+//! objective is a tiny `Σ (n-s) · i · assign[s][i]` tiebreaker that biases
 //! statements with low original index toward low-index links — so the chain
 //! roughly follows source order when nothing else forces a rearrangement.
 //!
@@ -31,9 +31,16 @@ use std::{
 };
 
 use good_lp::{
-    constraint, default_solver, variable, Expression, ProblemVariables, Solution, SolverModel,
-    Variable,
+    constraint, solvers::scip::SCIPProblem, variable, Expression, ProblemVariables, Solution,
+    SolverModel, Variable,
 };
+
+/// Solver random-seed shift. Pinning this gives within-version reproducibility
+/// against any internal SCIP heuristics that consult the seed (random
+/// branching, restart shuffles, etc.). Cross-version determinism still
+/// depends on SCIP not changing its algorithms; pin russcip in `Cargo.toml`
+/// to control that.
+const SCIP_RANDOM_SEED: i32 = 0;
 
 pub use crate::lang::error::SplittingError;
 use crate::{lang::frontend_ast::*, middleware::Params};
@@ -171,9 +178,6 @@ pub fn validate_predicate_is_splittable(pred: &CustomPredicateDef) -> Result<(),
 }
 
 /// Split a predicate into a chain if it exceeds statement limit.
-///
-/// Takes `pred` by reference so callers can re-use it (for example to call
-/// [`analyze_infeasibility`] on the failure path) without cloning preemptively.
 pub fn split_predicate_if_needed(
     pred: &CustomPredicateDef,
     params: &Params,
@@ -269,11 +273,25 @@ fn declare_milp_vars(
 /// Source-order tiebreaker: prefers low-original-index statements at low-link
 /// indices, so the chain roughly preserves source order when nothing else
 /// forces a rearrangement.
+///
+/// Coefficient `(n - s)` is strictly positive for every statement, so every
+/// pairwise swap of distinct `(s, i)` assignments changes the objective by a
+/// non-zero amount. That makes the tiebreaker uniquely-optimising — the
+/// solver can't pick between equivalent placements of any single statement.
 fn source_order_tiebreaker(v: &MilpVars) -> Expression {
     (0..v.n)
         .flat_map(|s| (0..v.k).map(move |i| (s, i)))
-        .map(|(s, i)| ((v.n - 1 - s) as f64) * (i as f64) * v.assign[s][i])
+        .map(|(s, i)| ((v.n - s) as f64) * (i as f64) * v.assign[s][i])
         .sum()
+}
+
+/// Build a SCIP model with the splitter's deterministic-build settings:
+/// pinned random seed and silent output.
+fn build_scip_model(vars: ProblemVariables, objective: Expression) -> SCIPProblem {
+    vars.minimise(objective)
+        .using(good_lp::solvers::scip::scip)
+        .set_option("randomization/randomseedshift", SCIP_RANDOM_SEED)
+        .set_verbose(false)
 }
 
 /// Add the MILP's structural constraints (C1..C7): assignment, link size,
@@ -410,7 +428,7 @@ fn solve_milp_for_k(
     let mut vars = ProblemVariables::new();
     let v = declare_milp_vars(&mut vars, n, k, num_wildcards);
     let objective = source_order_tiebreaker(&v);
-    let mut model = vars.minimise(objective).using(default_solver);
+    let mut model = build_scip_model(vars, objective);
     add_structural_constraints(&mut model, &v, statements_using, is_original_public);
 
     // C8: per-link public-args cap (incoming chain-call args).
@@ -609,7 +627,7 @@ fn solve_elastic_lp(k: usize, input: &MilpInput, params: &Params) -> Option<Vec<
     let scale = 1.0 / ((n * n * k * k + 1) as f64);
     let objective = slack_term + scale * source_order_tiebreaker(&v);
 
-    let mut model = vars.minimise(objective).using(default_solver);
+    let mut model = build_scip_model(vars, objective);
     add_structural_constraints(
         &mut model,
         &v,
