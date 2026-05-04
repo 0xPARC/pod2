@@ -53,6 +53,12 @@ pub struct Module {
 
     /// Split chain info for predicates that were split
     pub split_chains: HashMap<String, SplitChainInfo>,
+
+    /// Records declared locally in this module's source: name → ordered field
+    /// list. Frontend metadata only — the middleware batch knows nothing
+    /// about records. No transitive re-export: a downstream importer
+    /// inherits only the records declared in this module's own source.
+    pub records: HashMap<String, Vec<String>>,
 }
 
 impl Module {
@@ -60,6 +66,15 @@ impl Module {
     pub fn new(
         batch: Arc<CustomPredicateBatch>,
         split_chains: HashMap<String, SplitChainInfo>,
+    ) -> Self {
+        Self::with_records(batch, split_chains, HashMap::new())
+    }
+
+    /// Like `new`, but seeds the module's locally-declared records.
+    pub fn with_records(
+        batch: Arc<CustomPredicateBatch>,
+        split_chains: HashMap<String, SplitChainInfo>,
+        records: HashMap<String, Vec<String>>,
     ) -> Self {
         let predicate_index = batch
             .predicates()
@@ -71,6 +86,7 @@ impl Module {
             batch,
             predicate_index,
             split_chains,
+            records,
         }
     }
 
@@ -264,6 +280,7 @@ pub fn build_module(
     params: &Params,
     module_name: &str,
     symbols: &SymbolTable,
+    records: HashMap<String, Vec<String>>,
 ) -> Result<Module, BatchingError> {
     // Extract predicates and collect split chains
     let mut predicates = Vec::new();
@@ -281,7 +298,7 @@ pub fn build_module(
     if predicates.is_empty() {
         // Return an empty module
         let empty_batch = CustomPredicateBatch::new(module_name.to_string(), vec![]);
-        return Ok(Module::new(empty_batch, split_chains));
+        return Ok(Module::with_records(empty_batch, split_chains, records));
     }
 
     // Build reference map: name -> index
@@ -294,7 +311,7 @@ pub fn build_module(
     // Build the batch
     let batch = build_single_batch(&predicates, &reference_map, symbols, params, module_name)?;
 
-    Ok(Module::new(batch, split_chains))
+    Ok(Module::with_records(batch, split_chains, records))
 }
 
 /// Build a batch with properly resolved references
@@ -454,6 +471,7 @@ mod tests {
             &params,
             "TestModule",
             validated.symbols(),
+            HashMap::new(),
         );
         assert!(result.is_ok());
 
@@ -477,6 +495,7 @@ mod tests {
             &params,
             "TestModule",
             validated.symbols(),
+            HashMap::new(),
         );
         assert!(result.is_ok());
 
@@ -501,6 +520,7 @@ mod tests {
             &params,
             "TestModule",
             validated.symbols(),
+            HashMap::new(),
         );
         assert!(result.is_ok());
 
@@ -533,6 +553,7 @@ mod tests {
             &params,
             "TestModule",
             validated.symbols(),
+            HashMap::new(),
         );
         assert!(result.is_ok());
 
@@ -567,6 +588,7 @@ mod tests {
             &params,
             "TestModule",
             validated.symbols(),
+            HashMap::new(),
         )
         .unwrap();
 
@@ -605,8 +627,14 @@ mod tests {
         assert_eq!(split_results[0].predicates.len(), 2);
         assert!(split_results[0].chain_info.is_some());
 
-        let module =
-            build_module(split_results, &params, "TestModule", validated.symbols()).unwrap();
+        let module = build_module(
+            split_results,
+            &params,
+            "TestModule",
+            validated.symbols(),
+            HashMap::new(),
+        )
+        .unwrap();
 
         // Verify chain info is preserved
         let chain_info = module.split_chains.get("large_pred").unwrap();

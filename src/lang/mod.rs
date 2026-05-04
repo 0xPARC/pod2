@@ -1075,4 +1075,133 @@ mod tests {
             e => panic!("Expected LangError::Validation, but got {:?}", e),
         }
     }
+
+    // ---- Records: cross-module export -------------------------------------
+
+    #[test]
+    fn test_e2e_record_imported_predicate_compiles() -> Result<(), LangError> {
+        // Module A defines a record + a predicate that uses it.
+        // Module B imports A and writes its own predicate using
+        // `in a::ProcInputs`. B should compile without errors.
+        let params = Params::default();
+        let module_a_src = r#"
+            record ProcInputs = (Foo, Bar, Baz)
+            uses_record(in ProcInputs) = AND(
+                Equal(in.Foo, in.Baz)
+            )
+        "#;
+        let module_a = Arc::new(load_module(module_a_src, "module_a", &params, &[])?);
+        let a_hash = module_a.id().encode_hex::<String>();
+
+        let module_b_src = format!(
+            r#"
+            use module 0x{} as a
+
+            wraps_a(in a::ProcInputs) = AND(
+                Equal(in.Bar, 7)
+            )
+            "#,
+            a_hash
+        );
+        let module_b = load_module(&module_b_src, "module_b", &params, &[module_a])?;
+        assert_eq!(module_b.batch.predicates().len(), 1);
+        assert_eq!(module_b.batch.predicates()[0].name, "wraps_a");
+        Ok(())
+    }
+
+    #[test]
+    fn test_e2e_imported_record_predicate_hash_matches_handwritten() -> Result<(), LangError> {
+        // Module B's predicate using `in a::ProcInputs` must hash identically
+        // to the same predicate built directly with an integer-keyed
+        // anchored key. Schema lives in A; the integer index is what gets
+        // baked into B's predicate body.
+        use crate::frontend::{
+            BuilderArg, CustomPredicateBatchBuilder, KeyComponent, StatementTmplBuilder,
+        };
+
+        let params = Params::default();
+        let module_a_src = r#"
+            record ProcInputs = (Foo, Bar, Baz)
+            stub(A) = AND(Equal(A["x"], 1))
+        "#;
+        let module_a = Arc::new(load_module(module_a_src, "module_a", &params, &[])?);
+        let a_hash = module_a.id().encode_hex::<String>();
+
+        let module_b_src = format!(
+            r#"
+            use module 0x{} as a
+
+            uses(in a::ProcInputs) = AND(
+                Equal(in.Bar, 7)
+            )
+            "#,
+            a_hash
+        );
+        let module_b = load_module(&module_b_src, "module_b", &params, &[module_a])?;
+
+        let mut hand = CustomPredicateBatchBuilder::new(params.clone(), "module_b".into());
+        let stb = StatementTmplBuilder::new_from_pred(NativePredicate::Equal)
+            .arg(BuilderArg::Key("in".into(), KeyComponent::Index(1)))
+            .arg(BuilderArg::Literal(Value::from(7i64)));
+        hand.predicate_and("uses", &["in"], &[], &[stb])
+            .expect("predicate_and");
+        let hand_batch = hand.finish().expect("finish");
+
+        assert_eq!(module_b.batch.id(), hand_batch.id());
+        Ok(())
+    }
+
+    #[test]
+    fn test_e2e_records_no_transitive_reexport() -> Result<(), LangError> {
+        // Module A defines a record. Module B imports A and uses it. Module C
+        // imports B but NOT A — `b::ProcInputs` must not resolve, since
+        // `Module.records` only carries locally-declared records.
+        let params = Params::default();
+        let module_a_src = r#"
+            record ProcInputs = (Foo, Bar)
+            stub(A) = AND(Equal(A["x"], 1))
+        "#;
+        let module_a = Arc::new(load_module(module_a_src, "module_a", &params, &[])?);
+        let a_hash = module_a.id().encode_hex::<String>();
+
+        let module_b_src = format!(
+            r#"
+            use module 0x{} as a
+
+            uses(in a::ProcInputs) = AND(Equal(in.Bar, 1))
+            "#,
+            a_hash
+        );
+        let module_b = Arc::new(load_module(
+            &module_b_src,
+            "module_b",
+            &params,
+            &[module_a],
+        )?);
+        // Sanity: B carries no records of its own.
+        assert!(module_b.records.is_empty());
+        let b_hash = module_b.id().encode_hex::<String>();
+
+        // C tries to use `b::ProcInputs` — should fail at validation.
+        let module_c_src = format!(
+            r#"
+            use module 0x{} as b
+
+            wraps(in b::ProcInputs) = AND(Equal(in.Bar, 1))
+            "#,
+            b_hash
+        );
+        let result = load_module(&module_c_src, "module_c", &params, &[module_b]);
+        assert!(result.is_err(), "expected re-export to be rejected");
+        match result.err().unwrap().kind {
+            LangErrorKind::Validation(e) => match *e {
+                frontend_ast_validate::ValidationError::UnknownRecord { name, .. } => {
+                    assert_eq!(name, "b::ProcInputs");
+                }
+                other => panic!("expected UnknownRecord, got {:?}", other),
+            },
+            other => panic!("expected ValidationError, got {:?}", other),
+        }
+        Ok(())
+    }
 }

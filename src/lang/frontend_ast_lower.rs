@@ -13,7 +13,7 @@ use crate::{
     lang::{
         frontend_ast::*,
         frontend_ast_split,
-        frontend_ast_validate::{PredicateKind, SymbolTable, ValidatedAST},
+        frontend_ast_validate::{PredicateKind, RecordSource, SymbolTable, ValidatedAST},
         module, Module,
     },
     middleware::{
@@ -372,6 +372,7 @@ impl<'a> Lowerer<'a> {
     fn lower_module(self, module_name: &str) -> Result<Module, LoweringError> {
         // Extract and split custom predicates from document
         let custom_predicates = self.extract_and_split_predicates()?;
+        let local_records = self.collect_local_records();
 
         // Build the module from split predicates
         let module = module::build_module(
@@ -379,9 +380,22 @@ impl<'a> Lowerer<'a> {
             self.params,
             module_name,
             self.validated.symbols(),
+            local_records,
         )?;
 
         Ok(module)
+    }
+
+    /// Collect record declarations from this module's source. No transitive
+    /// re-export — imported records aren't included.
+    fn collect_local_records(&self) -> HashMap<String, Vec<String>> {
+        self.validated
+            .symbols()
+            .records
+            .iter()
+            .filter(|(_, schema)| matches!(schema.source, RecordSource::Local))
+            .map(|(name, schema)| (name.clone(), schema.fields.clone()))
+            .collect()
     }
 
     fn lower_request(self) -> Result<crate::frontend::PodRequest, LoweringError> {

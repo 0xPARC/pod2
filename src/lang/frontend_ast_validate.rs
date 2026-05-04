@@ -66,10 +66,40 @@ pub struct RecordSchema {
     pub source_span: Option<Span>,
 }
 
+impl RecordSchema {
+    /// Build a schema from already-deduplicated fields. Callers that need to
+    /// surface a per-field span on duplicates (e.g. local declarations)
+    /// should detect duplicates themselves before calling this.
+    pub fn from_fields(
+        fields: Vec<String>,
+        source: RecordSource,
+        source_span: Option<Span>,
+    ) -> Self {
+        let field_index = fields
+            .iter()
+            .enumerate()
+            .map(|(i, f)| (f.clone(), i))
+            .collect();
+        Self {
+            fields,
+            field_index,
+            source,
+            source_span,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RecordSource {
     Local,
     Imported { module: String },
+}
+
+/// Build the `SymbolTable.records` key for a record imported via
+/// `use module ... as alias`. Mirrors the `alias::Name` form used for
+/// `TypeRef::Qualified`.
+pub fn qualified_record_key(alias: &str, name: &str) -> String {
+    format!("{}::{}", alias, name)
 }
 
 /// Information about a predicate
@@ -281,6 +311,22 @@ impl Validator {
                     span: use_stmt.span,
                 })?;
 
+        // Flatten the imported module's locally-declared records into the
+        // symbol table under qualified keys (`alias::Name`). No transitive
+        // re-export — `Module.records` only carries local declarations.
+        for (record_name, fields) in &module.records {
+            self.symbols.records.insert(
+                qualified_record_key(alias, record_name),
+                RecordSchema::from_fields(
+                    fields.clone(),
+                    RecordSource::Imported {
+                        module: alias.clone(),
+                    },
+                    use_stmt.span,
+                ),
+            );
+        }
+
         // Store the module keyed by alias for later qualified name resolution
         self.symbols
             .imported_modules
@@ -289,20 +335,25 @@ impl Validator {
         Ok(())
     }
 
-    /// Returns the resolved record-type name for a typed arg, or `None` if
-    /// the arg has no `type_name`. Errors if the type tag doesn't refer to
-    /// a known record.
+    /// Returns the resolved `SymbolTable.records` key for a typed arg, or
+    /// `None` if the arg has no `type_name`. The key is the bare type name
+    /// for locals and `"alias::Name"` for qualified imports. Errors if the
+    /// tag doesn't refer to a known record.
     fn resolve_typed_arg(&self, arg: &TypedArg) -> Result<Option<String>, ValidationError> {
-        let Some(type_name) = &arg.type_name else {
+        let Some(type_ref) = &arg.type_name else {
             return Ok(None);
         };
-        if !self.symbols.records.contains_key(&type_name.name) {
+        let key = match type_ref {
+            TypeRef::Local(id) => id.name.clone(),
+            TypeRef::Qualified { module, name } => qualified_record_key(&module.name, &name.name),
+        };
+        if !self.symbols.records.contains_key(&key) {
             return Err(ValidationError::UnknownRecord {
-                name: type_name.name.clone(),
-                span: type_name.span,
+                name: key,
+                span: type_ref.span(),
             });
         }
-        Ok(Some(type_name.name.clone()))
+        Ok(Some(key))
     }
 
     fn process_use_intro_statement(

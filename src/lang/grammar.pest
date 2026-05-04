@@ -23,8 +23,11 @@ arg_section = {
     public_arg_list ~ ("," ~ private_kw ~ private_arg_list)?
 }
 
-// `name` or `name TypeName`. The optional second identifier is a record type tag.
-typed_arg = { identifier ~ identifier? }
+// `name` or `name TypeName` or `name module::TypeName`. The optional `type_tag`
+// is a record type, either local or imported via a `use module ... as alias`.
+typed_arg = { identifier ~ type_tag? }
+type_tag = { qualified_type_ref | identifier }
+qualified_type_ref = { identifier ~ "::" ~ identifier }
 public_arg_list = { typed_arg ~ ("," ~ typed_arg)* }
 private_arg_list = { typed_arg ~ ("," ~ typed_arg)* }
 

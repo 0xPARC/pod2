@@ -82,13 +82,42 @@ pub struct ArgSection {
     pub span: Option<Span>,
 }
 
-/// Predicate argument: `name` or `name TypeName`. The optional `type_name`
-/// names a record type whose dot-access fields are resolved at lowering time.
+/// Predicate argument: `name`, `name TypeName`, or `name module::TypeName`.
+/// The optional `type_name` names a record type whose dot-access fields are
+/// resolved at lowering time.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TypedArg {
     pub name: String,
-    pub type_name: Option<Identifier>,
+    pub type_name: Option<TypeRef>,
     pub span: Option<Span>,
+}
+
+/// Reference to a record type — either a local declaration in this module
+/// or an import via `use module ... as alias`.
+#[derive(Debug, Clone, PartialEq)]
+pub enum TypeRef {
+    Local(Identifier),
+    Qualified {
+        module: Identifier,
+        name: Identifier,
+    },
+}
+
+impl TypeRef {
+    /// The type's bare name (without module qualifier).
+    pub fn type_name(&self) -> &str {
+        match self {
+            TypeRef::Local(id) => &id.name,
+            TypeRef::Qualified { name, .. } => &name.name,
+        }
+    }
+
+    pub fn span(&self) -> Option<Span> {
+        match self {
+            TypeRef::Local(id) => id.span,
+            TypeRef::Qualified { name, .. } => name.span,
+        }
+    }
 }
 
 /// Conjunction type for custom predicates
@@ -410,6 +439,15 @@ impl fmt::Display for TypedArg {
             write!(f, " {}", t)?;
         }
         Ok(())
+    }
+}
+
+impl fmt::Display for TypeRef {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            TypeRef::Local(id) => write!(f, "{}", id),
+            TypeRef::Qualified { module, name } => write!(f, "{}::{}", module, name),
+        }
     }
 }
 
@@ -805,11 +843,26 @@ pub mod parse {
         let mut inner = pair.into_inner();
         let name_pair = inner.next().unwrap();
         let name = name_pair.as_str().to_string();
-        let type_name = inner.next().map(parse_identifier);
+        let type_name = inner.next().map(parse_type_tag);
         TypedArg {
             name,
             type_name,
             span: Some(span),
+        }
+    }
+
+    fn parse_type_tag(pair: Pair<Rule>) -> TypeRef {
+        assert_eq!(pair.as_rule(), Rule::type_tag);
+        let inner = pair.into_inner().next().expect("type_tag has one child");
+        match inner.as_rule() {
+            Rule::identifier => TypeRef::Local(parse_identifier(inner)),
+            Rule::qualified_type_ref => {
+                let mut idents = inner.into_inner();
+                let module = parse_identifier(idents.next().unwrap());
+                let name = parse_identifier(idents.next().unwrap());
+                TypeRef::Qualified { module, name }
+            }
+            other => unreachable!("unexpected type_tag inner rule: {other:?}"),
         }
     }
 
@@ -1246,14 +1299,14 @@ mod tests {
                     for arg in &mut c.args.public_args {
                         arg.span = None;
                         if let Some(t) = &mut arg.type_name {
-                            t.span = None;
+                            clear_type_ref_spans(t);
                         }
                     }
                     if let Some(private) = &mut c.args.private_args {
                         for arg in private {
                             arg.span = None;
                             if let Some(t) = &mut arg.type_name {
-                                t.span = None;
+                                clear_type_ref_spans(t);
                             }
                         }
                     }
@@ -1267,6 +1320,16 @@ mod tests {
                         clear_statement_spans(stmt);
                     }
                 }
+            }
+        }
+    }
+
+    fn clear_type_ref_spans(t: &mut TypeRef) {
+        match t {
+            TypeRef::Local(id) => id.span = None,
+            TypeRef::Qualified { module, name } => {
+                module.span = None;
+                name.span = None;
             }
         }
     }
@@ -1464,6 +1527,16 @@ my_pred(in ProcInputs, other) = AND (
         let input = r#"record R = (X, Y)
 mixed(a, b R, c, private: d, e R) = AND (
     Equal(a, c)
+)"#;
+        test_roundtrip(input);
+    }
+
+    #[test]
+    fn test_typed_arg_qualified() {
+        // Qualified type tag references an imported record; the parser
+        // accepts it without inspecting the import (validation is downstream).
+        let input = r#"my_pred(in some_module::ProcInputs) = AND (
+    Equal(in.Foo, in.Bar)
 )"#;
         test_roundtrip(input);
     }
