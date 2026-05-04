@@ -110,6 +110,13 @@ impl TypeRef {
             TypeRef::Qualified { name, .. } => name.span,
         }
     }
+
+    /// Key used to look this reference up in `SymbolTable.records`: the bare
+    /// name for locals, `alias::Name` for qualified imports. Pairs with
+    /// `qualified_record_key` (which builds the same shape from raw parts).
+    pub fn symbol_table_key(&self) -> String {
+        self.to_string()
+    }
 }
 
 /// Conjunction type for custom predicates
@@ -299,11 +306,12 @@ pub struct DictPair {
     pub span: Option<Span>,
 }
 
-/// Record literal: `Name(Entry: value, ...)`. Entries may appear in any
+/// Record literal: `Name(Entry: value, ...)` (local) or
+/// `module::Name(Entry: value, ...)` (imported). Entries may appear in any
 /// order; the schema (resolved in validation) maps each to its index.
 #[derive(Debug, Clone, PartialEq)]
 pub struct LiteralRecord {
-    pub name: Identifier,
+    pub name: TypeRef,
     pub entries: Vec<RecordEntryLiteral>,
     pub span: Option<Span>,
 }
@@ -1049,7 +1057,7 @@ pub mod parse {
         assert_eq!(pair.as_rule(), Rule::literal_record);
         let span = get_span(&pair);
         let mut inner = pair.into_inner();
-        let name = parse_identifier(inner.next().unwrap());
+        let name = parse_type_tag(inner.next().unwrap());
         let entries: Result<Vec<_>, _> = inner
             .filter(|p| p.as_rule() == Rule::record_entry)
             .map(parse_record_entry)
@@ -1413,7 +1421,7 @@ mod tests {
             }
             LiteralValue::Record(r) => {
                 r.span = None;
-                r.name.span = None;
+                clear_type_ref_spans(&mut r.name);
                 for entry in &mut r.entries {
                     entry.span = None;
                     entry.name.span = None;
@@ -1577,11 +1585,18 @@ mixed(a, b R, c, private: d, e R) = AND (
     }
 
     #[test]
-    fn test_record_literal_empty() {
+    fn test_record_literal_empty_rejected() {
+        // Record literals require at least one entry — an empty literal
+        // would never validate (no schema has zero entries), so reject at
+        // parse time for a clearer error.
         let input = r#"REQUEST(
     Equal(A["data"], Empty())
 )"#;
-        test_roundtrip(input);
+        let parsed = crate::lang::parser::parse_podlang(input);
+        assert!(
+            parsed.is_err(),
+            "expected empty record literal `Empty()` to be rejected"
+        );
     }
 
     #[test]
@@ -1611,6 +1626,18 @@ mixed(a, b R, c, private: d, e R) = AND (
     }
 
     #[test]
+    fn test_record_literal_qualified() {
+        // Imported record literal: `module::R(Foo: 1)`. Parses with
+        // `TypeRef::Qualified` as the head; PEG ordering means the
+        // `module::R` prefix is consumed by `literal_record` rather than
+        // shadowed by `record_entry_index`.
+        let input = r#"REQUEST(
+    Equal(A["data"], some_mod::R(Foo: 1, Bar: 2))
+)"#;
+        test_roundtrip(input);
+    }
+
+    #[test]
     fn test_record_keyword_reserved() {
         // `record` may not appear as an identifier name.
         let input = r#"record record = (Foo)"#;
@@ -1619,6 +1646,19 @@ mixed(a, b R, c, private: d, e R) = AND (
             parsed.is_err(),
             "expected `record` to be rejected as an identifier"
         );
+    }
+
+    #[test]
+    fn test_reserved_word_prefix_allowed_as_identifier() {
+        // The reserved-word check is anchored at a word boundary, so only
+        // the exact keyword is rejected. Identifiers that merely begin with
+        // a reserved word (`record_count`, `recorder`, `record_field`, the
+        // predicate name `record_using_pred`) must parse normally.
+        let input = r#"record Outer = (record_field, recorder)
+record_using_pred(record_count, recordOwner) = AND (
+    Equal(record_count, recordOwner)
+)"#;
+        test_roundtrip(input);
     }
 
     #[test]

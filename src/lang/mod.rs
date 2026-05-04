@@ -1153,6 +1153,93 @@ mod tests {
     }
 
     #[test]
+    fn test_e2e_imported_record_literal_matches_array_root() -> Result<(), LangError> {
+        // Qualified record literal: `a::ProcInputs(...)` in the importer's
+        // body lowers to the same `Array` root as a local record literal
+        // built from the same schema, with entries placed at their schema
+        // indices.
+        use crate::middleware::{containers::Array, StatementTmplArg};
+
+        let params = Params::default();
+        let module_a_src = r#"
+            record ProcInputs = (Foo, Bar, Baz)
+            stub(A) = AND(Equal(A["x"], 1))
+        "#;
+        let module_a = Arc::new(load_module(module_a_src, "module_a", &params, &[])?);
+        let a_hash = module_a.id().encode_hex::<String>();
+
+        // Source order is intentionally not schema order — the schema lookup
+        // through the qualified key has to map each entry back to its index.
+        let module_b_src = format!(
+            r#"
+            use module 0x{} as a
+
+            uses(A) = AND(
+                Equal(A["data"], a::ProcInputs(Baz: 30, Foo: 10, Bar: 20))
+            )
+            "#,
+            a_hash
+        );
+        let module_b = load_module(&module_b_src, "module_b", &params, &[module_a])?;
+
+        let pred = &module_b.batch.predicates()[0];
+        let stmt = &pred.statements()[0];
+        let lowered = match &stmt.args()[1] {
+            StatementTmplArg::Literal(v) => v.clone(),
+            other => panic!("expected Literal at arg 1, got {other:?}"),
+        };
+
+        let expected = Value::from(Array::new(vec![
+            Value::from(10i64),
+            Value::from(20i64),
+            Value::from(30i64),
+        ]));
+
+        assert_eq!(lowered.raw(), expected.raw());
+        Ok(())
+    }
+
+    #[test]
+    fn test_e2e_imported_record_literal_unknown_module_rejected() -> Result<(), LangError> {
+        // A literal that names a module the importer didn't bind must be
+        // rejected — the qualified key never gets into the symbol table,
+        // so validation surfaces `UnknownRecord` rather than producing a
+        // bogus lowered value.
+        use crate::lang::frontend_ast_validate::ValidationError;
+
+        let params = Params::default();
+        let module_a_src = r#"
+            record ProcInputs = (Foo, Bar)
+            stub(A) = AND(Equal(A["x"], 1))
+        "#;
+        let module_a = Arc::new(load_module(module_a_src, "module_a", &params, &[])?);
+        let a_hash = module_a.id().encode_hex::<String>();
+
+        // Imported as `a`, but the literal references `b::ProcInputs`.
+        let module_b_src = format!(
+            r#"
+            use module 0x{} as a
+
+            uses(A) = AND(
+                Equal(A["data"], b::ProcInputs(Foo: 1, Bar: 2))
+            )
+            "#,
+            a_hash
+        );
+        let err = load_module(&module_b_src, "module_b", &params, &[module_a]).unwrap_err();
+        match err.kind {
+            LangErrorKind::Validation(e) => match *e {
+                ValidationError::UnknownRecord { name, .. } => {
+                    assert_eq!(name, "b::ProcInputs");
+                }
+                other => panic!("expected UnknownRecord, got {other:?}"),
+            },
+            other => panic!("expected Validation, got {other:?}"),
+        }
+        Ok(())
+    }
+
+    #[test]
     fn test_e2e_record_entry_index_proves_via_mock() -> Result<(), LangError> {
         // End-to-end: a record-using predicate is satisfied by an Array
         // value, with `Inputs::X` resolving the entry's integer index.
@@ -1187,6 +1274,46 @@ mod tests {
             .unwrap();
         builder
             .pub_op(Operation::custom(at_x_is, [contains_st]))
+            .unwrap();
+        let pod = builder.prove(&MockProver {}).unwrap();
+        pod.pod.verify().unwrap();
+        Ok(())
+    }
+
+    #[test]
+    fn test_e2e_record_typed_dot_proves_via_mock() -> Result<(), LangError> {
+        // End-to-end: typed dot access is satisfied by an Array entry opened
+        // with an integer key, then used as an AnchoredKey in an Equal statement.
+        use crate::{
+            backends::plonky2::mock::mainpod::MockProver,
+            frontend::{MainPodBuilder, Operation},
+            middleware::{containers::Array, VDSet},
+        };
+
+        let params = Params::default();
+        let module = load_module(
+            r#"
+            record Inputs = (X, Y)
+            at_x_is(arr Inputs, val) = AND(
+                Equal(arr.X, val)
+            )
+            "#,
+            "records_dot_e2e",
+            &params,
+            &[],
+        )?;
+        let at_x_is = module.batch.predicate_ref_by_name("at_x_is").unwrap();
+
+        let arr = Array::new(vec![Value::from(7i64), Value::from(13i64)]);
+
+        let vd_set = VDSet::new(&[]);
+        let mut builder = MainPodBuilder::new(&params, &vd_set);
+        let contains_st = builder
+            .priv_op(Operation::array_contains(arr, 0i64, 7i64))
+            .unwrap();
+        let equal_st = builder.priv_op(Operation::eq(contains_st, 7i64)).unwrap();
+        builder
+            .pub_op(Operation::custom(at_x_is, [equal_st]))
             .unwrap();
         let pod = builder.prove(&MockProver {}).unwrap();
         pod.pod.verify().unwrap();

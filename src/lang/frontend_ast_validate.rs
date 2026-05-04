@@ -343,9 +343,7 @@ impl Validator {
         let Some(type_ref) = &arg.type_name else {
             return Ok(None);
         };
-        // `TypeRef`'s Display matches `SymbolTable.records`'s key shape:
-        // bare for locals, `alias::Name` for qualified imports.
-        let key = type_ref.to_string();
+        let key = type_ref.symbol_table_key();
         if !self.symbols.records.contains_key(&key) {
             return Err(ValidationError::UnknownRecord {
                 name: key,
@@ -726,7 +724,10 @@ impl Validator {
                                         span: ak.span,
                                     });
                                 }
-                                AnchoredKeyPath::Index(_) => {}
+                                AnchoredKeyPath::Index(_) => unreachable!(
+                                    "AnchoredKeyPath::Index is introduced during lowering; \
+                                     it cannot appear in the parsed AST that validation sees"
+                                ),
                             }
                         }
                     }
@@ -814,24 +815,25 @@ impl Validator {
                 Ok(())
             }
             LiteralValue::Record(r) => {
-                let Some(schema) = self.symbols.records.get(&r.name.name) else {
+                let key = r.name.symbol_table_key();
+                let Some(schema) = self.symbols.records.get(&key) else {
                     return Err(ValidationError::UnknownRecord {
-                        name: r.name.name.clone(),
-                        span: r.name.span,
+                        name: key,
+                        span: r.name.span(),
                     });
                 };
                 let mut seen: HashSet<&String> = HashSet::new();
                 for entry in &r.entries {
                     if !schema.entry_index.contains_key(&entry.name.name) {
                         return Err(ValidationError::UnknownRecordEntry {
-                            record: r.name.name.clone(),
+                            record: key.clone(),
                             entry: entry.name.name.clone(),
                             span: entry.name.span,
                         });
                     }
                     if !seen.insert(&entry.name.name) {
                         return Err(ValidationError::DuplicateLiteralRecordEntry {
-                            record: r.name.name.clone(),
+                            record: key.clone(),
                             entry: entry.name.name.clone(),
                             span: entry.name.span,
                         });
@@ -841,7 +843,7 @@ impl Validator {
                 Ok(())
             }
             LiteralValue::RecordEntryIndex { record, entry } => {
-                let key = record.to_string();
+                let key = record.symbol_table_key();
                 let Some(schema) = self.symbols.records.get(&key) else {
                     return Err(ValidationError::UnknownRecord {
                         name: key,

@@ -158,8 +158,10 @@ fn resolve_local_predicate(
 /// Lower a literal value from AST to middleware Value.
 ///
 /// This is a pure conversion that cannot fail for context-free literals.
-/// Panics on ExternalPredicateHash — use `lower_literal_with_context` when
-/// external predicate references may appear (e.g. inside containers).
+/// Panics on `ExternalPredicateHash`, `Record`, and `RecordEntryIndex` —
+/// use `lower_literal_with_context` when any of those may appear (records
+/// and entry indices need the symbol table to resolve the record schema;
+/// external predicate hashes need the imported-module table).
 pub(crate) fn lower_literal(lit: &LiteralValue) -> Value {
     match lit {
         LiteralValue::Int(i) => Value::from(i.value),
@@ -270,12 +272,11 @@ pub fn lower_literal_with_context(
             Ok(Value::from(containers::Dictionary::new(pairs)))
         }
         LiteralValue::Record(r) => {
-            // Sparse `Array` keyed by the schema's entry index. Missing
-            // entries stay missing; entry order in source doesn't affect
-            // the merkle root (the schema fixes the index).
+            // The schema fixes each entry's index, so source order doesn't
+            // affect the merkle root and missing entries stay missing.
             let schema = symbols
                 .records
-                .get(&r.name.name)
+                .get(&r.name.symbol_table_key())
                 .expect("record schema validated");
             let mut arr = containers::Array::empty_with_db(Box::new(MemDB::new()));
             for entry_lit in &r.entries {
@@ -288,7 +289,7 @@ pub fn lower_literal_with_context(
         LiteralValue::RecordEntryIndex { record, entry } => {
             let schema = symbols
                 .records
-                .get(&record.to_string())
+                .get(&record.symbol_table_key())
                 .expect("record schema validated");
             let idx = schema.entry_index[&entry.name];
             Ok(Value::from(idx as i64))

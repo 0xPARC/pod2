@@ -11,7 +11,11 @@ WHITESPACE = _{ (" " | "\t" | NEWLINE)+ }
 // COMMENT matches a line comment (//...\n) or block comment (/*...*/).
 COMMENT = _{ ("//" ~ (!NEWLINE ~ ANY)* | "/*" ~ (!"*/" ~ ANY)* ~ "*/" ) }
 
-reserved_identifier = { "private" | "true" | "false" | "record" }
+// Word-boundary anchor: the reserved word must not be followed by an
+// identifier character, otherwise prefixes like `record_count` or `recorder`
+// would be wrongly rejected by the `!reserved_identifier` lookahead in
+// `identifier`.
+reserved_identifier = @{ ("private" | "true" | "false" | "record") ~ !(ASCII_ALPHANUMERIC | "_") }
 
 // Define rules for identifiers (predicate names, wildcard names)
 // Must start with alpha or _, followed by alpha, numeric, or _
@@ -92,23 +96,23 @@ literal_value = {
     literal_string |
     predicate_hash_native |
     predicate_hash_external |
-    record_entry_index |
     literal_record |
+    record_entry_index |
     literal_int
 }
 
-// Record literal: Name(Field: value, ...). Must come after the `Name(...)`-shaped
-// prefix-tagged literals (PublicKey, SecretKey, Raw) in `literal_value` so PEG
-// ordering doesn't shadow them.
+// Record literal: `Name(Field: value, ...)` or `module::Name(...)`. Ordering
+// in `literal_value` matters: must come after `Name(...)`-shaped prefix
+// literals (PublicKey, SecretKey, Raw) so PEG doesn't shadow them, and BEFORE
+// `record_entry_index` so `module::R(...)` isn't consumed as a 2-segment
+// entry index — Pest backtracks to `record_entry_index` when no `(` follows.
 literal_record = {
-    identifier ~ "(" ~ (record_entry ~ ("," ~ record_entry)*)? ~ ")"
+    type_tag ~ "(" ~ record_entry ~ ("," ~ record_entry)* ~ ")"
 }
 record_entry = { identifier ~ ":" ~ literal_value }
 
 // Compile-time entry-index lookup: `R::Foo` or `module::R::Foo`. Resolves to
 // the integer index of the named entry in the (possibly imported) record.
-// Must come before `literal_record` so `R::Foo` doesn't try to match the
-// `Name(...)` shape and fail on the missing `(`.
 record_entry_index = {
     identifier ~ "::" ~ identifier ~ ("::" ~ identifier)?
 }
