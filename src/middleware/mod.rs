@@ -685,7 +685,7 @@ impl IndexKey {
         RawValue::from(self.value)
     }
     pub fn hash(&self) -> Hash {
-        Hash(self.raw().0)
+        Hash::from(self.raw())
     }
 }
 
@@ -1060,9 +1060,9 @@ impl Params {
         self.max_statements - self.max_public_statements
     }
 
-    /// Maximum number of fields permitted in a `record` declaration: the
+    /// Maximum number of entries permitted in a `record` declaration: the
     /// number of leaves in the small container merkle tree variant.
-    pub fn max_record_fields(&self) -> usize {
+    pub fn max_record_entries(&self) -> usize {
         2usize.pow(self.containers.max_depth_small as u32)
     }
 

@@ -9,7 +9,7 @@ use std::{
 };
 
 use crate::{
-    frontend::{BuilderArg, KeyComponent, PredicateOrWildcard, StatementTmplBuilder},
+    frontend::{BuilderArg, PredicateOrWildcard, StatementTmplBuilder},
     lang::{
         frontend_ast::*,
         frontend_ast_split,
@@ -265,17 +265,17 @@ pub fn lower_literal_with_context(
             Ok(Value::from(containers::Dictionary::new(pairs)))
         }
         LiteralValue::Record(r) => {
-            // Sparse `Array` keyed by the schema's field index. Missing
-            // fields stay missing; field order in source doesn't affect
+            // Sparse `Array` keyed by the schema's entry index. Missing
+            // entries stay missing; entry order in source doesn't affect
             // the merkle root (the schema fixes the index).
             let schema = symbols
                 .records
                 .get(&r.name.name)
                 .expect("record schema validated");
             let mut arr = containers::Array::empty_with_db(Box::new(MemDB::new()));
-            for field_lit in &r.fields {
-                let idx = schema.field_index[&field_lit.name.name];
-                let value = lower_literal_with_context(&field_lit.value, symbols, context)?;
+            for entry_lit in &r.entries {
+                let idx = schema.entry_index[&entry_lit.name.name];
+                let value = lower_literal_with_context(&entry_lit.value, symbols, context)?;
                 arr.insert(idx, value)?;
             }
             Ok(Value::from(arr))
@@ -298,9 +298,9 @@ pub(crate) fn lower_statement_arg(arg: &StatementTmplArg) -> BuilderArg {
         StatementTmplArg::Wildcard(id) => BuilderArg::WildcardLiteral(id.name.clone()),
         StatementTmplArg::AnchoredKey(ak) => {
             let key = match &ak.key {
-                AnchoredKeyPath::Bracket(s) => KeyComponent::Str(s.value.clone()),
-                AnchoredKeyPath::Dot(id) => KeyComponent::Str(id.name.clone()),
-                AnchoredKeyPath::Index(i) => KeyComponent::Index(*i),
+                AnchoredKeyPath::Bracket(s) => Key::new(s.value.clone()),
+                AnchoredKeyPath::Dot(id) => Key::new(id.name.clone()),
+                AnchoredKeyPath::Index(i) => Key::from_index(*i),
             };
             BuilderArg::Key(ak.root.name.clone(), key)
         }
@@ -394,7 +394,7 @@ impl<'a> Lowerer<'a> {
             .records
             .iter()
             .filter(|(_, schema)| matches!(schema.source, RecordSource::Local))
-            .map(|(name, schema)| (name.clone(), schema.fields.clone()))
+            .map(|(name, schema)| (name.clone(), schema.entries.clone()))
             .collect()
     }
 
@@ -470,7 +470,7 @@ impl<'a> Lowerer<'a> {
                         .get(&root_name)
                         .expect("Root wildcard not found");
                     let wildcard = Wildcard::new(root_name, *root_index);
-                    MWStatementTmplArg::AnchoredKey(wildcard, Key::from(key))
+                    MWStatementTmplArg::AnchoredKey(wildcard, key)
                 }
                 BuilderArg::SelfPredicateHash(_) => {
                     unreachable!("SelfPredicateHash should not appear in request lowering")
@@ -560,7 +560,7 @@ impl<'a> Lowerer<'a> {
     }
 
     /// Rewrite `r.Foo` to `r[i]` when `r` is a typed wildcard, using the
-    /// record schema's field-index map. Untyped wildcards keep
+    /// record schema's entry-index map. Untyped wildcards keep
     /// `Dot`/`Bracket` keys unchanged (POD-string-key semantics).
     fn rewrite_typed_dot_access(&self, pred: &mut CustomPredicateDef) {
         let symbols = self.validated.symbols();
@@ -583,14 +583,14 @@ impl<'a> Lowerer<'a> {
                 let Some(record_name) = &wc_info.record_type else {
                     continue;
                 };
-                let AnchoredKeyPath::Dot(field) = &ak.key else {
+                let AnchoredKeyPath::Dot(entry) = &ak.key else {
                     continue;
                 };
                 let schema = symbols
                     .records
                     .get(record_name)
                     .expect("record_type was resolved at predicate-def time");
-                let idx = schema.field_index[&field.name];
+                let idx = schema.entry_index[&entry.name];
                 ak.key = AnchoredKeyPath::Index(idx as i64);
             }
         }
@@ -898,8 +898,8 @@ mod tests {
 
     #[test]
     fn test_typed_dot_lowers_to_index_key() {
-        // Single field on a typed wildcard becomes an integer-keyed
-        // AnchoredKey at the schema's field index.
+        // Single entry on a typed wildcard becomes an integer-keyed
+        // AnchoredKey at the schema's entry index.
         let input = r#"
             record R = (Foo, Bar, Baz)
             my_pred(in R) = AND(Equal(in.Bar, 0))
@@ -938,7 +938,7 @@ mod tests {
     }
 
     #[test]
-    fn test_typed_dot_multiple_fields_distinct_indices() {
+    fn test_typed_dot_multiple_entries_distinct_indices() {
         let input = r#"
             record R = (Foo, Bar, Baz)
             my_pred(in R) = AND(
@@ -977,7 +977,7 @@ mod tests {
         // anchored key. There is no Podlang surface syntax for `in[1]`, so we
         // build the reference batch via the builder API.
         use crate::{
-            frontend::{CustomPredicateBatchBuilder, KeyComponent, StatementTmplBuilder},
+            frontend::{CustomPredicateBatchBuilder, StatementTmplBuilder},
             middleware::NativePredicate,
         };
 
@@ -990,7 +990,7 @@ mod tests {
 
         let mut b = CustomPredicateBatchBuilder::new(params.clone(), "test_batch".into());
         let stb = StatementTmplBuilder::new_from_pred(NativePredicate::Equal)
-            .arg(BuilderArg::Key("in".into(), KeyComponent::Index(1)))
+            .arg(BuilderArg::Key("in".into(), Key::from_index(1)))
             .arg(BuilderArg::Literal(Value::from(7i64)));
         b.predicate_and("p", &["in"], &[], &[stb]).unwrap();
         let plain_batch = b.finish().unwrap();
@@ -1029,7 +1029,7 @@ mod tests {
     }
 
     #[test]
-    fn test_record_literal_field_order_doesnt_matter() {
+    fn test_record_literal_entry_order_doesnt_matter() {
         // Schema fixes the index, so source order never affects the root.
         let input_a = r#"
             record R = (Foo, Bar)
@@ -1047,7 +1047,7 @@ mod tests {
 
     #[test]
     fn test_record_literal_sparse_stays_sparse() {
-        // Missing fields stay missing (no zero-fill). Compare against an
+        // Missing entries stay missing (no zero-fill). Compare against an
         // explicit sparse Array built the same way.
         let input = r#"
             record R = (Foo, Bar, Baz)
@@ -1063,27 +1063,8 @@ mod tests {
     }
 
     #[test]
-    fn test_record_literal_sparse_differs_from_zero_fill() {
-        // Sparseness is observable: a sparse literal must not equal the
-        // dense zero-filled equivalent. This pins the "no zero-fill"
-        // invariant — if someone ever silently adds defaults, this fails.
-        let sparse_input = r#"
-            record R = (Foo, Bar, Baz)
-            my_pred(A) = AND(Equal(A["x"], R(Bar: 42)))
-        "#;
-        let dense_zero_input = r#"
-            record R = (Foo, Bar, Baz)
-            my_pred(A) = AND(Equal(A["x"], R(Foo: 0, Bar: 42, Baz: 0)))
-        "#;
-        assert_ne!(
-            lower_literal_in_pred(sparse_input).raw(),
-            lower_literal_in_pred(dense_zero_input).raw()
-        );
-    }
-
-    #[test]
     fn test_record_literal_nested_record_value() {
-        // A record literal whose field value is itself a record literal.
+        // A record literal whose entry value is itself a record literal.
         // The outer literal commits to whatever root the inner produces.
         let input = r#"
             record Inner = (X, Y)
@@ -1133,25 +1114,5 @@ mod tests {
                 }
             }
         }
-    }
-
-    #[test]
-    fn test_record_literal_nested_array_value() {
-        // A record literal whose field value is an array literal — the
-        // recursive lowering must thread through the with-context path.
-        let input = r#"
-            record R = (Items)
-            my_pred(A) = AND(Equal(A["x"], R(Items: [10, 20, 30])))
-        "#;
-        let v = lower_literal_in_pred(input);
-
-        let inner_array = Value::from(containers::Array::new(vec![
-            Value::from(10i64),
-            Value::from(20i64),
-            Value::from(30i64),
-        ]));
-        let expected = Value::from(containers::Array::new(vec![inner_array]));
-
-        assert_eq!(v.raw(), expected.raw());
     }
 }

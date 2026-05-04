@@ -1115,8 +1115,9 @@ mod tests {
         // to the same predicate built directly with an integer-keyed
         // anchored key. Schema lives in A; the integer index is what gets
         // baked into B's predicate body.
-        use crate::frontend::{
-            BuilderArg, CustomPredicateBatchBuilder, KeyComponent, StatementTmplBuilder,
+        use crate::{
+            frontend::{BuilderArg, CustomPredicateBatchBuilder, StatementTmplBuilder},
+            middleware::Key,
         };
 
         let params = Params::default();
@@ -1141,7 +1142,7 @@ mod tests {
 
         let mut hand = CustomPredicateBatchBuilder::new(params.clone(), "module_b".into());
         let stb = StatementTmplBuilder::new_from_pred(NativePredicate::Equal)
-            .arg(BuilderArg::Key("in".into(), KeyComponent::Index(1)))
+            .arg(BuilderArg::Key("in".into(), Key::from_index(1)))
             .arg(BuilderArg::Literal(Value::from(7i64)));
         hand.predicate_and("uses", &["in"], &[], &[stb])
             .expect("predicate_and");

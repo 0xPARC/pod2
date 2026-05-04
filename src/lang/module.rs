@@ -54,7 +54,7 @@ pub struct Module {
     /// Split chain info for predicates that were split
     pub split_chains: HashMap<String, SplitChainInfo>,
 
-    /// Records declared locally in this module's source: name → ordered field
+    /// Records declared locally in this module's source: name → ordered entry
     /// list. Frontend metadata only — the middleware batch knows nothing
     /// about records. No transitive re-export: a downstream importer
     /// inherits only the records declared in this module's own source.

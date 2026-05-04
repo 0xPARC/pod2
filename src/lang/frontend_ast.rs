@@ -25,11 +25,11 @@ pub enum DocumentItem {
     RequestDef(RequestDef),
 }
 
-/// Record definition: `record Name = (Field1, Field2, ...)`
+/// Record definition: `record Name = (Entry1, Entry2, ...)`
 #[derive(Debug, Clone, PartialEq)]
 pub struct RecordDef {
     pub name: Identifier,
-    pub fields: Vec<Identifier>,
+    pub entries: Vec<Identifier>,
     pub span: Option<Span>,
 }
 
@@ -83,7 +83,7 @@ pub struct ArgSection {
 }
 
 /// Predicate argument: `name`, `name TypeName`, or `name module::TypeName`.
-/// The optional `type_name` names a record type whose dot-access fields are
+/// The optional `type_name` names a record type whose dot-access entries are
 /// resolved at lowering time.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TypedArg {
@@ -104,14 +104,6 @@ pub enum TypeRef {
 }
 
 impl TypeRef {
-    /// The type's bare name (without module qualifier).
-    pub fn type_name(&self) -> &str {
-        match self {
-            TypeRef::Local(id) => &id.name,
-            TypeRef::Qualified { name, .. } => &name.name,
-        }
-    }
-
     pub fn span(&self) -> Option<Span> {
         match self {
             TypeRef::Local(id) => id.span,
@@ -155,6 +147,13 @@ impl PredicateRef {
             PredicateRef::Qualified { predicate, .. } => &predicate.name,
         }
     }
+
+    pub fn span(&self) -> Option<Span> {
+        match self {
+            PredicateRef::Local(id) => id.span,
+            PredicateRef::Qualified { predicate, .. } => predicate.span,
+        }
+    }
 }
 
 /// Arguments that can be passed to statements
@@ -175,23 +174,13 @@ pub struct AnchoredKey {
     pub span: Option<Span>,
 }
 
-impl AnchoredKey {
-    pub fn key_str(&self) -> &str {
-        match &self.key {
-            AnchoredKeyPath::Bracket(ls) => &ls.value,
-            AnchoredKeyPath::Dot(id) => &id.name,
-            AnchoredKeyPath::Index(_) => todo!(),
-        }
-    }
-}
-
 /// Key path in an anchored key
 #[derive(Debug, Clone, PartialEq)]
 pub enum AnchoredKeyPath {
     Bracket(LiteralString), // ["key"]
     Dot(Identifier),        // .key
     /// Integer-indexed key. Not produced by the parser; introduced by lowering
-    /// when a `Dot` access on a record-typed wildcard is resolved to a field
+    /// when a `Dot` access on a record-typed wildcard is resolved to an entry
     /// index.
     Index(i64),
 }
@@ -303,17 +292,17 @@ pub struct DictPair {
     pub span: Option<Span>,
 }
 
-/// Record literal: `Name(Field: value, ...)`. Fields may appear in any order;
-/// the schema (resolved in validation) maps each to its index.
+/// Record literal: `Name(Entry: value, ...)`. Entries may appear in any
+/// order; the schema (resolved in validation) maps each to its index.
 #[derive(Debug, Clone, PartialEq)]
 pub struct LiteralRecord {
     pub name: Identifier,
-    pub fields: Vec<RecordFieldLiteral>,
+    pub entries: Vec<RecordEntryLiteral>,
     pub span: Option<Span>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct RecordFieldLiteral {
+pub struct RecordEntryLiteral {
     pub name: Identifier,
     pub value: LiteralValue,
     pub span: Option<Span>,
@@ -454,11 +443,11 @@ impl fmt::Display for TypeRef {
 impl fmt::Display for RecordDef {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "record {} = (", self.name)?;
-        for (i, field) in self.fields.iter().enumerate() {
+        for (i, entry) in self.entries.iter().enumerate() {
             if i > 0 {
                 write!(f, ", ")?;
             }
-            write!(f, "{}", field)?;
+            write!(f, "{}", entry)?;
         }
         write!(f, ")")
     }
@@ -551,17 +540,17 @@ impl fmt::Display for LiteralValue {
 impl fmt::Display for LiteralRecord {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}(", self.name)?;
-        for (i, field) in self.fields.iter().enumerate() {
+        for (i, entry) in self.entries.iter().enumerate() {
             if i > 0 {
                 write!(f, ", ")?;
             }
-            write!(f, "{}", field)?;
+            write!(f, "{}", entry)?;
         }
         write!(f, ")")
     }
 }
 
-impl fmt::Display for RecordFieldLiteral {
+impl fmt::Display for RecordEntryLiteral {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}: {}", self.name, self.value)
     }
@@ -873,10 +862,10 @@ pub mod parse {
             .into_inner()
             .filter(|p| p.as_rule() == Rule::identifier);
         let name = parse_identifier(idents.next().unwrap());
-        let fields: Vec<_> = idents.map(parse_identifier).collect();
+        let entries: Vec<_> = idents.map(parse_identifier).collect();
         RecordDef {
             name,
-            fields,
+            entries,
             span: Some(span),
         }
     }
@@ -1035,24 +1024,24 @@ pub mod parse {
         let span = get_span(&pair);
         let mut inner = pair.into_inner();
         let name = parse_identifier(inner.next().unwrap());
-        let fields: Result<Vec<_>, _> = inner
-            .filter(|p| p.as_rule() == Rule::record_field)
-            .map(parse_record_field)
+        let entries: Result<Vec<_>, _> = inner
+            .filter(|p| p.as_rule() == Rule::record_entry)
+            .map(parse_record_entry)
             .collect();
         Ok(LiteralRecord {
             name,
-            fields: fields?,
+            entries: entries?,
             span: Some(span),
         })
     }
 
-    fn parse_record_field(pair: Pair<Rule>) -> Result<RecordFieldLiteral, parser::ParseError> {
-        assert_eq!(pair.as_rule(), Rule::record_field);
+    fn parse_record_entry(pair: Pair<Rule>) -> Result<RecordEntryLiteral, parser::ParseError> {
+        assert_eq!(pair.as_rule(), Rule::record_entry);
         let span = get_span(&pair);
         let mut inner = pair.into_inner();
         let name = parse_identifier(inner.next().unwrap());
         let value = parse_literal_value(inner.next().unwrap())?;
-        Ok(RecordFieldLiteral {
+        Ok(RecordEntryLiteral {
             name,
             value,
             span: Some(span),
@@ -1288,8 +1277,8 @@ mod tests {
                 DocumentItem::RecordDef(r) => {
                     r.span = None;
                     r.name.span = None;
-                    for f in &mut r.fields {
-                        f.span = None;
+                    for e in &mut r.entries {
+                        e.span = None;
                     }
                 }
                 DocumentItem::CustomPredicateDef(c) => {
@@ -1399,10 +1388,10 @@ mod tests {
             LiteralValue::Record(r) => {
                 r.span = None;
                 r.name.span = None;
-                for field in &mut r.fields {
-                    field.span = None;
-                    field.name.span = None;
-                    clear_literal_spans(&mut field.value);
+                for entry in &mut r.entries {
+                    entry.span = None;
+                    entry.name.span = None;
+                    clear_literal_spans(&mut entry.value);
                 }
             }
             LiteralValue::NativePredicateHash(id) => id.span = None,
@@ -1508,7 +1497,7 @@ mod tests {
     }
 
     #[test]
-    fn test_record_decl_single_field() {
+    fn test_record_decl_single_entry() {
         let input = r#"record Singleton = (Only)"#;
         test_roundtrip(input);
     }
@@ -1568,7 +1557,7 @@ mixed(a, b R, c, private: d, e R) = AND (
     #[test]
     fn test_record_literal_nested_value() {
         let input = r#"REQUEST(
-    Equal(A["data"], R(field: [1, 2, 3], other: {"k": "v"}))
+    Equal(A["data"], R(items: [1, 2, 3], other: {"k": "v"}))
 )"#;
         test_roundtrip(input);
     }

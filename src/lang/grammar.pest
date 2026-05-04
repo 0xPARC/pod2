@@ -100,9 +100,9 @@ literal_value = {
 // prefix-tagged literals (PublicKey, SecretKey, Raw) in `literal_value` so PEG
 // ordering doesn't shadow them.
 literal_record = {
-    identifier ~ "(" ~ (record_field ~ ("," ~ record_field)*)? ~ ")"
+    identifier ~ "(" ~ (record_entry ~ ("," ~ record_entry)*)? ~ ")"
 }
-record_field = { identifier ~ ":" ~ literal_value }
+record_entry = { identifier ~ ":" ~ literal_value }
 
 // Primitive literal types
 literal_int = @{ "-"? ~ ASCII_DIGIT+ }

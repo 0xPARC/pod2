@@ -305,14 +305,14 @@ fn render_validation_error(
             )
         }
 
-        ValidationError::RecordTooManyFields {
+        ValidationError::RecordTooManyEntries {
             name,
             count,
             max,
             span,
         } => {
             let title = format!(
-                "record `{}` has {} fields, exceeding the limit of {}",
+                "record `{}` has {} entries, exceeding the limit of {}",
                 name, count, max
             );
             render_with_optional_span(
@@ -321,16 +321,16 @@ fn render_validation_error(
                 path,
                 &title,
                 span.as_ref(),
-                "too many fields",
+                "too many entries",
             )
         }
 
-        ValidationError::DuplicateRecordField {
+        ValidationError::DuplicateRecordEntry {
             record,
-            field,
+            entry,
             span,
         } => {
-            let title = format!("duplicate field `{}` in record `{}`", field, record);
+            let title = format!("duplicate entry `{}` in record `{}`", entry, record);
             render_with_optional_span(
                 renderer,
                 source,
@@ -353,28 +353,28 @@ fn render_validation_error(
             )
         }
 
-        ValidationError::UnknownRecordField {
+        ValidationError::UnknownRecordEntry {
             record,
-            field,
+            entry,
             span,
         } => {
-            let title = format!("record `{}` has no field `{}`", record, field);
+            let title = format!("record `{}` has no entry `{}`", record, entry);
             render_with_optional_span(
                 renderer,
                 source,
                 path,
                 &title,
                 span.as_ref(),
-                "unknown field",
+                "unknown entry",
             )
         }
 
-        ValidationError::DuplicateLiteralRecordField {
+        ValidationError::DuplicateLiteralRecordEntry {
             record,
-            field,
+            entry,
             span,
         } => {
-            let title = format!("duplicate field `{}` in `{}` literal", field, record);
+            let title = format!("duplicate entry `{}` in `{}` literal", entry, record);
             render_with_optional_span(
                 renderer,
                 source,

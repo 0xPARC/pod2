@@ -15,37 +15,11 @@ use crate::{
 #[derive(Clone, Debug)]
 pub enum BuilderArg {
     Literal(Value),
-    /// Key: (origin, key), where origin is Wildcard and key is the key component.
-    Key(String, KeyComponent),
+    /// Key: (origin, key), where origin is the wildcard name.
+    Key(String, Key),
     WildcardLiteral(String),
     /// Reference to a same-batch predicate's identity hash (resolved by name in finish()).
     SelfPredicateHash(String),
-}
-
-/// The key half of an `AnchoredKey`, either string-named (POD-style) or
-/// integer-indexed (record-style after dot-access desugaring).
-#[derive(Clone, Debug)]
-pub enum KeyComponent {
-    Str(String),
-    Index(i64),
-}
-
-impl From<KeyComponent> for Key {
-    fn from(k: KeyComponent) -> Self {
-        match k {
-            KeyComponent::Str(s) => Key::new(s),
-            KeyComponent::Index(i) => Key::from_index(i),
-        }
-    }
-}
-
-impl From<&KeyComponent> for Key {
-    fn from(k: &KeyComponent) -> Self {
-        match k {
-            KeyComponent::Str(s) => Key::new(s.clone()),
-            KeyComponent::Index(i) => Key::from_index(*i),
-        }
-    }
 }
 
 /// When defining a `BuilderArg`, it can be done from 3 different inputs:
@@ -55,7 +29,7 @@ impl From<&KeyComponent> for Key {
 /// case i.
 impl From<(&str, &str)> for BuilderArg {
     fn from((origin, field): (&str, &str)) -> Self {
-        Self::Key(origin.to_string(), KeyComponent::Str(field.to_string()))
+        Self::Key(origin.to_string(), Key::from(field))
     }
 }
 /// case ii.
@@ -247,7 +221,7 @@ impl CustomPredicateBatchBuilder {
                             BuilderArg::Literal(v) => StatementTmplArg::Literal(v.clone()),
                             BuilderArg::Key(root_wc, key) => StatementTmplArg::AnchoredKey(
                                 resolve_wildcard(args, priv_args, root_wc)?,
-                                Key::from(key),
+                                key.clone(),
                             ),
                             BuilderArg::WildcardLiteral(v) => {
                                 StatementTmplArg::Wildcard(resolve_wildcard(args, priv_args, v)?)

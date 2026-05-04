@@ -172,35 +172,35 @@ pub enum ValidationError {
         second_span: Option<Span>,
     },
 
-    #[error("Record '{name}' has {count} fields, exceeding the limit of {max}")]
-    RecordTooManyFields {
+    #[error("Record '{name}' has {count} entries, exceeding the limit of {max}")]
+    RecordTooManyEntries {
         name: String,
         count: usize,
         max: usize,
         span: Option<Span>,
     },
 
-    #[error("Duplicate field name '{field}' in record '{record}'")]
-    DuplicateRecordField {
+    #[error("Duplicate entry name '{entry}' in record '{record}'")]
+    DuplicateRecordEntry {
         record: String,
-        field: String,
+        entry: String,
         span: Option<Span>,
     },
 
     #[error("Unknown record type: {name}")]
     UnknownRecord { name: String, span: Option<Span> },
 
-    #[error("Record '{record}' has no field '{field}'")]
-    UnknownRecordField {
+    #[error("Record '{record}' has no entry '{entry}'")]
+    UnknownRecordEntry {
         record: String,
-        field: String,
+        entry: String,
         span: Option<Span>,
     },
 
-    #[error("Duplicate field '{field}' in record literal '{record}'")]
-    DuplicateLiteralRecordField {
+    #[error("Duplicate entry '{entry}' in record literal '{record}'")]
+    DuplicateLiteralRecordEntry {
         record: String,
-        field: String,
+        entry: String,
         span: Option<Span>,
     },
 }
