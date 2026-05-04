@@ -406,8 +406,14 @@ mod tests {
     fn parse_and_validate(input: &str) -> (Vec<CustomPredicateDef>, ValidatedAST) {
         let parsed = parse_podlang(input).expect("Failed to parse");
         let document = parse_document(parsed.into_iter().next().unwrap()).expect("Failed to parse");
-        let validated = validate(document.clone(), &HashMap::new(), ParseMode::Module)
-            .expect("Failed to validate");
+        let params = Params::default();
+        let validated = validate(
+            document.clone(),
+            &HashMap::new(),
+            &params,
+            ParseMode::Module,
+        )
+        .expect("Failed to validate");
 
         let predicates = document
             .items

@@ -164,6 +164,45 @@ pub enum ValidationError {
 
     #[error("Requests must contain a REQUEST block")]
     NoRequestBlock,
+
+    #[error("Duplicate record definition: {name}")]
+    DuplicateRecord {
+        name: String,
+        first_span: Option<Span>,
+        second_span: Option<Span>,
+    },
+
+    #[error("Record '{name}' has {count} fields, exceeding the limit of {max}")]
+    RecordTooManyFields {
+        name: String,
+        count: usize,
+        max: usize,
+        span: Option<Span>,
+    },
+
+    #[error("Duplicate field name '{field}' in record '{record}'")]
+    DuplicateRecordField {
+        record: String,
+        field: String,
+        span: Option<Span>,
+    },
+
+    #[error("Unknown record type: {name}")]
+    UnknownRecord { name: String, span: Option<Span> },
+
+    #[error("Record '{record}' has no field '{field}'")]
+    UnknownRecordField {
+        record: String,
+        field: String,
+        span: Option<Span>,
+    },
+
+    #[error("Duplicate field '{field}' in record literal '{record}'")]
+    DuplicateLiteralRecordField {
+        record: String,
+        field: String,
+        span: Option<Span>,
+    },
 }
 
 /// Lowering errors from frontend AST lowering to middleware

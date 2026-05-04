@@ -541,8 +541,8 @@ mod tests {
     ) -> Result<Module, LoweringError> {
         let parsed = parse_podlang(input).expect("Failed to parse");
         let document = parse_document(parsed.into_iter().next().unwrap()).expect("Failed to parse");
-        let validated =
-            validate(document, &HashMap::new(), ParseMode::Module).expect("Failed to validate");
+        let validated = validate(document, &HashMap::new(), params, ParseMode::Module)
+            .expect("Failed to validate");
         lower_module(validated, params, "test_batch")
     }
 
@@ -771,8 +771,8 @@ mod tests {
         let parsed = parse_podlang(&input).expect("Failed to parse");
         let document =
             parse_document(parsed.into_iter().next().unwrap()).expect("Failed to parse document");
-        let validated =
-            validate(document, &HashMap::new(), ParseMode::Module).expect("Failed to validate");
+        let validated = validate(document, &HashMap::new(), &params, ParseMode::Module)
+            .expect("Failed to validate");
         let result = lower_module(validated, &params, "test_batch");
 
         assert!(result.is_ok(), "Lowering failed: {:?}", result.err());

@@ -286,6 +286,104 @@ fn render_validation_error(
                 "not allowed here",
             )
         }
+
+        ValidationError::DuplicateRecord {
+            name,
+            first_span,
+            second_span,
+        } => {
+            let title = format!("duplicate record definition: {}", name);
+            render_dual_span(
+                renderer,
+                source,
+                path,
+                &title,
+                first_span.as_ref(),
+                "first definition here",
+                second_span.as_ref(),
+                "duplicate definition",
+            )
+        }
+
+        ValidationError::RecordTooManyFields {
+            name,
+            count,
+            max,
+            span,
+        } => {
+            let title = format!(
+                "record `{}` has {} fields, exceeding the limit of {}",
+                name, count, max
+            );
+            render_with_optional_span(
+                renderer,
+                source,
+                path,
+                &title,
+                span.as_ref(),
+                "too many fields",
+            )
+        }
+
+        ValidationError::DuplicateRecordField {
+            record,
+            field,
+            span,
+        } => {
+            let title = format!("duplicate field `{}` in record `{}`", field, record);
+            render_with_optional_span(
+                renderer,
+                source,
+                path,
+                &title,
+                span.as_ref(),
+                "already declared",
+            )
+        }
+
+        ValidationError::UnknownRecord { name, span } => {
+            let title = format!("unknown record type: {}", name);
+            render_with_optional_span(
+                renderer,
+                source,
+                path,
+                &title,
+                span.as_ref(),
+                "no such record",
+            )
+        }
+
+        ValidationError::UnknownRecordField {
+            record,
+            field,
+            span,
+        } => {
+            let title = format!("record `{}` has no field `{}`", record, field);
+            render_with_optional_span(
+                renderer,
+                source,
+                path,
+                &title,
+                span.as_ref(),
+                "unknown field",
+            )
+        }
+
+        ValidationError::DuplicateLiteralRecordField {
+            record,
+            field,
+            span,
+        } => {
+            let title = format!("duplicate field `{}` in `{}` literal", field, record);
+            render_with_optional_span(
+                renderer,
+                source,
+                path,
+                &title,
+                span.as_ref(),
+                "already given",
+            )
+        }
     }
 }
 

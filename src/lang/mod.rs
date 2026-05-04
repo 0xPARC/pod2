@@ -84,6 +84,7 @@ fn load_module_inner(
     let validated = frontend_ast_validate::validate(
         document,
         &available_modules_map,
+        params,
         frontend_ast_validate::ParseMode::Module,
     )?;
     let module = frontend_ast_lower::lower_module(validated, params, name)?;
@@ -124,6 +125,7 @@ fn parse_request_inner(
     let validated = frontend_ast_validate::validate(
         document,
         &available_modules_map,
+        params,
         frontend_ast_validate::ParseMode::Request,
     )?;
     let request = frontend_ast_lower::lower_request(validated, params)?;

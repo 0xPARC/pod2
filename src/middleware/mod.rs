@@ -1060,6 +1060,12 @@ impl Params {
         self.max_statements - self.max_public_statements
     }
 
+    /// Maximum number of fields permitted in a `record` declaration: the
+    /// number of leaves in the small container merkle tree variant.
+    pub fn max_record_fields(&self) -> usize {
+        2usize.pow(self.containers.max_depth_small as u32)
+    }
+
     pub const fn statement_tmpl_arg_size() -> usize {
         2 * HASH_SIZE + 1
     }

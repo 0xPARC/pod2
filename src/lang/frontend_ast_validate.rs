@@ -13,7 +13,7 @@ use hex::ToHex;
 
 use crate::{
     lang::{frontend_ast::*, Module},
-    middleware::{CustomPredicateBatch, Hash, NativePredicate},
+    middleware::{CustomPredicateBatch, Hash, NativePredicate, Params},
 };
 
 /// A validated AST document with symbol table and diagnostics
@@ -51,6 +51,25 @@ pub struct SymbolTable {
     pub wildcard_scopes: HashMap<String, WildcardScope>,
     /// Imported modules (bound name → Module reference)
     pub imported_modules: HashMap<String, Arc<Module>>,
+    /// Records visible in this scope (local declarations + imports).
+    pub records: HashMap<String, RecordSchema>,
+}
+
+/// Resolved record schema: ordered fields plus a name→index lookup, with
+/// provenance for diagnostics. Lowering uses `field_index` to translate
+/// dot-access like `r.Foo` into the integer key for an `AnchoredKey`.
+#[derive(Debug, Clone)]
+pub struct RecordSchema {
+    pub fields: Vec<String>,
+    pub field_index: HashMap<String, usize>,
+    pub source: RecordSource,
+    pub source_span: Option<Span>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RecordSource {
+    Local,
+    Imported { module: String },
 }
 
 /// Information about a predicate
@@ -96,6 +115,9 @@ pub struct WildcardInfo {
     pub index: usize,
     pub is_public: bool,
     pub source_span: Option<Span>,
+    /// Record type tag for typed args (`name TypeName` syntax). The name
+    /// references an entry in `SymbolTable.records`.
+    pub record_type: Option<String>,
 }
 
 /// Diagnostic message (warning or info)
@@ -127,14 +149,16 @@ pub enum ParseMode {
 pub fn validate(
     document: Document,
     available_modules: &HashMap<Hash, Arc<Module>>,
+    params: &Params,
     mode: ParseMode,
 ) -> Result<ValidatedAST, ValidationError> {
-    let validator = Validator::new(available_modules, mode);
+    let validator = Validator::new(available_modules, params, mode);
     validator.validate(document)
 }
 
 struct Validator {
     available_modules: HashMap<Hash, Arc<Module>>,
+    params: Params,
     symbols: SymbolTable,
     diagnostics: Vec<Diagnostic>,
     custom_predicate_count: usize,
@@ -142,13 +166,19 @@ struct Validator {
 }
 
 impl Validator {
-    fn new(available_modules: &HashMap<Hash, Arc<Module>>, mode: ParseMode) -> Self {
+    fn new(
+        available_modules: &HashMap<Hash, Arc<Module>>,
+        params: &Params,
+        mode: ParseMode,
+    ) -> Self {
         Self {
             available_modules: available_modules.clone(),
+            params: params.clone(),
             symbols: SymbolTable {
                 predicates: HashMap::new(),
                 wildcard_scopes: HashMap::new(),
                 imported_modules: HashMap::new(),
+                records: HashMap::new(),
             },
             diagnostics: Vec::new(),
             custom_predicate_count: 0,
@@ -178,6 +208,13 @@ impl Validator {
             }
             if let DocumentItem::UseIntroStatement(use_stmt) = item {
                 self.process_use_intro_statement(use_stmt)?;
+            }
+        }
+
+        // Records before predicates so typed-arg resolution can find them.
+        for item in &document.items {
+            if let DocumentItem::RecordDef(record_def) = item {
+                self.process_record_def(record_def)?;
             }
         }
 
@@ -214,7 +251,7 @@ impl Validator {
             }
         }
 
-        // Enforce that modules have predicates and requests have a REQUEST block
+        // Enforce that modules have predicates and requests have a REQUEST block.
         match self.mode {
             ParseMode::Module if !has_predicates => {
                 return Err(ValidationError::NoPredicatesInModule);
@@ -252,6 +289,22 @@ impl Validator {
         Ok(())
     }
 
+    /// Returns the resolved record-type name for a typed arg, or `None` if
+    /// the arg has no `type_name`. Errors if the type tag doesn't refer to
+    /// a known record.
+    fn resolve_typed_arg(&self, arg: &TypedArg) -> Result<Option<String>, ValidationError> {
+        let Some(type_name) = &arg.type_name else {
+            return Ok(None);
+        };
+        if !self.symbols.records.contains_key(&type_name.name) {
+            return Err(ValidationError::UnknownRecord {
+                name: type_name.name.clone(),
+                span: type_name.span,
+            });
+        }
+        Ok(Some(type_name.name.clone()))
+    }
+
     fn process_use_intro_statement(
         &mut self,
         use_stmt: &UseIntroStatement,
@@ -280,6 +333,54 @@ impl Validator {
                 source_span: use_stmt.span,
             },
         );
+        Ok(())
+    }
+
+    fn process_record_def(&mut self, record_def: &RecordDef) -> Result<(), ValidationError> {
+        let name = &record_def.name.name;
+
+        if let Some(existing) = self.symbols.records.get(name) {
+            return Err(ValidationError::DuplicateRecord {
+                name: name.clone(),
+                first_span: existing.source_span,
+                second_span: record_def.name.span,
+            });
+        }
+
+        let max = self.params.max_record_fields();
+        if record_def.fields.len() > max {
+            return Err(ValidationError::RecordTooManyFields {
+                name: name.clone(),
+                count: record_def.fields.len(),
+                max,
+                span: record_def.span,
+            });
+        }
+
+        let mut field_index = HashMap::with_capacity(record_def.fields.len());
+        let mut fields = Vec::with_capacity(record_def.fields.len());
+        for (i, field) in record_def.fields.iter().enumerate() {
+            if field_index.contains_key(&field.name) {
+                return Err(ValidationError::DuplicateRecordField {
+                    record: name.clone(),
+                    field: field.name.clone(),
+                    span: field.span,
+                });
+            }
+            field_index.insert(field.name.clone(), i);
+            fields.push(field.name.clone());
+        }
+
+        self.symbols.records.insert(
+            name.clone(),
+            RecordSchema {
+                fields,
+                field_index,
+                source: RecordSource::Local,
+                source_span: record_def.name.span,
+            },
+        );
+
         Ok(())
     }
 
@@ -318,12 +419,14 @@ impl Validator {
                     span: arg.span,
                 });
             }
+            let record_type = self.resolve_typed_arg(arg)?;
             wildcards.insert(
                 arg.name.clone(),
                 WildcardInfo {
                     index: wildcard_index,
                     is_public: true,
                     source_span: arg.span,
+                    record_type,
                 },
             );
             wildcard_index += 1;
@@ -339,12 +442,14 @@ impl Validator {
                         span: arg.span,
                     });
                 }
+                let record_type = self.resolve_typed_arg(arg)?;
                 wildcards.insert(
                     arg.name.clone(),
                     WildcardInfo {
                         index: wildcard_index,
                         is_public: false,
                         source_span: arg.span,
+                        record_type,
                     },
                 );
                 wildcard_index += 1;
@@ -547,12 +652,31 @@ impl Validator {
                 }
                 StatementTmplArg::AnchoredKey(ak) => {
                     if let Some((pred_name, scope)) = wildcard_context {
-                        if !scope.wildcards.contains_key(&ak.root.name) {
+                        let Some(wc_info) = scope.wildcards.get(&ak.root.name) else {
                             return Err(ValidationError::UndefinedWildcard {
                                 name: ak.root.name.clone(),
                                 pred_name: pred_name.to_string(),
                                 span: ak.root.span,
                             });
+                        };
+                        // Dot access on a typed wildcard: field must be in
+                        // the record schema. Bracket access is unchecked
+                        // (escape hatch for POD-string-key lookups).
+                        if let (Some(record_name), AnchoredKeyPath::Dot(field)) =
+                            (&wc_info.record_type, &ak.key)
+                        {
+                            let schema = self
+                                .symbols
+                                .records
+                                .get(record_name)
+                                .expect("record_type was resolved at predicate-def time");
+                            if !schema.field_index.contains_key(&field.name) {
+                                return Err(ValidationError::UnknownRecordField {
+                                    record: record_name.clone(),
+                                    field: field.name.clone(),
+                                    span: field.span,
+                                });
+                            }
                         }
                     }
                 }
@@ -638,6 +762,33 @@ impl Validator {
                 }
                 Ok(())
             }
+            LiteralValue::Record(r) => {
+                let Some(schema) = self.symbols.records.get(&r.name.name) else {
+                    return Err(ValidationError::UnknownRecord {
+                        name: r.name.name.clone(),
+                        span: r.name.span,
+                    });
+                };
+                let mut seen: HashSet<&String> = HashSet::new();
+                for field in &r.fields {
+                    if !schema.field_index.contains_key(&field.name.name) {
+                        return Err(ValidationError::UnknownRecordField {
+                            record: r.name.name.clone(),
+                            field: field.name.name.clone(),
+                            span: field.name.span,
+                        });
+                    }
+                    if !seen.insert(&field.name.name) {
+                        return Err(ValidationError::DuplicateLiteralRecordField {
+                            record: r.name.name.clone(),
+                            field: field.name.name.clone(),
+                            span: field.name.span,
+                        });
+                    }
+                    self.validate_literal_value(&field.value)?;
+                }
+                Ok(())
+            }
             _ => Ok(()),
         }
     }
@@ -659,7 +810,7 @@ mod tests {
     ) -> Result<ValidatedAST, ValidationError> {
         let parsed = parse_podlang(input).expect("Failed to parse");
         let document = parse_document(parsed.into_iter().next().unwrap()).expect("Failed to parse");
-        validate(document, modules, ParseMode::Module)
+        validate(document, modules, &Params::default(), ParseMode::Module)
     }
 
     fn parse_and_validate_request(
@@ -668,7 +819,7 @@ mod tests {
     ) -> Result<ValidatedAST, ValidationError> {
         let parsed = parse_podlang(input).expect("Failed to parse");
         let document = parse_document(parsed.into_iter().next().unwrap()).expect("Failed to parse");
-        validate(document, modules, ParseMode::Request)
+        validate(document, modules, &Params::default(), ParseMode::Request)
     }
 
     #[test]
@@ -859,7 +1010,12 @@ mod tests {
                 span: None,
             })],
         };
-        let result = validate(document, &HashMap::new(), ParseMode::Module);
+        let result = validate(
+            document,
+            &HashMap::new(),
+            &Params::default(),
+            ParseMode::Module,
+        );
         assert!(matches!(
             result,
             Err(ValidationError::EmptyStatementList { .. })
@@ -936,5 +1092,221 @@ mod tests {
         )"#;
         let result = parse_and_validate_request(input, &HashMap::new());
         assert!(result.is_ok());
+    }
+
+    // ----- Records ----------------------------------------------------------
+
+    #[test]
+    fn test_record_decl_accepted() {
+        let input = r#"
+            record ProcInputs = (Foo, Bar, Baz)
+            my_pred(A) = AND(Equal(A["x"], 1))
+        "#;
+        let validated = parse_and_validate_module(input, &HashMap::new()).unwrap();
+        let schema = validated.symbols.records.get("ProcInputs").unwrap();
+        assert_eq!(schema.fields, vec!["Foo", "Bar", "Baz"]);
+        assert_eq!(schema.source, RecordSource::Local);
+    }
+
+    #[test]
+    fn test_records_only_module_rejected() {
+        // A module needs at least one predicate; record-only modules are not
+        // a valid distribution unit.
+        let input = r#"record R = (X)"#;
+        assert!(matches!(
+            parse_and_validate_module(input, &HashMap::new()),
+            Err(ValidationError::NoPredicatesInModule)
+        ));
+    }
+
+    #[test]
+    fn test_duplicate_record() {
+        let input = r#"
+            record R = (Foo)
+            record R = (Bar)
+        "#;
+        let result = parse_and_validate_module(input, &HashMap::new());
+        assert!(matches!(
+            result,
+            Err(ValidationError::DuplicateRecord { .. })
+        ));
+    }
+
+    #[test]
+    fn test_duplicate_field_in_record() {
+        let input = r#"
+            record R = (Foo, Foo)
+            my_pred(A) = AND(Equal(A["x"], 1))
+        "#;
+        let result = parse_and_validate_module(input, &HashMap::new());
+        assert!(matches!(
+            result,
+            Err(ValidationError::DuplicateRecordField { record, field, .. })
+                if record == "R" && field == "Foo"
+        ));
+    }
+
+    #[test]
+    fn test_record_field_cap() {
+        // Use a non-default depth so the cap reflects the parameter (not
+        // some hard-coded default). This pins three facts in one test:
+        // the param is wired through, the boundary is inclusive on accept,
+        // and cap + 1 is rejected.
+        let mut params = Params::default();
+        params.containers.max_depth_small -= 1;
+        let cap = params.max_record_fields();
+        let validate_with_n_fields = |n: usize| {
+            let fields: Vec<String> = (0..n).map(|i| format!("f{i}")).collect();
+            let input = format!(
+                "record Big = ({})\nmy_pred(A) = AND(Equal(A[\"x\"], 1))",
+                fields.join(", ")
+            );
+            let parsed = parse_podlang(&input).expect("Failed to parse");
+            let document =
+                parse_document(parsed.into_iter().next().unwrap()).expect("Failed to parse");
+            validate(document, &HashMap::new(), &params, ParseMode::Module)
+        };
+        assert!(validate_with_n_fields(cap).is_ok());
+        let too_many = cap + 1;
+        assert!(matches!(
+            validate_with_n_fields(too_many),
+            Err(ValidationError::RecordTooManyFields { count, max, .. })
+                if count == too_many && max == cap
+        ));
+    }
+
+    #[test]
+    fn test_typed_arg_resolves_known_record() {
+        let input = r#"
+            record R = (Foo, Bar)
+            my_pred(in R) = AND(Equal(in.Foo, in.Bar))
+        "#;
+        let result = parse_and_validate_module(input, &HashMap::new());
+        assert!(result.is_ok());
+        let validated = result.unwrap();
+        let scope = validated.symbols.wildcard_scopes.get("my_pred").unwrap();
+        assert_eq!(scope.wildcards["in"].record_type.as_deref(), Some("R"));
+    }
+
+    #[test]
+    fn test_typed_arg_unknown_record_rejected() {
+        let input = r#"
+            my_pred(in NonExistent) = AND(Equal(in.Foo, 1))
+        "#;
+        let result = parse_and_validate_module(input, &HashMap::new());
+        assert!(matches!(
+            result,
+            Err(ValidationError::UnknownRecord { name, .. }) if name == "NonExistent"
+        ));
+    }
+
+    #[test]
+    fn test_dot_access_unknown_field_rejected() {
+        let input = r#"
+            record R = (Foo, Bar)
+            my_pred(in R) = AND(Equal(in.Quux, 1))
+        "#;
+        let result = parse_and_validate_module(input, &HashMap::new());
+        assert!(matches!(
+            result,
+            Err(ValidationError::UnknownRecordField { record, field, .. })
+                if record == "R" && field == "Quux"
+        ));
+    }
+
+    #[test]
+    fn test_dot_access_on_untyped_wildcard_unchecked() {
+        // r.Foo on an untyped wildcard keeps current POD-string-key behavior;
+        // no record exists named anything that would constrain `Foo`.
+        let input = r#"
+            my_pred(r) = AND(Equal(r.Foo, 1))
+        "#;
+        assert!(parse_and_validate_module(input, &HashMap::new()).is_ok());
+    }
+
+    #[test]
+    fn test_bracket_access_on_typed_wildcard_unchecked() {
+        // `r["Foo"]` is the escape hatch — even on a typed wildcard, it
+        // bypasses record-field validation.
+        let input = r#"
+            record R = (Foo)
+            my_pred(r R) = AND(Equal(r["arbitrary"], 1))
+        "#;
+        assert!(parse_and_validate_module(input, &HashMap::new()).is_ok());
+    }
+
+    #[test]
+    fn test_record_literal_full_accepted() {
+        let input = r#"
+            record R = (Foo, Bar)
+            my_pred(A) = AND(Equal(A["x"], R(Foo: 1, Bar: 2)))
+        "#;
+        assert!(parse_and_validate_module(input, &HashMap::new()).is_ok());
+    }
+
+    #[test]
+    fn test_record_literal_sparse_accepted() {
+        let input = r#"
+            record R = (Foo, Bar, Baz)
+            my_pred(A) = AND(Equal(A["x"], R(Bar: 2)))
+        "#;
+        assert!(parse_and_validate_module(input, &HashMap::new()).is_ok());
+    }
+
+    #[test]
+    fn test_record_literal_unknown_record() {
+        let input = r#"
+            my_pred(A) = AND(Equal(A["x"], NotARecord(F: 1)))
+        "#;
+        let result = parse_and_validate_module(input, &HashMap::new());
+        assert!(matches!(
+            result,
+            Err(ValidationError::UnknownRecord { name, .. }) if name == "NotARecord"
+        ));
+    }
+
+    #[test]
+    fn test_record_literal_unknown_field() {
+        let input = r#"
+            record R = (Foo, Bar)
+            my_pred(A) = AND(Equal(A["x"], R(Foo: 1, Quux: 2)))
+        "#;
+        let result = parse_and_validate_module(input, &HashMap::new());
+        assert!(matches!(
+            result,
+            Err(ValidationError::UnknownRecordField { record, field, .. })
+                if record == "R" && field == "Quux"
+        ));
+    }
+
+    #[test]
+    fn test_record_literal_nested() {
+        // Nested literals recurse through `validate_literal_value`: an unknown
+        // field on the inner literal must still be caught.
+        let input = r#"
+            record Outer = (Inner)
+            record Inner = (X, Y)
+            my_pred(A) = AND(Equal(A["x"], Outer(Inner: Inner(X: 1, Z: 2))))
+        "#;
+        let result = parse_and_validate_module(input, &HashMap::new());
+        assert!(matches!(
+            result,
+            Err(ValidationError::UnknownRecordField { record, field, .. })
+                if record == "Inner" && field == "Z"
+        ));
+    }
+
+    #[test]
+    fn test_record_literal_duplicate_field() {
+        let input = r#"
+            record R = (Foo, Bar)
+            my_pred(A) = AND(Equal(A["x"], R(Foo: 1, Foo: 2)))
+        "#;
+        let result = parse_and_validate_module(input, &HashMap::new());
+        assert!(matches!(
+            result,
+            Err(ValidationError::DuplicateLiteralRecordField { record, field, .. })
+                if record == "R" && field == "Foo"
+        ));
     }
 }
