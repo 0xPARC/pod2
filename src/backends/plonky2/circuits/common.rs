@@ -725,7 +725,6 @@ impl CustomPredicateInBatchTarget {
         let mtp =
             MerkleClaimAndProofTarget::new_virtual(Params::max_depth_custom_batch_mt(), builder);
         let _true = builder._true();
-        builder.connect(_true.target, mtp.enabled.target);
         builder.connect(_true.target, mtp.existence.target);
         let zero = builder.constant(F(0));
         let key = ValueTarget {
@@ -763,7 +762,7 @@ impl CustomPredicateInBatchTarget {
             value: RawValue::from(hash_fields(&predicate.to_fields())),
             proof: mtp.clone(),
         };
-        self.mtp.set_targets(pw, true, &mtp_claim)?;
+        self.mtp.set_targets(pw, &mtp_claim)?;
         Ok(())
     }
 }
@@ -987,7 +986,6 @@ pub trait Flattenable {
 /// elsewhere.
 #[derive(Copy, Clone)]
 pub struct MerkleClaimTarget {
-    pub(crate) enabled: BoolTarget,
     pub(crate) root: HashOutTarget,
     pub(crate) key: ValueTarget,
     pub(crate) value: ValueTarget,
@@ -997,7 +995,6 @@ pub struct MerkleClaimTarget {
 impl From<MerkleClaimAndProofTarget> for MerkleClaimTarget {
     fn from(pf: MerkleClaimAndProofTarget) -> Self {
         Self {
-            enabled: pf.enabled,
             root: pf.root,
             key: pf.key,
             value: pf.value,
@@ -1011,7 +1008,6 @@ impl From<MerkleClaimAndProofTarget> for MerkleClaimTarget {
 /// transition proof since it is verified elsewhere.
 #[derive(Copy, Clone)]
 pub struct MerkleTreeStateTransitionClaimTarget {
-    pub(crate) enabled: BoolTarget,
     pub(crate) op: Target,
     pub(crate) old_root: HashOutTarget,
     pub(crate) new_root: HashOutTarget,
@@ -1022,7 +1018,6 @@ pub struct MerkleTreeStateTransitionClaimTarget {
 impl From<MerkleTreeStateTransitionProofTarget> for MerkleTreeStateTransitionClaimTarget {
     fn from(pf: MerkleTreeStateTransitionProofTarget) -> Self {
         Self {
-            enabled: pf.enabled,
             op: pf.op,
             old_root: pf.old_root,
             new_root: pf.new_root,
@@ -1063,7 +1058,6 @@ impl Flattenable for ValueTarget {
 impl Flattenable for MerkleClaimTarget {
     fn flatten(&self) -> Vec<Target> {
         [
-            vec![self.enabled.target],
             self.root.elements.to_vec(),
             self.key.elements.to_vec(),
             self.value.elements.to_vec(),
@@ -1075,31 +1069,28 @@ impl Flattenable for MerkleClaimTarget {
     fn from_flattened(params: &Params, vs: &[Target]) -> Self {
         assert_eq!(vs.len(), Self::size(params));
         Self {
-            enabled: BoolTarget::new_unsafe(vs[0]),
-            root: HashOutTarget::from_vec(vs[1..1 + NUM_HASH_OUT_ELTS].to_vec()),
-            key: ValueTarget::from_slice(
-                &vs[1 + NUM_HASH_OUT_ELTS..1 + NUM_HASH_OUT_ELTS + VALUE_SIZE],
-            ),
+            root: HashOutTarget::from_vec(vs[0..NUM_HASH_OUT_ELTS].to_vec()),
+            key: ValueTarget::from_slice(&vs[NUM_HASH_OUT_ELTS..NUM_HASH_OUT_ELTS + VALUE_SIZE]),
             value: ValueTarget::from_slice(
-                &vs[1 + NUM_HASH_OUT_ELTS + VALUE_SIZE..1 + NUM_HASH_OUT_ELTS + 2 * VALUE_SIZE],
+                &vs[NUM_HASH_OUT_ELTS + VALUE_SIZE..NUM_HASH_OUT_ELTS + 2 * VALUE_SIZE],
             ),
-            existence: BoolTarget::new_unsafe(vs[1 + NUM_HASH_OUT_ELTS + 2 * VALUE_SIZE]),
+            existence: BoolTarget::new_unsafe(vs[NUM_HASH_OUT_ELTS + 2 * VALUE_SIZE]),
         }
     }
 
     fn size(params: &Params) -> usize {
-        2 + HashOutTarget::size(params) + 2 * ValueTarget::size(params)
+        HashOutTarget::size(params) + 2 * ValueTarget::size(params) + 1
     }
 }
 
 impl Flattenable for MerkleTreeStateTransitionClaimTarget {
     fn flatten(&self) -> Vec<Target> {
         [
-            vec![self.enabled.target, self.op],
             self.old_root.elements.to_vec(),
             self.new_root.elements.to_vec(),
             self.op_key.elements.to_vec(),
             self.op_value.elements.to_vec(),
+            vec![self.op],
         ]
         .concat()
     }
@@ -1107,24 +1098,22 @@ impl Flattenable for MerkleTreeStateTransitionClaimTarget {
     fn from_flattened(params: &Params, vs: &[Target]) -> Self {
         assert_eq!(vs.len(), Self::size(params));
         Self {
-            enabled: BoolTarget::new_unsafe(vs[0]),
-            op: vs[1],
-            old_root: HashOutTarget::from_vec(vs[2..2 + NUM_HASH_OUT_ELTS].to_vec()),
+            old_root: HashOutTarget::from_vec(vs[0..NUM_HASH_OUT_ELTS].to_vec()),
             new_root: HashOutTarget::from_vec(
-                vs[2 + NUM_HASH_OUT_ELTS..2 * (1 + NUM_HASH_OUT_ELTS)].to_vec(),
+                vs[NUM_HASH_OUT_ELTS..2 * NUM_HASH_OUT_ELTS].to_vec(),
             ),
             op_key: ValueTarget::from_slice(
-                &vs[2 * (1 + NUM_HASH_OUT_ELTS)..2 * (1 + NUM_HASH_OUT_ELTS) + VALUE_SIZE],
+                &vs[2 * NUM_HASH_OUT_ELTS..2 * NUM_HASH_OUT_ELTS + VALUE_SIZE],
             ),
             op_value: ValueTarget::from_slice(
-                &vs[2 * (1 + NUM_HASH_OUT_ELTS) + VALUE_SIZE
-                    ..2 * (1 + NUM_HASH_OUT_ELTS) + 2 * VALUE_SIZE],
+                &vs[2 * NUM_HASH_OUT_ELTS + VALUE_SIZE..2 * NUM_HASH_OUT_ELTS + 2 * VALUE_SIZE],
             ),
+            op: vs[2 * NUM_HASH_OUT_ELTS + 2 * VALUE_SIZE],
         }
     }
 
     fn size(params: &Params) -> usize {
-        2 * (1 + HashOutTarget::size(params)) + 2 * ValueTarget::size(params)
+        2 * HashOutTarget::size(params) + 2 * ValueTarget::size(params) + 1
     }
 }
 

@@ -150,6 +150,9 @@ impl VDSet {
             ))?
             .clone())
     }
+    pub fn get_vds_proof_0(&self) -> MerkleClaimAndProof {
+        self.proofs_map[&self.vds_hashes[0]].clone()
+    }
     /// Returns true if the `verifier_data_hash` is in the set
     pub fn contains(&self, verifier_data_hash: HashOut) -> bool {
         self.proofs_map

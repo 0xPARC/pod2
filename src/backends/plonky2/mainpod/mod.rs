@@ -572,20 +572,15 @@ impl MainPodProver for Prover {
             .collect_vec();
 
         let mut vd_mt_proofs = Vec::with_capacity(inputs.pods.len());
+        let pad_vd_mt_proof = inputs.vd_set.get_vds_proof_0();
         for (pod, vd) in inputs.pods.iter().zip(&verifier_datas) {
             vd_mt_proofs.push(if pod.is_main() {
-                (true, inputs.vd_set.get_vds_proof(vd)?)
+                inputs.vd_set.get_vds_proof(vd)?
             } else {
                 // For intro pods we don't verify inclusion of their vk into the vd set, so we
-                // generate a dummy mt proof with expected root and value to pass some constraints
-                (
-                    false,
-                    MerkleClaimAndProof {
-                        root: inputs.vd_set.root(),
-                        value: RawValue::from(pod.verifier_data_hash()),
-                        ..MerkleClaimAndProof::empty()
-                    },
-                )
+                // use a valid vds proof that matches the expected root but not the value to pass
+                // the constraints
+                pad_vd_mt_proof.clone()
             });
         }
 

@@ -42,8 +42,6 @@ use crate::{
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct MerkleClaimAndProofTarget {
     pub(crate) max_depth: usize,
-    // `enabled` determines if the merkleproof verification is enabled
-    pub(crate) enabled: BoolTarget,
     pub(crate) root: HashOutTarget,
     pub(crate) key: ValueTarget,
     pub(crate) value: ValueTarget,
@@ -121,16 +119,9 @@ pub fn verify_merkle_proof_circuit(
     let obtained_root =
         compute_root_from_leaf(max_depth, builder, &path, &leaf_hash, &proof.siblings);
 
-    // check that obtained_root==root (from inputs), when enabled==true
-    let zero = builder.zero();
-    let expected_root: Vec<Target> = (0..HASH_SIZE)
-        .map(|j| builder.select(proof.enabled, proof.root.elements[j], zero))
-        .collect();
-    let computed_root: Vec<Target> = (0..HASH_SIZE)
-        .map(|j| builder.select(proof.enabled, obtained_root.elements[j], zero))
-        .collect();
+    // check that obtained_root==root (from inputs)
     for j in 0..HASH_SIZE {
-        builder.connect(computed_root[j], expected_root[j]);
+        builder.connect(obtained_root.elements[j], proof.root.elements[j]);
     }
     measure_gates_end!(builder, measure);
 }
@@ -139,7 +130,6 @@ impl MerkleClaimAndProofTarget {
     pub fn new_virtual(max_depth: usize, builder: &mut CircuitBuilder<F, D>) -> Self {
         MerkleClaimAndProofTarget {
             max_depth,
-            enabled: builder.add_virtual_bool_target_safe(),
             root: builder.add_virtual_hash(),
             key: builder.add_virtual_value(),
             value: builder.add_virtual_value(),
@@ -154,12 +144,7 @@ impl MerkleClaimAndProofTarget {
     }
     /// assigns the given values to the targets
     #[allow(clippy::too_many_arguments)]
-    pub fn set_targets(
-        &self,
-        pw: &mut PartialWitness<F>,
-        enabled: bool,
-        mp: &MerkleClaimAndProof,
-    ) -> Result<()> {
+    pub fn set_targets(&self, pw: &mut PartialWitness<F>, mp: &MerkleClaimAndProof) -> Result<()> {
         if mp.proof.siblings.len() > self.max_depth {
             return Err(Error::Tree(TreeError::circuit_depth_too_small(
                 self.max_depth,
@@ -167,7 +152,6 @@ impl MerkleClaimAndProofTarget {
             )));
         }
 
-        pw.set_bool_target(self.enabled, enabled)?;
         pw.set_hash_target(self.root, HashOut::from_vec(mp.root.0.to_vec()))?;
         pw.set_target_arr(&self.key.elements, &mp.key.0)?;
         pw.set_target_arr(&self.value.elements, &mp.value.0)?;
@@ -207,8 +191,6 @@ impl MerkleClaimAndProofTarget {
 #[derive(Clone, Serialize, Deserialize)]
 pub struct MerkleProofExistenceTarget {
     max_depth: usize,
-    // `enabled` determines if the merkleproof verification is enabled
-    pub(crate) enabled: BoolTarget,
     pub(crate) root: HashOutTarget,
     pub(crate) key: ValueTarget,
     pub(crate) value: ValueTarget,
@@ -236,16 +218,9 @@ pub fn verify_merkle_proof_existence_circuit(
     let obtained_root =
         compute_root_from_leaf(max_depth, builder, &path, &leaf_hash, &proof.siblings);
 
-    // check that obtained_root==root (from inputs), when enabled==true
-    let zero = builder.zero();
-    let expected_root: Vec<Target> = (0..HASH_SIZE)
-        .map(|j| builder.select(proof.enabled, proof.root.elements[j], zero))
-        .collect();
-    let computed_root: Vec<Target> = (0..HASH_SIZE)
-        .map(|j| builder.select(proof.enabled, obtained_root.elements[j], zero))
-        .collect();
+    // check that obtained_root==root (from inputs)
     for j in 0..HASH_SIZE {
-        builder.connect(computed_root[j], expected_root[j]);
+        builder.connect(obtained_root.elements[j], proof.root.elements[j]);
     }
     measure_gates_end!(builder, measure);
 
@@ -256,7 +231,6 @@ impl MerkleProofExistenceTarget {
     pub fn new_virtual(max_depth: usize, builder: &mut CircuitBuilder<F, D>) -> Self {
         MerkleProofExistenceTarget {
             max_depth,
-            enabled: builder.add_virtual_bool_target_safe(),
             root: builder.add_virtual_hash(),
             key: builder.add_virtual_value(),
             value: builder.add_virtual_value(),
@@ -265,12 +239,7 @@ impl MerkleProofExistenceTarget {
         }
     }
     /// assigns the given values to the targets
-    pub fn set_targets(
-        &self,
-        pw: &mut PartialWitness<F>,
-        enabled: bool,
-        mp: &MerkleClaimAndProof,
-    ) -> Result<()> {
+    pub fn set_targets(&self, pw: &mut PartialWitness<F>, mp: &MerkleClaimAndProof) -> Result<()> {
         assert!(mp.proof.existence); // sanity check
         if mp.proof.siblings.len() > self.max_depth {
             return Err(Error::Tree(TreeError::circuit_depth_too_small(
@@ -279,7 +248,6 @@ impl MerkleProofExistenceTarget {
             )));
         }
 
-        pw.set_bool_target(self.enabled, enabled)?;
         pw.set_hash_target(self.root, HashOut::from_vec(mp.root.0.to_vec()))?;
         pw.set_target_arr(&self.key.elements, &mp.key.0)?;
         pw.set_target_arr(&self.value.elements, &mp.value.0)?;
@@ -456,8 +424,6 @@ fn hash_with_flag_target<H: AlgebraicHasher<F>>(
 #[derive(Clone, Serialize, Deserialize)]
 pub struct MerkleTreeStateTransitionProofTarget {
     pub(crate) max_depth: usize,
-    // `enabled` determines if the merkleproof state transition verification is enabled
-    pub(crate) enabled: BoolTarget,
     pub(crate) op: Target,
     pub(crate) old_root: HashOutTarget,
     pub(crate) op_proof: MerkleClaimAndProofTarget,
@@ -511,7 +477,6 @@ pub fn verify_merkle_state_transition_circuit(
     };
     let new_key_proof = MerkleProofExistenceTarget {
         max_depth: proof.max_depth,
-        enabled: proof.enabled,
         root,
         key: proof.op_key,
         value: proof.op_value,
@@ -523,13 +488,7 @@ pub fn verify_merkle_state_transition_circuit(
     // Insert/Delete: Non-existence
     // Update: Existence
     let proof_type = is_update;
-    builder.conditional_assert_eq(
-        proof.enabled.target,
-        proof.op_proof.existence.target,
-        proof_type.target,
-    );
-    // 3.2) assert that proof.enabled matches with op_proof.enabled
-    builder.connect(proof.op_proof.enabled.target, proof.enabled.target);
+    builder.connect(proof.op_proof.existence.target, proof_type.target);
 
     // 4) assert proof_non_existence.root corresponds to the root
     // specified by the op (old_root for Insert/Update and new_root
@@ -545,17 +504,9 @@ pub fn verify_merkle_state_transition_circuit(
     };
     for j in 0..HASH_SIZE {
         // 4.1) assert that proof.proof_non_existence.root == proof.old_root
-        builder.conditional_assert_eq(
-            proof.enabled.target,
-            proof.op_proof.root.elements[j],
-            claim_root.elements[j],
-        );
+        builder.connect(proof.op_proof.root.elements[j], claim_root.elements[j]);
         // 4.2) assert that the non-existence proof uses the op_key (value not needed).
-        builder.conditional_assert_eq(
-            proof.enabled.target,
-            proof.op_proof.key.elements[j],
-            proof.op_key.elements[j],
-        );
+        builder.connect(proof.op_proof.key.elements[j], proof.op_key.elements[j]);
     }
 
     // prepare value for check 5.2)
@@ -593,7 +544,7 @@ pub fn verify_merkle_state_transition_circuit(
             .map(|j| builder.select(is_divergence_level, zero, new_siblings[i].elements[j]))
             .collect();
         for j in 0..HASH_SIZE {
-            builder.conditional_assert_eq(proof.enabled.target, old_sibling_i[j], new_sibling_i[j]);
+            builder.connect(old_sibling_i[j], new_sibling_i[j]);
         }
 
         // 5.2) when i==d && if old_siblings[i] != new_siblings[i], check that:
@@ -611,7 +562,7 @@ pub fn verify_merkle_state_transition_circuit(
         let in_case_5_2 = builder.and(old_is_noteq_new, is_divergence_level);
 
         // do the case2's checks
-        let sel = builder.and(proof.enabled, in_case_5_2);
+        let sel = in_case_5_2;
         for j in 0..HASH_SIZE {
             builder.conditional_assert_eq(sel.target, old_siblings[i].elements[j], zero);
             builder.conditional_assert_eq(
@@ -641,7 +592,6 @@ impl MerkleTreeStateTransitionProofTarget {
     pub fn new_virtual(max_depth: usize, builder: &mut CircuitBuilder<F, D>) -> Self {
         Self {
             max_depth,
-            enabled: builder.add_virtual_bool_target_safe(),
             op: builder.add_virtual_target(),
 
             old_root: builder.add_virtual_hash(),
@@ -661,7 +611,6 @@ impl MerkleTreeStateTransitionProofTarget {
     pub fn set_targets(
         &self,
         pw: &mut PartialWitness<F>,
-        enabled: bool,
         mp: &MerkleTreeStateTransitionProof,
     ) -> Result<()> {
         let new_siblings = mp.siblings.clone();
@@ -672,13 +621,11 @@ impl MerkleTreeStateTransitionProofTarget {
             )));
         }
 
-        pw.set_bool_target(self.enabled, enabled)?;
         pw.set_target(self.op, F::from_canonical_u8(mp.op as u8))?;
 
         pw.set_hash_target(self.old_root, HashOut::from_vec(mp.old_root.0.to_vec()))?;
         self.op_proof.set_targets(
             pw,
-            enabled,
             &MerkleClaimAndProof {
                 root: if mp.op == MerkleTreeOp::Delete {
                     mp.new_root
@@ -859,7 +806,6 @@ pub mod tests {
         verify_merkle_proof_circuit(&mut builder, &targets);
         targets.set_targets(
             &mut pw,
-            true,
             &MerkleClaimAndProof::new(tree.root(), key, Some(value), proof),
         )?;
 
@@ -868,6 +814,42 @@ pub mod tests {
         let proof = data.prove(pw)?;
         data.verify(proof)?;
 
+        Ok(())
+    }
+
+    #[test]
+    fn test_merkleproof_pad_valid() -> Result<()> {
+        // circuit
+        let config = CircuitConfig::standard_recursion_config();
+        let mut builder = CircuitBuilder::<F, D>::new(config);
+        let mut pw = PartialWitness::<F>::new();
+
+        let targets = MerkleClaimAndProofTarget::new_virtual(32, &mut builder);
+        verify_merkle_proof_circuit(&mut builder, &targets);
+        targets.set_targets(&mut pw, &MerkleClaimAndProof::pad())?;
+
+        // generate & verify proof
+        let data = builder.build::<C>();
+        let proof = data.prove(pw)?;
+        data.verify(proof)?;
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_merkleproof_transition_pad_valid() -> Result<()> {
+        let config = CircuitConfig::standard_recursion_config();
+        let mut builder = CircuitBuilder::<F, D>::new(config);
+        let mut pw = PartialWitness::<F>::new();
+
+        let targets = MerkleTreeStateTransitionProofTarget::new_virtual(32, &mut builder);
+        verify_merkle_state_transition_circuit(&mut builder, &targets);
+        targets.set_targets(&mut pw, &MerkleTreeStateTransitionProof::pad())?;
+
+        // generate & verify proof
+        let data = builder.build::<C>();
+        let proof = data.prove(pw)?;
+        data.verify(proof)?;
         Ok(())
     }
 
@@ -906,7 +888,6 @@ pub mod tests {
         verify_merkle_proof_circuit(&mut builder, &targets);
         targets.set_targets(
             &mut pw,
-            true,
             &MerkleClaimAndProof::new(tree.root(), key, Some(value), proof),
         )?;
 
@@ -982,7 +963,6 @@ pub mod tests {
         verify_merkle_proof_circuit(&mut builder, &targets);
         targets.set_targets(
             &mut pw,
-            true,
             &MerkleClaimAndProof::new(tree.root(), key, Some(value), proof),
         )?;
 
@@ -1028,31 +1008,14 @@ pub mod tests {
 
         let targets = MerkleClaimAndProofTarget::new_virtual(max_depth, &mut builder);
         verify_merkle_proof_circuit(&mut builder, &targets);
-        // verification enabled & proof of existence
+        // proof of existence
         let mp = MerkleClaimAndProof::new(tree2.root(), key, Some(value), proof);
-        targets.set_targets(&mut pw, true, &mp)?;
+        targets.set_targets(&mut pw, &mp)?;
 
         // generate proof, expecting it to fail (since we're using the wrong
         // root)
         let data = builder.build::<C>();
         assert!(data.prove(pw).is_err());
-
-        // Now generate a new proof, using `enabled=false`, which should pass the verification
-        // despite containing 'wrong' witness.
-        let config = CircuitConfig::standard_recursion_config();
-        let mut builder = CircuitBuilder::<F, D>::new(config);
-        let mut pw = PartialWitness::<F>::new();
-
-        let targets = MerkleClaimAndProofTarget::new_virtual(max_depth, &mut builder);
-        verify_merkle_proof_circuit(&mut builder, &targets);
-        // verification disabled & proof of existence
-        targets.set_targets(&mut pw, false, &mp)?;
-
-        // generate proof, should pass despite using wrong witness, since the
-        // `enabled=false`
-        let data = builder.build::<C>();
-        let proof = data.prove(pw)?;
-        data.verify(proof)?;
 
         Ok(())
     }
@@ -1076,7 +1039,7 @@ pub mod tests {
 
         let targets = MerkleTreeStateTransitionProofTarget::new_virtual(max_depth, &mut builder);
         verify_merkle_state_transition_circuit(&mut builder, &targets);
-        targets.set_targets(&mut pw, true, state_transition_proof)?;
+        targets.set_targets(&mut pw, state_transition_proof)?;
 
         // generate & verify proof
         let data = builder.build::<C>();
@@ -1271,73 +1234,6 @@ pub mod tests {
         run_state_transition_circuit(false, max_depth, &state_transition_proof)?;
         assert_eq!(state_transition_proof.old_root, old_root);
         assert_ne!(state_transition_proof.new_root, tree.root()); // Tamper check
-        Ok(())
-    }
-
-    #[test]
-    fn test_state_transition_gadget_disabled() -> Result<()> {
-        let max_depth: usize = 32;
-        let mut kvs = HashMap::new();
-        for i in 0..8 {
-            kvs.insert(RawValue::from(i), RawValue::from(1000 + i));
-        }
-        let mut tree = MerkleTree::new(&kvs);
-
-        let key = RawValue::from(37);
-        let value = RawValue::from(1037);
-        let _ = tree.insert(&key, &value)?;
-
-        let key = RawValue::from(21);
-        let value = RawValue::from(1021);
-        let original_state_transition_proof = tree.insert(&key, &value)?;
-
-        let mut state_transition_proof = original_state_transition_proof.clone();
-
-        // modify the proof, so that it should fail when `enabled=true`, by
-        // changing the new_root
-        state_transition_proof.new_root = state_transition_proof.old_root;
-
-        run_circuit_disabled(max_depth, &state_transition_proof)?;
-
-        // modify the proof, so that it should fail when `enabled=true`, by
-        // changing the new_sibling at the divergence level, which should not
-        // pass the verification in the case where we're inserting key=21
-        let mut state_transition_proof = original_state_transition_proof.clone();
-        state_transition_proof.siblings[4] = EMPTY_HASH;
-
-        run_circuit_disabled(max_depth, &state_transition_proof)?;
-
-        Ok(())
-    }
-
-    fn run_circuit_disabled(
-        max_depth: usize,
-        state_transition_proof: &MerkleTreeStateTransitionProof,
-    ) -> Result<()> {
-        let config = CircuitConfig::standard_recursion_config();
-        let mut builder = CircuitBuilder::<F, D>::new(config);
-        let mut pw = PartialWitness::<F>::new();
-
-        let targets = MerkleTreeStateTransitionProofTarget::new_virtual(max_depth, &mut builder);
-        verify_merkle_state_transition_circuit(&mut builder, &targets);
-        targets.set_targets(&mut pw, true, state_transition_proof)?;
-
-        // generate proof, and expect it to fail
-        let data = builder.build::<C>();
-        assert!(data.prove(pw).is_err()); // expect prove to fail
-
-        let config = CircuitConfig::standard_recursion_config();
-        let mut builder = CircuitBuilder::<F, D>::new(config);
-        let mut pw = PartialWitness::<F>::new();
-
-        let targets = MerkleTreeStateTransitionProofTarget::new_virtual(max_depth, &mut builder);
-        verify_merkle_state_transition_circuit(&mut builder, &targets);
-        targets.set_targets(&mut pw, false, state_transition_proof)?;
-
-        // generate and expect it to pass
-        let data = builder.build::<C>();
-        let proof = data.prove(pw)?;
-        data.verify(proof)?;
         Ok(())
     }
 }
