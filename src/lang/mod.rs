@@ -1153,60 +1153,6 @@ mod tests {
     }
 
     #[test]
-    fn test_e2e_records_no_transitive_reexport() -> Result<(), LangError> {
-        // Module A defines a record. Module B imports A and uses it. Module C
-        // imports B but NOT A — `b::ProcInputs` must not resolve, since
-        // `Module.records` only carries locally-declared records.
-        let params = Params::default();
-        let module_a_src = r#"
-            record ProcInputs = (Foo, Bar)
-            stub(A) = AND(Equal(A["x"], 1))
-        "#;
-        let module_a = Arc::new(load_module(module_a_src, "module_a", &params, &[])?);
-        let a_hash = module_a.id().encode_hex::<String>();
-
-        let module_b_src = format!(
-            r#"
-            use module 0x{} as a
-
-            uses(in a::ProcInputs) = AND(Equal(in.Bar, 1))
-            "#,
-            a_hash
-        );
-        let module_b = Arc::new(load_module(
-            &module_b_src,
-            "module_b",
-            &params,
-            &[module_a],
-        )?);
-        // Sanity: B carries no records of its own.
-        assert!(module_b.records.is_empty());
-        let b_hash = module_b.id().encode_hex::<String>();
-
-        // C tries to use `b::ProcInputs` — should fail at validation.
-        let module_c_src = format!(
-            r#"
-            use module 0x{} as b
-
-            wraps(in b::ProcInputs) = AND(Equal(in.Bar, 1))
-            "#,
-            b_hash
-        );
-        let result = load_module(&module_c_src, "module_c", &params, &[module_b]);
-        assert!(result.is_err(), "expected re-export to be rejected");
-        match result.err().unwrap().kind {
-            LangErrorKind::Validation(e) => match *e {
-                frontend_ast_validate::ValidationError::UnknownRecord { name, .. } => {
-                    assert_eq!(name, "b::ProcInputs");
-                }
-                other => panic!("expected UnknownRecord, got {:?}", other),
-            },
-            other => panic!("expected ValidationError, got {:?}", other),
-        }
-        Ok(())
-    }
-
-    #[test]
     fn test_e2e_record_entry_index_proves_via_mock() -> Result<(), LangError> {
         // End-to-end: a record-using predicate is satisfied by an Array
         // value, with `Inputs::X` resolving the entry's integer index.

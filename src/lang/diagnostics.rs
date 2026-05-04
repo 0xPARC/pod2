@@ -384,6 +384,25 @@ fn render_validation_error(
                 "already given",
             )
         }
+
+        ValidationError::BracketAccessOnTypedWildcard {
+            wildcard,
+            record,
+            span,
+        } => {
+            let title = format!(
+                "bracket access on `{}` (typed as record `{}`); use `{}.entry` instead",
+                wildcard, record, wildcard
+            );
+            render_with_optional_span(
+                renderer,
+                source,
+                path,
+                &title,
+                span.as_ref(),
+                "string-key access on integer-keyed record",
+            )
+        }
     }
 }
 

@@ -203,6 +203,13 @@ pub enum ValidationError {
         entry: String,
         span: Option<Span>,
     },
+
+    #[error("Bracket access '{wildcard}[...]' is not allowed on a wildcard typed as record '{record}'; use `{wildcard}.entry` instead")]
+    BracketAccessOnTypedWildcard {
+        wildcard: String,
+        record: String,
+        span: Option<Span>,
+    },
 }
 
 /// Lowering errors from frontend AST lowering to middleware

@@ -936,21 +936,6 @@ mod tests {
     }
 
     #[test]
-    fn test_bracket_on_typed_wildcard_stays_str_key() {
-        // The bracket form is the escape hatch: even on a typed wildcard,
-        // it bypasses the record schema and resolves to a string key.
-        let input = r#"
-            record R = (Foo)
-            my_pred(in R) = AND(Equal(in["Foo"], 1))
-        "#;
-        let module = parse_validate_and_lower_module(input, &Params::default()).unwrap();
-        match anchored_key_at(&module, 0, 0, 0) {
-            middleware::Key::Str(sk) => assert_eq!(sk.name(), "Foo"),
-            other => panic!("expected Str key, got {other:?}"),
-        }
-    }
-
-    #[test]
     fn test_typed_dot_multiple_entries_distinct_indices() {
         let input = r#"
             record R = (Foo, Bar, Baz)

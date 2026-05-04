@@ -700,23 +700,33 @@ impl Validator {
                                 span: ak.root.span,
                             });
                         };
-                        // Dot access on a typed wildcard: entry must be in
-                        // the record schema. Bracket access is unchecked
-                        // (escape hatch for POD-string-key lookups).
-                        if let (Some(record_name), AnchoredKeyPath::Dot(entry)) =
-                            (&wc_info.record_type, &ak.key)
-                        {
-                            let schema = self
-                                .symbols
-                                .records
-                                .get(record_name)
-                                .expect("record_type was resolved at predicate-def time");
-                            if !schema.entry_index.contains_key(&entry.name) {
-                                return Err(ValidationError::UnknownRecordEntry {
-                                    record: record_name.clone(),
-                                    entry: entry.name.clone(),
-                                    span: entry.span,
-                                });
+                        // Records are integer-keyed, so string-key access on
+                        // a typed wildcard is dead code at proof time. Reject
+                        // dot access for unknown entries and bracket access
+                        // outright; require `r.entry` for record-shaped data.
+                        if let Some(record_name) = &wc_info.record_type {
+                            match &ak.key {
+                                AnchoredKeyPath::Dot(entry) => {
+                                    let schema =
+                                        self.symbols.records.get(record_name).expect(
+                                            "record_type was resolved at predicate-def time",
+                                        );
+                                    if !schema.entry_index.contains_key(&entry.name) {
+                                        return Err(ValidationError::UnknownRecordEntry {
+                                            record: record_name.clone(),
+                                            entry: entry.name.clone(),
+                                            span: entry.span,
+                                        });
+                                    }
+                                }
+                                AnchoredKeyPath::Bracket(_) => {
+                                    return Err(ValidationError::BracketAccessOnTypedWildcard {
+                                        wildcard: ak.root.name.clone(),
+                                        record: record_name.clone(),
+                                        span: ak.span,
+                                    });
+                                }
+                                AnchoredKeyPath::Index(_) => {}
                             }
                         }
                     }
@@ -1283,14 +1293,20 @@ mod tests {
     }
 
     #[test]
-    fn test_bracket_access_on_typed_wildcard_unchecked() {
-        // `r["Foo"]` is the escape hatch — even on a typed wildcard, it
-        // bypasses record-entry validation.
+    fn test_bracket_access_on_typed_wildcard_rejected() {
+        // Records are integer-keyed; string-key access on a record-typed
+        // wildcard is incoherent and would never resolve at proof time.
+        // Force the user to use `.entry` instead.
         let input = r#"
             record R = (Foo)
-            my_pred(r R) = AND(Equal(r["arbitrary"], 1))
+            my_pred(r R) = AND(Equal(r["Foo"], 1))
         "#;
-        assert!(parse_and_validate_module(input, &HashMap::new()).is_ok());
+        let result = parse_and_validate_module(input, &HashMap::new());
+        assert!(matches!(
+            result,
+            Err(ValidationError::BracketAccessOnTypedWildcard { wildcard, record, .. })
+                if wildcard == "r" && record == "R"
+        ));
     }
 
     #[test]
@@ -1352,11 +1368,15 @@ mod tests {
 
     #[test]
     fn test_record_entry_index_resolves() {
+        // Validation accepts `R::Bar` and the schema records Bar at index 1
+        // — the integer the literal will lower to.
         let input = r#"
             record R = (Foo, Bar)
             my_pred(A) = AND(Contains(A, R::Bar, 7))
         "#;
-        assert!(parse_and_validate_module(input, &HashMap::new()).is_ok());
+        let validated = parse_and_validate_module(input, &HashMap::new()).unwrap();
+        let schema = validated.symbols.records.get("R").unwrap();
+        assert_eq!(schema.entry_index["Bar"], 1);
     }
 
     #[test]
