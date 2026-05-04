@@ -116,9 +116,11 @@ pub fn ordered_map<S, V: Serialize>(
 where
     S: Serializer,
 {
-    // Convert to Vec and sort by the key's name field
+    // Sort by the key's raw value for deterministic serialization. Both Str
+    // and Index variants surface as a `RawValue`, giving a total order across
+    // both kinds.
     let mut pairs: Vec<_> = value.iter().collect();
-    pairs.sort_by(|(k1, _), (k2, _)| k1.name.cmp(&k2.name));
+    pairs.sort_by_key(|(k, _)| k.raw());
 
     // Serialize as a map
     use serde::ser::SerializeMap;

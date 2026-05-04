@@ -577,20 +577,23 @@ where
     }
 }
 
+/// A key identified by a string name. Hash is computed via `hash_str`.
 #[derive(Clone, Debug, Eq)]
-pub struct Key {
+pub struct StrKey {
     name: String,
     hash: Hash,
 }
 
-impl Key {
+impl StrKey {
     pub fn new(name: String) -> Self {
         let hash = hash_str(&name);
         Self { name, hash }
     }
-
     pub fn name(&self) -> &str {
         &self.name
+    }
+    pub fn into_name(self) -> String {
+        self.name
     }
     pub fn hash(&self) -> Hash {
         self.hash
@@ -600,20 +603,31 @@ impl Key {
     }
 }
 
-impl hash::Hash for Key {
-    fn hash<H: hash::Hasher>(&self, state: &mut H) {
-        self.hash.hash(state);
-    }
-}
-
-impl PartialEq for Key {
+impl PartialEq for StrKey {
     fn eq(&self, other: &Self) -> bool {
         self.hash == other.hash
     }
 }
 
-// A Key can easily be created from a string-like type
-impl<T> From<T> for Key
+impl hash::Hash for StrKey {
+    fn hash<H: hash::Hasher>(&self, state: &mut H) {
+        self.hash.hash(state);
+    }
+}
+
+impl ToFields for StrKey {
+    fn to_fields(&self) -> Vec<F> {
+        self.hash.to_fields()
+    }
+}
+
+impl fmt::Display for StrKey {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "\"{}\"", self.name)
+    }
+}
+
+impl<T> From<T> for StrKey
 where
     T: Into<String>,
 {
@@ -622,30 +636,9 @@ where
     }
 }
 
-impl ToFields for Key {
-    fn to_fields(&self) -> Vec<F> {
-        self.hash.to_fields()
-    }
-}
-
-impl fmt::Display for Key {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "\"{}\"", self.name)?;
-        Ok(())
-    }
-}
-
-impl From<Key> for RawValue {
-    fn from(key: Key) -> RawValue {
-        RawValue(key.hash.0)
-    }
-}
-
-// When serializing a Key, we serialize only the name field, and not the hash.
-// We can't directly tell Serde to render the whole struct as a string, so we
-// implement our own serialization. It's important that if we change the
-// structure of the Key struct, we update this implementation.
-impl Serialize for Key {
+// `StrKey` serializes as a bare string. The cached hash is recomputed on
+// deserialize via `StrKey::new`.
+impl Serialize for StrKey {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: serde::Serializer,
@@ -654,26 +647,206 @@ impl Serialize for Key {
     }
 }
 
-impl<'de> Deserialize<'de> for Key {
+impl<'de> Deserialize<'de> for StrKey {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: serde::Deserializer<'de>,
     {
-        let name = String::deserialize(deserializer)?;
-        Ok(Key::new(name))
+        String::deserialize(deserializer).map(StrKey::new)
     }
 }
 
-// As per the above, we implement custom serialization for the Key type, and
-// Schemars can't automatically generate a schema for it. Instead, we tell it
-// to use the standard String schema.
-impl JsonSchema for Key {
+impl JsonSchema for StrKey {
     fn schema_name() -> String {
-        "Key".to_string()
+        "StrKey".to_string()
     }
-
     fn json_schema(gen: &mut schemars::gen::SchemaGenerator) -> schemars::schema::Schema {
         <String>::json_schema(gen)
+    }
+}
+
+/// A key identified by an integer index. The hash is taken directly from the
+/// integer's `RawValue` encoding so that integer-keyed merkle trees (e.g.
+/// `Array`, future shallow-MT variants) and integer-keyed `AnchoredKey`s
+/// share the same leaf-key encoding.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct IndexKey {
+    value: i64,
+}
+
+impl IndexKey {
+    pub fn new(value: i64) -> Self {
+        Self { value }
+    }
+    pub fn value(&self) -> i64 {
+        self.value
+    }
+    pub fn raw(&self) -> RawValue {
+        RawValue::from(self.value)
+    }
+    pub fn hash(&self) -> Hash {
+        Hash(self.raw().0)
+    }
+}
+
+impl ToFields for IndexKey {
+    fn to_fields(&self) -> Vec<F> {
+        self.hash().to_fields()
+    }
+}
+
+impl fmt::Display for IndexKey {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.value)
+    }
+}
+
+impl From<i64> for IndexKey {
+    fn from(i: i64) -> Self {
+        Self::new(i)
+    }
+}
+
+// `IndexKey` serializes as a bare integer.
+impl Serialize for IndexKey {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        self.value.serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for IndexKey {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        i64::deserialize(deserializer).map(IndexKey::new)
+    }
+}
+
+impl JsonSchema for IndexKey {
+    fn schema_name() -> String {
+        "IndexKey".to_string()
+    }
+    fn json_schema(gen: &mut schemars::gen::SchemaGenerator) -> schemars::schema::Schema {
+        <i64>::json_schema(gen)
+    }
+}
+
+/// A key, either string-named or integer-indexed.
+///
+/// APIs that only make sense for one variant (e.g. `Dictionary::insert` for
+/// strings) take the inner type directly, lifting the variant check out to
+/// the call site where the `match` on `Key` makes the missing arm visible at
+/// compile time.
+#[derive(Clone, Debug, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(untagged)]
+pub enum Key {
+    Str(StrKey),
+    Index(IndexKey),
+}
+
+impl Key {
+    pub fn new(name: String) -> Self {
+        Key::Str(StrKey::new(name))
+    }
+    pub fn from_index(i: i64) -> Self {
+        Key::Index(IndexKey::new(i))
+    }
+    pub fn as_str(&self) -> Option<&StrKey> {
+        match self {
+            Key::Str(k) => Some(k),
+            Key::Index(_) => None,
+        }
+    }
+    pub fn as_index(&self) -> Option<&IndexKey> {
+        match self {
+            Key::Str(_) => None,
+            Key::Index(k) => Some(k),
+        }
+    }
+    pub fn hash(&self) -> Hash {
+        match self {
+            Key::Str(k) => k.hash(),
+            Key::Index(k) => k.hash(),
+        }
+    }
+    pub fn raw(&self) -> RawValue {
+        match self {
+            Key::Str(k) => k.raw(),
+            Key::Index(k) => k.raw(),
+        }
+    }
+}
+
+impl PartialEq for Key {
+    fn eq(&self, other: &Self) -> bool {
+        self.hash() == other.hash()
+    }
+}
+
+impl hash::Hash for Key {
+    fn hash<H: hash::Hasher>(&self, state: &mut H) {
+        self.hash().hash(state);
+    }
+}
+
+impl ToFields for Key {
+    fn to_fields(&self) -> Vec<F> {
+        self.hash().to_fields()
+    }
+}
+
+impl fmt::Display for Key {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Key::Str(k) => k.fmt(f),
+            Key::Index(k) => k.fmt(f),
+        }
+    }
+}
+
+impl From<StrKey> for Key {
+    fn from(k: StrKey) -> Self {
+        Key::Str(k)
+    }
+}
+
+impl From<IndexKey> for Key {
+    fn from(k: IndexKey) -> Self {
+        Key::Index(k)
+    }
+}
+
+impl From<&str> for Key {
+    fn from(s: &str) -> Self {
+        Key::Str(StrKey::from(s))
+    }
+}
+
+impl From<String> for Key {
+    fn from(s: String) -> Self {
+        Key::Str(StrKey::from(s))
+    }
+}
+
+impl From<&String> for Key {
+    fn from(s: &String) -> Self {
+        Key::Str(StrKey::from(s))
+    }
+}
+
+impl From<i64> for Key {
+    fn from(i: i64) -> Self {
+        Key::Index(IndexKey::from(i))
+    }
+}
+
+impl From<Key> for RawValue {
+    fn from(key: Key) -> RawValue {
+        key.raw()
     }
 }
 
@@ -693,13 +866,13 @@ impl AnchoredKey {
 impl hash::Hash for AnchoredKey {
     fn hash<H: hash::Hasher>(&self, state: &mut H) {
         self.root.hash(state);
-        self.key.hash.hash(state);
+        self.key.hash().hash(state);
     }
 }
 
 impl PartialEq for AnchoredKey {
     fn eq(&self, other: &Self) -> bool {
-        self.root == other.root && self.key.hash == other.key.hash
+        self.root == other.root && self.key.hash() == other.key.hash()
     }
 }
 

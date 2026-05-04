@@ -18,7 +18,7 @@ use crate::{
     backends::plonky2::primitives::merkletree::MerkleTreeStateTransitionProof,
     middleware::{
         db::{mem::MemDB, DB},
-        Error, Hash, Key, RawValue, Result, TypedValue, Value, EMPTY_HASH,
+        Error, Hash, RawValue, Result, StrKey, TypedValue, Value, EMPTY_HASH,
     },
 };
 
@@ -264,22 +264,22 @@ macro_rules! dict {
     );
     ({ $($key:expr => $val:expr),* }) => ({
         let mut map = ::std::collections::HashMap::new();
-        $( map.insert($crate::middleware::Key::from($key), $crate::middleware::Value::from($val)); )*
+        $( map.insert($crate::middleware::StrKey::from($key), $crate::middleware::Value::from($val)); )*
         $crate::middleware::containers::Dictionary::new(map)
     });
 }
 
-// TODO: Replace all methods that receive a `&Key` by either `impl Into<String>` for write
+// TODO: Replace all methods that receive a `&StrKey` by either `impl Into<String>` for write
 // methods and `impl AsRef<str>` for read methods.
 // TODO: Replace all methods that receive a `&Value` in write methods for `Value`.  Consider a
 // trait?
 
 impl Dictionary {
-    pub fn new(kvs: HashMap<Key, Value>) -> Self {
+    pub fn new(kvs: HashMap<StrKey, Value>) -> Self {
         Self {
             inner: Container::new(
                 kvs.into_iter()
-                    .map(|(k, v)| (Value::from(k.name), v))
+                    .map(|(k, v)| (Value::from(k.into_name()), v))
                     .collect(),
             ),
         }
@@ -297,29 +297,37 @@ impl Dictionary {
     pub fn commitment(&self) -> Hash {
         self.inner.commitment()
     }
-    pub fn get(&self, key: &Key) -> Result<Option<Value>> {
+    pub fn get(&self, key: &StrKey) -> Result<Option<Value>> {
         self.inner.get(key.raw())
     }
-    pub fn prove(&self, key: &Key) -> Result<(Value, MerkleProof)> {
+    pub fn prove(&self, key: &StrKey) -> Result<(Value, MerkleProof)> {
         self.inner.prove(key.raw())
     }
-    pub fn prove_nonexistence(&self, key: &Key) -> Result<MerkleProof> {
+    pub fn prove_nonexistence(&self, key: &StrKey) -> Result<MerkleProof> {
         self.inner.prove_nonexistence(key.raw())
     }
-    pub fn insert(&mut self, key: &Key, value: &Value) -> Result<MerkleTreeStateTransitionProof> {
+    pub fn insert(
+        &mut self,
+        key: &StrKey,
+        value: &Value,
+    ) -> Result<MerkleTreeStateTransitionProof> {
         self.inner
-            .insert(Value::from(key.name.clone()), value.clone())
+            .insert(Value::from(key.name().to_string()), value.clone())
     }
-    pub fn update(&mut self, key: &Key, value: &Value) -> Result<MerkleTreeStateTransitionProof> {
+    pub fn update(
+        &mut self,
+        key: &StrKey,
+        value: &Value,
+    ) -> Result<MerkleTreeStateTransitionProof> {
         self.inner.update(key.raw(), value.clone())
     }
-    pub fn delete(&mut self, key: &Key) -> Result<MerkleTreeStateTransitionProof> {
+    pub fn delete(&mut self, key: &StrKey) -> Result<MerkleTreeStateTransitionProof> {
         self.inner.delete(key.raw())
     }
-    pub fn verify(root: Hash, proof: &MerkleProof, key: &Key, value: &Value) -> Result<()> {
+    pub fn verify(root: Hash, proof: &MerkleProof, key: &StrKey, value: &Value) -> Result<()> {
         Container::verify(root, proof, key.raw(), value.raw())
     }
-    pub fn verify_nonexistence(root: Hash, proof: &MerkleProof, key: &Key) -> Result<()> {
+    pub fn verify_nonexistence(root: Hash, proof: &MerkleProof, key: &StrKey) -> Result<()> {
         Container::verify_nonexistence(root, proof, key.raw())
     }
     pub fn verify_state_transition(proof: &MerkleTreeStateTransitionProof) -> Result<()> {
@@ -524,11 +532,11 @@ mod tests {
 
     fn _test_dict(db: Box<dyn DB>) {
         let mut dict0 = Dictionary::empty_with_db(db.clone());
-        dict0.insert(&Key::from("a"), &Value::from(1)).unwrap();
-        dict0.insert(&Key::from("b"), &Value::from(2)).unwrap();
-        dict0.update(&Key::from("a"), &Value::from(3)).unwrap();
-        dict0.insert(&Key::from("c"), &Value::from(4)).unwrap();
-        dict0.delete(&Key::from("c")).unwrap();
+        dict0.insert(&StrKey::from("a"), &Value::from(1)).unwrap();
+        dict0.insert(&StrKey::from("b"), &Value::from(2)).unwrap();
+        dict0.update(&StrKey::from("a"), &Value::from(3)).unwrap();
+        dict0.insert(&StrKey::from("c"), &Value::from(4)).unwrap();
+        dict0.delete(&StrKey::from("c")).unwrap();
         let kvs0 = dict0.dump().unwrap();
         assert_eq!(
             kvs0,
@@ -579,14 +587,14 @@ mod tests {
 
     fn _test_nested(db: Box<dyn DB>) {
         let mut nested = Dictionary::empty_with_db(db.clone());
-        nested.insert(&Key::from("a"), &Value::from(1)).unwrap();
-        nested.insert(&Key::from("b"), &Value::from(2)).unwrap();
+        nested.insert(&StrKey::from("a"), &Value::from(1)).unwrap();
+        nested.insert(&StrKey::from("b"), &Value::from(2)).unwrap();
         let nested_kvs0 = nested.dump().unwrap();
 
         let mut dict0 = Dictionary::empty_with_db(db.clone());
-        dict0.insert(&Key::from("x"), &Value::from(1)).unwrap();
+        dict0.insert(&StrKey::from("x"), &Value::from(1)).unwrap();
         dict0
-            .insert(&Key::from("y"), &Value::from(nested.clone()))
+            .insert(&StrKey::from("y"), &Value::from(nested.clone()))
             .unwrap();
         let kvs0 = dict0.dump().unwrap();
 

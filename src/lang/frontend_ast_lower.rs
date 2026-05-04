@@ -18,8 +18,8 @@ use crate::{
     },
     middleware::{
         self, containers, CustomPredicateRef, IntroPredicateRef, Key, NativePredicate, Params,
-        Predicate, StatementTmpl as MWStatementTmpl, StatementTmplArg as MWStatementTmplArg, Value,
-        Wildcard,
+        Predicate, StatementTmpl as MWStatementTmpl, StatementTmplArg as MWStatementTmplArg,
+        StrKey, Value, Wildcard,
     },
 };
 
@@ -184,7 +184,7 @@ pub(crate) fn lower_literal(lit: &LiteralValue) -> Value {
                 .pairs
                 .iter()
                 .map(|pair| {
-                    let key = Key::from(pair.key.value.as_str());
+                    let key = StrKey::from(pair.key.value.as_str());
                     let value = lower_literal(&pair.value);
                     (key, value)
                 })
@@ -252,7 +252,7 @@ pub fn lower_literal_with_context(
                 .pairs
                 .iter()
                 .map(|pair| {
-                    let key = Key::from(pair.key.value.as_str());
+                    let key = StrKey::from(pair.key.value.as_str());
                     let value = lower_literal_with_context(&pair.value, symbols, context)?;
                     Ok((key, value))
                 })
