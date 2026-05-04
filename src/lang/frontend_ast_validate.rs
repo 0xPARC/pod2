@@ -846,8 +846,9 @@ mod tests {
                     span: None,
                 },
                 args: ArgSection {
-                    public_args: vec![Identifier {
+                    public_args: vec![TypedArg {
                         name: "A".to_string(),
+                        type_name: None,
                         span: None,
                     }],
                     private_args: None,

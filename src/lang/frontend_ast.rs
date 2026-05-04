@@ -20,8 +20,17 @@ pub struct Document {
 pub enum DocumentItem {
     UseModuleStatement(UseModuleStatement),
     UseIntroStatement(UseIntroStatement),
+    RecordDef(RecordDef),
     CustomPredicateDef(CustomPredicateDef),
     RequestDef(RequestDef),
+}
+
+/// Record definition: `record Name = (Field1, Field2, ...)`
+#[derive(Debug, Clone, PartialEq)]
+pub struct RecordDef {
+    pub name: Identifier,
+    pub fields: Vec<Identifier>,
+    pub span: Option<Span>,
 }
 
 /// Module import statement: `use module 0xHASH as alias`
@@ -68,8 +77,17 @@ pub struct RequestDef {
 /// Argument section with public and optional private arguments
 #[derive(Debug, Clone, PartialEq)]
 pub struct ArgSection {
-    pub public_args: Vec<Identifier>,
-    pub private_args: Option<Vec<Identifier>>,
+    pub public_args: Vec<TypedArg>,
+    pub private_args: Option<Vec<TypedArg>>,
+    pub span: Option<Span>,
+}
+
+/// Predicate argument: `name` or `name TypeName`. The optional `type_name`
+/// names a record type whose dot-access fields are resolved at lowering time.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TypedArg {
+    pub name: String,
+    pub type_name: Option<Identifier>,
     pub span: Option<Span>,
 }
 
@@ -133,6 +151,7 @@ impl AnchoredKey {
         match &self.key {
             AnchoredKeyPath::Bracket(ls) => &ls.value,
             AnchoredKeyPath::Dot(id) => &id.name,
+            AnchoredKeyPath::Index(_) => todo!(),
         }
     }
 }
@@ -142,6 +161,10 @@ impl AnchoredKey {
 pub enum AnchoredKeyPath {
     Bracket(LiteralString), // ["key"]
     Dot(Identifier),        // .key
+    /// Integer-indexed key. Not produced by the parser; introduced by lowering
+    /// when a `Dot` access on a record-typed wildcard is resolved to a field
+    /// index.
+    Index(i64),
 }
 
 /// Identifier (variable names, predicate names, etc.)
@@ -170,6 +193,7 @@ pub enum LiteralValue {
     Array(LiteralArray),
     Set(LiteralSet),
     Dict(LiteralDict),
+    Record(LiteralRecord),
     /// Hash of a native predicate (resolved immediately).
     NativePredicateHash(Identifier),
     /// Hash of an external module's predicate (resolved immediately).
@@ -250,6 +274,22 @@ pub struct DictPair {
     pub span: Option<Span>,
 }
 
+/// Record literal: `Name(Field: value, ...)`. Fields may appear in any order;
+/// the schema (resolved in validation) maps each to its index.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LiteralRecord {
+    pub name: Identifier,
+    pub fields: Vec<RecordFieldLiteral>,
+    pub span: Option<Span>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct RecordFieldLiteral {
+    pub name: Identifier,
+    pub value: LiteralValue,
+    pub span: Option<Span>,
+}
+
 /// Source location information for error reporting and formatting
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Span {
@@ -276,6 +316,7 @@ impl fmt::Display for DocumentItem {
         match self {
             DocumentItem::UseModuleStatement(u) => write!(f, "{}", u),
             DocumentItem::UseIntroStatement(u) => write!(f, "{}", u),
+            DocumentItem::RecordDef(r) => write!(f, "{}", r),
             DocumentItem::CustomPredicateDef(c) => write!(f, "{}", c),
             DocumentItem::RequestDef(r) => write!(f, "{}", r),
         }
@@ -362,6 +403,29 @@ impl fmt::Display for ArgSection {
     }
 }
 
+impl fmt::Display for TypedArg {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.name)?;
+        if let Some(t) = &self.type_name {
+            write!(f, " {}", t)?;
+        }
+        Ok(())
+    }
+}
+
+impl fmt::Display for RecordDef {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "record {} = (", self.name)?;
+        for (i, field) in self.fields.iter().enumerate() {
+            if i > 0 {
+                write!(f, ", ")?;
+            }
+            write!(f, "{}", field)?;
+        }
+        write!(f, ")")
+    }
+}
+
 impl fmt::Display for ConjunctionType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -418,6 +482,7 @@ impl fmt::Display for AnchoredKey {
         match &self.key {
             AnchoredKeyPath::Bracket(s) => write!(f, "{}[{}]", self.root, s),
             AnchoredKeyPath::Dot(id) => write!(f, "{}.{}", self.root, id),
+            AnchoredKeyPath::Index(i) => write!(f, "{}[{}]", self.root, i),
         }
     }
 }
@@ -434,6 +499,7 @@ impl fmt::Display for LiteralValue {
             LiteralValue::Array(a) => write!(f, "{}", a),
             LiteralValue::Set(s) => write!(f, "{}", s),
             LiteralValue::Dict(d) => write!(f, "{}", d),
+            LiteralValue::Record(r) => write!(f, "{}", r),
             LiteralValue::NativePredicateHash(id) => {
                 write!(f, "@native_predicate({})", id)
             }
@@ -441,6 +507,25 @@ impl fmt::Display for LiteralValue {
                 module, predicate, ..
             } => write!(f, "@external_predicate({}, {})", module, predicate),
         }
+    }
+}
+
+impl fmt::Display for LiteralRecord {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}(", self.name)?;
+        for (i, field) in self.fields.iter().enumerate() {
+            if i > 0 {
+                write!(f, ", ")?;
+            }
+            write!(f, "{}", field)?;
+        }
+        write!(f, ")")
+    }
+}
+
+impl fmt::Display for RecordFieldLiteral {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}: {}", self.name, self.value)
     }
 }
 
@@ -561,6 +646,9 @@ pub mod parse {
                     items.push(DocumentItem::UseIntroStatement(parse_use_intro_statement(
                         inner_pair,
                     )));
+                }
+                Rule::record_def => {
+                    items.push(DocumentItem::RecordDef(parse_record_def(inner_pair)));
                 }
                 Rule::custom_predicate_def => {
                     items.push(DocumentItem::CustomPredicateDef(
@@ -687,16 +775,16 @@ pub mod parse {
                 Rule::public_arg_list => {
                     public_args = inner_pair
                         .into_inner()
-                        .filter(|p| p.as_rule() == Rule::identifier)
-                        .map(parse_identifier)
+                        .filter(|p| p.as_rule() == Rule::typed_arg)
+                        .map(parse_typed_arg)
                         .collect();
                 }
                 Rule::private_arg_list => {
                     private_args = Some(
                         inner_pair
                             .into_inner()
-                            .filter(|p| p.as_rule() == Rule::identifier)
-                            .map(parse_identifier)
+                            .filter(|p| p.as_rule() == Rule::typed_arg)
+                            .map(parse_typed_arg)
                             .collect(),
                     );
                 }
@@ -707,6 +795,35 @@ pub mod parse {
         ArgSection {
             public_args,
             private_args,
+            span: Some(span),
+        }
+    }
+
+    fn parse_typed_arg(pair: Pair<Rule>) -> TypedArg {
+        assert_eq!(pair.as_rule(), Rule::typed_arg);
+        let span = get_span(&pair);
+        let mut inner = pair.into_inner();
+        let name_pair = inner.next().unwrap();
+        let name = name_pair.as_str().to_string();
+        let type_name = inner.next().map(parse_identifier);
+        TypedArg {
+            name,
+            type_name,
+            span: Some(span),
+        }
+    }
+
+    fn parse_record_def(pair: Pair<Rule>) -> RecordDef {
+        assert_eq!(pair.as_rule(), Rule::record_def);
+        let span = get_span(&pair);
+        let mut idents = pair
+            .into_inner()
+            .filter(|p| p.as_rule() == Rule::identifier);
+        let name = parse_identifier(idents.next().unwrap());
+        let fields: Vec<_> = idents.map(parse_identifier).collect();
+        RecordDef {
+            name,
+            fields,
             span: Some(span),
         }
     }
@@ -845,6 +962,7 @@ pub mod parse {
             Rule::literal_array => Ok(LiteralValue::Array(parse_literal_array(inner)?)),
             Rule::literal_set => Ok(LiteralValue::Set(parse_literal_set(inner)?)),
             Rule::literal_dict => Ok(LiteralValue::Dict(parse_literal_dict(inner)?)),
+            Rule::literal_record => Ok(LiteralValue::Record(parse_literal_record(inner)?)),
             Rule::predicate_hash_native => {
                 let id = parse_identifier(inner.into_inner().next().unwrap());
                 Ok(LiteralValue::NativePredicateHash(id))
@@ -857,6 +975,35 @@ pub mod parse {
             }
             _ => unreachable!("Unexpected literal value rule: {:?}", inner.as_rule()),
         }
+    }
+
+    fn parse_literal_record(pair: Pair<Rule>) -> Result<LiteralRecord, parser::ParseError> {
+        assert_eq!(pair.as_rule(), Rule::literal_record);
+        let span = get_span(&pair);
+        let mut inner = pair.into_inner();
+        let name = parse_identifier(inner.next().unwrap());
+        let fields: Result<Vec<_>, _> = inner
+            .filter(|p| p.as_rule() == Rule::record_field)
+            .map(parse_record_field)
+            .collect();
+        Ok(LiteralRecord {
+            name,
+            fields: fields?,
+            span: Some(span),
+        })
+    }
+
+    fn parse_record_field(pair: Pair<Rule>) -> Result<RecordFieldLiteral, parser::ParseError> {
+        assert_eq!(pair.as_rule(), Rule::record_field);
+        let span = get_span(&pair);
+        let mut inner = pair.into_inner();
+        let name = parse_identifier(inner.next().unwrap());
+        let value = parse_literal_value(inner.next().unwrap())?;
+        Ok(RecordFieldLiteral {
+            name,
+            value,
+            span: Some(span),
+        })
     }
 
     fn parse_literal_int(pair: Pair<Rule>) -> Result<LiteralInt, parser::ParseError> {
@@ -1085,16 +1232,29 @@ mod tests {
                     u.name.span = None;
                     u.intro_hash.span = None;
                 }
+                DocumentItem::RecordDef(r) => {
+                    r.span = None;
+                    r.name.span = None;
+                    for f in &mut r.fields {
+                        f.span = None;
+                    }
+                }
                 DocumentItem::CustomPredicateDef(c) => {
                     c.span = None;
                     c.name.span = None;
                     c.args.span = None;
                     for arg in &mut c.args.public_args {
                         arg.span = None;
+                        if let Some(t) = &mut arg.type_name {
+                            t.span = None;
+                        }
                     }
                     if let Some(private) = &mut c.args.private_args {
                         for arg in private {
                             arg.span = None;
+                            if let Some(t) = &mut arg.type_name {
+                                t.span = None;
+                            }
                         }
                     }
                     for stmt in &mut c.statements {
@@ -1134,6 +1294,7 @@ mod tests {
                     match &mut ak.key {
                         AnchoredKeyPath::Bracket(s) => s.span = None,
                         AnchoredKeyPath::Dot(id) => id.span = None,
+                        AnchoredKeyPath::Index(_) => {}
                     }
                 }
                 StatementTmplArg::SelfPredicateHash(id) => id.span = None,
@@ -1170,6 +1331,15 @@ mod tests {
                     pair.span = None;
                     pair.key.span = None;
                     clear_literal_spans(&mut pair.value);
+                }
+            }
+            LiteralValue::Record(r) => {
+                r.span = None;
+                r.name.span = None;
+                for field in &mut r.fields {
+                    field.span = None;
+                    field.name.span = None;
+                    clear_literal_spans(&mut field.value);
                 }
             }
             LiteralValue::NativePredicateHash(id) => id.span = None,
@@ -1266,6 +1436,79 @@ mod tests {
     Equal(Var.dot_key, Other.key3)
 )"#;
         test_roundtrip(input);
+    }
+
+    #[test]
+    fn test_record_decl() {
+        let input = r#"record ProcInputs = (Foo, Bar, Baz)"#;
+        test_roundtrip(input);
+    }
+
+    #[test]
+    fn test_record_decl_single_field() {
+        let input = r#"record Singleton = (Only)"#;
+        test_roundtrip(input);
+    }
+
+    #[test]
+    fn test_typed_arg_in_predicate() {
+        let input = r#"record ProcInputs = (Foo, Bar, Baz)
+my_pred(in ProcInputs, other) = AND (
+    Equal(in.Foo, other)
+)"#;
+        test_roundtrip(input);
+    }
+
+    #[test]
+    fn test_typed_arg_mixed_with_untyped() {
+        let input = r#"record R = (X, Y)
+mixed(a, b R, c, private: d, e R) = AND (
+    Equal(a, c)
+)"#;
+        test_roundtrip(input);
+    }
+
+    #[test]
+    fn test_record_literal_full() {
+        let input = r#"REQUEST(
+    Equal(A["data"], ProcInputs(Foo: 1, Bar: 2, Baz: 3))
+)"#;
+        test_roundtrip(input);
+    }
+
+    #[test]
+    fn test_record_literal_sparse() {
+        let input = r#"REQUEST(
+    Equal(A["data"], ProcInputs(Bar: 42))
+)"#;
+        test_roundtrip(input);
+    }
+
+    #[test]
+    fn test_record_literal_empty() {
+        let input = r#"REQUEST(
+    Equal(A["data"], Empty())
+)"#;
+        test_roundtrip(input);
+    }
+
+    #[test]
+    fn test_record_literal_nested_value() {
+        let input = r#"REQUEST(
+    Equal(A["data"], R(field: [1, 2, 3], other: {"k": "v"}))
+)"#;
+        test_roundtrip(input);
+    }
+
+    #[test]
+    fn test_record_keyword_reserved() {
+        // `record` may not appear as an identifier name.
+        let input = r#"record record = (Foo)"#;
+        let parsed = crate::lang::parser::parse_podlang(input);
+        assert!(
+            parsed.is_err(),
+            "expected `record` to be rejected as an identifier"
+        );
     }
 
     #[test]

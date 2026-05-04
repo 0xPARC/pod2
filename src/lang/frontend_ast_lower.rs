@@ -192,6 +192,7 @@ pub(crate) fn lower_literal(lit: &LiteralValue) -> Value {
             let dict = containers::Dictionary::new(pairs);
             Value::from(dict)
         }
+        LiteralValue::Record(_) => todo!(),
         LiteralValue::NativePredicateHash(id) => {
             let np = NativePredicate::from_str(&id.name).expect("validated native predicate");
             Value::from(Predicate::Native(np).hash())
@@ -279,6 +280,7 @@ pub(crate) fn lower_statement_arg(arg: &StatementTmplArg) -> BuilderArg {
             let key_str = match &ak.key {
                 AnchoredKeyPath::Bracket(s) => s.value.clone(),
                 AnchoredKeyPath::Dot(id) => id.name.clone(),
+                AnchoredKeyPath::Index(_) => todo!(),
             };
             BuilderArg::Key(ak.root.name.clone(), key_str)
         }

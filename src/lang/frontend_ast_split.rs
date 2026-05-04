@@ -709,12 +709,13 @@ fn generate_chain_predicates(
             statements.push(chain_call);
         }
 
-        // Build public args (incoming)
-        let public_args: Vec<Identifier> = link
+        // Build public args (incoming).
+        let public_args: Vec<TypedArg> = link
             .public_args_in
             .iter()
-            .map(|name| Identifier {
+            .map(|name| TypedArg {
                 name: name.clone(),
+                type_name: None,
                 span: None,
             })
             .collect();
@@ -733,7 +734,11 @@ fn generate_chain_predicates(
             Some(
                 private_arg_names
                     .into_iter()
-                    .map(|name| Identifier { name, span: None })
+                    .map(|name| TypedArg {
+                        name,
+                        type_name: None,
+                        span: None,
+                    })
                     .collect(),
             )
         };

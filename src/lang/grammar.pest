@@ -11,7 +11,7 @@ WHITESPACE = _{ (" " | "\t" | NEWLINE)+ }
 // COMMENT matches a line comment (//...\n) or block comment (/*...*/).
 COMMENT = _{ ("//" ~ (!NEWLINE ~ ANY)* | "/*" ~ (!"*/" ~ ANY)* ~ "*/" ) }
 
-reserved_identifier = { "private" | "true" | "false" }
+reserved_identifier = { "private" | "true" | "false" | "record" }
 
 // Define rules for identifiers (predicate names, wildcard names)
 // Must start with alpha or _, followed by alpha, numeric, or _
@@ -23,10 +23,16 @@ arg_section = {
     public_arg_list ~ ("," ~ private_kw ~ private_arg_list)?
 }
 
-public_arg_list = { identifier ~ ("," ~ identifier)* } 
-private_arg_list = { identifier ~ ("," ~ identifier)* }
+// `name` or `name TypeName`. The optional second identifier is a record type tag.
+typed_arg = { identifier ~ identifier? }
+public_arg_list = { typed_arg ~ ("," ~ typed_arg)* }
+private_arg_list = { typed_arg ~ ("," ~ typed_arg)* }
 
-document = { SOI ~ (use_module_statement | use_intro_statement | custom_predicate_def | request_def)* ~ EOI }
+record_def = {
+    "record" ~ identifier ~ "=" ~ "(" ~ identifier ~ ("," ~ identifier)* ~ ")"
+}
+
+document = { SOI ~ (use_module_statement | use_intro_statement | record_def | custom_predicate_def | request_def)* ~ EOI }
 
 use_module_statement = { "use" ~ "module" ~ hash_hex ~ "as" ~ identifier }
 
@@ -83,8 +89,17 @@ literal_value = {
     literal_string |
     predicate_hash_native |
     predicate_hash_external |
+    literal_record |
     literal_int
 }
+
+// Record literal: Name(Field: value, ...). Must come after the `Name(...)`-shaped
+// prefix-tagged literals (PublicKey, SecretKey, Raw) in `literal_value` so PEG
+// ordering doesn't shadow them.
+literal_record = {
+    identifier ~ "(" ~ (record_field ~ ("," ~ record_field)*)? ~ ")"
+}
+record_field = { identifier ~ ":" ~ literal_value }
 
 // Primitive literal types
 literal_int = @{ "-"? ~ ASCII_DIGIT+ }
