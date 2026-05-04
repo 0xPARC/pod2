@@ -92,6 +92,7 @@ literal_value = {
     literal_string |
     predicate_hash_native |
     predicate_hash_external |
+    record_entry_index |
     literal_record |
     literal_int
 }
@@ -103,6 +104,14 @@ literal_record = {
     identifier ~ "(" ~ (record_entry ~ ("," ~ record_entry)*)? ~ ")"
 }
 record_entry = { identifier ~ ":" ~ literal_value }
+
+// Compile-time entry-index lookup: `R::Foo` or `module::R::Foo`. Resolves to
+// the integer index of the named entry in the (possibly imported) record.
+// Must come before `literal_record` so `R::Foo` doesn't try to match the
+// `Name(...)` shape and fail on the missing `(`.
+record_entry_index = {
+    identifier ~ "::" ~ identifier ~ ("::" ~ identifier)?
+}
 
 // Primitive literal types
 literal_int = @{ "-"? ~ ASCII_DIGIT+ }

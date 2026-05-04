@@ -219,6 +219,13 @@ pub enum LiteralValue {
         module: Identifier,
         predicate: Identifier,
     },
+    /// Compile-time integer literal that resolves to the index of a named
+    /// entry in a record schema: `R::Foo` (local) or `mod::R::Foo` (imported).
+    /// Lowers to `Value::from(idx as i64)` after schema resolution.
+    RecordEntryIndex {
+        record: TypeRef,
+        entry: Identifier,
+    },
 }
 
 /// Integer literal
@@ -533,6 +540,9 @@ impl fmt::Display for LiteralValue {
             LiteralValue::ExternalPredicateHash {
                 module, predicate, ..
             } => write!(f, "@external_predicate({}, {})", module, predicate),
+            LiteralValue::RecordEntryIndex { record, entry } => {
+                write!(f, "{}::{}", record, entry)
+            }
         }
     }
 }
@@ -1015,6 +1025,22 @@ pub mod parse {
                 let predicate = parse_identifier(parts.next().unwrap());
                 Ok(LiteralValue::ExternalPredicateHash { module, predicate })
             }
+            Rule::record_entry_index => {
+                let mut parts = inner.into_inner();
+                let first = parse_identifier(parts.next().unwrap());
+                let second = parse_identifier(parts.next().unwrap());
+                let (record, entry) = match parts.next().map(parse_identifier) {
+                    Some(third) => (
+                        TypeRef::Qualified {
+                            module: first,
+                            name: second,
+                        },
+                        third,
+                    ),
+                    None => (TypeRef::Local(first), second),
+                };
+                Ok(LiteralValue::RecordEntryIndex { record, entry })
+            }
             _ => unreachable!("Unexpected literal value rule: {:?}", inner.as_rule()),
         }
     }
@@ -1401,6 +1427,10 @@ mod tests {
                 module.span = None;
                 predicate.span = None;
             }
+            LiteralValue::RecordEntryIndex { record, entry } => {
+                clear_type_ref_spans(record);
+                entry.span = None;
+            }
         }
     }
 
@@ -1550,6 +1580,24 @@ mixed(a, b R, c, private: d, e R) = AND (
     fn test_record_literal_empty() {
         let input = r#"REQUEST(
     Equal(A["data"], Empty())
+)"#;
+        test_roundtrip(input);
+    }
+
+    #[test]
+    fn test_record_entry_index_local() {
+        // `R::Foo` resolves to the entry's integer index at compile time.
+        let input = r#"REQUEST(
+    Contains(A, R::Foo, 7)
+)"#;
+        test_roundtrip(input);
+    }
+
+    #[test]
+    fn test_record_entry_index_qualified() {
+        // `mod::R::Foo` for an imported record.
+        let input = r#"REQUEST(
+    Contains(A, some_mod::R::Foo, 7)
 )"#;
         test_roundtrip(input);
     }

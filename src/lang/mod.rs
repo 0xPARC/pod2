@@ -1205,4 +1205,45 @@ mod tests {
         }
         Ok(())
     }
+
+    #[test]
+    fn test_e2e_record_entry_index_proves_via_mock() -> Result<(), LangError> {
+        // End-to-end: a record-using predicate is satisfied by an Array
+        // value, with `Inputs::X` resolving the entry's integer index.
+        // MockProver runs the full proving path.
+        use crate::{
+            backends::plonky2::mock::mainpod::MockProver,
+            frontend::{MainPodBuilder, Operation},
+            middleware::{containers::Array, VDSet},
+        };
+
+        let params = Params::default();
+        let module = load_module(
+            r#"
+            record Inputs = (X, Y)
+            at_x_is(arr, val) = AND(
+                Contains(arr, Inputs::X, val)
+            )
+            "#,
+            "records_e2e",
+            &params,
+            &[],
+        )?;
+        let at_x_is = module.batch.predicate_ref_by_name("at_x_is").unwrap();
+
+        // Build a 2-entry Array; arr[0] = 7 (Inputs::X), arr[1] = 13 (Inputs::Y).
+        let arr = Array::new(vec![Value::from(7i64), Value::from(13i64)]);
+
+        let vd_set = VDSet::new(&[]);
+        let mut builder = MainPodBuilder::new(&params, &vd_set);
+        let contains_st = builder
+            .priv_op(Operation::array_contains(arr, 0i64, 7i64))
+            .unwrap();
+        builder
+            .pub_op(Operation::custom(at_x_is, [contains_st]))
+            .unwrap();
+        let pod = builder.prove(&MockProver {}).unwrap();
+        pod.pod.verify().unwrap();
+        Ok(())
+    }
 }

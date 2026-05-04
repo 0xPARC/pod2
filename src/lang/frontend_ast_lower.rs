@@ -206,6 +206,11 @@ pub(crate) fn lower_literal(lit: &LiteralValue) -> Value {
                 "ExternalPredicateHash must be lowered with context via lower_literal_with_context"
             )
         }
+        LiteralValue::RecordEntryIndex { .. } => {
+            unreachable!(
+                "RecordEntryIndex must be lowered with context via lower_literal_with_context"
+            )
+        }
     }
 }
 
@@ -279,6 +284,14 @@ pub fn lower_literal_with_context(
                 arr.insert(idx, value)?;
             }
             Ok(Value::from(arr))
+        }
+        LiteralValue::RecordEntryIndex { record, entry } => {
+            let schema = symbols
+                .records
+                .get(&record.to_string())
+                .expect("record schema validated");
+            let idx = schema.entry_index[&entry.name];
+            Ok(Value::from(idx as i64))
         }
         // All other variants are context-free
         other => Ok(lower_literal(other)),
@@ -1113,6 +1126,24 @@ mod tests {
                     }
                 }
             }
+        }
+    }
+
+    #[test]
+    fn test_record_entry_index_lowers_to_integer() {
+        // `R::Bar` resolves to integer 1 (Bar is the second entry of R).
+        let input = r#"
+            record R = (Foo, Bar, Baz)
+            my_pred(A) = AND(Contains(A, R::Bar, 7))
+        "#;
+        let module = parse_validate_and_lower_module(input, &Params::default()).unwrap();
+        let pred = &module.batch.predicates()[0];
+        let stmt = &pred.statements()[0];
+        match &stmt.args()[1] {
+            middleware::StatementTmplArg::Literal(v) => {
+                assert_eq!(v.raw(), Value::from(1i64).raw());
+            }
+            other => panic!("expected Literal at arg 1, got {other:?}"),
         }
     }
 }

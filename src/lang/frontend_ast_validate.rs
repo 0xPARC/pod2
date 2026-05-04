@@ -830,6 +830,23 @@ impl Validator {
                 }
                 Ok(())
             }
+            LiteralValue::RecordEntryIndex { record, entry } => {
+                let key = record.to_string();
+                let Some(schema) = self.symbols.records.get(&key) else {
+                    return Err(ValidationError::UnknownRecord {
+                        name: key,
+                        span: record.span(),
+                    });
+                };
+                if !schema.entry_index.contains_key(&entry.name) {
+                    return Err(ValidationError::UnknownRecordEntry {
+                        record: key,
+                        entry: entry.name.clone(),
+                        span: entry.span,
+                    });
+                }
+                Ok(())
+            }
             _ => Ok(()),
         }
     }
@@ -1330,6 +1347,41 @@ mod tests {
             result,
             Err(ValidationError::DuplicateLiteralRecordEntry { record, entry, .. })
                 if record == "R" && entry == "Foo"
+        ));
+    }
+
+    #[test]
+    fn test_record_entry_index_resolves() {
+        let input = r#"
+            record R = (Foo, Bar)
+            my_pred(A) = AND(Contains(A, R::Bar, 7))
+        "#;
+        assert!(parse_and_validate_module(input, &HashMap::new()).is_ok());
+    }
+
+    #[test]
+    fn test_record_entry_index_unknown_record() {
+        let input = r#"
+            my_pred(A) = AND(Contains(A, NotARecord::Foo, 7))
+        "#;
+        let result = parse_and_validate_module(input, &HashMap::new());
+        assert!(matches!(
+            result,
+            Err(ValidationError::UnknownRecord { name, .. }) if name == "NotARecord"
+        ));
+    }
+
+    #[test]
+    fn test_record_entry_index_unknown_entry() {
+        let input = r#"
+            record R = (Foo, Bar)
+            my_pred(A) = AND(Contains(A, R::Quux, 7))
+        "#;
+        let result = parse_and_validate_module(input, &HashMap::new());
+        assert!(matches!(
+            result,
+            Err(ValidationError::UnknownRecordEntry { record, entry, .. })
+                if record == "R" && entry == "Quux"
         ));
     }
 }
