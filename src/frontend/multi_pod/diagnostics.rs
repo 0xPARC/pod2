@@ -78,12 +78,12 @@ fn aggregate_rows<'a>(
         UtilizationRow {
             name: "merkle proofs",
             used: merkle_proofs,
-            limit: params.max_merkle_proofs_containers,
+            limit: params.containers.state.max_medium,
         },
         UtilizationRow {
             name: "merkle state transitions",
             used: merkle_state_transitions,
-            limit: params.max_merkle_tree_state_transition_proofs_containers,
+            limit: params.containers.transition.max_medium,
         },
         UtilizationRow {
             name: "custom pred verifications",
@@ -278,15 +278,24 @@ mod tests {
     use super::*;
     use crate::{
         frontend::multi_pod::cost::CustomPredicateId,
-        middleware::{Hash, RawValue},
+        middleware::{Hash, ParamsContainers, ParamsMerkleProofs, RawValue},
     };
 
     fn default_params() -> Params {
         Params {
             max_statements: 48,
             max_public_statements: 8,
-            max_merkle_proofs_containers: 8,
-            max_merkle_tree_state_transition_proofs_containers: 4,
+            containers: ParamsContainers {
+                state: ParamsMerkleProofs {
+                    max_small: 0,
+                    max_medium: 8,
+                },
+                transition: ParamsMerkleProofs {
+                    max_small: 0,
+                    max_medium: 4,
+                },
+                ..Default::default()
+            },
             max_custom_predicate_verifications: 10,
             max_custom_predicates: 2,
             max_signed_by: 4,

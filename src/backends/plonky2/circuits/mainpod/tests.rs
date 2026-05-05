@@ -23,7 +23,7 @@ use crate::{
     dict,
     frontend::{self, literal, CustomPredicateBatchBuilder, StatementTmplBuilder},
     middleware::{
-        hash_values, AnchoredKey, Hash, Key, OperationType, Predicate, PredicateOrWildcard,
+        self, hash_values, AnchoredKey, Hash, Key, OperationType, Predicate, PredicateOrWildcard,
         RawValue, StatementArg, StatementTmpl, StatementTmplArg, ValueRef, Wildcard, BASE_PARAMS,
         EMPTY_VALUE,
     },
@@ -34,7 +34,7 @@ struct Aux {
     merkle_proofs: Vec<MerkleClaimAndProof>,
     secret_keys: Vec<SecretKey>,
     signed_bys: Vec<SignedBy>,
-    merkle_tree_state_transition_proofs: Vec<MerkleTreeStateTransitionProof>,
+    merkle_transition_proofs: Vec<MerkleTreeStateTransitionProof>,
 }
 
 impl Aux {
@@ -58,7 +58,7 @@ impl Aux {
     }
     fn merkle_tree_state_transition_proof(v: MerkleTreeStateTransitionProof) -> Self {
         Self {
-            merkle_tree_state_transition_proofs: vec![v],
+            merkle_transition_proofs: vec![v],
             ..Default::default()
         }
     }
@@ -71,13 +71,20 @@ fn operation_verify(
     aux: Aux,
 ) -> Result<()> {
     let params = Params {
-        max_merkle_proofs_containers: aux.merkle_proofs.len(),
-        max_small_merkle_proofs_exist: 0,
         max_public_key_of: aux.secret_keys.len(),
         max_signed_by: aux.signed_bys.len(),
-        max_merkle_tree_state_transition_proofs_containers: aux
-            .merkle_tree_state_transition_proofs
-            .len(),
+        containers: middleware::ParamsContainers {
+            state: middleware::ParamsMerkleProofs {
+                max_small: 0,
+                max_medium: aux.merkle_proofs.len(),
+            },
+            transition: middleware::ParamsMerkleProofs {
+                max_small: 0,
+                max_medium: aux.merkle_transition_proofs.len(),
+            },
+            max_depth_small: 8,
+            max_depth_medium: 32,
+        },
         max_custom_predicate_verifications: 0,
         max_custom_predicates: 0,
         ..Default::default()
@@ -105,7 +112,10 @@ fn operation_verify(
             .merkle_proofs
             .iter()
             .map(|_| {
-                MerkleClaimAndProofTarget::new_virtual(params.max_depth_mt_containers, &mut builder)
+                MerkleClaimAndProofTarget::new_virtual(
+                    params.containers.max_depth_medium,
+                    &mut builder,
+                )
             })
             .collect(),
         small: Vec::new(),
@@ -123,24 +133,27 @@ fn operation_verify(
         .map(|_| SignedByTarget::new_virtual(&mut builder))
         .collect();
 
-    let merkle_tree_state_transition_proofs_target: Vec<_> = aux
-        .merkle_tree_state_transition_proofs
-        .iter()
-        .map(|_| {
-            MerkleTreeStateTransitionProofTarget::new_virtual(
-                params.max_depth_mt_containers,
-                &mut builder,
-            )
-        })
-        .collect();
+    let merkle_transition_proofs_target = MerkleTransitionProofsTarget {
+        medium: aux
+            .merkle_transition_proofs
+            .iter()
+            .map(|_| {
+                MerkleTreeStateTransitionProofTarget::new_virtual(
+                    params.containers.max_depth_medium,
+                    &mut builder,
+                )
+            })
+            .collect(),
+        small: Vec::new(),
+    };
 
     let aux_table = build_operation_aux_table_circuit(
         &params,
         &mut builder,
         &merkle_proofs_target,
+        &merkle_transition_proofs_target,
         &secret_keys_target,
         &signed_by_targets,
-        &merkle_tree_state_transition_proofs_target,
         &[],
         &[],
     )?;
@@ -172,9 +185,10 @@ fn operation_verify(
         merkle_proof_target.set_targets(&mut pw, merkle_proof)?
     }
     for (merkle_tree_state_transition_proof_target, merkle_tree_state_transition_proof) in
-        merkle_tree_state_transition_proofs_target
+        merkle_transition_proofs_target
+            .medium
             .iter()
-            .zip(aux.merkle_tree_state_transition_proofs.iter())
+            .zip(aux.merkle_transition_proofs.iter())
     {
         merkle_tree_state_transition_proof_target
             .set_targets(&mut pw, merkle_tree_state_transition_proof)?
@@ -886,7 +900,7 @@ fn test_operation_verify_merkle_insert() -> Result<()> {
             OperationArg::Index(0),
             OperationArg::Index(0),
         ],
-        OperationAux::MerkleTreeStateTransitionProofIndex(0),
+        OperationAux::MerkleTransitionProofIndex(Size::Medium, 0),
     );
 
     let aux = Aux::merkle_tree_state_transition_proof(state_transition_proof);
@@ -913,7 +927,7 @@ fn test_operation_verify_merkle_update() -> Result<()> {
             OperationArg::Index(0),
             OperationArg::Index(0),
         ],
-        OperationAux::MerkleTreeStateTransitionProofIndex(0),
+        OperationAux::MerkleTransitionProofIndex(Size::Medium, 0),
     );
 
     let aux = Aux::merkle_tree_state_transition_proof(state_transition_proof);
@@ -938,7 +952,7 @@ fn test_operation_verify_merkle_delete() -> Result<()> {
             OperationArg::Index(0),
             OperationArg::Index(0),
         ],
-        OperationAux::MerkleTreeStateTransitionProofIndex(0),
+        OperationAux::MerkleTransitionProofIndex(Size::Medium, 0),
     );
 
     let aux = Aux::merkle_tree_state_transition_proof(state_transition_proof);

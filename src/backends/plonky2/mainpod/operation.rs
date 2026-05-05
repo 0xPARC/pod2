@@ -5,8 +5,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     backends::plonky2::{
         error::{Error, Result},
-        mainpod::{MerkleProofs, SignedBy, Statement},
-        primitives::merkletree::MerkleTreeStateTransitionProof,
+        mainpod::{MerkleProofs, MerkleTransitionProofs, SignedBy, Statement},
     },
     middleware::{self, OperationType, Params},
 };
@@ -32,61 +31,72 @@ impl OperationArg {
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub enum Size {
-    Medium,
     Small,
+    Medium,
+}
+
+impl Size {
+    pub const fn min() -> Self {
+        Self::Small
+    }
+    pub const fn max() -> Self {
+        Self::Medium
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub enum OperationAux {
     None,
     MerkleProofIndex(Size, usize),
+    MerkleTransitionProofIndex(Size, usize),
     PublicKeyOfIndex(usize),
     SignedByIndex(usize),
-    MerkleTreeStateTransitionProofIndex(usize),
     CustomPredVerifyIndex(usize),
 }
 
 impl OperationAux {
-    fn table_offset_merkle_proof(_params: &Params) -> usize {
+    fn table_offset_merkle_proof(params: &Params, size: Size) -> usize {
         // At index 0 we store a zero entry
-        1
+        1 + match size {
+            Size::Small => 0,
+            Size::Medium => params.containers.state.max_small,
+        }
     }
-    fn table_offset_small_merkle_proof(params: &Params) -> usize {
-        Self::table_offset_merkle_proof(params) + params.max_merkle_proofs_containers
+    fn table_offset_merkle_transition_proof(params: &Params, size: Size) -> usize {
+        Self::table_offset_merkle_proof(params, Size::min())
+            + params.containers.state.max_total()
+            + match size {
+                Size::Small => 0,
+                Size::Medium => params.containers.transition.max_small,
+            }
     }
     fn table_offset_public_key_of(params: &Params) -> usize {
-        Self::table_offset_small_merkle_proof(params) + params.max_small_merkle_proofs_exist
+        Self::table_offset_merkle_proof(params, Size::min()) + params.containers.state.max_total()
     }
     fn table_offset_signed_by(params: &Params) -> usize {
         Self::table_offset_public_key_of(params) + params.max_public_key_of
     }
-    fn table_offset_merkle_tree_state_transition_proof(params: &Params) -> usize {
+    fn table_offset_custom_pred_verify(params: &Params) -> usize {
         Self::table_offset_signed_by(params) + params.max_signed_by
     }
-    fn table_offset_custom_pred_verify(params: &Params) -> usize {
-        Self::table_offset_merkle_tree_state_transition_proof(params)
-            + params.max_merkle_tree_state_transition_proofs_containers
-    }
     pub(crate) fn table_size(params: &Params) -> usize {
-        1 + params.max_merkle_proofs_containers
-            + params.max_small_merkle_proofs_exist
+        1 + params.containers.state.max_small
+            + params.containers.state.max_medium
             + params.max_public_key_of
             + params.max_signed_by
-            + params.max_merkle_tree_state_transition_proofs_containers
+            + params.containers.transition.max_small
+            + params.containers.transition.max_medium
             + params.max_custom_predicate_verifications
     }
     pub fn table_index(&self, params: &Params) -> usize {
         match self {
             Self::None => 0,
-            Self::MerkleProofIndex(Size::Medium, i) => Self::table_offset_merkle_proof(params) + *i,
-            Self::MerkleProofIndex(Size::Small, i) => {
-                Self::table_offset_small_merkle_proof(params) + *i
+            Self::MerkleProofIndex(size, i) => Self::table_offset_merkle_proof(params, *size) + *i,
+            Self::MerkleTransitionProofIndex(size, i) => {
+                Self::table_offset_merkle_transition_proof(params, *size) + *i
             }
             Self::PublicKeyOfIndex(i) => Self::table_offset_public_key_of(params) + *i,
             Self::SignedByIndex(i) => Self::table_offset_signed_by(params) + *i,
-            Self::MerkleTreeStateTransitionProofIndex(i) => {
-                Self::table_offset_merkle_tree_state_transition_proof(params) + *i
-            }
             Self::CustomPredVerifyIndex(i) => Self::table_offset_custom_pred_verify(params) + *i,
         }
     }
@@ -110,7 +120,7 @@ impl Operation {
         statements: &[Statement],
         signatures: &[SignedBy],
         merkle_proofs: &MerkleProofs,
-        merkle_tree_state_transition_proofs: &[MerkleTreeStateTransitionProof],
+        merkle_transition_proofs: &MerkleTransitionProofs,
     ) -> Result<crate::middleware::Operation> {
         let deref_args = self
             .1
@@ -140,9 +150,13 @@ impl Operation {
                         .clone(),
                 )
             }
-            OperationAux::MerkleTreeStateTransitionProofIndex(i) => {
+            OperationAux::MerkleTransitionProofIndex(size, i) => {
+                let table = match size {
+                    Size::Small => &merkle_transition_proofs.small,
+                    Size::Medium => &merkle_transition_proofs.medium,
+                };
                 crate::middleware::OperationAux::MerkleTreeStateTransitionProof(
-                    merkle_tree_state_transition_proofs
+                    table
                         .get(i)
                         .ok_or(Error::custom(format!(
                             "Missing Merkle state transition proof index {}",
@@ -190,8 +204,8 @@ impl fmt::Display for Operation {
             OperationAux::CustomPredVerifyIndex(i) => write!(f, " custom_pred_verify_{:02}", i)?,
             OperationAux::PublicKeyOfIndex(i) => write!(f, " public_key_of_{:02}", i)?,
             OperationAux::SignedByIndex(i) => write!(f, " signed_by_{:02}", i)?,
-            OperationAux::MerkleTreeStateTransitionProofIndex(i) => {
-                write!(f, " merkle_tree_state_transition_proof_{:02}", i)?
+            OperationAux::MerkleTransitionProofIndex(size, i) => {
+                write!(f, " {:?}merkle_tree_state_transition_proof_{:02}", size, i)?
             }
         }
         Ok(())
