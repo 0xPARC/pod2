@@ -51,7 +51,7 @@ use crate::{
         mainpod::cache_get_rec_main_pod_verifier_circuit_data,
         primitives::merkletree::MerkleClaimAndProof,
     },
-    middleware::{containers::Array, Hash, Params, RawValue, Result, Value},
+    middleware::{containers::Array, Hash, Params, RawValue, Result, Value, EMPTY_HASH},
 };
 
 pub static DEFAULT_VD_LIST: LazyLock<Vec<VerifierOnlyCircuitData>> = LazyLock::new(|| {
@@ -95,6 +95,12 @@ impl Eq for VDSet {}
 
 impl VDSet {
     fn new_from_vds_hashes(mut vds_hashes: Vec<Hash>) -> Self {
+        // If vds_hashes is empty we add an zero entry to be used as padding when verifying merkle
+        // proofs of inclusion in the vds set.  This zero entry can't be abused because no circuit
+        // exists with a vds_hash = 0.
+        if vds_hashes.is_empty() {
+            vds_hashes.push(EMPTY_HASH);
+        }
         // before using the hash values, sort them, so that each set of
         // verifier_datas gets the same VDSet root
         vds_hashes.sort();
