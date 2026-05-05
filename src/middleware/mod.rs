@@ -795,10 +795,14 @@ pub struct Params {
     pub max_custom_predicate_wildcards: usize,
     // maximum number of merkle proofs used for container operations
     pub max_merkle_proofs_containers: usize,
+    // maximum number of small merkle proofs used for exist container operations
+    pub max_small_merkle_proofs_exist: usize,
     // maximum number of merkle tree state transition proofs used for container update operations
     pub max_merkle_tree_state_transition_proofs_containers: usize,
     // maximum depth for merkle tree gadget used for container operations
     pub max_depth_mt_containers: usize,
+    // maximum depth for merkle tree gadget used for small container operations
+    pub max_small_depth_mt_containers: usize,
     // maximum depth of the merkle tree gadget used for verifier_data membership
     // check.  This allows creating verifying sets of pod circuits of size
     // 2^max_depth_mt_vds.  Limits the number of container operations of the type Contains,
@@ -820,9 +824,11 @@ impl Default for Params {
             max_custom_predicates: 8,
             max_custom_predicate_verifications: 8,
             max_custom_predicate_wildcards: 8,
-            max_merkle_proofs_containers: 20,
+            max_merkle_proofs_containers: 8,
+            max_small_merkle_proofs_exist: 22,
             max_merkle_tree_state_transition_proofs_containers: 6,
             max_depth_mt_containers: 32,
+            max_small_depth_mt_containers: 8,
             max_depth_mt_vds: 6, // up to 64 (2^6) different pod circuits
             max_public_key_of: 2,
             max_signed_by: 4,

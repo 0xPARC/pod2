@@ -148,14 +148,20 @@ pub(crate) fn extract_custom_predicate_verifications(
     Ok(table)
 }
 
+#[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MerkleProofs {
+    pub(crate) medium: Vec<MerkleClaimAndProof>,
+    pub(crate) small: Vec<MerkleClaimAndProof>,
+}
+
 /// Extracts Merkle proofs from Contains/NotContains ops.
 pub(crate) fn extract_merkle_proofs(
     params: &Params,
     aux_list: &mut [OperationAux],
     operations: &[middleware::Operation],
     statements: &[middleware::Statement],
-) -> Result<Vec<MerkleClaimAndProof>> {
-    let mut table = Vec::new();
+) -> Result<MerkleProofs> {
+    let mut tables = MerkleProofs::default();
     for (i, (op, st)) in operations.iter().zip(statements.iter()).enumerate() {
         let deduction_err = || MiddlewareError::invalid_deduction(op.clone(), st.clone());
         let (root, key, value, pf) = match (op, st) {
@@ -178,22 +184,27 @@ pub(crate) fn extract_merkle_proofs(
             }
             _ => continue,
         };
-        aux_list[i] = OperationAux::MerkleProofIndex(table.len());
-        table.push(MerkleClaimAndProof::new(
-            Hash::from(root),
-            key,
-            value,
-            pf.clone(),
-        ));
+        let claim_proof = MerkleClaimAndProof::new(Hash::from(root), key, value, pf.clone());
+        if pf.existence
+            // TODO: Make sure there's no off-by-one error here
+            && pf.siblings.len() <= params.max_small_depth_mt_containers
+            && tables.small.len() < params.max_small_merkle_proofs_exist
+        {
+            aux_list[i] = OperationAux::MerkleProofIndex(Size::Small, tables.small.len());
+            tables.small.push(claim_proof);
+        } else {
+            aux_list[i] = OperationAux::MerkleProofIndex(Size::Medium, tables.medium.len());
+            tables.medium.push(claim_proof);
+        }
     }
-    if table.len() > params.max_merkle_proofs_containers {
+    if tables.medium.len() > params.max_merkle_proofs_containers {
         return Err(Error::custom(format!(
             "The number of required Merkle proofs ({}) exceeds the maximum number ({}).",
-            table.len(),
+            tables.medium.len(),
             params.max_merkle_proofs_containers
         )));
     }
-    Ok(table)
+    Ok(tables)
 }
 
 /// Extracts Merkle state transition proofs from container update ops.
@@ -1020,9 +1031,11 @@ pub mod tests {
             max_custom_predicate_verifications: 2,
             max_custom_predicate_wildcards: 3,
             max_merkle_proofs_containers: 2,
+            max_small_merkle_proofs_exist: 2,
             max_merkle_tree_state_transition_proofs_containers: 2,
             max_public_key_of: 2,
             max_depth_mt_containers: 4,
+            max_small_depth_mt_containers: 2,
             max_depth_mt_vds: 6,
         };
         let mut vds = DEFAULT_VD_LIST.clone();

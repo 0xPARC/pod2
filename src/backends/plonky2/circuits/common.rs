@@ -30,7 +30,7 @@ use crate::{
         mainpod::{Operation, OperationArg, OperationAux, Statement},
         primitives::merkletree::{
             verify_merkle_proof_circuit, MerkleClaimAndProof, MerkleClaimAndProofTarget,
-            MerkleProof, MerkleTreeStateTransitionProofTarget,
+            MerkleProof, MerkleProofExistenceTarget, MerkleTreeStateTransitionProofTarget,
         },
     },
     middleware::{
@@ -999,6 +999,20 @@ impl From<MerkleClaimAndProofTarget> for MerkleClaimTarget {
             key: pf.key,
             value: pf.value,
             existence: pf.existence,
+        }
+    }
+}
+
+impl MerkleClaimTarget {
+    pub fn from_proof_existence(
+        builder: &mut CircuitBuilder,
+        pf: MerkleProofExistenceTarget,
+    ) -> Self {
+        Self {
+            root: pf.root,
+            key: pf.key,
+            value: pf.value,
+            existence: builder._true(),
         }
     }
 }

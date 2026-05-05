@@ -13,7 +13,7 @@ use crate::{
     backends::plonky2::{
         basetypes::C,
         circuits::common::tests::I64_TEST_PAIRS,
-        mainpod::{calculate_statements_hash, OperationArg, OperationAux},
+        mainpod::{calculate_statements_hash, OperationArg, OperationAux, Size},
         primitives::{
             ec::schnorr::SecretKey,
             merkletree::{MerkleClaimAndProof, MerkleTree, MerkleTreeStateTransitionProof},
@@ -72,6 +72,7 @@ fn operation_verify(
 ) -> Result<()> {
     let params = Params {
         max_merkle_proofs_containers: aux.merkle_proofs.len(),
+        max_small_merkle_proofs_exist: 0,
         max_public_key_of: aux.secret_keys.len(),
         max_signed_by: aux.signed_bys.len(),
         max_merkle_tree_state_transition_proofs_containers: aux
@@ -99,13 +100,16 @@ fn operation_verify(
         .map(|flat| builder.hash_n_to_hash_no_pad::<PoseidonHash>(flat.clone()))
         .collect();
 
-    let merkle_proofs_target: Vec<_> = aux
-        .merkle_proofs
-        .iter()
-        .map(|_| {
-            MerkleClaimAndProofTarget::new_virtual(params.max_depth_mt_containers, &mut builder)
-        })
-        .collect();
+    let merkle_proofs_target = MerkleProofsTarget {
+        medium: aux
+            .merkle_proofs
+            .iter()
+            .map(|_| {
+                MerkleClaimAndProofTarget::new_virtual(params.max_depth_mt_containers, &mut builder)
+            })
+            .collect(),
+        small: Vec::new(),
+    };
 
     let secret_keys_target: Vec<_> = aux
         .secret_keys
@@ -160,8 +164,10 @@ fn operation_verify(
     for (signed_by_target, signed_by) in signed_by_targets.iter().zip(aux.signed_bys.iter()) {
         signed_by_target.set_targets(&mut pw, signed_by)?
     }
-    for (merkle_proof_target, merkle_proof) in
-        merkle_proofs_target.iter().zip(aux.merkle_proofs.iter())
+    for (merkle_proof_target, merkle_proof) in merkle_proofs_target
+        .medium
+        .iter()
+        .zip(aux.merkle_proofs.iter())
     {
         merkle_proof_target.set_targets(&mut pw, merkle_proof)?
     }
@@ -809,7 +815,7 @@ fn test_operation_verify_sintains() -> Result<()> {
     let op = mainpod::Operation(
         OperationType::Native(NativeOperation::NotContainsFromEntries),
         vec![OperationArg::Index(0), OperationArg::Index(1)],
-        OperationAux::MerkleProofIndex(0),
+        OperationAux::MerkleProofIndex(Size::Medium, 0),
     );
 
     let merkle_proof = MerkleClaimAndProof::new(root, key.raw(), None, no_key_pf);
@@ -853,7 +859,7 @@ fn test_operation_verify_contains() -> Result<()> {
             OperationArg::Index(1),
             OperationArg::Index(2),
         ],
-        OperationAux::MerkleProofIndex(0),
+        OperationAux::MerkleProofIndex(Size::Medium, 0),
     );
 
     let merkle_proof = MerkleClaimAndProof::new(root, key.raw(), Some(value), key_pf);

@@ -36,7 +36,7 @@ use crate::{
         },
         emptypod::EmptyPod,
         error::Result,
-        mainpod::{self, pad_statement, SignedBy},
+        mainpod::{self, pad_statement, MerkleProofs, SignedBy},
         primitives::{
             ec::{
                 bits::{BigUInt320Target, CircuitBuilderBits},
@@ -47,8 +47,9 @@ use crate::{
                 schnorr::{CircuitBuilderSchnorr, SecretKey, SignatureTarget, WitnessWriteSchnorr},
             },
             merkletree::{
-                verify_merkle_proof_circuit, verify_merkle_state_transition_circuit,
-                MerkleClaimAndProof, MerkleClaimAndProofTarget, MerkleProof, MerkleTreeOp,
+                verify_merkle_proof_circuit, verify_merkle_proof_existence_circuit,
+                verify_merkle_state_transition_circuit, MerkleClaimAndProof,
+                MerkleClaimAndProofTarget, MerkleProof, MerkleProofExistenceTarget, MerkleTreeOp,
                 MerkleTreeStateTransitionProof, MerkleTreeStateTransitionProofTarget,
             },
             signature::{verify_signature_circuit, SignatureVerifyTarget},
@@ -250,6 +251,7 @@ enum OperationAuxTableTag {
 fn max_operation_aux_entry_len(params: &Params) -> usize {
     [
         (params.max_merkle_proofs_containers > 0).then(|| MerkleClaimTarget::size(params)),
+        (params.max_small_merkle_proofs_exist > 0).then(|| MerkleClaimTarget::size(params)),
         (params.max_public_key_of > 0).then(|| PubKeySecKeyTarget::size(params)),
         (params.max_signed_by > 0).then(|| MsgPubKeyTarget::size(params)),
         (params.max_merkle_tree_state_transition_proofs_containers > 0)
@@ -313,7 +315,7 @@ impl SignedByTarget {
 fn build_operation_aux_table_circuit(
     params: &Params,
     builder: &mut CircuitBuilder,
-    merkle_proofs: &[MerkleClaimAndProofTarget],
+    merkle_proofs: &MerkleProofsTarget,
     public_key_of_sks: &[BigUInt320Target],
     signed_bys: &[SignedByTarget],
     merkle_tree_state_transition_proofs: &[MerkleTreeStateTransitionProofTarget],
@@ -325,7 +327,14 @@ fn build_operation_aux_table_circuit(
         params.max_custom_predicate_verifications,
         custom_predicate_verifications.len()
     );
-    assert_eq!(params.max_merkle_proofs_containers, merkle_proofs.len());
+    assert_eq!(
+        params.max_merkle_proofs_containers,
+        merkle_proofs.medium.len()
+    );
+    assert_eq!(
+        params.max_small_merkle_proofs_exist,
+        merkle_proofs.small.len()
+    );
     let max_entry_len = max_operation_aux_entry_len(params);
     let mut table = MuxTableTarget::new(params, max_entry_len);
 
@@ -333,9 +342,17 @@ fn build_operation_aux_table_circuit(
     table.push_flattened(builder, OperationAuxTableTag::None as u32, &[]);
 
     // MerkleProofs: verify container merkle proofs (inclusion/non-inclusion)
-    for merkle_proof in merkle_proofs {
+    for merkle_proof in &merkle_proofs.medium {
         verify_merkle_proof_circuit(builder, merkle_proof);
         let entry = MerkleClaimTarget::from(merkle_proof.clone());
+
+        table.push(builder, OperationAuxTableTag::MerkleProof as u32, &entry);
+    }
+
+    // Small MerkleProofs: verify container merkle proofs (only inclusion)
+    for merkle_proof in &merkle_proofs.small {
+        verify_merkle_proof_existence_circuit(builder, merkle_proof);
+        let entry = MerkleClaimTarget::from_proof_existence(builder, merkle_proof.clone());
 
         table.push(builder, OperationAuxTableTag::MerkleProof as u32, &entry);
     }
@@ -507,7 +524,7 @@ fn verify_operation_circuit(
     }
     // Skip these if there are no resolved aux entries
     if let Some(resolved_aux) = resolved_aux {
-        if params.max_merkle_proofs_containers > 0 {
+        if params.max_merkle_proofs_containers + params.max_small_merkle_proofs_exist > 0 {
             op_checks.extend_from_slice(&[
                 verify_contains_from_entries_circuit(
                     params,
@@ -1890,6 +1907,32 @@ fn verify_main_pod_circuit(
 }
 
 #[derive(Clone, Serialize, Deserialize)]
+pub struct MerkleProofsTarget {
+    medium: Vec<MerkleClaimAndProofTarget>,
+    small: Vec<MerkleProofExistenceTarget>,
+}
+
+impl MerkleProofsTarget {
+    pub fn new_virtual(params: &Params, builder: &mut CircuitBuilder) -> Self {
+        Self {
+            medium: (0..params.max_merkle_proofs_containers)
+                .map(|_| {
+                    MerkleClaimAndProofTarget::new_virtual(params.max_depth_mt_containers, builder)
+                })
+                .collect(),
+            small: (0..params.max_small_merkle_proofs_exist)
+                .map(|_| {
+                    MerkleProofExistenceTarget::new_virtual(
+                        params.max_small_depth_mt_containers,
+                        builder,
+                    )
+                })
+                .collect(),
+        }
+    }
+}
+
+#[derive(Clone, Serialize, Deserialize)]
 pub struct MainPodVerifyTarget {
     params: Params,
     vds_root: HashOutTarget,
@@ -1898,7 +1941,7 @@ pub struct MainPodVerifyTarget {
     // The KEY_TYPE statement must be the first public one
     input_statements: Vec<StatementTarget>,
     operations: Vec<OperationTarget>,
-    merkle_proofs: Vec<MerkleClaimAndProofTarget>,
+    merkle_proofs: MerkleProofsTarget,
     public_key_of_sks: Vec<BigUInt320Target>,
     signed_bys: Vec<SignedByTarget>,
     merkle_tree_state_transition_proofs: Vec<MerkleTreeStateTransitionProofTarget>,
@@ -1927,11 +1970,7 @@ impl MainPodVerifyTarget {
             operations: (0..params.max_statements)
                 .map(|_| builder.add_virtual_operation(params))
                 .collect(),
-            merkle_proofs: (0..params.max_merkle_proofs_containers)
-                .map(|_| {
-                    MerkleClaimAndProofTarget::new_virtual(params.max_depth_mt_containers, builder)
-                })
-                .collect(),
+            merkle_proofs: MerkleProofsTarget::new_virtual(params, builder),
             public_key_of_sks: (0..params.max_public_key_of)
                 .map(|_| builder.add_virtual_biguint320_target())
                 .collect(),
@@ -1973,7 +2012,7 @@ pub struct MainPodVerifyInput {
     pub input_pods_pub_self_statements: Vec<Vec<Statement>>,
     pub statements: Vec<mainpod::Statement>,
     pub operations: Vec<mainpod::Operation>,
-    pub merkle_proofs: Vec<MerkleClaimAndProof>,
+    pub merkle_proofs: MerkleProofs,
     pub public_key_of_sks: Vec<SecretKey>,
     pub signed_bys: Vec<SignedBy>,
     pub merkle_tree_state_transition_proofs: Vec<MerkleTreeStateTransitionProof>,
@@ -2066,14 +2105,24 @@ impl InnerCircuit for MainPodVerifyTarget {
             self.operations[i].set_targets(pw, &self.params, op)?;
         }
 
-        assert!(input.merkle_proofs.len() <= self.params.max_merkle_proofs_containers);
-        for (i, mp) in input.merkle_proofs.iter().enumerate() {
-            self.merkle_proofs[i].set_targets(pw, mp)?;
+        assert!(input.merkle_proofs.medium.len() <= self.params.max_merkle_proofs_containers);
+        for (i, mp) in input.merkle_proofs.medium.iter().enumerate() {
+            self.merkle_proofs.medium[i].set_targets(pw, mp)?;
         }
         // Padding
         let pad_mp = MerkleClaimAndProof::pad();
-        for i in input.merkle_proofs.len()..self.params.max_merkle_proofs_containers {
-            self.merkle_proofs[i].set_targets(pw, &pad_mp)?;
+        for i in input.merkle_proofs.medium.len()..self.params.max_merkle_proofs_containers {
+            self.merkle_proofs.medium[i].set_targets(pw, &pad_mp)?;
+        }
+
+        assert!(input.merkle_proofs.small.len() <= self.params.max_small_merkle_proofs_exist);
+        for (i, mp) in input.merkle_proofs.small.iter().enumerate() {
+            self.merkle_proofs.small[i].set_targets(pw, mp)?;
+        }
+        // Padding
+        let pad_mp = MerkleClaimAndProof::pad();
+        for i in input.merkle_proofs.small.len()..self.params.max_small_merkle_proofs_exist {
+            self.merkle_proofs.small[i].set_targets(pw, &pad_mp)?;
         }
 
         assert!(input.public_key_of_sks.len() <= self.params.max_public_key_of);
