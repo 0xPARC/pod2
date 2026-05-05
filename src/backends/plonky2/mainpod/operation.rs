@@ -56,22 +56,30 @@ pub enum OperationAux {
 
 impl OperationAux {
     fn table_offset_merkle_proof(params: &Params, size: Size) -> usize {
-        // At index 0 we store a zero entry
-        1 + match size {
-            Size::Small => 0,
-            Size::Medium => params.containers.state.max_small,
+        match size {
+            // At index 0 we store a zero entry
+            Size::Small => 1,
+            Size::Medium => {
+                Self::table_offset_merkle_proof(params, Size::Small)
+                    + params.containers.state.max_small
+            }
         }
     }
     fn table_offset_merkle_transition_proof(params: &Params, size: Size) -> usize {
-        Self::table_offset_merkle_proof(params, Size::min())
-            + params.containers.state.max_total()
-            + match size {
-                Size::Small => 0,
-                Size::Medium => params.containers.transition.max_small,
+        match size {
+            Size::Small => {
+                Self::table_offset_merkle_proof(params, Size::min())
+                    + params.containers.state.max_total()
             }
+            Size::Medium => {
+                Self::table_offset_merkle_transition_proof(params, Size::Small)
+                    + params.containers.transition.max_small
+            }
+        }
     }
     fn table_offset_public_key_of(params: &Params) -> usize {
-        Self::table_offset_merkle_proof(params, Size::min()) + params.containers.state.max_total()
+        Self::table_offset_merkle_transition_proof(params, Size::min())
+            + params.containers.transition.max_total()
     }
     fn table_offset_signed_by(params: &Params) -> usize {
         Self::table_offset_public_key_of(params) + params.max_public_key_of
@@ -80,12 +88,10 @@ impl OperationAux {
         Self::table_offset_signed_by(params) + params.max_signed_by
     }
     pub(crate) fn table_size(params: &Params) -> usize {
-        1 + params.containers.state.max_small
-            + params.containers.state.max_medium
+        1 + params.containers.state.max_total()
+            + params.containers.transition.max_total()
             + params.max_public_key_of
             + params.max_signed_by
-            + params.containers.transition.max_small
-            + params.containers.transition.max_medium
             + params.max_custom_predicate_verifications
     }
     pub fn table_index(&self, params: &Params) -> usize {

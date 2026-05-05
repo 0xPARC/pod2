@@ -815,8 +815,8 @@ impl Default for ParamsContainers {
                 max_medium: 8,
             },
             transition: ParamsMerkleProofs {
-                max_small: 6,
-                max_medium: 0,
+                max_small: 12,
+                max_medium: 6,
             },
             max_depth_small: 8,
             max_depth_medium: 32,

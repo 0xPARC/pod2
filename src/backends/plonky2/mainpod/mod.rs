@@ -187,8 +187,8 @@ pub(crate) fn extract_merkle_proofs(
         let claim_proof = MerkleClaimAndProof::new(Hash::from(root), key, value, pf.clone());
         if pf.existence
             // TODO: Make sure there's no off-by-one error here
-            && pf.siblings.len() <= params.containers.state.max_small
-            && tables.small.len() < params.containers.max_depth_small
+            && pf.siblings.len() <= params.containers.max_depth_small
+            && tables.small.len() < params.containers.state.max_small
         {
             aux_list[i] = OperationAux::MerkleProofIndex(Size::Small, tables.small.len());
             tables.small.push(claim_proof);
@@ -229,8 +229,8 @@ pub(crate) fn extract_merkle_transition_proofs(
         };
         if pf.op_proof.existence
             // TODO: Make sure there's no off-by-one error here
-            && pf.siblings.len() <= params.containers.transition.max_small
-            && tables.small.len() < params.containers.max_depth_small
+            && pf.siblings.len() <= params.containers.max_depth_small
+            && tables.small.len() < params.containers.transition.max_small
         {
             aux_list[i] = OperationAux::MerkleTransitionProofIndex(Size::Small, tables.small.len());
             tables.small.push(pf);
@@ -540,6 +540,8 @@ impl MainPodProver for Prover {
         let mut aux_list = vec![OperationAux::None; params.max_priv_statements()];
         let merkle_proofs =
             extract_merkle_proofs(params, &mut aux_list, inputs.operations, inputs.statements)?;
+        let merkle_transition_proofs =
+            extract_merkle_transition_proofs(params, &mut aux_list, inputs.operations)?;
         let custom_predicates = extract_custom_predicates(params, inputs.operations)?;
         let custom_predicate_verifications = extract_custom_predicate_verifications(
             params,
@@ -563,9 +565,6 @@ impl MainPodProver for Prover {
             extract_public_key_of(params, &mut aux_list, inputs.operations, inputs.statements)?;
         let signed_bys =
             extract_signatures(params, &mut aux_list, inputs.operations, inputs.statements)?;
-
-        let merkle_transition_proofs =
-            extract_merkle_transition_proofs(params, &mut aux_list, inputs.operations)?;
 
         let (statements, public_statements) = layout_statements(params, false, &inputs)?;
         let operations = process_private_statements_operations(

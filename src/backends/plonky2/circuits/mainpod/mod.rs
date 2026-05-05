@@ -242,10 +242,10 @@ fn verify_operation_public_statement_circuit(
 enum OperationAuxTableTag {
     None = 0,
     MerkleProof = 1,
-    PublicKeyOf = 2,
-    SignedBy = 3,
-    MerkleTreeStateTransitionProof = 4,
-    CustomPredVerify = 5,
+    MerkleTransitionProof = 2,
+    CustomPredVerify = 3,
+    PublicKeyOf = 4,
+    SignedBy = 5,
 }
 
 fn max_operation_aux_entry_len(params: &Params) -> usize {
@@ -310,6 +310,51 @@ impl SignedByTarget {
     }
 }
 
+fn append_container_proofs_operation_aux_table_circuit(
+    builder: &mut CircuitBuilder,
+    table: &mut MuxTableTarget,
+    merkle_proofs: &MerkleProofsTarget,
+    merkle_transition_proofs: &MerkleTransitionProofsTarget,
+) {
+    // Small MerkleProofs: verify container merkle proofs (only inclusion)
+    for merkle_proof in &merkle_proofs.small {
+        verify_merkle_proof_existence_circuit(builder, merkle_proof);
+        let entry = MerkleClaimTarget::from_proof_existence(builder, merkle_proof.clone());
+
+        table.push(builder, OperationAuxTableTag::MerkleProof as u32, &entry);
+    }
+    // Medium MerkleProofs: verify container merkle proofs (inclusion/non-inclusion)
+    for merkle_proof in &merkle_proofs.medium {
+        verify_merkle_proof_circuit(builder, merkle_proof);
+        let entry = MerkleClaimTarget::from(merkle_proof.clone());
+
+        table.push(builder, OperationAuxTableTag::MerkleProof as u32, &entry);
+    }
+
+    // Small Merkle state transition proofs: verify op proof (only update)
+    for merkle_transition_proof in &merkle_transition_proofs.small {
+        verify_merkle_state_transition_circuit(builder, merkle_transition_proof);
+        let entry = MerkleTreeStateTransitionClaimTarget::from(merkle_transition_proof.clone());
+
+        table.push(
+            builder,
+            OperationAuxTableTag::MerkleTransitionProof as u32,
+            &entry,
+        );
+    }
+    // Medium Merkle state transition proofs: verify op proof (insert/update/delete)
+    for merkle_transition_proof in &merkle_transition_proofs.medium {
+        verify_merkle_state_transition_circuit(builder, merkle_transition_proof);
+        let entry = MerkleTreeStateTransitionClaimTarget::from(merkle_transition_proof.clone());
+
+        table.push(
+            builder,
+            OperationAuxTableTag::MerkleTransitionProof as u32,
+            &entry,
+        );
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn build_operation_aux_table_circuit(
     params: &Params,
@@ -337,45 +382,12 @@ fn build_operation_aux_table_circuit(
     // None
     table.push_flattened(builder, OperationAuxTableTag::None as u32, &[]);
 
-    // Small MerkleProofs: verify container merkle proofs (only inclusion)
-    for merkle_proof in &merkle_proofs.small {
-        verify_merkle_proof_existence_circuit(builder, merkle_proof);
-        let entry = MerkleClaimTarget::from_proof_existence(builder, merkle_proof.clone());
-
-        table.push(builder, OperationAuxTableTag::MerkleProof as u32, &entry);
-    }
-
-    // Medium MerkleProofs: verify container merkle proofs (inclusion/non-inclusion)
-    for merkle_proof in &merkle_proofs.medium {
-        verify_merkle_proof_circuit(builder, merkle_proof);
-        let entry = MerkleClaimTarget::from(merkle_proof.clone());
-
-        table.push(builder, OperationAuxTableTag::MerkleProof as u32, &entry);
-    }
-
-    // Small Merkle state transition proofs: verify op proof (only update)
-    for merkle_transition_proof in &merkle_transition_proofs.small {
-        verify_merkle_state_transition_circuit(builder, merkle_transition_proof);
-        let entry = MerkleTreeStateTransitionClaimTarget::from(merkle_transition_proof.clone());
-
-        table.push(
-            builder,
-            OperationAuxTableTag::MerkleTreeStateTransitionProof as u32,
-            &entry,
-        );
-    }
-
-    // Medium Merkle state transition proofs: verify op proof (insert/update/delete)
-    for merkle_transition_proof in &merkle_transition_proofs.medium {
-        verify_merkle_state_transition_circuit(builder, merkle_transition_proof);
-        let entry = MerkleTreeStateTransitionClaimTarget::from(merkle_transition_proof.clone());
-
-        table.push(
-            builder,
-            OperationAuxTableTag::MerkleTreeStateTransitionProof as u32,
-            &entry,
-        );
-    }
+    append_container_proofs_operation_aux_table_circuit(
+        builder,
+        &mut table,
+        merkle_proofs,
+        merkle_transition_proofs,
+    );
 
     // PublicKeyOf: verify the derivation from a Schnorr secret key to public key
     let invgenerator = builder.constant_point(Point::generator().inverse());
@@ -726,7 +738,7 @@ fn verify_merkle_insert_circuit(
     let (aux_tag_ok, resolved_merkle_tree_state_transition_claim) =
         aux.as_type::<MerkleTreeStateTransitionClaimTarget>(
             builder,
-            OperationAuxTableTag::MerkleTreeStateTransitionProof as u32,
+            OperationAuxTableTag::MerkleTransitionProof as u32,
         );
     let op_code_ok = op_type.has_native(builder, NativeOperation::ContainerInsertFromEntries);
 
@@ -799,7 +811,7 @@ fn verify_merkle_update_circuit(
     let (aux_tag_ok, resolved_merkle_tree_state_transition_claim) =
         aux.as_type::<MerkleTreeStateTransitionClaimTarget>(
             builder,
-            OperationAuxTableTag::MerkleTreeStateTransitionProof as u32,
+            OperationAuxTableTag::MerkleTransitionProof as u32,
         );
     let op_code_ok = op_type.has_native(builder, NativeOperation::ContainerUpdateFromEntries);
 
@@ -872,7 +884,7 @@ fn verify_merkle_delete_circuit(
     let (aux_tag_ok, resolved_merkle_tree_state_transition_claim) =
         aux.as_type::<MerkleTreeStateTransitionClaimTarget>(
             builder,
-            OperationAuxTableTag::MerkleTreeStateTransitionProof as u32,
+            OperationAuxTableTag::MerkleTransitionProof as u32,
         );
     let op_code_ok = op_type.has_native(builder, NativeOperation::ContainerDeleteFromEntries);
 
