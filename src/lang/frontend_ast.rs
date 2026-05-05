@@ -25,7 +25,7 @@ pub enum DocumentItem {
     RequestDef(RequestDef),
 }
 
-/// Record definition: `record Name = (Entry1, Entry2, ...)`
+/// Record definition: `record Name = (entry1, entry2, ...)`
 #[derive(Debug, Clone, PartialEq)]
 pub struct RecordDef {
     pub name: Identifier,
@@ -227,7 +227,7 @@ pub enum LiteralValue {
         predicate: Identifier,
     },
     /// Compile-time integer literal that resolves to the index of a named
-    /// entry in a record schema: `R::Foo` (local) or `mod::R::Foo` (imported).
+    /// entry in a record schema: `R::foo` (local) or `mod::R::foo` (imported).
     /// Lowers to `Value::from(idx as i64)` after schema resolution.
     RecordEntryIndex {
         record: TypeRef,
@@ -1530,28 +1530,28 @@ mod tests {
 
     #[test]
     fn test_record_decl() {
-        let input = r#"record ProcInputs = (Foo, Bar, Baz)"#;
+        let input = r#"record ProcInputs = (foo, bar, baz)"#;
         test_roundtrip(input);
     }
 
     #[test]
     fn test_record_decl_single_entry() {
-        let input = r#"record Singleton = (Only)"#;
+        let input = r#"record Singleton = (only)"#;
         test_roundtrip(input);
     }
 
     #[test]
     fn test_typed_arg_in_predicate() {
-        let input = r#"record ProcInputs = (Foo, Bar, Baz)
+        let input = r#"record ProcInputs = (foo, bar, baz)
 my_pred(in ProcInputs, other) = AND (
-    Equal(in.Foo, other)
+    Equal(in.foo, other)
 )"#;
         test_roundtrip(input);
     }
 
     #[test]
     fn test_typed_arg_mixed_with_untyped() {
-        let input = r#"record R = (X, Y)
+        let input = r#"record R = (x, y)
 mixed(a, b R, c, private: d, e R) = AND (
     Equal(a, c)
 )"#;
@@ -1563,7 +1563,7 @@ mixed(a, b R, c, private: d, e R) = AND (
         // Qualified type tag references an imported record; the parser
         // accepts it without inspecting the import (validation is downstream).
         let input = r#"my_pred(in some_module::ProcInputs) = AND (
-    Equal(in.Foo, in.Bar)
+    Equal(in.foo, in.bar)
 )"#;
         test_roundtrip(input);
     }
@@ -1571,7 +1571,7 @@ mixed(a, b R, c, private: d, e R) = AND (
     #[test]
     fn test_record_literal_full() {
         let input = r#"REQUEST(
-    Equal(A["data"], ProcInputs(Foo: 1, Bar: 2, Baz: 3))
+    Equal(A["data"], ProcInputs(foo: 1, bar: 2, baz: 3))
 )"#;
         test_roundtrip(input);
     }
@@ -1579,7 +1579,7 @@ mixed(a, b R, c, private: d, e R) = AND (
     #[test]
     fn test_record_literal_sparse() {
         let input = r#"REQUEST(
-    Equal(A["data"], ProcInputs(Bar: 42))
+    Equal(A["data"], ProcInputs(bar: 42))
 )"#;
         test_roundtrip(input);
     }
@@ -1601,18 +1601,18 @@ mixed(a, b R, c, private: d, e R) = AND (
 
     #[test]
     fn test_record_entry_index_local() {
-        // `R::Foo` resolves to the entry's integer index at compile time.
+        // `R::foo` resolves to the entry's integer index at compile time.
         let input = r#"REQUEST(
-    Contains(A, R::Foo, 7)
+    Contains(A, R::foo, 7)
 )"#;
         test_roundtrip(input);
     }
 
     #[test]
     fn test_record_entry_index_qualified() {
-        // `mod::R::Foo` for an imported record.
+        // `mod::R::foo` for an imported record.
         let input = r#"REQUEST(
-    Contains(A, some_mod::R::Foo, 7)
+    Contains(A, some_mod::R::foo, 7)
 )"#;
         test_roundtrip(input);
     }
@@ -1627,12 +1627,12 @@ mixed(a, b R, c, private: d, e R) = AND (
 
     #[test]
     fn test_record_literal_qualified() {
-        // Imported record literal: `module::R(Foo: 1)`. Parses with
+        // Imported record literal: `module::R(foo: 1)`. Parses with
         // `TypeRef::Qualified` as the head; PEG ordering means the
         // `module::R` prefix is consumed by `literal_record` rather than
         // shadowed by `record_entry_index`.
         let input = r#"REQUEST(
-    Equal(A["data"], some_mod::R(Foo: 1, Bar: 2))
+    Equal(A["data"], some_mod::R(foo: 1, bar: 2))
 )"#;
         test_roundtrip(input);
     }
@@ -1640,7 +1640,7 @@ mixed(a, b R, c, private: d, e R) = AND (
     #[test]
     fn test_record_keyword_reserved() {
         // `record` may not appear as an identifier name.
-        let input = r#"record record = (Foo)"#;
+        let input = r#"record record = (foo)"#;
         let parsed = crate::lang::parser::parse_podlang(input);
         assert!(
             parsed.is_err(),

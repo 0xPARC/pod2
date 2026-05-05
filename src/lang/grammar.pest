@@ -111,7 +111,7 @@ literal_record = {
 }
 record_entry = { identifier ~ ":" ~ literal_value }
 
-// Compile-time entry-index lookup: `R::Foo` or `module::R::Foo`. Resolves to
+// Compile-time entry-index lookup: `R::foo` or `module::R::foo`. Resolves to
 // the integer index of the named entry in the (possibly imported) record.
 record_entry_index = {
     identifier ~ "::" ~ identifier ~ ("::" ~ identifier)?

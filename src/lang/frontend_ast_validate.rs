@@ -57,7 +57,7 @@ pub struct SymbolTable {
 
 /// Resolved record schema: ordered entries plus a name→index lookup, with
 /// provenance for diagnostics. Lowering uses `entry_index` to translate
-/// dot-access like `r.Foo` into the integer key for an `AnchoredKey`.
+/// dot-access like `r.foo` into the integer key for an `AnchoredKey`.
 #[derive(Debug, Clone)]
 pub struct RecordSchema {
     pub entries: Vec<String>,
@@ -1169,12 +1169,12 @@ mod tests {
     #[test]
     fn test_record_decl_accepted() {
         let input = r#"
-            record ProcInputs = (Foo, Bar, Baz)
+            record ProcInputs = (foo, bar, baz)
             my_pred(A) = AND(Equal(A["x"], 1))
         "#;
         let validated = parse_and_validate_module(input, &HashMap::new()).unwrap();
         let schema = validated.symbols.records.get("ProcInputs").unwrap();
-        assert_eq!(schema.entries, vec!["Foo", "Bar", "Baz"]);
+        assert_eq!(schema.entries, vec!["foo", "bar", "baz"]);
         assert_eq!(schema.source, RecordSource::Local);
     }
 
@@ -1182,7 +1182,7 @@ mod tests {
     fn test_records_only_module_rejected() {
         // A module needs at least one predicate; record-only modules are not
         // a valid distribution unit.
-        let input = r#"record R = (X)"#;
+        let input = r#"record R = (x)"#;
         assert!(matches!(
             parse_and_validate_module(input, &HashMap::new()),
             Err(ValidationError::NoPredicatesInModule)
@@ -1192,8 +1192,8 @@ mod tests {
     #[test]
     fn test_duplicate_record() {
         let input = r#"
-            record R = (Foo)
-            record R = (Bar)
+            record R = (foo)
+            record R = (bar)
         "#;
         let result = parse_and_validate_module(input, &HashMap::new());
         assert!(matches!(
@@ -1205,14 +1205,14 @@ mod tests {
     #[test]
     fn test_duplicate_entry_in_record() {
         let input = r#"
-            record R = (Foo, Foo)
+            record R = (foo, foo)
             my_pred(A) = AND(Equal(A["x"], 1))
         "#;
         let result = parse_and_validate_module(input, &HashMap::new());
         assert!(matches!(
             result,
             Err(ValidationError::DuplicateRecordEntry { record, entry, .. })
-                if record == "R" && entry == "Foo"
+                if record == "R" && entry == "foo"
         ));
     }
 
@@ -1248,8 +1248,8 @@ mod tests {
     #[test]
     fn test_typed_arg_resolves_known_record() {
         let input = r#"
-            record R = (Foo, Bar)
-            my_pred(in R) = AND(Equal(in.Foo, in.Bar))
+            record R = (foo, bar)
+            my_pred(in R) = AND(Equal(in.foo, in.bar))
         "#;
         let result = parse_and_validate_module(input, &HashMap::new());
         assert!(result.is_ok());
@@ -1261,7 +1261,7 @@ mod tests {
     #[test]
     fn test_typed_arg_unknown_record_rejected() {
         let input = r#"
-            my_pred(in NonExistent) = AND(Equal(in.Foo, 1))
+            my_pred(in NonExistent) = AND(Equal(in.foo, 1))
         "#;
         let result = parse_and_validate_module(input, &HashMap::new());
         assert!(matches!(
@@ -1273,23 +1273,23 @@ mod tests {
     #[test]
     fn test_dot_access_unknown_entry_rejected() {
         let input = r#"
-            record R = (Foo, Bar)
-            my_pred(in R) = AND(Equal(in.Quux, 1))
+            record R = (foo, bar)
+            my_pred(in R) = AND(Equal(in.quux, 1))
         "#;
         let result = parse_and_validate_module(input, &HashMap::new());
         assert!(matches!(
             result,
             Err(ValidationError::UnknownRecordEntry { record, entry, .. })
-                if record == "R" && entry == "Quux"
+                if record == "R" && entry == "quux"
         ));
     }
 
     #[test]
     fn test_dot_access_on_untyped_wildcard_unchecked() {
-        // r.Foo on an untyped wildcard keeps current POD-string-key behavior;
-        // no record exists named anything that would constrain `Foo`.
+        // r.foo on an untyped wildcard keeps current POD-string-key behavior;
+        // no record exists named anything that would constrain `foo`.
         let input = r#"
-            my_pred(r) = AND(Equal(r.Foo, 1))
+            my_pred(r) = AND(Equal(r.foo, 1))
         "#;
         assert!(parse_and_validate_module(input, &HashMap::new()).is_ok());
     }
@@ -1300,8 +1300,8 @@ mod tests {
         // wildcard is incoherent and would never resolve at proof time.
         // Force the user to use `.entry` instead.
         let input = r#"
-            record R = (Foo)
-            my_pred(r R) = AND(Equal(r["Foo"], 1))
+            record R = (foo)
+            my_pred(r R) = AND(Equal(r["foo"], 1))
         "#;
         let result = parse_and_validate_module(input, &HashMap::new());
         assert!(matches!(
@@ -1314,7 +1314,7 @@ mod tests {
     #[test]
     fn test_record_literal_unknown_record() {
         let input = r#"
-            my_pred(A) = AND(Equal(A["x"], NotARecord(F: 1)))
+            my_pred(A) = AND(Equal(A["x"], NotARecord(f: 1)))
         "#;
         let result = parse_and_validate_module(input, &HashMap::new());
         assert!(matches!(
@@ -1326,14 +1326,14 @@ mod tests {
     #[test]
     fn test_record_literal_unknown_entry() {
         let input = r#"
-            record R = (Foo, Bar)
-            my_pred(A) = AND(Equal(A["x"], R(Foo: 1, Quux: 2)))
+            record R = (foo, bar)
+            my_pred(A) = AND(Equal(A["x"], R(foo: 1, quux: 2)))
         "#;
         let result = parse_and_validate_module(input, &HashMap::new());
         assert!(matches!(
             result,
             Err(ValidationError::UnknownRecordEntry { record, entry, .. })
-                if record == "R" && entry == "Quux"
+                if record == "R" && entry == "quux"
         ));
     }
 
@@ -1342,49 +1342,49 @@ mod tests {
         // Nested literals recurse through `validate_literal_value`: an unknown
         // entry on the inner literal must still be caught.
         let input = r#"
-            record Outer = (Inner)
-            record Inner = (X, Y)
-            my_pred(A) = AND(Equal(A["x"], Outer(Inner: Inner(X: 1, Z: 2))))
+            record Outer = (inner)
+            record Inner = (x, y)
+            my_pred(A) = AND(Equal(A["x"], Outer(inner: Inner(x: 1, z: 2))))
         "#;
         let result = parse_and_validate_module(input, &HashMap::new());
         assert!(matches!(
             result,
             Err(ValidationError::UnknownRecordEntry { record, entry, .. })
-                if record == "Inner" && entry == "Z"
+                if record == "Inner" && entry == "z"
         ));
     }
 
     #[test]
     fn test_record_literal_duplicate_entry() {
         let input = r#"
-            record R = (Foo, Bar)
-            my_pred(A) = AND(Equal(A["x"], R(Foo: 1, Foo: 2)))
+            record R = (foo, bar)
+            my_pred(A) = AND(Equal(A["x"], R(foo: 1, foo: 2)))
         "#;
         let result = parse_and_validate_module(input, &HashMap::new());
         assert!(matches!(
             result,
             Err(ValidationError::DuplicateLiteralRecordEntry { record, entry, .. })
-                if record == "R" && entry == "Foo"
+                if record == "R" && entry == "foo"
         ));
     }
 
     #[test]
     fn test_record_entry_index_resolves() {
-        // Validation accepts `R::Bar` and the schema records Bar at index 1
+        // Validation accepts `R::bar` and the schema records bar at index 1
         // — the integer the literal will lower to.
         let input = r#"
-            record R = (Foo, Bar)
-            my_pred(A) = AND(Contains(A, R::Bar, 7))
+            record R = (foo, bar)
+            my_pred(A) = AND(Contains(A, R::bar, 7))
         "#;
         let validated = parse_and_validate_module(input, &HashMap::new()).unwrap();
         let schema = validated.symbols.records.get("R").unwrap();
-        assert_eq!(schema.entry_index["Bar"], 1);
+        assert_eq!(schema.entry_index["bar"], 1);
     }
 
     #[test]
     fn test_record_entry_index_unknown_record() {
         let input = r#"
-            my_pred(A) = AND(Contains(A, NotARecord::Foo, 7))
+            my_pred(A) = AND(Contains(A, NotARecord::foo, 7))
         "#;
         let result = parse_and_validate_module(input, &HashMap::new());
         assert!(matches!(
@@ -1396,14 +1396,14 @@ mod tests {
     #[test]
     fn test_record_entry_index_unknown_entry() {
         let input = r#"
-            record R = (Foo, Bar)
-            my_pred(A) = AND(Contains(A, R::Quux, 7))
+            record R = (foo, bar)
+            my_pred(A) = AND(Contains(A, R::quux, 7))
         "#;
         let result = parse_and_validate_module(input, &HashMap::new());
         assert!(matches!(
             result,
             Err(ValidationError::UnknownRecordEntry { record, entry, .. })
-                if record == "R" && entry == "Quux"
+                if record == "R" && entry == "quux"
         ));
     }
 }

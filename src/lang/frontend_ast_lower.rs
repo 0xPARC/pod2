@@ -573,7 +573,7 @@ impl<'a> Lowerer<'a> {
         Ok(split_results)
     }
 
-    /// Rewrite `r.Foo` to `r[i]` when `r` is a typed wildcard, using the
+    /// Rewrite `r.foo` to `r[i]` when `r` is a typed wildcard, using the
     /// record schema's entry-index map. Untyped wildcards keep
     /// `Dot`/`Bracket` keys unchanged (POD-string-key semantics).
     fn rewrite_typed_dot_access(&self, pred: &mut CustomPredicateDef) {
@@ -915,8 +915,8 @@ mod tests {
         // Single entry on a typed wildcard becomes an integer-keyed
         // AnchoredKey at the schema's entry index.
         let input = r#"
-            record R = (Foo, Bar, Baz)
-            my_pred(in R) = AND(Equal(in.Bar, 0))
+            record R = (foo, bar, baz)
+            my_pred(in R) = AND(Equal(in.bar, 0))
         "#;
         let module = parse_validate_and_lower_module(input, &Params::default()).unwrap();
         assert_eq!(anchored_index_at(&module, 0, 0, 0), 1);
@@ -927,11 +927,11 @@ mod tests {
         // No type tag, no schema lookup: dot-access keeps POD-string-key
         // semantics.
         let input = r#"
-            my_pred(r) = AND(Equal(r.Foo, 1))
+            my_pred(r) = AND(Equal(r.foo, 1))
         "#;
         let module = parse_validate_and_lower_module(input, &Params::default()).unwrap();
         match anchored_key_at(&module, 0, 0, 0) {
-            middleware::Key::Str(sk) => assert_eq!(sk.name(), "Foo"),
+            middleware::Key::Str(sk) => assert_eq!(sk.name(), "foo"),
             other => panic!("expected Str key, got {other:?}"),
         }
     }
@@ -939,10 +939,10 @@ mod tests {
     #[test]
     fn test_typed_dot_multiple_entries_distinct_indices() {
         let input = r#"
-            record R = (Foo, Bar, Baz)
+            record R = (foo, bar, baz)
             my_pred(in R) = AND(
-                Equal(in.Foo, in.Baz)
-                Equal(in.Bar, 0)
+                Equal(in.foo, in.baz)
+                Equal(in.bar, 0)
             )
         "#;
         let module = parse_validate_and_lower_module(input, &Params::default()).unwrap();
@@ -956,10 +956,10 @@ mod tests {
         // OR predicates: the lowering produces a single AnchoredKey per
         // statement, no cross-statement coupling, so OR works the same as AND.
         let input = r#"
-            record R = (Foo, Bar)
+            record R = (foo, bar)
             my_pred(in R) = OR(
-                Equal(in.Foo, 1)
-                Equal(in.Bar, 2)
+                Equal(in.foo, 1)
+                Equal(in.bar, 2)
             )
         "#;
         let module = parse_validate_and_lower_module(input, &Params::default()).unwrap();
@@ -971,7 +971,7 @@ mod tests {
     #[test]
     fn test_record_predicate_hash_matches_handwritten_index_form() {
         // Source-level records are syntactic sugar: the predicate hash for
-        // `record R = (Foo, Bar); p(in R) = AND(Equal(in.Bar, 7))` must equal
+        // `record R = (foo, bar); p(in R) = AND(Equal(in.bar, 7))` must equal
         // the hash of the same predicate built directly with an integer-keyed
         // anchored key. There is no Podlang surface syntax for `in[1]`, so we
         // build the reference batch via the builder API.
@@ -981,8 +981,8 @@ mod tests {
         };
 
         let with_record = r#"
-            record R = (Foo, Bar)
-            p(in R) = AND(Equal(in.Bar, 7))
+            record R = (foo, bar)
+            p(in R) = AND(Equal(in.bar, 7))
         "#;
         let params = Params::default();
         let m_record = parse_validate_and_lower_module(with_record, &params).unwrap();
@@ -1015,8 +1015,8 @@ mod tests {
         // packed into an `Array::new(...)` (which inserts at indices 0..n in
         // order).
         let input = r#"
-            record R = (Foo, Bar, Baz)
-            my_pred(A) = AND(Equal(A["x"], R(Foo: 1, Bar: 2, Baz: 3)))
+            record R = (foo, bar, baz)
+            my_pred(A) = AND(Equal(A["x"], R(foo: 1, bar: 2, baz: 3)))
         "#;
         let v = lower_literal_in_pred(input);
         let expected = Value::from(containers::Array::new(vec![
@@ -1031,12 +1031,12 @@ mod tests {
     fn test_record_literal_entry_order_doesnt_matter() {
         // Schema fixes the index, so source order never affects the root.
         let input_a = r#"
-            record R = (Foo, Bar)
-            my_pred(A) = AND(Equal(A["x"], R(Foo: 1, Bar: 2)))
+            record R = (foo, bar)
+            my_pred(A) = AND(Equal(A["x"], R(foo: 1, bar: 2)))
         "#;
         let input_b = r#"
-            record R = (Foo, Bar)
-            my_pred(A) = AND(Equal(A["x"], R(Bar: 2, Foo: 1)))
+            record R = (foo, bar)
+            my_pred(A) = AND(Equal(A["x"], R(bar: 2, foo: 1)))
         "#;
         assert_eq!(
             lower_literal_in_pred(input_a).raw(),
@@ -1049,8 +1049,8 @@ mod tests {
         // Missing entries stay missing (no zero-fill). Compare against an
         // explicit sparse Array built the same way.
         let input = r#"
-            record R = (Foo, Bar, Baz)
-            my_pred(A) = AND(Equal(A["x"], R(Bar: 42)))
+            record R = (foo, bar, baz)
+            my_pred(A) = AND(Equal(A["x"], R(bar: 42)))
         "#;
         let v = lower_literal_in_pred(input);
 
@@ -1066,9 +1066,9 @@ mod tests {
         // A record literal whose entry value is itself a record literal.
         // The outer literal commits to whatever root the inner produces.
         let input = r#"
-            record Inner = (X, Y)
-            record Outer = (Inner)
-            my_pred(A) = AND(Equal(A["x"], Outer(Inner: Inner(X: 1, Y: 2))))
+            record Inner = (x, y)
+            record Outer = (inner)
+            my_pred(A) = AND(Equal(A["x"], Outer(inner: Inner(x: 1, y: 2))))
         "#;
         let v = lower_literal_in_pred(input);
 
@@ -1087,14 +1087,14 @@ mod tests {
         // `Index` keys unchanged. Force a split by exceeding the
         // per-predicate statement cap.
         let input = r#"
-            record R = (A, B, C, D, E, F)
+            record R = (a, b, c, d, e, f)
             my_pred(in R) = AND(
-                Equal(in.A, 1)
-                Equal(in.B, 2)
-                Equal(in.C, 3)
-                Equal(in.D, 4)
-                Equal(in.E, 5)
-                Equal(in.F, 6)
+                Equal(in.a, 1)
+                Equal(in.b, 2)
+                Equal(in.c, 3)
+                Equal(in.d, 4)
+                Equal(in.e, 5)
+                Equal(in.f, 6)
             )
         "#;
         let module = parse_validate_and_lower_module(input, &Params::default()).unwrap();
@@ -1117,10 +1117,10 @@ mod tests {
 
     #[test]
     fn test_record_entry_index_lowers_to_integer() {
-        // `R::Bar` resolves to integer 1 (Bar is the second entry of R).
+        // `R::bar` resolves to integer 1 (bar is the second entry of R).
         let input = r#"
-            record R = (Foo, Bar, Baz)
-            my_pred(A) = AND(Contains(A, R::Bar, 7))
+            record R = (foo, bar, baz)
+            my_pred(A) = AND(Contains(A, R::bar, 7))
         "#;
         let module = parse_validate_and_lower_module(input, &Params::default()).unwrap();
         let pred = &module.batch.predicates()[0];

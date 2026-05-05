@@ -1085,9 +1085,9 @@ mod tests {
         // `in a::ProcInputs`. B should compile without errors.
         let params = Params::default();
         let module_a_src = r#"
-            record ProcInputs = (Foo, Bar, Baz)
+            record ProcInputs = (foo, bar, baz)
             uses_record(in ProcInputs) = AND(
-                Equal(in.Foo, in.Baz)
+                Equal(in.foo, in.baz)
             )
         "#;
         let module_a = Arc::new(load_module(module_a_src, "module_a", &params, &[])?);
@@ -1098,7 +1098,7 @@ mod tests {
             use module 0x{} as a
 
             wraps_a(in a::ProcInputs) = AND(
-                Equal(in.Bar, 7)
+                Equal(in.bar, 7)
             )
             "#,
             a_hash
@@ -1122,7 +1122,7 @@ mod tests {
 
         let params = Params::default();
         let module_a_src = r#"
-            record ProcInputs = (Foo, Bar, Baz)
+            record ProcInputs = (foo, bar, baz)
             stub(A) = AND(Equal(A["x"], 1))
         "#;
         let module_a = Arc::new(load_module(module_a_src, "module_a", &params, &[])?);
@@ -1133,7 +1133,7 @@ mod tests {
             use module 0x{} as a
 
             uses(in a::ProcInputs) = AND(
-                Equal(in.Bar, 7)
+                Equal(in.bar, 7)
             )
             "#,
             a_hash
@@ -1162,7 +1162,7 @@ mod tests {
 
         let params = Params::default();
         let module_a_src = r#"
-            record ProcInputs = (Foo, Bar, Baz)
+            record ProcInputs = (foo, bar, baz)
             stub(A) = AND(Equal(A["x"], 1))
         "#;
         let module_a = Arc::new(load_module(module_a_src, "module_a", &params, &[])?);
@@ -1175,7 +1175,7 @@ mod tests {
             use module 0x{} as a
 
             uses(A) = AND(
-                Equal(A["data"], a::ProcInputs(Baz: 30, Foo: 10, Bar: 20))
+                Equal(A["data"], a::ProcInputs(baz: 30, foo: 10, bar: 20))
             )
             "#,
             a_hash
@@ -1209,7 +1209,7 @@ mod tests {
 
         let params = Params::default();
         let module_a_src = r#"
-            record ProcInputs = (Foo, Bar)
+            record ProcInputs = (foo, bar)
             stub(A) = AND(Equal(A["x"], 1))
         "#;
         let module_a = Arc::new(load_module(module_a_src, "module_a", &params, &[])?);
@@ -1221,7 +1221,7 @@ mod tests {
             use module 0x{} as a
 
             uses(A) = AND(
-                Equal(A["data"], b::ProcInputs(Foo: 1, Bar: 2))
+                Equal(A["data"], b::ProcInputs(foo: 1, bar: 2))
             )
             "#,
             a_hash
@@ -1242,7 +1242,7 @@ mod tests {
     #[test]
     fn test_e2e_record_entry_index_proves_via_mock() -> Result<(), LangError> {
         // End-to-end: a record-using predicate is satisfied by an Array
-        // value, with `Inputs::X` resolving the entry's integer index.
+        // value, with `Inputs::x` resolving the entry's integer index.
         // MockProver runs the full proving path.
         use crate::{
             backends::plonky2::mock::mainpod::MockProver,
@@ -1253,9 +1253,9 @@ mod tests {
         let params = Params::default();
         let module = load_module(
             r#"
-            record Inputs = (X, Y)
+            record Inputs = (x, y)
             at_x_is(arr, val) = AND(
-                Contains(arr, Inputs::X, val)
+                Contains(arr, Inputs::x, val)
             )
             "#,
             "records_e2e",
@@ -1264,7 +1264,7 @@ mod tests {
         )?;
         let at_x_is = module.batch.predicate_ref_by_name("at_x_is").unwrap();
 
-        // Build a 2-entry Array; arr[0] = 7 (Inputs::X), arr[1] = 13 (Inputs::Y).
+        // Build a 2-entry Array; arr[0] = 7 (Inputs::x), arr[1] = 13 (Inputs::y).
         let arr = Array::new(vec![Value::from(7i64), Value::from(13i64)]);
 
         let vd_set = VDSet::new(&[]);
@@ -1293,9 +1293,9 @@ mod tests {
         let params = Params::default();
         let module = load_module(
             r#"
-            record Inputs = (X, Y)
+            record Inputs = (x, y)
             at_x_is(arr Inputs, val) = AND(
-                Equal(arr.X, val)
+                Equal(arr.x, val)
             )
             "#,
             "records_dot_e2e",
