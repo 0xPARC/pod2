@@ -15,8 +15,8 @@ use crate::{
 #[derive(Clone, Debug)]
 pub enum BuilderArg {
     Literal(Value),
-    /// Key: (origin, key), where origin is Wildcard and key is Key
-    Key(String, String),
+    /// Key: (origin, key), where origin is the wildcard name.
+    Key(String, Key),
     WildcardLiteral(String),
     /// Reference to a same-batch predicate's identity hash (resolved by name in finish()).
     SelfPredicateHash(String),
@@ -29,7 +29,7 @@ pub enum BuilderArg {
 /// case i.
 impl From<(&str, &str)> for BuilderArg {
     fn from((origin, field): (&str, &str)) -> Self {
-        Self::Key(origin.to_string(), field.to_string())
+        Self::Key(origin.to_string(), Key::from(field))
     }
 }
 /// case ii.
@@ -219,9 +219,9 @@ impl CustomPredicateBatchBuilder {
                     .map(|(arg_idx, a)| {
                         Ok::<_, Error>(match a {
                             BuilderArg::Literal(v) => StatementTmplArg::Literal(v.clone()),
-                            BuilderArg::Key(root_wc, key_str) => StatementTmplArg::AnchoredKey(
+                            BuilderArg::Key(root_wc, key) => StatementTmplArg::AnchoredKey(
                                 resolve_wildcard(args, priv_args, root_wc)?,
-                                Key::from(key_str),
+                                key.clone(),
                             ),
                             BuilderArg::WildcardLiteral(v) => {
                                 StatementTmplArg::Wildcard(resolve_wildcard(args, priv_args, v)?)

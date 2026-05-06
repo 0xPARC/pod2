@@ -13,13 +13,13 @@ use crate::{
     lang::{
         frontend_ast::*,
         frontend_ast_split,
-        frontend_ast_validate::{PredicateKind, SymbolTable, ValidatedAST},
+        frontend_ast_validate::{PredicateKind, RecordSource, SymbolTable, ValidatedAST},
         module, Module,
     },
     middleware::{
-        self, containers, CustomPredicateRef, IntroPredicateRef, Key, NativePredicate, Params,
-        Predicate, StatementTmpl as MWStatementTmpl, StatementTmplArg as MWStatementTmplArg, Value,
-        Wildcard,
+        self, containers, db::mem::MemDB, CustomPredicateRef, IntroPredicateRef, Key,
+        NativePredicate, Params, Predicate, StatementTmpl as MWStatementTmpl,
+        StatementTmplArg as MWStatementTmplArg, StrKey, Value, Wildcard,
     },
 };
 
@@ -158,8 +158,10 @@ fn resolve_local_predicate(
 /// Lower a literal value from AST to middleware Value.
 ///
 /// This is a pure conversion that cannot fail for context-free literals.
-/// Panics on ExternalPredicateHash — use `lower_literal_with_context` when
-/// external predicate references may appear (e.g. inside containers).
+/// Panics on `ExternalPredicateHash`, `Record`, and `RecordEntryIndex` —
+/// use `lower_literal_with_context` when any of those may appear (records
+/// and entry indices need the symbol table to resolve the record schema;
+/// external predicate hashes need the imported-module table).
 pub(crate) fn lower_literal(lit: &LiteralValue) -> Value {
     match lit {
         LiteralValue::Int(i) => Value::from(i.value),
@@ -184,13 +186,18 @@ pub(crate) fn lower_literal(lit: &LiteralValue) -> Value {
                 .pairs
                 .iter()
                 .map(|pair| {
-                    let key = Key::from(pair.key.value.as_str());
+                    let key = StrKey::from(pair.key.value.as_str());
                     let value = lower_literal(&pair.value);
                     (key, value)
                 })
                 .collect();
             let dict = containers::Dictionary::new(pairs);
             Value::from(dict)
+        }
+        LiteralValue::Record(_) => {
+            unreachable!(
+                "Record literals must be lowered with context via lower_literal_with_context"
+            )
         }
         LiteralValue::NativePredicateHash(id) => {
             let np = NativePredicate::from_str(&id.name).expect("validated native predicate");
@@ -199,6 +206,11 @@ pub(crate) fn lower_literal(lit: &LiteralValue) -> Value {
         LiteralValue::ExternalPredicateHash { .. } => {
             unreachable!(
                 "ExternalPredicateHash must be lowered with context via lower_literal_with_context"
+            )
+        }
+        LiteralValue::RecordEntryIndex { .. } => {
+            unreachable!(
+                "RecordEntryIndex must be lowered with context via lower_literal_with_context"
             )
         }
     }
@@ -252,12 +264,35 @@ pub fn lower_literal_with_context(
                 .pairs
                 .iter()
                 .map(|pair| {
-                    let key = Key::from(pair.key.value.as_str());
+                    let key = StrKey::from(pair.key.value.as_str());
                     let value = lower_literal_with_context(&pair.value, symbols, context)?;
                     Ok((key, value))
                 })
                 .collect::<Result<_, LoweringError>>()?;
             Ok(Value::from(containers::Dictionary::new(pairs)))
+        }
+        LiteralValue::Record(r) => {
+            // The schema fixes each entry's index, so source order doesn't
+            // affect the merkle root and missing entries stay missing.
+            let schema = symbols
+                .records
+                .get(&r.name.symbol_table_key())
+                .expect("record schema validated");
+            let mut arr = containers::Array::empty_with_db(Box::new(MemDB::new()));
+            for entry_lit in &r.entries {
+                let idx = schema.entry_index[&entry_lit.name.name];
+                let value = lower_literal_with_context(&entry_lit.value, symbols, context)?;
+                arr.insert(idx, value)?;
+            }
+            Ok(Value::from(arr))
+        }
+        LiteralValue::RecordEntryIndex { record, entry } => {
+            let schema = symbols
+                .records
+                .get(&record.symbol_table_key())
+                .expect("record schema validated");
+            let idx = schema.entry_index[&entry.name];
+            Ok(Value::from(idx as i64))
         }
         // All other variants are context-free
         other => Ok(lower_literal(other)),
@@ -276,11 +311,12 @@ pub(crate) fn lower_statement_arg(arg: &StatementTmplArg) -> BuilderArg {
         }
         StatementTmplArg::Wildcard(id) => BuilderArg::WildcardLiteral(id.name.clone()),
         StatementTmplArg::AnchoredKey(ak) => {
-            let key_str = match &ak.key {
-                AnchoredKeyPath::Bracket(s) => s.value.clone(),
-                AnchoredKeyPath::Dot(id) => id.name.clone(),
+            let key = match &ak.key {
+                AnchoredKeyPath::Bracket(s) => Key::new(s.value.clone()),
+                AnchoredKeyPath::Dot(id) => Key::new(id.name.clone()),
+                AnchoredKeyPath::Index(i) => Key::from(*i),
             };
-            BuilderArg::Key(ak.root.name.clone(), key_str)
+            BuilderArg::Key(ak.root.name.clone(), key)
         }
         StatementTmplArg::SelfPredicateHash(id) => BuilderArg::SelfPredicateHash(id.name.clone()),
     }
@@ -350,6 +386,7 @@ impl<'a> Lowerer<'a> {
     fn lower_module(self, module_name: &str) -> Result<Module, LoweringError> {
         // Extract and split custom predicates from document
         let custom_predicates = self.extract_and_split_predicates()?;
+        let local_records = self.collect_local_records();
 
         // Build the module from split predicates
         let module = module::build_module(
@@ -357,9 +394,22 @@ impl<'a> Lowerer<'a> {
             self.params,
             module_name,
             self.validated.symbols(),
+            local_records,
         )?;
 
         Ok(module)
+    }
+
+    /// Collect record declarations from this module's source. No transitive
+    /// re-export — imported records aren't included.
+    fn collect_local_records(&self) -> HashMap<String, Vec<String>> {
+        self.validated
+            .symbols()
+            .records
+            .iter()
+            .filter(|(_, schema)| matches!(schema.source, RecordSource::Local))
+            .map(|(name, schema)| (name.clone(), schema.entries.clone()))
+            .collect()
     }
 
     fn lower_request(self) -> Result<crate::frontend::PodRequest, LoweringError> {
@@ -429,12 +479,11 @@ impl<'a> Lowerer<'a> {
                     let index = wildcard_map.get(&name).expect("Wildcard not found");
                     MWStatementTmplArg::Wildcard(Wildcard::new(name, *index))
                 }
-                BuilderArg::Key(root_name, key_str) => {
+                BuilderArg::Key(root_name, key) => {
                     let root_index = wildcard_map
                         .get(&root_name)
                         .expect("Root wildcard not found");
                     let wildcard = Wildcard::new(root_name, *root_index);
-                    let key = Key::from(key_str.as_str());
                     MWStatementTmplArg::AnchoredKey(wildcard, key)
                 }
                 BuilderArg::SelfPredicateHash(_) => {
@@ -511,14 +560,55 @@ impl<'a> Lowerer<'a> {
             })
             .collect();
 
-        // Apply splitting to each predicate as needed
+        // Apply splitting to each predicate as needed. The typed-key rewrite
+        // happens before splitting so split chain pieces inherit `Index` keys
+        // unchanged.
         let mut split_results = Vec::new();
-        for pred in predicates {
+        for mut pred in predicates {
+            self.rewrite_typed_dot_access(&mut pred);
             let result = frontend_ast_split::split_predicate_if_needed(pred, self.params)?;
             split_results.push(result);
         }
 
         Ok(split_results)
+    }
+
+    /// Rewrite `r.foo` to `r[i]` when `r` is a typed wildcard, using the
+    /// record schema's entry-index map. Untyped wildcards keep
+    /// `Dot`/`Bracket` keys unchanged (POD-string-key semantics).
+    fn rewrite_typed_dot_access(&self, pred: &mut CustomPredicateDef) {
+        let symbols = self.validated.symbols();
+        let scope = symbols
+            .wildcard_scopes
+            .get(&pred.name.name)
+            .expect("wildcard scope exists for every custom predicate after validation");
+        // Skip the per-arg walk for predicates with no typed wildcards —
+        // the common case before records see widespread use.
+        if !scope.wildcards.values().any(|wc| wc.record_type.is_some()) {
+            return;
+        }
+        for stmt in &mut pred.statements {
+            for arg in &mut stmt.args {
+                let StatementTmplArg::AnchoredKey(ak) = arg else {
+                    continue;
+                };
+                let Some(wc_info) = scope.wildcards.get(&ak.root.name) else {
+                    continue;
+                };
+                let Some(record_name) = &wc_info.record_type else {
+                    continue;
+                };
+                let AnchoredKeyPath::Dot(entry) = &ak.key else {
+                    continue;
+                };
+                let schema = symbols
+                    .records
+                    .get(record_name)
+                    .expect("record_type was resolved at predicate-def time");
+                let idx = schema.entry_index[&entry.name];
+                ak.key = AnchoredKeyPath::Index(idx as i64);
+            }
+        }
     }
 }
 
@@ -539,8 +629,8 @@ mod tests {
     ) -> Result<Module, LoweringError> {
         let parsed = parse_podlang(input).expect("Failed to parse");
         let document = parse_document(parsed.into_iter().next().unwrap()).expect("Failed to parse");
-        let validated =
-            validate(document, &HashMap::new(), ParseMode::Module).expect("Failed to validate");
+        let validated = validate(document, &HashMap::new(), params, ParseMode::Module)
+            .expect("Failed to validate");
         lower_module(validated, params, "test_batch")
     }
 
@@ -769,8 +859,8 @@ mod tests {
         let parsed = parse_podlang(&input).expect("Failed to parse");
         let document =
             parse_document(parsed.into_iter().next().unwrap()).expect("Failed to parse document");
-        let validated =
-            validate(document, &HashMap::new(), ParseMode::Module).expect("Failed to validate");
+        let validated = validate(document, &HashMap::new(), &params, ParseMode::Module)
+            .expect("Failed to validate");
         let result = lower_module(validated, &params, "test_batch");
 
         assert!(result.is_ok(), "Lowering failed: {:?}", result.err());
@@ -794,6 +884,253 @@ mod tests {
                 assert_eq!(intro_ref.verifier_data_hash, EMPTY_HASH);
             }
             other => panic!("Expected Intro predicate, got {:?}", other),
+        }
+    }
+
+    // ---- Records: predicate-side dot-access lowering -----------------------
+
+    /// Pull the single `Key` out of statement N, arg N of the first predicate.
+    fn anchored_key_at(
+        module: &Module,
+        pred_idx: usize,
+        stmt_idx: usize,
+        arg_idx: usize,
+    ) -> middleware::Key {
+        let pred = &module.batch.predicates()[pred_idx];
+        let stmt = &pred.statements()[stmt_idx];
+        match &stmt.args()[arg_idx] {
+            middleware::StatementTmplArg::AnchoredKey(_, k) => k.clone(),
+            other => panic!("expected AnchoredKey at arg {arg_idx}, got {other:?}"),
+        }
+    }
+
+    fn anchored_index_at(module: &Module, pred_idx: usize, stmt_idx: usize, arg_idx: usize) -> i64 {
+        anchored_key_at(module, pred_idx, stmt_idx, arg_idx)
+            .as_index()
+            .expect("expected Index key")
+            .value()
+    }
+
+    #[test]
+    fn test_typed_dot_lowers_to_index_key() {
+        // Single entry on a typed wildcard becomes an integer-keyed
+        // AnchoredKey at the schema's entry index.
+        let input = r#"
+            record R = (foo, bar, baz)
+            my_pred(in R) = AND(Equal(in.bar, 0))
+        "#;
+        let module = parse_validate_and_lower_module(input, &Params::default()).unwrap();
+        assert_eq!(anchored_index_at(&module, 0, 0, 0), 1);
+    }
+
+    #[test]
+    fn test_dot_on_untyped_wildcard_stays_str_key() {
+        // No type tag, no schema lookup: dot-access keeps POD-string-key
+        // semantics.
+        let input = r#"
+            my_pred(r) = AND(Equal(r.foo, 1))
+        "#;
+        let module = parse_validate_and_lower_module(input, &Params::default()).unwrap();
+        match anchored_key_at(&module, 0, 0, 0) {
+            middleware::Key::Str(sk) => assert_eq!(sk.name(), "foo"),
+            other => panic!("expected Str key, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_typed_dot_multiple_entries_distinct_indices() {
+        let input = r#"
+            record R = (foo, bar, baz)
+            my_pred(in R) = AND(
+                Equal(in.foo, in.baz)
+                Equal(in.bar, 0)
+            )
+        "#;
+        let module = parse_validate_and_lower_module(input, &Params::default()).unwrap();
+        assert_eq!(anchored_index_at(&module, 0, 0, 0), 0);
+        assert_eq!(anchored_index_at(&module, 0, 0, 1), 2);
+        assert_eq!(anchored_index_at(&module, 0, 1, 0), 1);
+    }
+
+    #[test]
+    fn test_typed_dot_in_or_predicate() {
+        // OR predicates: the lowering produces a single AnchoredKey per
+        // statement, no cross-statement coupling, so OR works the same as AND.
+        let input = r#"
+            record R = (foo, bar)
+            my_pred(in R) = OR(
+                Equal(in.foo, 1)
+                Equal(in.bar, 2)
+            )
+        "#;
+        let module = parse_validate_and_lower_module(input, &Params::default()).unwrap();
+        assert!(module.batch.predicates()[0].is_disjunction());
+        assert_eq!(anchored_index_at(&module, 0, 0, 0), 0);
+        assert_eq!(anchored_index_at(&module, 0, 1, 0), 1);
+    }
+
+    #[test]
+    fn test_record_predicate_hash_matches_handwritten_index_form() {
+        // Source-level records are syntactic sugar: the predicate hash for
+        // `record R = (foo, bar); p(in R) = AND(Equal(in.bar, 7))` must equal
+        // the hash of the same predicate built directly with an integer-keyed
+        // anchored key. There is no Podlang surface syntax for `in[1]`, so we
+        // build the reference batch via the builder API.
+        use crate::{
+            frontend::{CustomPredicateBatchBuilder, StatementTmplBuilder},
+            middleware::NativePredicate,
+        };
+
+        let with_record = r#"
+            record R = (foo, bar)
+            p(in R) = AND(Equal(in.bar, 7))
+        "#;
+        let params = Params::default();
+        let m_record = parse_validate_and_lower_module(with_record, &params).unwrap();
+
+        let mut b = CustomPredicateBatchBuilder::new(params.clone(), "test_batch".into());
+        let stb = StatementTmplBuilder::new_from_pred(NativePredicate::Equal)
+            .arg(BuilderArg::Key("in".into(), Key::from(1i64)))
+            .arg(BuilderArg::Literal(Value::from(7i64)));
+        b.predicate_and("p", &["in"], &[], &[stb]).unwrap();
+        let plain_batch = b.finish().unwrap();
+
+        assert_eq!(m_record.batch.id(), plain_batch.id());
+    }
+
+    // ---- Records: literal lowering -----------------------------------------
+
+    fn lower_literal_in_pred(input: &str) -> Value {
+        let module = parse_validate_and_lower_module(input, &Params::default()).unwrap();
+        let pred = &module.batch.predicates()[0];
+        let stmt = &pred.statements()[0];
+        match &stmt.args()[1] {
+            middleware::StatementTmplArg::Literal(v) => v.clone(),
+            other => panic!("expected Literal at arg 1, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_record_literal_full_matches_array_root() {
+        // A fully populated literal must hash identically to the same values
+        // packed into an `Array::new(...)` (which inserts at indices 0..n in
+        // order).
+        let input = r#"
+            record R = (foo, bar, baz)
+            my_pred(A) = AND(Equal(A["x"], R(foo: 1, bar: 2, baz: 3)))
+        "#;
+        let v = lower_literal_in_pred(input);
+        let expected = Value::from(containers::Array::new(vec![
+            Value::from(1i64),
+            Value::from(2i64),
+            Value::from(3i64),
+        ]));
+        assert_eq!(v.raw(), expected.raw());
+    }
+
+    #[test]
+    fn test_record_literal_entry_order_doesnt_matter() {
+        // Schema fixes the index, so source order never affects the root.
+        let input_a = r#"
+            record R = (foo, bar)
+            my_pred(A) = AND(Equal(A["x"], R(foo: 1, bar: 2)))
+        "#;
+        let input_b = r#"
+            record R = (foo, bar)
+            my_pred(A) = AND(Equal(A["x"], R(bar: 2, foo: 1)))
+        "#;
+        assert_eq!(
+            lower_literal_in_pred(input_a).raw(),
+            lower_literal_in_pred(input_b).raw()
+        );
+    }
+
+    #[test]
+    fn test_record_literal_sparse_stays_sparse() {
+        // Missing entries stay missing (no zero-fill). Compare against an
+        // explicit sparse Array built the same way.
+        let input = r#"
+            record R = (foo, bar, baz)
+            my_pred(A) = AND(Equal(A["x"], R(bar: 42)))
+        "#;
+        let v = lower_literal_in_pred(input);
+
+        let mut sparse = containers::Array::empty_with_db(Box::new(MemDB::new()));
+        sparse.insert(1, Value::from(42i64)).unwrap();
+        let expected = Value::from(sparse);
+
+        assert_eq!(v.raw(), expected.raw());
+    }
+
+    #[test]
+    fn test_record_literal_nested_record_value() {
+        // A record literal whose entry value is itself a record literal.
+        // The outer literal commits to whatever root the inner produces.
+        let input = r#"
+            record Inner = (x, y)
+            record Outer = (inner)
+            my_pred(A) = AND(Equal(A["x"], Outer(inner: Inner(x: 1, y: 2))))
+        "#;
+        let v = lower_literal_in_pred(input);
+
+        let inner = Value::from(containers::Array::new(vec![
+            Value::from(1i64),
+            Value::from(2i64),
+        ]));
+        let expected = Value::from(containers::Array::new(vec![inner]));
+
+        assert_eq!(v.raw(), expected.raw());
+    }
+
+    #[test]
+    fn test_typed_dot_survives_predicate_splitting() {
+        // The rewrite runs before splitting, so chain pieces inherit
+        // `Index` keys unchanged. Force a split by exceeding the
+        // per-predicate statement cap.
+        let input = r#"
+            record R = (a, b, c, d, e, f)
+            my_pred(in R) = AND(
+                Equal(in.a, 1)
+                Equal(in.b, 2)
+                Equal(in.c, 3)
+                Equal(in.d, 4)
+                Equal(in.e, 5)
+                Equal(in.f, 6)
+            )
+        "#;
+        let module = parse_validate_and_lower_module(input, &Params::default()).unwrap();
+        // Splitter ran (max_custom_predicate_arity = 5).
+        assert!(module.batch.predicates().len() > 1);
+        // Every AnchoredKey across all chain pieces is integer-keyed.
+        for pred in module.batch.predicates() {
+            for stmt in pred.statements() {
+                for arg in stmt.args() {
+                    if let middleware::StatementTmplArg::AnchoredKey(_, k) = arg {
+                        assert!(
+                            matches!(k, middleware::Key::Index(_)),
+                            "expected Index key in split chain piece, got {k:?}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_record_entry_index_lowers_to_integer() {
+        // `R::bar` resolves to integer 1 (bar is the second entry of R).
+        let input = r#"
+            record R = (foo, bar, baz)
+            my_pred(A) = AND(Contains(A, R::bar, 7))
+        "#;
+        let module = parse_validate_and_lower_module(input, &Params::default()).unwrap();
+        let pred = &module.batch.predicates()[0];
+        let stmt = &pred.statements()[0];
+        match &stmt.args()[1] {
+            middleware::StatementTmplArg::Literal(v) => {
+                assert_eq!(v.raw(), Value::from(1i64).raw());
+            }
+            other => panic!("expected Literal at arg 1, got {other:?}"),
         }
     }
 }

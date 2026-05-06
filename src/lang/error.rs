@@ -164,6 +164,52 @@ pub enum ValidationError {
 
     #[error("Requests must contain a REQUEST block")]
     NoRequestBlock,
+
+    #[error("Duplicate record definition: {name}")]
+    DuplicateRecord {
+        name: String,
+        first_span: Option<Span>,
+        second_span: Option<Span>,
+    },
+
+    #[error("Record '{name}' has {count} entries, exceeding the limit of {max}")]
+    RecordTooManyEntries {
+        name: String,
+        count: usize,
+        max: usize,
+        span: Option<Span>,
+    },
+
+    #[error("Duplicate entry name '{entry}' in record '{record}'")]
+    DuplicateRecordEntry {
+        record: String,
+        entry: String,
+        span: Option<Span>,
+    },
+
+    #[error("Unknown record type: {name}")]
+    UnknownRecord { name: String, span: Option<Span> },
+
+    #[error("Record '{record}' has no entry '{entry}'")]
+    UnknownRecordEntry {
+        record: String,
+        entry: String,
+        span: Option<Span>,
+    },
+
+    #[error("Duplicate entry '{entry}' in record literal '{record}'")]
+    DuplicateLiteralRecordEntry {
+        record: String,
+        entry: String,
+        span: Option<Span>,
+    },
+
+    #[error("Bracket access '{wildcard}[...]' is not allowed on a wildcard typed as record '{record}'; use `{wildcard}.entry` instead")]
+    BracketAccessOnTypedWildcard {
+        wildcard: String,
+        record: String,
+        span: Option<Span>,
+    },
 }
 
 /// Lowering errors from frontend AST lowering to middleware
