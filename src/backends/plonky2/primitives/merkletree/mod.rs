@@ -921,6 +921,21 @@ impl MerkleClaimAndProof {
             },
         }
     }
+    /// Value used for padding.  This is a valid merkle proof.
+    pub fn pad() -> Self {
+        let [key, value] = [EMPTY_VALUE, EMPTY_VALUE];
+        let root = kv_hash(&key, Some(value));
+        Self {
+            root,
+            key,
+            value,
+            proof: MerkleProof {
+                existence: true,
+                siblings: vec![],
+                other_leaf: None,
+            },
+        }
+    }
     pub fn new(root: Hash, key: RawValue, value: Option<RawValue>, proof: MerkleProof) -> Self {
         Self {
             root,
@@ -974,7 +989,6 @@ pub struct MerkleTreeStateTransitionProof {
 }
 
 impl MerkleTreeStateTransitionProof {
-    /// Value used for padding.
     pub fn empty() -> Self {
         let empty_proof_and_claim = MerkleClaimAndProof::empty();
         Self {
@@ -985,6 +999,20 @@ impl MerkleTreeStateTransitionProof {
             op_key: empty_proof_and_claim.key,
             op_value: empty_proof_and_claim.value,
             value: None,
+            siblings: vec![],
+        }
+    }
+    /// Value used for padding.  This is a valid transition proof.
+    pub fn pad() -> Self {
+        let pad_proof_and_claim = MerkleClaimAndProof::pad();
+        Self {
+            op: MerkleTreeOp::Update,
+            old_root: pad_proof_and_claim.root,
+            op_proof: pad_proof_and_claim.proof,
+            new_root: pad_proof_and_claim.root,
+            op_key: pad_proof_and_claim.key,
+            op_value: pad_proof_and_claim.value,
+            value: Some(pad_proof_and_claim.value),
             siblings: vec![],
         }
     }
@@ -1163,6 +1191,15 @@ pub mod tests {
         assert_eq!(collected_kvs, sorted_kvs);
 
         Ok(())
+    }
+
+    #[test]
+    fn test_merkletree_pad() {
+        let claim = MerkleClaimAndProof::pad();
+        MerkleTree::verify(claim.root, &claim.proof, &claim.key, &claim.value).unwrap();
+
+        let proof = MerkleTreeStateTransitionProof::pad();
+        MerkleTree::verify_state_transition(&proof).unwrap();
     }
 
     #[test]

@@ -395,13 +395,11 @@ pub fn solve(input: &SolverInput) -> Result<MultiPodSolution> {
         let lb_statement_groups = lower_bound_from_total(input.num_statements, max_stmts_per_pod);
         let lb_merkle = lower_bound_from_total(
             resource_totals.merkle_proofs,
-            input.params.max_merkle_proofs_containers,
+            input.params.containers.state.max_medium,
         );
         let lb_merkle_transitions = lower_bound_from_total(
             resource_totals.merkle_state_transitions,
-            input
-                .params
-                .max_merkle_tree_state_transition_proofs_containers,
+            input.params.containers.transition.max_medium,
         );
         let lb_custom_pred_verifications = lower_bound_from_total(
             resource_totals.custom_pred_verifications,
@@ -753,7 +751,7 @@ fn try_solve_with_pods(
             .map(|s| (input.costs[s].merkle_proofs as f64) * prove[s][p])
             .sum();
         model.add_constraint(constraint!(
-            merkle_sum <= (input.params.max_merkle_proofs_containers as f64) * pod_used[p]
+            merkle_sum <= (input.params.containers.state.max_medium as f64) * pod_used[p]
         ));
 
         // 6d: Merkle state transitions
@@ -761,11 +759,7 @@ fn try_solve_with_pods(
             .map(|s| (input.costs[s].merkle_state_transitions as f64) * prove[s][p])
             .sum();
         model.add_constraint(constraint!(
-            mst_sum
-                <= (input
-                    .params
-                    .max_merkle_tree_state_transition_proofs_containers as f64)
-                    * pod_used[p]
+            mst_sum <= (input.params.containers.transition.max_medium as f64) * pod_used[p]
         ));
 
         // 6e: Custom predicate verifications

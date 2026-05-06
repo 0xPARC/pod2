@@ -11,13 +11,12 @@ use crate::{
         basetypes::{Proof, VerifierOnlyCircuitData},
         error::{Error, Result},
         mainpod::{
-            calculate_statements_hash, extract_merkle_proofs,
-            extract_merkle_tree_state_transition_proofs, extract_signatures, layout_statements,
-            process_private_statements_operations, process_public_statements_operations, Operation,
+            calculate_statements_hash, extract_merkle_proofs, extract_merkle_transition_proofs,
+            extract_signatures, layout_statements, process_private_statements_operations,
+            process_public_statements_operations, MerkleProofs, MerkleTransitionProofs, Operation,
             OperationAux, SignedBy, Statement,
         },
         mock::emptypod::MockEmptyPod,
-        primitives::merkletree::{MerkleClaimAndProof, MerkleTreeStateTransitionProof},
         recursion::hash_verifier_data,
     },
     middleware::{
@@ -45,10 +44,10 @@ pub struct MockMainPod {
     operations: Vec<Operation>,
     // public subset of the `statements` vector
     public_statements: Vec<Statement>,
-    // All Merkle proofs
-    merkle_proofs_containers: Vec<MerkleClaimAndProof>,
-    // All Merkle tree state transition proofs
-    merkle_tree_state_transition_proofs_containers: Vec<MerkleTreeStateTransitionProof>,
+    // All Merkle proofs for containers
+    merkle_proofs: MerkleProofs,
+    // All Merkle tree state transition proofs for containers
+    merkle_transition_proofs: MerkleTransitionProofs,
     // All verified signatures
     signatures: Vec<SignedBy>,
 }
@@ -124,8 +123,8 @@ struct Data {
     public_statements: Vec<Statement>,
     operations: Vec<Operation>,
     statements: Vec<Statement>,
-    merkle_proofs: Vec<MerkleClaimAndProof>,
-    merkle_tree_state_transition_proofs: Vec<MerkleTreeStateTransitionProof>,
+    merkle_proofs: MerkleProofs,
+    merkle_transition_proofs: MerkleTransitionProofs,
     signatures: Vec<SignedBy>,
     input_pods: Vec<(usize, Params, Hash, VDSet, serde_json::Value)>,
 }
@@ -153,8 +152,8 @@ impl MockMainPod {
         let merkle_proofs =
             extract_merkle_proofs(params, &mut aux_list, inputs.operations, inputs.statements)?;
         // Similarly for Merkle state transition proofs.
-        let merkle_tree_state_transition_proofs =
-            extract_merkle_tree_state_transition_proofs(params, &mut aux_list, inputs.operations)?;
+        let merkle_transition_proofs =
+            extract_merkle_transition_proofs(params, &mut aux_list, inputs.operations)?;
         let signatures =
             extract_signatures(params, &mut aux_list, inputs.operations, inputs.statements)?;
 
@@ -185,8 +184,8 @@ impl MockMainPod {
             public_statements,
             statements,
             operations,
-            merkle_proofs_containers: merkle_proofs,
-            merkle_tree_state_transition_proofs_containers: merkle_tree_state_transition_proofs,
+            merkle_proofs,
+            merkle_transition_proofs,
             signatures,
         })
     }
@@ -260,8 +259,8 @@ impl Pod for MockMainPod {
                     .deref(
                         &self.statements[..input_statement_offset + i],
                         &self.signatures,
-                        &self.merkle_proofs_containers,
-                        &self.merkle_tree_state_transition_proofs_containers,
+                        &self.merkle_proofs,
+                        &self.merkle_transition_proofs,
                     )?
                     .check_and_log(&self.params, &s.clone().try_into()?)
                     .map_err(|e| e.into())
@@ -321,10 +320,8 @@ impl Pod for MockMainPod {
             public_statements: self.public_statements.clone(),
             operations: self.operations.clone(),
             statements: self.statements.clone(),
-            merkle_proofs: self.merkle_proofs_containers.clone(),
-            merkle_tree_state_transition_proofs: self
-                .merkle_tree_state_transition_proofs_containers
-                .clone(),
+            merkle_proofs: self.merkle_proofs.clone(),
+            merkle_transition_proofs: self.merkle_transition_proofs.clone(),
             signatures: self.signatures.clone(),
             input_pods,
         })
@@ -344,7 +341,7 @@ impl Pod for MockMainPod {
             operations,
             statements,
             merkle_proofs,
-            merkle_tree_state_transition_proofs,
+            merkle_transition_proofs,
             signatures,
             input_pods,
         } = serde_json::from_value(data)?;
@@ -362,8 +359,8 @@ impl Pod for MockMainPod {
             public_statements,
             operations,
             statements,
-            merkle_proofs_containers: merkle_proofs,
-            merkle_tree_state_transition_proofs_containers: merkle_tree_state_transition_proofs,
+            merkle_proofs,
+            merkle_transition_proofs,
             signatures,
         })
     }

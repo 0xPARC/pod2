@@ -148,14 +148,20 @@ pub(crate) fn extract_custom_predicate_verifications(
     Ok(table)
 }
 
+#[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MerkleProofs {
+    pub(crate) medium: Vec<MerkleClaimAndProof>,
+    pub(crate) small: Vec<MerkleClaimAndProof>,
+}
+
 /// Extracts Merkle proofs from Contains/NotContains ops.
 pub(crate) fn extract_merkle_proofs(
     params: &Params,
     aux_list: &mut [OperationAux],
     operations: &[middleware::Operation],
     statements: &[middleware::Statement],
-) -> Result<Vec<MerkleClaimAndProof>> {
-    let mut table = Vec::new();
+) -> Result<MerkleProofs> {
+    let mut tables = MerkleProofs::default();
     for (i, (op, st)) in operations.iter().zip(statements.iter()).enumerate() {
         let deduction_err = || MiddlewareError::invalid_deduction(op.clone(), st.clone());
         let (root, key, value, pf) = match (op, st) {
@@ -178,31 +184,42 @@ pub(crate) fn extract_merkle_proofs(
             }
             _ => continue,
         };
-        aux_list[i] = OperationAux::MerkleProofIndex(table.len());
-        table.push(MerkleClaimAndProof::new(
-            Hash::from(root),
-            key,
-            value,
-            pf.clone(),
-        ));
+        let claim_proof = MerkleClaimAndProof::new(Hash::from(root), key, value, pf.clone());
+        if pf.existence
+            // TODO: Make sure there's no off-by-one error here
+            && pf.siblings.len() <= params.containers.max_depth_small
+            && tables.small.len() < params.containers.state.max_small
+        {
+            aux_list[i] = OperationAux::MerkleProofIndex(Size::Small, tables.small.len());
+            tables.small.push(claim_proof);
+        } else {
+            aux_list[i] = OperationAux::MerkleProofIndex(Size::Medium, tables.medium.len());
+            tables.medium.push(claim_proof);
+        }
     }
-    if table.len() > params.max_merkle_proofs_containers {
+    if tables.medium.len() > params.containers.state.max_medium {
         return Err(Error::custom(format!(
             "The number of required Merkle proofs ({}) exceeds the maximum number ({}).",
-            table.len(),
-            params.max_merkle_proofs_containers
+            tables.medium.len(),
+            params.containers.state.max_medium
         )));
     }
-    Ok(table)
+    Ok(tables)
+}
+
+#[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MerkleTransitionProofs {
+    pub(crate) medium: Vec<MerkleTreeStateTransitionProof>,
+    pub(crate) small: Vec<MerkleTreeStateTransitionProof>,
 }
 
 /// Extracts Merkle state transition proofs from container update ops.
-pub(crate) fn extract_merkle_tree_state_transition_proofs(
+pub(crate) fn extract_merkle_transition_proofs(
     params: &Params,
     aux_list: &mut [OperationAux],
     operations: &[middleware::Operation],
-) -> Result<Vec<MerkleTreeStateTransitionProof>> {
-    let mut table = Vec::new();
+) -> Result<MerkleTransitionProofs> {
+    let mut tables = MerkleTransitionProofs::default();
     for (i, op) in operations.iter().enumerate() {
         let pf = match op {
             middleware::Operation::ContainerInsertFromEntries(_, _, _, _, pf)
@@ -210,17 +227,27 @@ pub(crate) fn extract_merkle_tree_state_transition_proofs(
             | middleware::Operation::ContainerDeleteFromEntries(_, _, _, pf) => pf.clone(),
             _ => continue,
         };
-        aux_list[i] = OperationAux::MerkleTreeStateTransitionProofIndex(table.len());
-        table.push(pf);
+        if pf.op_proof.existence
+            // TODO: Make sure there's no off-by-one error here
+            && pf.siblings.len() <= params.containers.max_depth_small
+            && tables.small.len() < params.containers.transition.max_small
+        {
+            aux_list[i] = OperationAux::MerkleTransitionProofIndex(Size::Small, tables.small.len());
+            tables.small.push(pf);
+        } else {
+            aux_list[i] =
+                OperationAux::MerkleTransitionProofIndex(Size::Medium, tables.medium.len());
+            tables.medium.push(pf);
+        }
     }
-    if table.len() > params.max_merkle_tree_state_transition_proofs_containers {
+    if tables.medium.len() > params.containers.transition.max_medium {
         return Err(Error::custom(format!(
             "The number of required Merkle proofs ({}) exceeds the maximum number ({}).",
-            table.len(),
-            params.max_merkle_tree_state_transition_proofs_containers
+            tables.medium.len(),
+            params.containers.transition.max_medium
         )));
     }
-    Ok(table)
+    Ok(tables)
 }
 
 pub(crate) fn extract_public_key_of(
@@ -513,6 +540,8 @@ impl MainPodProver for Prover {
         let mut aux_list = vec![OperationAux::None; params.max_priv_statements()];
         let merkle_proofs =
             extract_merkle_proofs(params, &mut aux_list, inputs.operations, inputs.statements)?;
+        let merkle_transition_proofs =
+            extract_merkle_transition_proofs(params, &mut aux_list, inputs.operations)?;
         let custom_predicates = extract_custom_predicates(params, inputs.operations)?;
         let custom_predicate_verifications = extract_custom_predicate_verifications(
             params,
@@ -536,9 +565,6 @@ impl MainPodProver for Prover {
             extract_public_key_of(params, &mut aux_list, inputs.operations, inputs.statements)?;
         let signed_bys =
             extract_signatures(params, &mut aux_list, inputs.operations, inputs.statements)?;
-
-        let merkle_tree_state_transition_proofs =
-            extract_merkle_tree_state_transition_proofs(params, &mut aux_list, inputs.operations)?;
 
         let (statements, public_statements) = layout_statements(params, false, &inputs)?;
         let operations = process_private_statements_operations(
@@ -572,20 +598,15 @@ impl MainPodProver for Prover {
             .collect_vec();
 
         let mut vd_mt_proofs = Vec::with_capacity(inputs.pods.len());
+        let pad_vd_mt_proof = inputs.vd_set.get_vds_proof_0();
         for (pod, vd) in inputs.pods.iter().zip(&verifier_datas) {
             vd_mt_proofs.push(if pod.is_main() {
-                (true, inputs.vd_set.get_vds_proof(vd)?)
+                inputs.vd_set.get_vds_proof(vd)?
             } else {
                 // For intro pods we don't verify inclusion of their vk into the vd set, so we
-                // generate a dummy mt proof with expected root and value to pass some constraints
-                (
-                    false,
-                    MerkleClaimAndProof {
-                        root: inputs.vd_set.root(),
-                        value: RawValue::from(pod.verifier_data_hash()),
-                        ..MerkleClaimAndProof::empty()
-                    },
-                )
+                // use a valid vds proof that matches the expected root but not the value to pass
+                // the constraints
+                pad_vd_mt_proof.clone()
             });
         }
 
@@ -598,7 +619,7 @@ impl MainPodProver for Prover {
             merkle_proofs,
             public_key_of_sks,
             signed_bys,
-            merkle_tree_state_transition_proofs,
+            merkle_transition_proofs,
             custom_predicates_with_mpt_proofs,
             custom_predicate_verifications,
         };
@@ -985,7 +1006,18 @@ pub mod tests {
             max_statements: 2,
             max_public_statements: 1,
             max_input_pods_public_statements: 0,
-            max_merkle_proofs_containers: 0,
+            containers: middleware::ParamsContainers {
+                state: middleware::ParamsMerkleProofs {
+                    max_small: 0,
+                    max_medium: 0,
+                },
+                transition: middleware::ParamsMerkleProofs {
+                    max_small: 0,
+                    max_medium: 0,
+                },
+                max_depth_small: 8,
+                max_depth_medium: 32,
+            },
             max_public_key_of: 0,
             max_custom_predicate_verifications: 0,
             max_custom_predicates: 0,
@@ -1024,11 +1056,20 @@ pub mod tests {
             max_custom_predicates: 2,
             max_custom_predicate_verifications: 2,
             max_custom_predicate_wildcards: 3,
-            max_merkle_proofs_containers: 2,
-            max_merkle_tree_state_transition_proofs_containers: 2,
             max_public_key_of: 2,
-            max_depth_mt_containers: 4,
             max_depth_mt_vds: 6,
+            containers: middleware::ParamsContainers {
+                state: middleware::ParamsMerkleProofs {
+                    max_small: 2,
+                    max_medium: 2,
+                },
+                transition: middleware::ParamsMerkleProofs {
+                    max_small: 2,
+                    max_medium: 2,
+                },
+                max_depth_small: 2,
+                max_depth_medium: 4,
+            },
         };
         let mut vds = DEFAULT_VD_LIST.clone();
         vds.push(rec_main_pod_circuit_data(&params).1.verifier_only.clone());
@@ -1087,8 +1128,18 @@ pub mod tests {
             max_public_statements: 4,
             max_custom_predicate_wildcards: 4,
             max_custom_predicate_verifications: 2,
-            max_merkle_proofs_containers: 3,
-            max_merkle_tree_state_transition_proofs_containers: 0,
+            containers: middleware::ParamsContainers {
+                state: middleware::ParamsMerkleProofs {
+                    max_small: 0,
+                    max_medium: 3,
+                },
+                transition: middleware::ParamsMerkleProofs {
+                    max_small: 0,
+                    max_medium: 0,
+                },
+                max_depth_small: 8,
+                max_depth_medium: 32,
+            },
             ..Default::default()
         };
         println!("{:#?}", params);
@@ -1156,8 +1207,18 @@ pub mod tests {
             max_public_statements: 2,
             max_custom_predicate_wildcards: 4,
             max_custom_predicate_verifications: 2,
-            max_merkle_proofs_containers: 0,
-            max_merkle_tree_state_transition_proofs_containers: 0,
+            containers: middleware::ParamsContainers {
+                state: middleware::ParamsMerkleProofs {
+                    max_small: 0,
+                    max_medium: 0,
+                },
+                transition: middleware::ParamsMerkleProofs {
+                    max_small: 0,
+                    max_medium: 0,
+                },
+                max_depth_small: 8,
+                max_depth_medium: 32,
+            },
             ..Default::default()
         };
         let mut vds = DEFAULT_VD_LIST.clone();

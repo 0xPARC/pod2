@@ -780,6 +780,50 @@ pub const BASE_PARAMS: BaseParams = BaseParams {
     max_operation_args: 5 + 1,
 };
 
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Hash)]
+#[serde(rename_all = "camelCase")]
+pub struct ParamsMerkleProofs {
+    pub max_small: usize,
+    pub max_medium: usize,
+}
+
+impl ParamsMerkleProofs {
+    pub fn max_total(&self) -> usize {
+        self.max_small + self.max_medium
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Hash)]
+#[serde(rename_all = "camelCase")]
+pub struct ParamsContainers {
+    // Parameters for exists/nonexists container operations.  The small set only supports exists
+    pub state: ParamsMerkleProofs,
+    // Parameters for transition container operations (insert, delete, update).  The small set only
+    // supports update.
+    pub transition: ParamsMerkleProofs,
+    // Max depth of small proofs
+    pub max_depth_small: usize,
+    // Max depth of medium proofs
+    pub max_depth_medium: usize,
+}
+
+impl Default for ParamsContainers {
+    fn default() -> Self {
+        Self {
+            state: ParamsMerkleProofs {
+                max_small: 22,
+                max_medium: 8,
+            },
+            transition: ParamsMerkleProofs {
+                max_small: 12,
+                max_medium: 6,
+            },
+            max_depth_small: 8,
+            max_depth_medium: 32,
+        }
+    }
+}
+
 /// Params: non dynamic parameters that define the circuit.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Hash)]
 #[serde(rename_all = "camelCase")]
@@ -793,12 +837,7 @@ pub struct Params {
     // max number of operations using custom predicates that can be verified in the MainPod
     pub max_custom_predicate_verifications: usize,
     pub max_custom_predicate_wildcards: usize,
-    // maximum number of merkle proofs used for container operations
-    pub max_merkle_proofs_containers: usize,
-    // maximum number of merkle tree state transition proofs used for container update operations
-    pub max_merkle_tree_state_transition_proofs_containers: usize,
-    // maximum depth for merkle tree gadget used for container operations
-    pub max_depth_mt_containers: usize,
+    pub containers: ParamsContainers,
     // maximum depth of the merkle tree gadget used for verifier_data membership
     // check.  This allows creating verifying sets of pod circuits of size
     // 2^max_depth_mt_vds.  Limits the number of container operations of the type Contains,
@@ -820,9 +859,7 @@ impl Default for Params {
             max_custom_predicates: 8,
             max_custom_predicate_verifications: 8,
             max_custom_predicate_wildcards: 8,
-            max_merkle_proofs_containers: 20,
-            max_merkle_tree_state_transition_proofs_containers: 6,
-            max_depth_mt_containers: 32,
+            containers: ParamsContainers::default(),
             max_depth_mt_vds: 6, // up to 64 (2^6) different pod circuits
             max_public_key_of: 2,
             max_signed_by: 4,
