@@ -1,3 +1,10 @@
+// REVIEW(EDU): Summary
+// Overall looks good to me!  But before merging please address these two points, explianed below:
+// - Briefly document the strict and elastic model in the top level docstring, and in relevant
+//   functions that generate constraints document whether those constraints are for the strict,
+//   elastic or both models (I think some functions don't have this information)
+// - Use the wildcard order defined in the args of a custom predicate instead of sotring the
+//   wildcards by name
 //! Predicate splitting for frontend AST
 //!
 //! Predicates whose statement count exceeds the middleware's
@@ -8,6 +15,10 @@
 //!
 //! The split is computed by an MILP that, for a given number of links K:
 //!
+// REVIEW(Edu): what about calling it `statement template` instead of `statement` here?
+// I see that in variables and comments below you use the term statement for statement
+// template. Perhaps I'm being too pedantic and just saying statement is clear enough, so maybe
+// ignore my suggestion.
 //! - Assigns each statement to exactly one link.
 //! - Tracks which wildcards are used and where, derives "live ranges," and
 //!   counts each link's declared public/private wildcards.
@@ -116,6 +127,8 @@ pub struct LinkOvershoot {
 /// [`SplittingError::Infeasible`]. Produced by [`analyze_infeasibility`] on
 /// demand — the splitter itself doesn't compute it, since computing it
 /// requires a second LP solve.
+// REVIEW(Edu): Does this mean that for an infeasible solution we get a result that doesn't pass
+// all LP constraints?
 #[derive(Debug, Clone)]
 pub struct InfeasibilityReport {
     pub predicate: String,
@@ -227,6 +240,10 @@ type LinkAssignment = Vec<Vec<usize>>;
 /// All variables are binary. Constraints (C1..C7 below) make every variable
 /// other than `assign` an exact function of the assignment, so the strict and
 /// elastic models differ only in how they handle the per-link caps (C8/C9).
+// REVIEW(Edu): what's the difference between strict and elastic model? Is strict a model that
+// gives a valid solution and elastic a model that gives invalid solutions that showcase the
+// bottlenecks? If this implementation has 2 different solving models, could you briefly document
+// them in the top level docstring?
 struct MilpVars {
     n: usize,
     k: usize,
@@ -237,6 +254,8 @@ struct MilpVars {
     u: Vec<Vec<Variable>>,
     /// `before[w][i]`: cumulative OR of `u[w][·]` from the left — w is used at link ≤ i.
     before: Vec<Vec<Variable>>,
+    // REVIEW(Edu): At first I was reading these as `public input` and `private input`; but I think
+    // they mean `public in this link` and `private in this link`.  Is this correct?
     /// `after[w][i]`: cumulative OR of `u[w][·]` from the right — w is used at link ≥ i.
     after: Vec<Vec<Variable>>,
     /// `pubin[w][i]`: w appears in link i's `public_args_in`.
@@ -294,6 +313,9 @@ fn build_scip_model(vars: ProblemVariables, objective: Expression) -> SCIPProble
         .set_verbose(false)
 }
 
+// REVIEW(Edu): So this defines constraints that can always find a solution, but the solution may
+// have too many wildcards (public or total) in a link.  I guess this is used for the elastic
+// solution.
 /// Add the MILP's structural constraints (C1..C7): assignment, link size,
 /// `u`/`before`/`after`/`pubin`/`privin` definitions. Cap constraints (C8/C9)
 /// are added by the caller — the strict and elastic versions differ there.
@@ -327,22 +349,25 @@ fn add_structural_constraints<M: SolverModel>(
     // chain call. Also require at least one statement per link.
     for i in 0..k {
         let cap = if i + 1 < k { max_arity - 1 } else { max_arity };
-        let sum_le: Expression = (0..n).map(|s| assign[s][i]).sum();
-        model.add_constraint(constraint!(sum_le <= cap as f64));
-        let sum_ge: Expression = (0..n).map(|s| assign[s][i]).sum();
-        model.add_constraint(constraint!(sum_ge >= 1));
+        let sum: Expression = (0..n).map(|s| assign[s][i]).sum();
+        model.add_constraint(constraint!(sum.clone() <= cap as f64));
+        model.add_constraint(constraint!(sum >= 1));
     }
 
     // C3: u[w][i] is exactly the OR over s referencing w of assign[s][i].
     for w in 0..num_wildcards {
         for i in 0..k {
             for &s in &statements_using[w] {
+                // If statement s is assigned to link i, then link i uses all wildcards w that
+                // appear in s.
                 model.add_constraint(constraint!(u[w][i] >= assign[s][i]));
             }
+            // sum of statements in link i that use wildcard w
             let upper: Expression = statements_using[w]
                 .iter()
                 .map(|&s| Expression::from(assign[s][i]))
                 .sum();
+            // If wildcard w is used in link i, at least one statement requires the wildcard
             model.add_constraint(constraint!(u[w][i] <= upper));
         }
     }
@@ -410,6 +435,7 @@ fn add_structural_constraints<M: SolverModel>(
     }
 }
 
+// REVIEW(Edu): This is the strict solution constraints
 /// Try to partition `n` statements into exactly `k` links using MILP.
 ///
 /// Returns `Some(assignment)` if a feasible partition exists, `None` if the
@@ -423,6 +449,10 @@ fn solve_milp_for_k(
 ) -> Option<LinkAssignment> {
     let max_args = Params::max_statement_args();
     let max_wildcards = params.max_custom_predicate_wildcards;
+    // REVIEW(Edu): I'm confused by the name `is_original_public`.  This makes me think about
+    // public wildcards in the original definition.  But you use it as `num_wildcards` which
+    // includes the private ones.
+    // OH, `is_original_public` has length=num_wildcards, it's just a "map"
     let num_wildcards = is_original_public.len();
 
     let mut vars = ProblemVariables::new();
@@ -520,6 +550,9 @@ fn build_chain_links_from_assignment(
         incoming.extend(promotions);
     }
 
+    // REVIEW(Edu): shouldn't this be addressed by the existing constraints?
+    // - If a wildcard is pub in link i, then it's used in that link or after (C6)
+    // - If a wildcard is "at_or_after" i, then a statement "at_or_after" i uses it (C5)
     // Backward pruning: drop public args from continuations that no link
     // (this one or downstream) actually references. Link 0 keeps its full
     // user-declared signature.
@@ -559,6 +592,8 @@ fn prepare_milp_input(pred: &CustomPredicateDef) -> MilpInput {
         .map(|id| id.name.clone())
         .collect();
 
+    // REVIEW(Edu): Wait a second, in `pred.args` we define an order of wildcards, I think we
+    // should use that one instead of sorting them by name.
     // Stable, sorted index over wildcards referenced by statements OR declared
     // as public args (a public arg may be unused in any statement).
     let mut wildcard_set: HashSet<String> = pred
@@ -603,6 +638,8 @@ fn prepare_milp_input(pred: &CustomPredicateDef) -> MilpInput {
     }
 }
 
+// REVIEW(Edu): This is very cool, at a very low cost (because it resuses most of the existing
+// cost) we get a different model that shows the bottleneck.
 /// Solve the elastic LP at the given K, returning per-link slack and
 /// wildcard membership for the binding links. Slack variables on each cap
 /// turn the otherwise-infeasible model into one that minimises constraint
@@ -616,6 +653,9 @@ fn solve_elastic_lp(k: usize, input: &MilpInput, params: &Params) -> Option<Vec<
 
     let mut vars = ProblemVariables::new();
     let v = declare_milp_vars(&mut vars, n, k, num_wildcards);
+    // REVIEW(Edu): In the circuit, adding more public arguments would be much more expensive than
+    // adding more private wildcards.  Perhaps it makes sense to give more weight to `slack_pub`,
+    // so that we can learn more from the infiseability results.
     let slack_pub: Vec<Variable> = (0..k).map(|_| vars.add(variable().min(0.0))).collect();
     let slack_total: Vec<Variable> = (0..k).map(|_| vars.add(variable().min(0.0))).collect();
 
