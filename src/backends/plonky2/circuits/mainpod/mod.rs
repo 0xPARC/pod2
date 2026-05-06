@@ -251,12 +251,12 @@ enum OperationAuxTableTag {
 fn max_operation_aux_entry_len(params: &Params) -> usize {
     [
         (params.containers.state.max_total() > 0).then(|| MerkleClaimTarget::size(params)),
-        (params.max_public_key_of > 0).then(|| PubKeySecKeyTarget::size(params)),
-        (params.max_signed_by > 0).then(|| MsgPubKeyTarget::size(params)),
         (params.containers.transition.max_total() > 0)
             .then(|| MerkleTreeStateTransitionClaimTarget::size(params)),
         (params.max_custom_predicate_verifications > 0)
             .then(|| CustomPredicateVerifyQueryTarget::size(params)),
+        (params.max_public_key_of > 0).then(|| PubKeySecKeyTarget::size(params)),
+        (params.max_signed_by > 0).then(|| MsgPubKeyTarget::size(params)),
     ]
     .into_iter()
     .flatten()
@@ -389,6 +389,40 @@ fn build_operation_aux_table_circuit(
         merkle_transition_proofs,
     );
 
+    // CustomPredVerify: verify custom predicate statements verification against operations
+    for entry in custom_predicate_verifications {
+        let measure = measure_gates_begin!(builder, "CustomPredVerify");
+        // Verify the custom predicate operation
+        let (statement, op_type) = make_custom_statement_circuit(
+            params,
+            builder,
+            &entry.custom_predicate,
+            &entry.op_args,
+            &entry.args,
+        )?;
+
+        // Check that the batch id is correct by querying the custom predicate batches table
+        let table_query_hash = builder.vec_ref(
+            params,
+            custom_predicate_table,
+            &entry.custom_predicate_table_index,
+        );
+        let out_query_hash = entry.custom_predicate.hash(builder);
+        builder.connect_array(table_query_hash.elements, out_query_hash.elements);
+
+        let query = CustomPredicateVerifyQueryTarget {
+            statement,                      // output
+            op_type,                        // output
+            op_args: entry.op_args.clone(), // input
+        };
+        table.push(
+            builder,
+            OperationAuxTableTag::CustomPredVerify as u32,
+            &query,
+        );
+        measure_gates_end!(builder, measure);
+    }
+
     // PublicKeyOf: verify the derivation from a Schnorr secret key to public key
     let invgenerator = builder.constant_point(Point::generator().inverse());
     let zero_bits: [BoolTarget; 320] = array::from_fn(|_| builder._false());
@@ -443,40 +477,6 @@ fn build_operation_aux_table_circuit(
         let entry: MsgPubKeyTarget = HashPairTarget(HashOutTarget::from(signed_by.msg), pk_hash);
 
         table.push(builder, OperationAuxTableTag::SignedBy as u32, &entry);
-        measure_gates_end!(builder, measure);
-    }
-
-    // CustomPredVerify: verify custom predicate statements verification against operations
-    for entry in custom_predicate_verifications {
-        let measure = measure_gates_begin!(builder, "CustomPredVerify");
-        // Verify the custom predicate operation
-        let (statement, op_type) = make_custom_statement_circuit(
-            params,
-            builder,
-            &entry.custom_predicate,
-            &entry.op_args,
-            &entry.args,
-        )?;
-
-        // Check that the batch id is correct by querying the custom predicate batches table
-        let table_query_hash = builder.vec_ref(
-            params,
-            custom_predicate_table,
-            &entry.custom_predicate_table_index,
-        );
-        let out_query_hash = entry.custom_predicate.hash(builder);
-        builder.connect_array(table_query_hash.elements, out_query_hash.elements);
-
-        let query = CustomPredicateVerifyQueryTarget {
-            statement,                      // output
-            op_type,                        // output
-            op_args: entry.op_args.clone(), // input
-        };
-        table.push(
-            builder,
-            OperationAuxTableTag::CustomPredVerify as u32,
-            &query,
-        );
         measure_gates_end!(builder, measure);
     }
 

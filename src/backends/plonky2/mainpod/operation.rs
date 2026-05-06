@@ -86,22 +86,22 @@ impl OperationAux {
             }
         }
     }
-    fn table_offset_public_key_of(params: &Params) -> usize {
+    fn table_offset_custom_pred_verify(params: &Params) -> usize {
         Self::table_offset_merkle_transition_proof(params, Size::min())
             + params.containers.transition.max_total()
+    }
+    fn table_offset_public_key_of(params: &Params) -> usize {
+        Self::table_offset_custom_pred_verify(params) + params.max_custom_predicate_verifications
     }
     fn table_offset_signed_by(params: &Params) -> usize {
         Self::table_offset_public_key_of(params) + params.max_public_key_of
     }
-    fn table_offset_custom_pred_verify(params: &Params) -> usize {
-        Self::table_offset_signed_by(params) + params.max_signed_by
-    }
     pub(crate) fn table_size(params: &Params) -> usize {
         1 + params.containers.state.max_total()
             + params.containers.transition.max_total()
+            + params.max_custom_predicate_verifications
             + params.max_public_key_of
             + params.max_signed_by
-            + params.max_custom_predicate_verifications
     }
     pub fn table_index(&self, params: &Params) -> usize {
         match self {
@@ -151,7 +151,6 @@ impl Operation {
             .collect::<Result<Vec<_>>>()?;
         let deref_aux = match self.2 {
             OperationAux::None => crate::middleware::OperationAux::None,
-            OperationAux::CustomPredVerifyIndex(_) => crate::middleware::OperationAux::None,
             OperationAux::MerkleProofIndex(size, i) => {
                 let table = match size {
                     Size::Small => &merkle_proofs.small,
@@ -180,6 +179,7 @@ impl Operation {
                         .clone(),
                 )
             }
+            OperationAux::CustomPredVerifyIndex(_) => crate::middleware::OperationAux::None,
             OperationAux::SignedByIndex(i) => crate::middleware::OperationAux::Signature(
                 signatures
                     .get(i)
