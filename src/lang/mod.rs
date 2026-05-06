@@ -1142,7 +1142,7 @@ mod tests {
 
         let mut hand = CustomPredicateBatchBuilder::new(params.clone(), "module_b".into());
         let stb = StatementTmplBuilder::new_from_pred(NativePredicate::Equal)
-            .arg(BuilderArg::Key("in".into(), Key::from_index(1)))
+            .arg(BuilderArg::Key("in".into(), Key::from(1i64)))
             .arg(BuilderArg::Literal(Value::from(7i64)));
         hand.predicate_and("uses", &["in"], &[], &[stb])
             .expect("predicate_and");

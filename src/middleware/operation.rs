@@ -864,7 +864,7 @@ pub(crate) fn root_key_to_ak(root: &Value, key: &Value) -> Option<AnchoredKey> {
         Some(AnchoredKey::new(root_hash, Key::from(s)))
     } else {
         key.as_int()
-            .map(|i| AnchoredKey::new(root_hash, Key::from_index(i)))
+            .map(|i| AnchoredKey::new(root_hash, Key::from(i)))
     }
 }
 

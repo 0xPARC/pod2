@@ -314,7 +314,7 @@ pub(crate) fn lower_statement_arg(arg: &StatementTmplArg) -> BuilderArg {
             let key = match &ak.key {
                 AnchoredKeyPath::Bracket(s) => Key::new(s.value.clone()),
                 AnchoredKeyPath::Dot(id) => Key::new(id.name.clone()),
-                AnchoredKeyPath::Index(i) => Key::from_index(*i),
+                AnchoredKeyPath::Index(i) => Key::from(*i),
             };
             BuilderArg::Key(ak.root.name.clone(), key)
         }
@@ -578,9 +578,10 @@ impl<'a> Lowerer<'a> {
     /// `Dot`/`Bracket` keys unchanged (POD-string-key semantics).
     fn rewrite_typed_dot_access(&self, pred: &mut CustomPredicateDef) {
         let symbols = self.validated.symbols();
-        let Some(scope) = symbols.wildcard_scopes.get(&pred.name.name) else {
-            return;
-        };
+        let scope = symbols
+            .wildcard_scopes
+            .get(&pred.name.name)
+            .expect("wildcard scope exists for every custom predicate after validation");
         // Skip the per-arg walk for predicates with no typed wildcards —
         // the common case before records see widespread use.
         if !scope.wildcards.values().any(|wc| wc.record_type.is_some()) {
@@ -989,7 +990,7 @@ mod tests {
 
         let mut b = CustomPredicateBatchBuilder::new(params.clone(), "test_batch".into());
         let stb = StatementTmplBuilder::new_from_pred(NativePredicate::Equal)
-            .arg(BuilderArg::Key("in".into(), Key::from_index(1)))
+            .arg(BuilderArg::Key("in".into(), Key::from(1i64)))
             .arg(BuilderArg::Literal(Value::from(7i64)));
         b.predicate_and("p", &["in"], &[], &[stb]).unwrap();
         let plain_batch = b.finish().unwrap();

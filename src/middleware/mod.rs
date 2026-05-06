@@ -752,9 +752,6 @@ impl Key {
     pub fn new(name: String) -> Self {
         Key::Str(StrKey::new(name))
     }
-    pub fn from_index(i: i64) -> Self {
-        Key::Index(IndexKey::new(i))
-    }
     pub fn as_str(&self) -> Option<&StrKey> {
         match self {
             Key::Str(k) => Some(k),
