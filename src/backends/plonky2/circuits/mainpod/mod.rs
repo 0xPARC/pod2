@@ -1835,7 +1835,7 @@ fn verify_main_pod_circuit(
         // their verifier_data_hash appears in their introduction statement.
         //
 
-        verify_merkle_proof_circuit(builder, vd_mt_proof);
+        verify_merkle_proof_existence_circuit(builder, vd_mt_proof);
 
         // connect the vd_mt_proof's root to the actual vds_root, to ensure that the mt proof
         // verifies against the vds_root
@@ -1987,7 +1987,7 @@ impl MerkleTransitionProofsTarget {
 pub struct MainPodVerifyTarget {
     params: Params,
     vds_root: HashOutTarget,
-    vd_mt_proofs: Vec<MerkleClaimAndProofTarget>,
+    vd_mt_proofs: Vec<MerkleProofExistenceTarget>,
     input_pods_self_statements: Vec<Vec<StatementTarget>>,
     // The KEY_TYPE statement must be the first public one
     input_statements: Vec<StatementTarget>,
@@ -2006,7 +2006,7 @@ impl MainPodVerifyTarget {
             params: params.clone(),
             vds_root: builder.add_virtual_hash(),
             vd_mt_proofs: (0..params.max_input_pods)
-                .map(|_| MerkleClaimAndProofTarget::new_virtual(params.max_depth_mt_vds, builder))
+                .map(|_| MerkleProofExistenceTarget::new_virtual(params.max_depth_mt_vds, builder))
                 .collect(),
             input_pods_self_statements: (0..params.max_input_pods)
                 .map(|_| {

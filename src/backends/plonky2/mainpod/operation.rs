@@ -35,6 +35,15 @@ pub enum Size {
     Medium,
 }
 
+impl fmt::Display for Size {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Self::Small => write!(f, "small"),
+            Self::Medium => write!(f, "medium"),
+        }
+    }
+}
+
 impl Size {
     pub const fn min() -> Self {
         Self::Small
@@ -205,13 +214,13 @@ impl fmt::Display for Operation {
         match self.2 {
             OperationAux::None => (),
             OperationAux::MerkleProofIndex(size, i) => {
-                write!(f, " {:?}_merkle_proof_{:02}", size, i)?
+                write!(f, " {}_merkle_proof_{:02}", size, i)?
             }
             OperationAux::CustomPredVerifyIndex(i) => write!(f, " custom_pred_verify_{:02}", i)?,
             OperationAux::PublicKeyOfIndex(i) => write!(f, " public_key_of_{:02}", i)?,
             OperationAux::SignedByIndex(i) => write!(f, " signed_by_{:02}", i)?,
             OperationAux::MerkleTransitionProofIndex(size, i) => {
-                write!(f, " {:?}merkle_tree_state_transition_proof_{:02}", size, i)?
+                write!(f, " {}_merkle_transition_proof_{:02}", size, i)?
             }
         }
         Ok(())
