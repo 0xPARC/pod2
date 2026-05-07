@@ -26,7 +26,7 @@
 #![allow(clippy::needless_range_loop)]
 
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{HashMap, HashSet, VecDeque},
     fmt,
 };
 
@@ -34,6 +34,7 @@ use good_lp::{
     constraint, solvers::scip::SCIPProblem, variable, Expression, ProblemVariables, Solution,
     SolverModel, Variable,
 };
+use itertools::Itertools;
 
 /// Solver random-seed shift. Pinning this gives within-version reproducibility
 /// against any internal SCIP heuristics that consult the seed (random
@@ -183,6 +184,7 @@ pub fn split_predicate_if_needed(
     params: &Params,
 ) -> Result<SplitResult, SplittingError> {
     validate_predicate_is_splittable(pred)?;
+    eprintln!("Splitting predicate: {}", pred);
 
     if pred.statements.len() <= Params::max_custom_predicate_arity() {
         return Ok(SplitResult {
@@ -192,6 +194,15 @@ pub fn split_predicate_if_needed(
     }
 
     let (predicates, chain_info) = split_into_chain(pred, params)?;
+
+    eprintln!(
+        "Split result: {}",
+        predicates
+            .clone()
+            .into_iter()
+            .map(|p| format!("{}", p))
+            .join("\n\n")
+    );
 
     Ok(SplitResult {
         predicates,
@@ -215,6 +226,337 @@ fn compute_min_links(n: usize) -> usize {
         // Smallest K such that (K-1)·(max_arity-1) + max_arity >= n
         (n - max_arity).div_ceil(max_arity - 1) + 1
     }
+}
+
+/// Build the projected stmt-adjacency graph: two stmts are adjacent iff they
+/// share any wildcard.
+fn build_stmt_adjacency(n: usize, statements_using: &[Vec<usize>]) -> Vec<HashSet<usize>> {
+    let mut adjacency: Vec<HashSet<usize>> = vec![HashSet::new(); n];
+    for stmts in statements_using {
+        for i in 0..stmts.len() {
+            for j in (i + 1)..stmts.len() {
+                adjacency[stmts[i]].insert(stmts[j]);
+                adjacency[stmts[j]].insert(stmts[i]);
+            }
+        }
+    }
+    adjacency
+}
+
+/// Reverse Cuthill–McKee from a chosen start node. Visits in BFS order,
+/// neighbours sorted by (degree, index); reverses the visit order at the end.
+fn rcm_from_start(
+    n: usize,
+    adjacency: &[HashSet<usize>],
+    degrees: &[usize],
+    start: usize,
+) -> Vec<usize> {
+    let mut visited = vec![false; n];
+    let mut result = Vec::with_capacity(n);
+    visited[start] = true;
+    let mut queue = VecDeque::new();
+    queue.push_back(start);
+
+    loop {
+        while let Some(node) = queue.pop_front() {
+            result.push(node);
+            let mut neighbors: Vec<usize> = adjacency[node]
+                .iter()
+                .copied()
+                .filter(|&m| !visited[m])
+                .collect();
+            neighbors.sort_by_key(|&m| (degrees[m], m));
+            for m in neighbors {
+                if !visited[m] {
+                    visited[m] = true;
+                    queue.push_back(m);
+                }
+            }
+        }
+        if result.len() == n {
+            break;
+        }
+        // Disconnected wildcard graphs are rare in real predicates but
+        // possible (e.g. an unused public arg shares no statements with the
+        // rest), so restart BFS at the lowest-degree unvisited node.
+        let next_start = (0..n)
+            .filter(|&i| !visited[i])
+            .min_by_key(|&i| (degrees[i], i))
+            .expect("unvisited nodes remain");
+        visited[next_start] = true;
+        queue.push_back(next_start);
+    }
+
+    result.reverse();
+    result
+}
+
+/// Try (R)CM from every start node, in both forward and reversed BFS order.
+/// Returns distinct orderings only.
+fn rcm_orderings(n: usize, statements_using: &[Vec<usize>]) -> Vec<Vec<usize>> {
+    let adjacency = build_stmt_adjacency(n, statements_using);
+    let degrees: Vec<usize> = adjacency.iter().map(|s| s.len()).collect();
+    let mut seen: HashSet<Vec<usize>> = HashSet::new();
+    let mut out = Vec::new();
+    for start in 0..n {
+        let rcm = rcm_from_start(n, &adjacency, &degrees, start);
+        if seen.insert(rcm.clone()) {
+            out.push(rcm.clone());
+        }
+        let mut cm = rcm;
+        cm.reverse();
+        if seen.insert(cm.clone()) {
+            out.push(cm);
+        }
+    }
+    out
+}
+
+/// Per-position wildcard usage and the running prefix/suffix unions over an
+/// ordering. `wcs_at[p]` lists the wildcards used by the statement at
+/// position `p`; `prefix[p]` and `suffix[p]` are the running unions of
+/// `wcs_at` over `[0..p)` and `[p..n)` respectively.
+struct WildcardLifetimes {
+    wcs_at: Vec<HashSet<usize>>,
+    prefix: Vec<HashSet<usize>>,
+    suffix: Vec<HashSet<usize>>,
+}
+
+/// Compute [`WildcardLifetimes`] for a given ordering. Shared between
+/// [`ordering_excess_cost`] and [`try_dp_at_k`], which both need to know
+/// which wildcards are alive across each cut.
+fn wildcard_lifetimes(
+    ordering: &[usize],
+    statements_using: &[Vec<usize>],
+    num_wildcards: usize,
+) -> WildcardLifetimes {
+    let n = ordering.len();
+    let mut pos_of = vec![usize::MAX; statements_using.len().max(n)];
+    for (p, &s) in ordering.iter().enumerate() {
+        if s < pos_of.len() {
+            pos_of[s] = p;
+        }
+    }
+    let mut wcs_at: Vec<HashSet<usize>> = vec![HashSet::new(); n];
+    for (w, stmts) in statements_using.iter().enumerate().take(num_wildcards) {
+        for &s in stmts {
+            let p = pos_of[s];
+            if p != usize::MAX {
+                wcs_at[p].insert(w);
+            }
+        }
+    }
+    let mut prefix: Vec<HashSet<usize>> = vec![HashSet::new(); n + 1];
+    for p in 0..n {
+        prefix[p + 1] = prefix[p].clone();
+        prefix[p + 1].extend(&wcs_at[p]);
+    }
+    let mut suffix: Vec<HashSet<usize>> = vec![HashSet::new(); n + 1];
+    for p in (0..n).rev() {
+        suffix[p] = suffix[p + 1].clone();
+        suffix[p].extend(&wcs_at[p]);
+    }
+    WildcardLifetimes {
+        wcs_at,
+        prefix,
+        suffix,
+    }
+}
+
+/// Sum of "bandwidth excess" over an ordering: for each potential boundary
+/// position, how many wildcards beyond `max_args` would cross it. Lower is
+/// better for the DP partitioner — when this drops to 0, every position is
+/// a viable boundary, so any chunking that fits the per-link statement cap
+/// is feasible.
+fn ordering_excess_cost(
+    ordering: &[usize],
+    statements_using: &[Vec<usize>],
+    is_original_public: &[bool],
+    max_args: usize,
+) -> usize {
+    let n = ordering.len();
+    let num_wildcards = is_original_public.len();
+    let WildcardLifetimes {
+        prefix, suffix, ..
+    } = wildcard_lifetimes(ordering, statements_using, num_wildcards);
+    let mut total: usize = 0;
+    for p in 1..n {
+        let mut bw: usize = 0;
+        for w in 0..num_wildcards {
+            if is_original_public[w] {
+                if suffix[p].contains(&w) {
+                    bw += 1;
+                }
+            } else if prefix[p].contains(&w) && suffix[p].contains(&w) {
+                bw += 1;
+            }
+        }
+        total += bw.saturating_sub(max_args);
+    }
+    total
+}
+
+/// Iteration budget for [`refine_ordering`]. Local search is cheap per step
+/// (a swap and a full cost recompute) so a few thousand attempts comfortably
+/// fits in the per-predicate budget on the inputs we've measured.
+const REFINE_ITERATIONS: usize = 5_000;
+
+/// Local-search refinement: starting from `initial`, try random pair swaps
+/// to reduce ordering excess cost. Returns the best ordering found. Uses a
+/// seeded ChaCha RNG so the result is deterministic for a given input.
+fn refine_ordering(
+    initial: Vec<usize>,
+    statements_using: &[Vec<usize>],
+    is_original_public: &[bool],
+    max_args: usize,
+    iters: usize,
+) -> Vec<usize> {
+    use rand::{Rng, SeedableRng};
+    use rand_chacha::ChaCha20Rng;
+
+    let n = initial.len();
+    if n < 2 {
+        return initial;
+    }
+    let mut current = initial.clone();
+    let mut current_cost =
+        ordering_excess_cost(&current, statements_using, is_original_public, max_args);
+    if current_cost == 0 {
+        return current;
+    }
+    // Mix the full initial ordering into the seed so different starting
+    // orderings explore independent swap sequences.
+    let mut seed: u64 = 0x9E3779B97F4A7C15;
+    for &v in &initial {
+        seed = seed.wrapping_mul(0x100000001B3).wrapping_add(v as u64 + 1);
+    }
+    let mut rng = ChaCha20Rng::seed_from_u64(seed);
+    for _ in 0..iters {
+        let i = rng.gen_range(0..n);
+        let j = rng.gen_range(0..n);
+        if i == j {
+            continue;
+        }
+        current.swap(i, j);
+        let cand = ordering_excess_cost(&current, statements_using, is_original_public, max_args);
+        // Accept equal-cost swaps too — sideways moves let us escape plateaus
+        // toward a swap that finally reduces cost.
+        if cand <= current_cost {
+            current_cost = cand;
+            if current_cost == 0 {
+                break;
+            }
+        } else {
+            current.swap(i, j);
+        }
+    }
+    current
+}
+
+/// DP-based partitioner. Given an ordering of statements, decide where to
+/// place K-1 boundaries using O(n²·K·W) dynamic programming. Returns the
+/// per-link statement assignment in original-index order if a feasible
+/// partition exists for this ordering at this K, else `None`.
+///
+/// Insight: once the ordering is fixed, the set of wildcards "live across"
+/// any boundary position is a function of the ordering alone, so the only
+/// remaining decision is where the boundaries go. This is exact for the
+/// chosen ordering — the only heuristic is the ordering itself.
+fn try_dp_at_k(
+    ordering: &[usize],
+    k: usize,
+    statements_using: &[Vec<usize>],
+    is_original_public: &[bool],
+    params: &Params,
+) -> Option<LinkAssignment> {
+    let n = ordering.len();
+    let max_arity = Params::max_custom_predicate_arity();
+    let max_args = Params::max_statement_args();
+    let max_wildcards = params.max_custom_predicate_wildcards;
+    let num_wildcards = is_original_public.len();
+
+    let WildcardLifetimes {
+        wcs_at,
+        prefix: prefix_wcs,
+        suffix: suffix_wcs,
+    } = wildcard_lifetimes(ordering, statements_using, num_wildcards);
+
+    // Wildcards incoming as public args to a link starting at boundary `a`:
+    //   - a = 0: full original-public-arg signature, including any unused
+    //     originals — backward pruning never trims link 0.
+    //   - a > 0: originals still used at some position ≥ a, plus private
+    //     wildcards crossing a (used both < a and ≥ a).
+    let incoming_at = |a: usize| -> HashSet<usize> {
+        if a == 0 {
+            return (0..num_wildcards)
+                .filter(|&w| is_original_public[w])
+                .collect();
+        }
+        suffix_wcs[a]
+            .iter()
+            .copied()
+            .filter(|&w| is_original_public[w] || prefix_wcs[a].contains(&w))
+            .collect()
+    };
+
+    // Incoming sets per boundary, with `None` for boundaries that are
+    // already over `max_args` and so can never start a link.
+    let incoming_set: Vec<Option<HashSet<usize>>> = (0..=n)
+        .map(|a| {
+            let inc = incoming_at(a);
+            (inc.len() <= max_args).then_some(inc)
+        })
+        .collect();
+
+    // dp[cur_k][p] = Some(prev_a) if [0..p) can be partitioned into exactly
+    // cur_k links, with the cur_k'th link being chunk [prev_a..p). Iterating
+    // `a` from largest to smallest gives partitions where earlier links fill
+    // to the cap and the trailing link absorbs the slack — matches the
+    // source-order shape tests expect.
+    let mut dp: Vec<Vec<Option<usize>>> = vec![vec![None; n + 1]; k + 1];
+    dp[0][0] = Some(0);
+
+    for cur_k in 1..=k {
+        let is_last = cur_k == k;
+        let stmt_cap = if is_last { max_arity } else { max_arity - 1 };
+
+        for p in 1..=n {
+            let a_min = p.saturating_sub(stmt_cap);
+            for a in (a_min..p).rev() {
+                if dp[cur_k - 1][a].is_none() {
+                    continue;
+                }
+                let Some(inc) = &incoming_set[a] else {
+                    continue;
+                };
+                let mut total = inc.clone();
+                for pos in a..p {
+                    total.extend(&wcs_at[pos]);
+                }
+                if total.len() > max_wildcards {
+                    continue;
+                }
+                dp[cur_k][p] = Some(a);
+                break;
+            }
+        }
+    }
+
+    dp[k][n]?;
+
+    let mut links: LinkAssignment = vec![Vec::new(); k];
+    let mut cur_p = n;
+    for cur_k in (1..=k).rev() {
+        let a = dp[cur_k][cur_p].expect("dp reachability already verified");
+        for pos in a..cur_p {
+            links[cur_k - 1].push(ordering[pos]);
+        }
+        cur_p = a;
+    }
+    for link in &mut links {
+        link.sort();
+    }
+    Some(links)
 }
 
 /// MILP outcome for a single K: `links[i]` is the list of original statement
@@ -286,12 +628,36 @@ fn source_order_tiebreaker(v: &MilpVars) -> Expression {
 }
 
 /// Build a SCIP model with the splitter's deterministic-build settings:
-/// pinned random seed and silent output.
-fn build_scip_model(vars: ProblemVariables, objective: Expression) -> SCIPProblem {
-    vars.minimise(objective)
+/// pinned random seed and silent output. When `accept_first_feasible` is
+/// true, SCIP terminates as soon as it has an integer-feasible solution
+/// rather than proving optimality — used by the strict MILP, where the
+/// objective is just a tiebreaker. The elastic diagnostic LP needs proper
+/// optimisation (minimum slack) so it must pass `false`.
+fn build_scip_model(
+    vars: ProblemVariables,
+    objective: Expression,
+    accept_first_feasible: bool,
+) -> SCIPProblem {
+    let mut model = vars
+        .minimise(objective)
         .using(good_lp::solvers::scip::scip)
         .set_option("randomization/randomseedshift", SCIP_RANDOM_SEED)
-        .set_verbose(false)
+        .set_verbose(false);
+    if accept_first_feasible {
+        // Huge gap → any integer-feasible incumbent satisfies the gap limit,
+        // so SCIP exits with `GapLimit` after the first feasible solution.
+        // ~10× faster than proving optimality on the dense, weakly-objective
+        // models we hand SCIP, and the tiebreaker still steers the primal
+        // heuristics toward source-ordered partitions.
+        model = model
+            .set_option("limits/gap", 1e20_f64)
+            // Cuts tighten the LP bound, but with gap=∞ we don't need a
+            // tight bound — only a feasible integer solution. Disabling
+            // separation alone roughly halves solve time on the tested cases.
+            .set_option("separating/maxrounds", 0_i32)
+            .set_option("separating/maxroundsroot", 0_i32);
+    }
+    model
 }
 
 /// Add the MILP's structural constraints (C1..C7): assignment, link size,
@@ -428,7 +794,7 @@ fn solve_milp_for_k(
     let mut vars = ProblemVariables::new();
     let v = declare_milp_vars(&mut vars, n, k, num_wildcards);
     let objective = source_order_tiebreaker(&v);
-    let mut model = build_scip_model(vars, objective);
+    let mut model = build_scip_model(vars, objective, true);
     add_structural_constraints(&mut model, &v, statements_using, is_original_public);
 
     // C8: per-link public-args cap (incoming chain-call args).
@@ -627,7 +993,7 @@ fn solve_elastic_lp(k: usize, input: &MilpInput, params: &Params) -> Option<Vec<
     let scale = 1.0 / ((n * n * k * k + 1) as f64);
     let objective = slack_term + scale * source_order_tiebreaker(&v);
 
-    let mut model = build_scip_model(vars, objective);
+    let mut model = build_scip_model(vars, objective, false);
     add_structural_constraints(
         &mut model,
         &v,
@@ -716,16 +1082,67 @@ fn split_into_chain(
 
     let k_min = compute_min_links(n);
     let mut found: Option<(usize, LinkAssignment)> = None;
-    for k in k_min..=n {
-        if let Some(assignment) = solve_milp_for_k(
-            n,
-            k,
+
+    let max_args = Params::max_statement_args();
+    let mut orderings: Vec<Vec<usize>> = std::iter::once((0..n).collect())
+        .chain(rcm_orderings(n, &input.statements_using))
+        .collect();
+    // One local-search pass on the lowest-cost initial ordering. Refining
+    // every ordering would be wasted preprocessing — RCM produces dozens of
+    // near-identical orderings on this problem class.
+    if let Some(best) = orderings
+        .iter()
+        .min_by_key(|o| {
+            ordering_excess_cost(
+                o,
+                &input.statements_using,
+                &input.is_original_public,
+                max_args,
+            )
+        })
+        .cloned()
+    {
+        let refined = refine_ordering(
+            best,
             &input.statements_using,
             &input.is_original_public,
-            params,
-        ) {
-            found = Some((k, assignment));
-            break;
+            max_args,
+            REFINE_ITERATIONS,
+        );
+        if !orderings.iter().any(|o| o == &refined) {
+            orderings.insert(0, refined);
+        }
+    }
+    // Try DP across the full K range starting from K_min: an extra link is
+    // cheap, MILP at any K is not. If no ordering admits feasibility at any
+    // K, fall back to MILP.
+    'dp_search: for k in k_min..=n {
+        for ordering in &orderings {
+            if let Some(assignment) = try_dp_at_k(
+                ordering,
+                k,
+                &input.statements_using,
+                &input.is_original_public,
+                params,
+            ) {
+                found = Some((k, assignment));
+                break 'dp_search;
+            }
+        }
+    }
+
+    if found.is_none() {
+        for k in k_min..=n {
+            if let Some(assignment) = solve_milp_for_k(
+                n,
+                k,
+                &input.statements_using,
+                &input.is_original_public,
+                params,
+            ) {
+                found = Some((k, assignment));
+                break;
+            }
         }
     }
 
@@ -1517,6 +1934,193 @@ mod tests {
         // Display impl shouldn't panic and should mention the predicate name.
         let formatted = format!("{}", report);
         assert!(formatted.contains("dense"));
+    }
+
+    /// 30-statement predicate with a 7-link wildcard chain (`chain0..chain6,
+    /// chain`) — modelled on `CraftRefinery` from the zk-craft episode-1
+    /// plugin. K_min = 8 with `max_custom_predicate_arity = 5`, and the
+    /// chain transitions force at most one promoted wildcard per boundary.
+    /// Used to measure splitter latency on real-world-shaped inputs.
+    ///
+    /// Run with `cargo test --release test_split_craft_refinery_shape -- --nocapture`.
+    #[test]
+    fn test_split_craft_refinery_shape() {
+        let pred = build_pred(
+            "CraftRefinery",
+            &["in", "out", "chain0", "chain"],
+            &[
+                "chain1", "chain2", "chain3", "chain4", "chain5", "chain6", "oil", "water",
+                "tar_a0", "tar_a1", "tar_a", "tar_b", "tar_c", "fuel", "gas", "key", "work",
+            ],
+            &[
+                &["in", "oil"],                 // 0:  ArrayContains(in, _, oil)
+                &["in", "water"],               // 1:  ArrayContains(in, _, water)
+                &["out", "tar_a"],              // 2:  ArrayContains(out, _, tar_a)
+                &["out", "tar_b"],              // 3:  ArrayContains(out, _, tar_b)
+                &["out", "tar_c"],              // 4:  ArrayContains(out, _, tar_c)
+                &["out", "fuel"],               // 5:  ArrayContains(out, _, fuel)
+                &["out", "gas"],                // 6:  ArrayContains(out, _, gas)
+                &["tar_a0"],                    // 7:  DictContains(tar_a0, ...)
+                &["tar_b"],                     // 8:  DictContains(tar_b, ...)
+                &["tar_c"],                     // 9:  DictContains(tar_c, ...)
+                &["fuel"],                      // 10: DictContains(fuel, ...)
+                &["gas"],                       // 11: DictContains(gas, ...)
+                &["tar_a1", "tar_a0", "key"],   // 12: DictUpdate(tar_a1, tar_a0, _, key)
+                &["tar_a1"],                    // 13: LtEqU256(tar_a1, _)
+                &["tar_a1", "work"],            // 14: Vdf(_, tar_a1, work)
+                &["tar_a", "tar_a1", "work"],   // 15: DictUpdate(tar_a, tar_a1, _, work)
+                &["oil"],                       // 16: DictContains(oil, ...)
+                &["chain1", "chain0", "oil"],   // 17: TxDelete(chain1, chain0, oil)
+                &["water"],                     // 18: DictContains(water, ...)
+                &["chain2", "chain1", "water"], // 19: TxDelete(chain2, chain1, water)
+                &["tar_a"],                     // 20: DictContains(tar_a, ...)
+                &["chain3", "chain2", "tar_a"], // 21: TxInsert(chain3, chain2, tar_a)
+                &["tar_b"],                     // 22: DictContains(tar_b, ...)
+                &["chain4", "chain3", "tar_b"], // 23: TxInsert(chain4, chain3, tar_b)
+                &["tar_c"],                     // 24: DictContains(tar_c, ...)
+                &["chain5", "chain4", "tar_c"], // 25: TxInsert(chain5, chain4, tar_c)
+                &["fuel"],                      // 26: DictContains(fuel, ...)
+                &["chain6", "chain5", "fuel"],  // 27: TxInsert(chain6, chain5, fuel)
+                &["gas"],                       // 28: DictContains(gas, ...)
+                &["chain", "chain6", "gas"],    // 29: TxInsert(chain, chain6, gas)
+            ],
+        );
+        let params = Params::default();
+
+        let start = std::time::Instant::now();
+        let result = split_predicate_if_needed(&pred, &params);
+        let elapsed = start.elapsed();
+
+        eprintln!("CraftRefinery split took {:?}", elapsed);
+        assert!(result.is_ok(), "split failed: {:?}", result.err());
+        let split = result.unwrap();
+        assert!(split.chain_info.is_some(), "expected a chain split");
+        let info = split.chain_info.unwrap();
+        eprintln!(
+            "  chain has {} pieces, real_statement_count = {}",
+            info.chain_pieces.len(),
+            info.real_statement_count
+        );
+    }
+
+    /// 51-statement predicate with a 13-link wildcard chain — modelled on
+    /// `CraftRefineryCracked` from the zk-craft episode-1 plugin. K_min = 13
+    /// with `max_custom_predicate_arity = 5`. This is the failure case the
+    /// CraftRefinery test was a smaller instance of.
+    ///
+    /// Run with `cargo test --release test_split_craft_refinery_cracked_shape -- --nocapture --ignored`.
+    #[test]
+    #[ignore]
+    fn test_split_craft_refinery_cracked_shape() {
+        let pred = build_pred(
+            "CraftRefineryCracked",
+            &["in", "out", "chain0", "chain"],
+            &[
+                "chain1",
+                "chain2",
+                "chain3",
+                "chain4",
+                "chain5",
+                "chain6",
+                "chain7",
+                "chain8",
+                "chain9",
+                "chain10",
+                "chain11",
+                "chain12",
+                "oil",
+                "water",
+                "tar_a0",
+                "tar_a1",
+                "tar_a",
+                "tar_b",
+                "tar_c",
+                "tar_d",
+                "tar_e",
+                "fuel_a",
+                "fuel_b",
+                "fuel_c",
+                "gas_a",
+                "gas_b",
+                "key",
+                "work",
+                "_TouchCrackingUnit_in_0",
+                "_TouchCrackingUnit_out_0",
+            ],
+            &[
+                &["in", "oil"],     // 0
+                &["in", "water"],   // 1
+                &["out", "tar_a"],  // 2
+                &["out", "tar_b"],  // 3
+                &["out", "tar_c"],  // 4
+                &["out", "tar_d"],  // 5
+                &["out", "tar_e"],  // 6
+                &["out", "fuel_a"], // 7
+                &["out", "fuel_b"], // 8
+                &["out", "fuel_c"], // 9
+                &["out", "gas_a"],  // 10
+                &["out", "gas_b"],  // 11
+                &[
+                    "_TouchCrackingUnit_in_0",
+                    "_TouchCrackingUnit_out_0",
+                    "chain0",
+                    "chain1",
+                ], // 12: TouchCrackingUnit
+                &["tar_a0"],        // 13
+                &["tar_b"],         // 14
+                &["tar_c"],         // 15
+                &["tar_d"],         // 16
+                &["tar_e"],         // 17
+                &["fuel_a"],        // 18
+                &["fuel_b"],        // 19
+                &["fuel_c"],        // 20
+                &["gas_a"],         // 21
+                &["gas_b"],         // 22
+                &["tar_a1", "tar_a0", "key"], // 23
+                &["tar_a1"],        // 24
+                &["tar_a1", "work"], // 25
+                &["tar_a", "tar_a1", "work"], // 26
+                &["oil"],           // 27
+                &["chain2", "chain1", "oil"], // 28
+                &["water"],         // 29
+                &["chain3", "chain2", "water"], // 30
+                &["tar_a"],         // 31
+                &["chain4", "chain3", "tar_a"], // 32
+                &["tar_b"],         // 33
+                &["chain5", "chain4", "tar_b"], // 34
+                &["tar_c"],         // 35
+                &["chain6", "chain5", "tar_c"], // 36
+                &["tar_d"],         // 37
+                &["chain7", "chain6", "tar_d"], // 38
+                &["tar_e"],         // 39
+                &["chain8", "chain7", "tar_e"], // 40
+                &["fuel_a"],        // 41
+                &["chain9", "chain8", "fuel_a"], // 42
+                &["fuel_b"],        // 43
+                &["chain10", "chain9", "fuel_b"], // 44
+                &["fuel_c"],        // 45
+                &["chain11", "chain10", "fuel_c"], // 46
+                &["gas_a"],         // 47
+                &["chain12", "chain11", "gas_a"], // 48
+                &["gas_b"],         // 49
+                &["chain", "chain12", "gas_b"], // 50
+            ],
+        );
+        let params = Params::default();
+
+        let start = std::time::Instant::now();
+        let result = split_predicate_if_needed(&pred, &params);
+        let elapsed = start.elapsed();
+
+        eprintln!("CraftRefineryCracked split took {:?}", elapsed);
+        match &result {
+            Ok(s) => eprintln!(
+                "  chain has {} pieces",
+                s.chain_info.as_ref().map_or(0, |c| c.chain_pieces.len())
+            ),
+            Err(e) => eprintln!("  split failed: {}", e),
+        }
+        assert!(result.is_ok(), "split failed: {:?}", result.err());
     }
 
     /// Randomized counterexample search. Run with
