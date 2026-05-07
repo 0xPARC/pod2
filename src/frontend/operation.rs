@@ -3,8 +3,9 @@ use std::{fmt, iter};
 use crate::{
     frontend::SignedDict,
     middleware::{
-        containers::Dictionary, root_key_to_ak, CustomPredicateRef, NativeOperation, OperationAux,
-        OperationType, Signature, Statement, Value, ValueRef, BASE_PARAMS,
+        containers::{Array, Dictionary},
+        root_key_to_ak, CustomPredicateRef, NativeOperation, OperationAux, OperationType,
+        Signature, Statement, Value, ValueRef, BASE_PARAMS,
     },
 };
 
@@ -74,6 +75,18 @@ impl From<(&Dictionary, &str)> for OperationArg {
         Self::Statement(Statement::Contains(
             dict.clone().into(),
             key.into(),
+            value.into(),
+        ))
+    }
+}
+
+impl From<(&Array, i64)> for OperationArg {
+    fn from((array, index): (&Array, i64)) -> Self {
+        // TODO: Use TryFrom
+        let value = array.get(index as usize).unwrap().unwrap();
+        Self::Statement(Statement::Contains(
+            array.clone().into(),
+            Value::from(index).into(),
             value.into(),
         ))
     }
@@ -219,16 +232,21 @@ impl Operation {
     op_impl_oa!(set_insert, SetInsertFromEntries, 3);
     op_impl_oa!(set_delete, SetDeleteFromEntries, 3);
     op_impl_oa!(array_update, ArrayUpdateFromEntries, 4);
-    pub fn replace_value_with_entry(args: Vec<Option<(&Dictionary, &str)>>, st: Statement) -> Self {
+    pub fn replace_value_with_entry<E: Into<OperationArg>>(
+        args: Vec<Option<E>>,
+        st: Statement,
+    ) -> Self {
         assert!(args.len() <= BASE_PARAMS.max_statement_args);
         let args = args
             .into_iter()
-            .chain(iter::repeat(None))
-            .take(BASE_PARAMS.max_statement_args)
             .map(|a| match a {
                 None => OperationArg::Statement(Statement::None),
-                Some((dict, key)) => OperationArg::from((dict, key)),
+                Some(entry) => entry.into(),
             })
+            .chain(iter::repeat_with(|| {
+                OperationArg::Statement(Statement::None)
+            }))
+            .take(BASE_PARAMS.max_statement_args)
             .chain(iter::once(OperationArg::Statement(st)))
             .collect();
         Self(

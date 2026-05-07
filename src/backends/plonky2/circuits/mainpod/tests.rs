@@ -1094,6 +1094,38 @@ fn test_operation_replace_value_with_entry() -> Result<()> {
     operation_verify(st_out, op, prev_statements, Aux::default())
 }
 
+#[test]
+fn test_operation_replace_value_with_entry_array() -> Result<()> {
+    use middleware::containers::Array;
+
+    let arr = Array::new(vec![Value::from(42), Value::from(33)]);
+
+    // 0: None
+    // 1: Lt(5, 42)
+    let st_in: mainpod::Statement = Statement::lt(5, 42).into();
+    // 2: Contains(arr, 0, 42)
+    let st_entry: mainpod::Statement = Statement::contains(arr.clone(), 0i64, 42).into();
+
+    let st_out: mainpod::Statement = Statement::lt(
+        5,
+        ValueRef::Key(AnchoredKey::new(arr.commitment(), Key::from(0i64))),
+    )
+    .into();
+    let mut op_args: Vec<_> = iter::repeat(OperationArg::None)
+        .take(BASE_PARAMS.max_statement_args + 1)
+        .collect();
+    op_args[1] = OperationArg::Index(2);
+    op_args[BASE_PARAMS.max_statement_args] = OperationArg::Index(1);
+    let op = mainpod::Operation(
+        OperationType::Native(NativeOperation::ReplaceValueWithEntry),
+        op_args,
+        OperationAux::None,
+    );
+
+    let prev_statements = vec![Statement::None.into(), st_in, st_entry];
+    operation_verify(st_out, op, prev_statements, Aux::default())
+}
+
 fn helper_statement_arg_from_template(
     params: &Params,
     st_tmpl_arg: StatementTmplArg,

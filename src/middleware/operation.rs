@@ -464,10 +464,13 @@ impl Operation {
                         ValueRef::Literal(key),
                         ValueRef::Literal(v),
                     ),
-                ) if v == &v_in => Ok(StatementArg::Key(AnchoredKey::new(
-                    Hash::from(root.raw()),
-                    Key::from(key.as_str().ok_or_else(|| Error::custom("not a string"))?),
-                ))),
+                ) if v == &v_in => {
+                    root_key_to_ak(root, key)
+                        .map(StatementArg::Key)
+                        .ok_or_else(|| {
+                            Error::custom("ReplaceValueWithEntry: key must be a string or integer")
+                        })
+                }
                 _ => Err(Error::custom(
                     "invalid statement argument in ReplaceValueWithEntry",
                 )),
