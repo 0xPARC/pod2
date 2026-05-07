@@ -245,8 +245,19 @@ impl Module {
 
             let start = piece_offsets[piece_idx];
             let end = start + piece.real_statement_count;
-            let mut args: Vec<Statement> = reordered[start..end].to_vec();
+            let real_args = &reordered[start..end];
 
+            // OR validation skips Statement::None args, so leading pieces with no
+            // real statements are dead; the chain rewires from the first kept piece.
+            if steps.is_empty()
+                && !is_final
+                && piece_ref.predicate().is_disjunction()
+                && real_args.iter().all(Statement::is_none)
+            {
+                continue;
+            }
+
+            let mut args: Vec<Statement> = real_args.to_vec();
             if piece.has_chain_call {
                 args.push(Statement::None);
             }
