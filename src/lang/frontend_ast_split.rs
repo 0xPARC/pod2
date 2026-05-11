@@ -323,6 +323,30 @@ fn ordering_excess_cost(
 /// fits in the per-predicate budget on the inputs we've measured.
 const REFINE_ITERATIONS: usize = 5_000;
 
+/// Number of lowest-bandwidth RCM orderings to refine. RCM orderings are
+/// nearly identical when the wildcard graph is highly connected, so a single
+/// refinement run from the best RCM ordering misses feasibility basins that
+/// a slightly worse starting ordering would have reached. Five gives DP a
+/// handful of independent refined candidates without ballooning splitter time.
+const REFINE_STARTS: usize = 5;
+
+/// Number of random-shuffle starts to refine on top of the RCM candidates.
+/// Pure random starts escape RCM-local basins entirely: when the wildcard
+/// graph has no meaningful structure for RCM to exploit, these are the only
+/// candidates with a chance.
+const REFINE_RANDOM_STARTS: usize = 8;
+
+/// Deterministic seed derived from an ordering. Used to seed the shuffle RNG
+/// in `split_into_chain` so the random-start orderings depend only on the
+/// predicate, not on test/run order.
+fn seed_from_ordering(ordering: &[usize]) -> u64 {
+    let mut seed: u64 = 0x9E3779B97F4A7C15;
+    for &v in ordering {
+        seed = seed.wrapping_mul(0x100000001B3).wrapping_add(v as u64 + 1);
+    }
+    seed
+}
+
 /// Local-search refinement: starting from `initial`, try random pair swaps
 /// to reduce ordering excess cost. Returns the best ordering found. Uses a
 /// seeded ChaCha RNG so the result is deterministic for a given input.
@@ -346,13 +370,9 @@ fn refine_ordering(
     if current_cost == 0 {
         return current;
     }
-    // Mix the full initial ordering into the seed so different starting
-    // orderings explore independent swap sequences.
-    let mut seed: u64 = 0x9E3779B97F4A7C15;
-    for &v in &initial {
-        seed = seed.wrapping_mul(0x100000001B3).wrapping_add(v as u64 + 1);
-    }
-    let mut rng = ChaCha20Rng::seed_from_u64(seed);
+    // Seed from the initial ordering so different starting orderings explore
+    // independent swap sequences.
+    let mut rng = ChaCha20Rng::seed_from_u64(seed_from_ordering(&initial));
     for _ in 0..iters {
         let i = rng.gen_range(0..n);
         let j = rng.gen_range(0..n);
@@ -877,6 +897,9 @@ fn split_into_chain(
     pred: &CustomPredicateDef,
     params: &Params,
 ) -> Result<(Vec<CustomPredicateDef>, SplitChainInfo), SplittingError> {
+    use rand::{Rng, SeedableRng};
+    use rand_chacha::ChaCha20Rng;
+
     let original_name = pred.name.name.clone();
     let conjunction = pred.conjunction_type;
     let real_statement_count = pred.statements.len();
@@ -891,30 +914,54 @@ fn split_into_chain(
     let mut orderings: Vec<Vec<usize>> = std::iter::once((0..n).collect())
         .chain(rcm_orderings(n, &input.statements_using))
         .collect();
-    // One local-search pass on the lowest-cost initial ordering. Refining
-    // every ordering would be wasted preprocessing — RCM produces dozens of
-    // near-identical orderings on this problem class.
-    if let Some(best) = orderings
-        .iter()
-        .min_by_key(|o| {
-            ordering_excess_cost(
-                o,
-                &input.statements_using,
-                &input.is_original_public,
-                max_args,
-            )
-        })
-        .cloned()
-    {
-        let refined = refine_ordering(
-            best,
+
+    let cost = |o: &[usize]| -> usize {
+        ordering_excess_cost(
+            o,
             &input.statements_using,
             &input.is_original_public,
             max_args,
-            REFINE_ITERATIONS,
-        );
-        if !orderings.iter().any(|o| o == &refined) {
-            orderings.insert(0, refined);
+        )
+    };
+
+    // Multi-start refinement. Refine the top REFINE_STARTS lowest-cost RCM
+    // orderings, then add REFINE_RANDOM_STARTS random shuffles each refined
+    // from a different seed. Tight predicates (4 public args, dense private
+    // wildcard pool > max_arity) have narrow feasibility basins that a
+    // single refinement from the RCM optimum routinely misses.
+    let mut refined_seeds: Vec<Vec<usize>> = orderings.clone();
+    refined_seeds.sort_by_key(|o| cost(o));
+    refined_seeds.truncate(REFINE_STARTS);
+
+    let identity: Vec<usize> = (0..n).collect();
+    let mut shuffle_rng = ChaCha20Rng::seed_from_u64(seed_from_ordering(&identity));
+    for _ in 0..REFINE_RANDOM_STARTS {
+        let mut shuffled: Vec<usize> = (0..n).collect();
+        for i in (1..n).rev() {
+            let j = shuffle_rng.gen_range(0..=i);
+            shuffled.swap(i, j);
+        }
+        refined_seeds.push(shuffled);
+    }
+
+    let mut refined: Vec<Vec<usize>> = refined_seeds
+        .into_iter()
+        .map(|seed| {
+            refine_ordering(
+                seed,
+                &input.statements_using,
+                &input.is_original_public,
+                max_args,
+                REFINE_ITERATIONS,
+            )
+        })
+        .collect();
+    // Refined orderings go first so DP probes the lowest-bandwidth candidates
+    // before the bulk RCM list.
+    refined.sort_by_key(|o| cost(o));
+    for r in refined.into_iter().rev() {
+        if !orderings.contains(&r) {
+            orderings.insert(0, r);
         }
     }
     'dp_search: for k in k_min..=n {
@@ -2097,8 +2144,7 @@ mod tests {
                                 let mut chosen = Vec::new();
                                 let mut tries = 0;
                                 while chosen.len() < arity && tries < 20 {
-                                    let pick =
-                                        all_names[rng.gen_range(0..all_names.len())].clone();
+                                    let pick = all_names[rng.gen_range(0..all_names.len())].clone();
                                     if !chosen.contains(&pick) {
                                         chosen.push(pick);
                                     }
@@ -2186,6 +2232,10 @@ mod tests {
         let mut checked = 0usize;
         let mut milp_feasible = 0usize;
         let mut divergences = 0usize;
+        let mut milp_total = std::time::Duration::ZERO;
+        let mut dp_total = std::time::Duration::ZERO;
+        let mut milp_max = std::time::Duration::ZERO;
+        let mut dp_max = std::time::Duration::ZERO;
 
         for &n_stmts in &[9usize, 10, 11, 12] {
             for &n_pub in &[3usize, 4] {
@@ -2202,8 +2252,7 @@ mod tests {
                                 let mut chosen = Vec::new();
                                 let mut tries = 0;
                                 while chosen.len() < arity && tries < 20 {
-                                    let pick =
-                                        all_names[rng.gen_range(0..all_names.len())].clone();
+                                    let pick = all_names[rng.gen_range(0..all_names.len())].clone();
                                     if !chosen.contains(&pick) {
                                         chosen.push(pick);
                                     }
@@ -2230,6 +2279,7 @@ mod tests {
 
                         let input = prepare_split_input(&pred);
                         let n = input.n;
+                        let milp_start = std::time::Instant::now();
                         let mut milp_ok = false;
                         for k in compute_min_links(n)..=n {
                             if super::milp_oracle::solve_milp_for_k(
@@ -2245,8 +2295,19 @@ mod tests {
                                 break;
                             }
                         }
+                        let milp_elapsed = milp_start.elapsed();
+                        milp_total += milp_elapsed;
+                        if milp_elapsed > milp_max {
+                            milp_max = milp_elapsed;
+                        }
 
+                        let dp_start = std::time::Instant::now();
                         let dp_result = split_predicate_if_needed(&pred, &params);
+                        let dp_elapsed = dp_start.elapsed();
+                        dp_total += dp_elapsed;
+                        if dp_elapsed > dp_max {
+                            dp_max = dp_elapsed;
+                        }
                         let dp_ok = dp_result.is_ok();
 
                         if milp_ok {
@@ -2271,9 +2332,28 @@ mod tests {
             }
         }
 
+        let safe_divs = |total: std::time::Duration, n: usize| -> std::time::Duration {
+            if n == 0 {
+                std::time::Duration::ZERO
+            } else {
+                total / n as u32
+            }
+        };
         eprintln!(
             "Parity sweep: checked={}, milp_feasible={}, dp_divergences={}",
             checked, milp_feasible, divergences
+        );
+        eprintln!(
+            "  MILP total={:?} mean={:?} max={:?}",
+            milp_total,
+            safe_divs(milp_total, checked),
+            milp_max
+        );
+        eprintln!(
+            "  DP   total={:?} mean={:?} max={:?}",
+            dp_total,
+            safe_divs(dp_total, checked),
+            dp_max
         );
         assert_eq!(
             divergences, 0,
