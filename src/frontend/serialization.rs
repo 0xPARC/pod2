@@ -234,8 +234,8 @@ mod tests {
 
         assert_eq!(kyc_pod.public_statements, deserialized.public_statements);
         assert_eq!(
-            kyc_pod.pod.statements_hash(),
-            deserialized.pod.statements_hash()
+            kyc_pod.pod.statements_root(),
+            deserialized.pod.statements_root()
         );
         assert_eq!(kyc_pod.pod.verify()?, deserialized.pod.verify()?);
 
@@ -250,8 +250,8 @@ mod tests {
 
         assert_eq!(kyc_pod.public_statements, deserialized.public_statements);
         assert_eq!(
-            kyc_pod.pod.statements_hash(),
-            deserialized.pod.statements_hash()
+            kyc_pod.pod.statements_root(),
+            deserialized.pod.statements_root()
         );
         assert_eq!(kyc_pod.pod.verify()?, deserialized.pod.verify()?);
 

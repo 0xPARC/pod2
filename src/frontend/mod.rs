@@ -744,7 +744,7 @@ pub struct MainPod {
 
 impl fmt::Display for MainPod {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        writeln!(f, "MainPod: {}", self.pod.statements_hash())?;
+        writeln!(f, "MainPod: {}", self.pod.statements_root())?;
         writeln!(f, "  valid?  {}", self.pod.verify().is_ok())?;
         writeln!(f, "  statements:")?;
         for st in &self.pod.pub_statements() {
@@ -756,7 +756,7 @@ impl fmt::Display for MainPod {
 
 impl MainPod {
     pub fn statements_hash(&self) -> Hash {
-        self.pod.statements_hash()
+        self.pod.statements_root()
     }
 }
 

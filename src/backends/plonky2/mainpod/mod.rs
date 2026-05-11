@@ -587,7 +587,7 @@ impl MainPodProver for Prover {
                 assert_eq!(inputs.vd_set.root(), pod.vd_set().root());
                 ProofWithPublicInputs {
                     proof: pod.proof(),
-                    public_inputs: [pod.statements_hash().0, inputs.vd_set.root().0].concat(),
+                    public_inputs: [pod.statements_root().0, inputs.vd_set.root().0].concat(),
                 }
             })
             .collect_vec();
@@ -795,7 +795,7 @@ impl Pod for MainPod {
             .map_err(|e| Error::plonky2_proof_fail("MainPod", e))
     }
 
-    fn statements_hash(&self) -> Hash {
+    fn statements_root(&self) -> Hash {
         self.sts_hash
     }
     fn pod_type(&self) -> (usize, &'static str) {

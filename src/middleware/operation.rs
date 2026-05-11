@@ -90,6 +90,7 @@ pub enum NativeOperation {
     ContainerUpdateFromEntries = 17,
     ContainerDeleteFromEntries = 18,
     ReplaceValueWithEntry = 19,
+    OpenInputStatement = 20,
 
     // Syntactic sugar operations.  These operations are not supported by the backend.  The
     // frontend compiler is responsible of translating these operations into the operations above.
@@ -130,6 +131,7 @@ impl OperationType {
             OperationType::Native(native_op) => match native_op {
                 NativeOperation::None => Some(Predicate::Native(NativePredicate::None)),
                 NativeOperation::CopyStatement => None,
+                NativeOperation::OpenInputStatement => None,
                 NativeOperation::EqualFromEntries => {
                     Some(Predicate::Native(NativePredicate::Equal))
                 }
@@ -225,6 +227,11 @@ pub enum Operation {
         /* Contains/None len=max_statement_args */ Vec<Statement>,
         /* to copy */ Statement,
     ),
+    OpenInputStatement(
+        Statement,
+        usize, // pod input index
+        MerkleProof,
+    ),
     Custom(CustomPredicateRef, Vec<Statement>),
 }
 
@@ -277,6 +284,7 @@ impl Operation {
             }
             Self::ContainerDeleteFromEntries(_, _, _, _) => OT::Native(ContainerDeleteFromEntries),
             Self::ReplaceValueWithEntry(_, _) => OT::Native(ReplaceValueWithEntry),
+            Self::OpenInputStatement(_, _, _) => OT::Native(OpenInputStatement),
             Self::Custom(cpr, _) => OT::Custom(cpr.clone()),
         }
     }
@@ -307,6 +315,7 @@ impl Operation {
                 sts.push(s);
                 sts
             }
+            Self::OpenInputStatement(_, _, _) => vec![],
             Self::Custom(_, args) => args,
         }
     }

@@ -760,6 +760,8 @@ pub struct BaseParams {
     /// Number of public statements to hash to calculate the public inputs.  Must be equal or
     /// greater than `max_public_statements`.
     pub num_public_statements_hash: usize,
+    // TODO: Doc
+    pub max_depth_public_statements_mt: usize,
     pub max_statement_args: usize,
     //
     // The following parameters define how a custom predicate batch id is calculated.
@@ -774,6 +776,7 @@ pub struct BaseParams {
 
 pub const BASE_PARAMS: BaseParams = BaseParams {
     num_public_statements_hash: 16,
+    max_depth_public_statements_mt: 10,
     max_statement_args: 5,
     max_custom_predicate_arity: 5,
     max_depth_custom_batch_mt: 16, // up to 65k (2^16) custom predicates in a batch
@@ -984,18 +987,17 @@ pub trait Pod: fmt::Debug + DynClone + Sync + Send + Any + EqualsAny {
     fn is_main(&self) -> bool {
         false
     }
-    /// Hash of the public statements.  This can be used to identify a Pod.  Different pods can
-    /// have the same `statements_hash` if they expose the same public statements even if they
-    /// arrive to them through different private inputs.
-    fn statements_hash(&self) -> Hash;
+    /// Root of the public statements.  Different pods can have the same `statements_root` if they
+    /// expose the same public statements even if they arrive to them through different private
+    /// inputs.
+    fn statements_root(&self) -> Hash;
     // TODO: String instead of &str
     /// Return a uuid of the pod type and its name.  The name is only used as metadata.
     fn pod_type(&self) -> (usize, &'static str);
-    /// Statements as internally generated, where self-referencing arguments use SELF in the
-    /// anchored key.  The serialization of these statements is used to calculate the id.
+    /// Statements as internally generated, where intro statements don't encode the verifier data
+    /// hash.  The serialization of these statements is used to calculate the statements root.
     fn pub_self_statements(&self) -> Vec<Statement>;
-    /// Normalized statements, where self-referencing arguments use the pod id instead of SELF in
-    /// the anchored key.
+    /// Normalized statements, where intro statements get the corresponding verified data hash.
     fn pub_statements(&self) -> Vec<Statement> {
         let verifier_data_hash = self.verifier_data_hash();
         self.pub_self_statements()
@@ -1004,7 +1006,7 @@ pub trait Pod: fmt::Debug + DynClone + Sync + Send + Any + EqualsAny {
             .collect()
     }
     /// Return this Pods data serialized into a json value.  This serialization can skip `params,
-    /// id, vds_root`
+    /// statements_root, vds_root`
     fn serialize_data(&self) -> serde_json::Value;
 
     /// Returns the deserialized Pod.

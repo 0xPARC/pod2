@@ -69,7 +69,7 @@ impl fmt::Display for MockMainPod {
             {
                 let index = (i - offset_input_pods) / self.params.max_input_pods_public_statements;
                 let pod = &self.input_pods[index];
-                let id = pod.statements_hash();
+                let id = pod.statements_root();
                 let pod_type = pod.pod_type();
                 writeln!(
                     f,
@@ -272,7 +272,7 @@ impl Pod for MockMainPod {
         Ok(())
     }
 
-    fn statements_hash(&self) -> Hash {
+    fn statements_root(&self) -> Hash {
         self.sts_hash
     }
     fn pod_type(&self) -> (usize, &'static str) {
@@ -310,7 +310,7 @@ impl Pod for MockMainPod {
                 (
                     p.pod_type().0,
                     p.params().clone(),
-                    p.statements_hash(),
+                    p.statements_root(),
                     p.vd_set().clone(),
                     p.serialize_data(),
                 )
