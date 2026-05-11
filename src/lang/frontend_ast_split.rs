@@ -3,36 +3,18 @@
 //! Predicates whose statement count exceeds the middleware's
 //! `max_custom_predicate_arity` are split into a chain of smaller predicates,
 //! each calling the next via a tail-position chain call. Private wildcards
-//! that span a split boundary must be promoted to public arguments on the
+//! that span a split boundary are promoted to public arguments on the
 //! continuation, since they need the same binding on both sides.
 //!
-//! The split is computed by a dynamic-programming partitioner. The pipeline:
+//! Each link in the resulting chain satisfies three caps: statement count
+//! (`max_custom_predicate_arity`, minus a slot for the chain call on non-last
+//! links), public-args-in (`max_statement_args`), and total declared wildcards
+//! (`max_custom_predicate_wildcards`). When no partition fits, the splitter
+//! returns a [`SplittingError`] pointing at the first cap that overflows, with
+//! an actionable [`RefactorSuggestion`] when one applies.
 //!
-//! 1. **Ordering search.** Try the source order, then a handful of (R)CM
-//!    orderings (Reverse Cuthill-McKee on the projected wildcard-statement
-//!    adjacency graph), then one local-search refinement pass on the
-//!    lowest-cost ordering. RCM is designed to minimise bandwidth, which is
-//!    exactly what we want at split boundaries.
-//! 2. **DP partition.** For each (ordering, K) pair with K running from
-//!    `K_min` upward, place K-1 boundaries to satisfy the per-link caps:
-//!    statement count at most `max_arity` (or `max_arity - 1` on non-last
-//!    links to reserve a chain-call slot), public-args-in at most
-//!    `max_statement_args`, and total declared wildcards at most
-//!    `max_custom_predicate_wildcards`. The DP is exact for a fixed ordering;
-//!    the only heuristic is the ordering itself.
-//! 3. **Diagnostic on failure.** If no (ordering, K) pair yields a feasible
-//!    partition, walk the lowest-cost ordering bucket-by-bucket and emit
-//!    [`SplittingError::TooManyPublicArgsAtSplit`] or
-//!    [`SplittingError::TooManyTotalArgsInChainLink`] for the first cap
-//!    overflow, with an actionable [`RefactorSuggestion`] when one applies.
-//!
-//! Determinism: all heuristics are seeded from the input (RCM start nodes,
-//! refinement RNG), so the same input always produces the same chain across
-//! clients and platforms.
-//!
-//! A test-only MILP oracle (`mod milp_oracle`) is kept alongside this module
-//! to cross-validate the DP partitioner: whenever MILP finds a feasible K,
-//! DP must also find one (possibly at a larger K).
+//! Splits are deterministic: the same predicate always produces the same chain
+//! across clients and platforms.
 
 #![allow(clippy::needless_range_loop)]
 
@@ -80,7 +62,7 @@ pub struct SplitChainInfo {
     pub chain_pieces: Vec<SplitChainPiece>,
     /// Total number of "real" user statements (excludes chain calls)
     pub real_statement_count: usize,
-    /// Maps original statement index → reordered index
+    /// Maps original statement index to reordered index
     /// e.g., if original stmt 0 became reordered stmt 3, then `reorder_map[0] = 3`
     pub reorder_map: Vec<usize>,
 }
@@ -112,21 +94,25 @@ pub fn validate_predicate_is_splittable(pred: &CustomPredicateDef) -> Result<(),
     Ok(())
 }
 
-/// Split a predicate into a chain if it exceeds statement limit.
+/// Split a predicate into a chain if it exceeds statement limit
 pub fn split_predicate_if_needed(
-    pred: &CustomPredicateDef,
+    pred: CustomPredicateDef,
     params: &Params,
 ) -> Result<SplitResult, SplittingError> {
-    validate_predicate_is_splittable(pred)?;
+    // Early validation
+    validate_predicate_is_splittable(&pred)?;
 
+    // If within limits, no splitting needed
     if pred.statements.len() <= Params::max_custom_predicate_arity() {
         return Ok(SplitResult {
-            predicates: vec![pred.clone()],
+            predicates: vec![pred],
             chain_info: None,
         });
     }
 
-    let (predicates, chain_info) = split_into_chain(pred, params)?;
+    // Need to split - execute the splitting algorithm
+    let (predicates, chain_info) = split_into_chain(&pred, params)?;
+
     Ok(SplitResult {
         predicates,
         chain_info: Some(chain_info),
@@ -146,10 +132,21 @@ fn compute_min_links(n: usize) -> usize {
     if n <= max_arity {
         1
     } else {
-        // Smallest K such that (K-1)·(max_arity-1) + max_arity >= n
+        // Smallest K such that (K-1) * (max_arity-1) + max_arity >= n
         (n - max_arity).div_ceil(max_arity - 1) + 1
     }
 }
+
+// Ordering heuristic. At each candidate split boundary, every wildcard alive
+// across it (first_use < boundary <= last_use) must be promoted to a public
+// arg on the continuation, and the public-args cap is the binding constraint
+// on splittability. That count is exactly the bandwidth of the statement-
+// wildcard incidence matrix at the boundary column, and Reverse Cuthill-
+// McKee on the statement-adjacency graph (built here) is the standard cheap
+// heuristic for keeping bandwidth low across all columns at once. RCM is
+// itself a heuristic with no optimality guarantee, so the splitter refines
+// the lowest-cost RCM seeds via local search before handing orderings to
+// the DP partitioner.
 
 /// Build the projected stmt-adjacency graph: two stmts are adjacent iff they
 /// share any wildcard.
@@ -166,7 +163,7 @@ fn build_stmt_adjacency(n: usize, statements_using: &[Vec<usize>]) -> Vec<HashSe
     adjacency
 }
 
-/// Reverse Cuthill–McKee from a chosen start node. Visits in BFS order,
+/// Reverse Cuthill-McKee from a chosen start node. Visits in BFS order,
 /// neighbours sorted by (degree, index); reverses the visit order at the end.
 fn rcm_from_start(
     n: usize,
@@ -190,18 +187,18 @@ fn rcm_from_start(
                 .collect();
             neighbors.sort_by_key(|&m| (degrees[m], m));
             for m in neighbors {
-                if !visited[m] {
-                    visited[m] = true;
-                    queue.push_back(m);
-                }
+                visited[m] = true;
+                queue.push_back(m);
             }
         }
         if result.len() == n {
             break;
         }
-        // Disconnected wildcard graphs are rare in real predicates but
-        // possible (e.g. an unused public arg shares no statements with the
-        // rest), so restart BFS at the lowest-degree unvisited node.
+        // The statement-adjacency graph can have multiple components: any
+        // predicate whose statements split into groups that share no
+        // wildcards (e.g. independent claims about disjoint inputs) produces
+        // one. Restart BFS at the lowest-degree unvisited node so the visit
+        // covers every statement.
         let next_start = (0..n)
             .filter(|&i| !visited[i])
             .min_by_key(|&i| (degrees[i], i))
@@ -238,35 +235,28 @@ fn rcm_orderings(n: usize, statements_using: &[Vec<usize>]) -> Vec<Vec<usize>> {
 /// Per-position wildcard usage and the running prefix/suffix unions over an
 /// ordering. `wcs_at[p]` lists the wildcards used by the statement at
 /// position `p`; `prefix[p]` and `suffix[p]` are the running unions of
-/// `wcs_at` over `[0..p)` and `[p..n)` respectively.
+/// `wcs_at` over `0..p` and `p..n` respectively.
 struct WildcardLifetimes {
     wcs_at: Vec<HashSet<usize>>,
     prefix: Vec<HashSet<usize>>,
     suffix: Vec<HashSet<usize>>,
 }
 
-/// Compute [`WildcardLifetimes`] for a given ordering. Shared between
-/// [`ordering_excess_cost`] and [`try_dp_at_k`], which both need to know
-/// which wildcards are alive across each cut.
+/// Compute [`WildcardLifetimes`] for a given ordering.
 fn wildcard_lifetimes(
     ordering: &[usize],
     statements_using: &[Vec<usize>],
     num_wildcards: usize,
 ) -> WildcardLifetimes {
     let n = ordering.len();
-    let mut pos_of = vec![usize::MAX; statements_using.len().max(n)];
+    let mut pos_of = vec![usize::MAX; n];
     for (p, &s) in ordering.iter().enumerate() {
-        if s < pos_of.len() {
-            pos_of[s] = p;
-        }
+        pos_of[s] = p;
     }
     let mut wcs_at: Vec<HashSet<usize>> = vec![HashSet::new(); n];
     for (w, stmts) in statements_using.iter().enumerate().take(num_wildcards) {
         for &s in stmts {
-            let p = pos_of[s];
-            if p != usize::MAX {
-                wcs_at[p].insert(w);
-            }
+            wcs_at[pos_of[s]].insert(w);
         }
     }
     let mut prefix: Vec<HashSet<usize>> = vec![HashSet::new(); n + 1];
@@ -288,9 +278,9 @@ fn wildcard_lifetimes(
 
 /// Sum of "bandwidth excess" over an ordering: for each potential boundary
 /// position, how many wildcards beyond `max_args` would cross it. Lower is
-/// better for the DP partitioner — when this drops to 0, every position is
-/// a viable boundary, so any chunking that fits the per-link statement cap
-/// is feasible.
+/// better for the DP partitioner: when this drops to 0, every position
+/// satisfies the per-link public-args cap. The total-wildcards cap is
+/// checked separately by the DP.
 fn ordering_excess_cost(
     ordering: &[usize],
     statements_using: &[Vec<usize>],
@@ -299,17 +289,44 @@ fn ordering_excess_cost(
 ) -> usize {
     let n = ordering.len();
     let num_wildcards = is_original_public.len();
-    let WildcardLifetimes { prefix, suffix, .. } =
-        wildcard_lifetimes(ordering, statements_using, num_wildcards);
+
+    let mut pos_of = vec![usize::MAX; n];
+    for (p, &s) in ordering.iter().enumerate() {
+        pos_of[s] = p;
+    }
+
+    // Represent each wildcard by just the first and last position at which it
+    // appears in the ordering.
+    let mut first = vec![usize::MAX; num_wildcards];
+    let mut last = vec![0usize; num_wildcards];
+    for (w, stmts) in statements_using.iter().enumerate().take(num_wildcards) {
+        for &s in stmts {
+            let p = pos_of[s];
+            if p < first[w] {
+                first[w] = p;
+            }
+            if p > last[w] {
+                last[w] = p;
+            }
+        }
+    }
+
     let mut total: usize = 0;
     for p in 1..n {
         let mut bw: usize = 0;
         for w in 0..num_wildcards {
+            if first[w] == usize::MAX {
+                continue;
+            }
+            // Public args are alive from position 0 (declared on the predicate
+            // signature regardless of where they're first referenced), so they
+            // cross p iff they're used at or after p. Private wildcards only
+            // count once they've actually appeared.
             if is_original_public[w] {
-                if suffix[p].contains(&w) {
+                if last[w] >= p {
                     bw += 1;
                 }
-            } else if prefix[p].contains(&w) && suffix[p].contains(&w) {
+            } else if first[w] < p && last[w] >= p {
                 bw += 1;
             }
         }
@@ -318,28 +335,25 @@ fn ordering_excess_cost(
     total
 }
 
-/// Iteration budget for [`refine_ordering`]. Local search is cheap per step
-/// (a swap and a full cost recompute) so a few thousand attempts comfortably
-/// fits in the per-predicate budget on the inputs we've measured.
+/// Swap attempts per local-search seed. Iterations are cheap per step, so
+/// thousands of iterations comfortably fits in the per-predicate budget.
 const REFINE_ITERATIONS: usize = 5_000;
 
-/// Number of lowest-bandwidth RCM orderings to refine. RCM orderings are
-/// nearly identical when the wildcard graph is highly connected, so a single
-/// refinement run from the best RCM ordering misses feasibility basins that
-/// a slightly worse starting ordering would have reached. Five gives DP a
-/// handful of independent refined candidates without ballooning splitter time.
+/// Number of low-cost RCM orderings handed to local search.
 const REFINE_STARTS: usize = 5;
 
-/// Number of random-shuffle starts to refine on top of the RCM candidates.
-/// Pure random starts escape RCM-local basins entirely: when the wildcard
-/// graph has no meaningful structure for RCM to exploit, these are the only
-/// candidates with a chance.
+/// Number of random-shuffle starts refined alongside the RCM seeds.
 const REFINE_RANDOM_STARTS: usize = 8;
 
 /// Deterministic seed derived from an ordering. Used to seed the shuffle RNG
 /// in `split_into_chain` so the random-start orderings depend only on the
 /// predicate, not on test/run order.
+/// Rust's `DefaultHasher` does not guarantee a stable algorithm across
+/// releases, so we pick our own constants.
 fn seed_from_ordering(ordering: &[usize]) -> u64 {
+    // 0x9E3779B97F4A7C15 is the 64-bit golden-ratio constant; 0x100000001B3 is
+    // the 64-bit FNV prime. Used here as an arbitrary mixing function - we
+    // only need determinism, not cryptographic quality.
     let mut seed: u64 = 0x9E3779B97F4A7C15;
     for &v in ordering {
         seed = seed.wrapping_mul(0x100000001B3).wrapping_add(v as u64 + 1);
@@ -381,7 +395,7 @@ fn refine_ordering(
         }
         current.swap(i, j);
         let cand = ordering_excess_cost(&current, statements_using, is_original_public, max_args);
-        // Accept equal-cost swaps too — sideways moves let us escape plateaus
+        // Accept equal-cost swaps too: sideways moves let us escape plateaus
         // toward a swap that finally reduces cost.
         if cand <= current_cost {
             current_cost = cand;
@@ -395,15 +409,17 @@ fn refine_ordering(
     current
 }
 
-/// DP-based partitioner. Given an ordering of statements, decide where to
-/// place K-1 boundaries using O(n²·K·W) dynamic programming. Returns the
-/// per-link statement assignment in original-index order if a feasible
-/// partition exists for this ordering at this K, else `None`.
+/// DP-based partitioner. Given an ordering, find where to place K-1 boundaries
+/// so every link satisfies the per-link caps. Returns the per-link assignment
+/// in original-index order, or `None` if no placement fits at this K.
 ///
-/// Insight: once the ordering is fixed, the set of wildcards "live across"
-/// any boundary position is a function of the ordering alone, so the only
-/// remaining decision is where the boundaries go. This is exact for the
-/// chosen ordering — the only heuristic is the ordering itself.
+/// Splitting a predicate is two problems: pick a statement order, then pick
+/// where to cut it. Picking the order is the hard part: that's the job of
+/// the heuristics upstream (RCM, refinement, random shuffles). Picking the
+/// cuts, given a fixed order, is easy: a left-to-right DP finds a valid
+/// placement if one exists. So if the splitter ever fails, it's because no
+/// ordering it tried worked, not because the cutting step gave up.
+/// Cost is O(n^2 * K * W).
 fn try_dp_at_k(
     ordering: &[usize],
     k: usize,
@@ -425,9 +441,9 @@ fn try_dp_at_k(
 
     // Wildcards incoming as public args to a link starting at boundary `a`:
     //   - a = 0: full original-public-arg signature, including any unused
-    //     originals — backward pruning never trims link 0.
-    //   - a > 0: originals still used at some position ≥ a, plus private
-    //     wildcards crossing a (used both < a and ≥ a).
+    //     originals: backward pruning never trims link 0.
+    //   - a > 0: originals still used at some position >= a, plus private
+    //     wildcards crossing a (used both < a and >= a).
     let incoming_at = |a: usize| -> HashSet<usize> {
         if a == 0 {
             return (0..num_wildcards)
@@ -450,11 +466,11 @@ fn try_dp_at_k(
         })
         .collect();
 
-    // dp[cur_k][p] = Some(prev_a) if [0..p) can be partitioned into exactly
-    // cur_k links, with the cur_k'th link being chunk [prev_a..p). Iterating
-    // `a` from largest to smallest gives partitions where earlier links fill
-    // to the cap and the trailing link absorbs the slack — matches the
-    // source-order shape tests expect.
+    // dp[cur_k][p] = Some(prev_a) if 0..p can be partitioned into exactly
+    // cur_k links, with the cur_k'th link being chunk prev_a..p. Iterating
+    // `a` from largest to smallest fills earlier links to the cap and lets
+    // the trailing link absorb any slack, keeping the resulting chain in
+    // source order whenever the caps permit it.
     let mut dp: Vec<Vec<Option<usize>>> = vec![vec![None; n + 1]; k + 1];
     dp[0][0] = Some(0);
 
@@ -587,7 +603,7 @@ fn build_chain_links_from_assignment(
 }
 
 /// Numeric encoding of a predicate's wildcard graph, ready for the DP
-/// partitioner (and for the test-only MILP oracle).
+/// partitioner.
 struct SplitInput {
     n: usize,
     wildcard_names: Vec<String>,
@@ -648,256 +664,16 @@ fn prepare_split_input(pred: &CustomPredicateDef) -> SplitInput {
     }
 }
 
-/// First per-link cap violation produced by a greedy bucket walk over a fixed
-/// ordering. Production code uses it to render a detailed error; the test
-/// helper uses it as the boolean "does this ordering admit a feasible chain".
-enum CapViolation {
-    PublicArgs {
-        link_index: usize,
-        statement_range: (usize, usize),
-        incoming_public: Vec<String>,
-        crossing_wildcards: Vec<String>,
-        total_public: usize,
-    },
-    TotalArgs {
-        link_index: usize,
-        public_count: usize,
-        private_count: usize,
-        total_count: usize,
-    },
-}
-
-/// Walk buckets of `ordered_wcs` applying the same cap rules the DP enforces,
-/// returning the first violation or `None` if the ordering admits a feasible
-/// chain. Shared between the production diagnostic and the brute-force
-/// completeness probe in the test module.
-fn first_cap_violation(
-    ordered_wcs: &[HashSet<String>],
-    original_public_args: &[String],
-    params: &Params,
-) -> Option<CapViolation> {
-    let n = ordered_wcs.len();
-    let max_arity = Params::max_custom_predicate_arity();
-    let max_args = Params::max_statement_args();
-    let max_wildcards = params.max_custom_predicate_wildcards;
-
-    if n <= max_arity {
-        return None;
-    }
-
-    // Suffix unions: suffix_wcs[p] is the union of ordered_wcs[p..n].
-    // Precomputed so each bucket's `live` set is an O(segment) intersection
-    // instead of an O(n) re-flat-map.
-    let mut suffix_wcs: Vec<HashSet<String>> = vec![HashSet::new(); n + 1];
-    for p in (0..n).rev() {
-        suffix_wcs[p] = suffix_wcs[p + 1].clone();
-        suffix_wcs[p].extend(ordered_wcs[p].iter().cloned());
-    }
-
-    let mut incoming_public: Vec<String> = original_public_args.to_vec();
-    let mut incoming_set: HashSet<String> = incoming_public.iter().cloned().collect();
-    let mut pos = 0;
-    let mut link_index = 0;
-
-    while pos < n {
-        let remaining = n - pos;
-        let is_last = remaining <= max_arity;
-        let bucket_size = if is_last { remaining } else { max_arity - 1 };
-        let end = pos + bucket_size;
-
-        let segment_wcs: HashSet<String> = ordered_wcs[pos..end]
-            .iter()
-            .flat_map(|s| s.iter().cloned())
-            .collect();
-
-        let live: HashSet<String> = if is_last {
-            HashSet::new()
-        } else {
-            segment_wcs
-                .intersection(&suffix_wcs[end])
-                .cloned()
-                .collect()
-        };
-
-        let mut new_promotions: Vec<String> = live
-            .iter()
-            .filter(|w| !incoming_set.contains(*w))
-            .cloned()
-            .collect();
-        new_promotions.sort();
-        let total_public = incoming_public.len() + new_promotions.len();
-        if total_public > max_args {
-            return Some(CapViolation::PublicArgs {
-                link_index,
-                statement_range: (pos, end),
-                incoming_public,
-                crossing_wildcards: new_promotions,
-                total_public,
-            });
-        }
-
-        let private_args: Vec<String> = segment_wcs
-            .difference(&incoming_set)
-            .filter(|w| !live.contains(*w))
-            .cloned()
-            .collect();
-        let private_count = private_args.len();
-        let total_count = total_public + private_count;
-        if total_count > max_wildcards {
-            return Some(CapViolation::TotalArgs {
-                link_index,
-                public_count: total_public,
-                private_count,
-                total_count,
-            });
-        }
-
-        incoming_set.extend(new_promotions.iter().cloned());
-        incoming_public.extend(new_promotions);
-        pos = end;
-        link_index += 1;
-    }
-
-    None
-}
-
-/// Per-statement wildcard names, indexed by original statement position. The
-/// inverse of `SplitInput::statements_using`; resolving names once up front
-/// is cheaper than `stmts.contains(&s)` scans inside the ordering loop.
-fn wildcards_per_statement(input: &SplitInput) -> Vec<HashSet<String>> {
-    let mut out: Vec<HashSet<String>> = vec![HashSet::new(); input.n];
-    for (w, stmts) in input.statements_using.iter().enumerate() {
-        for &s in stmts {
-            out[s].insert(input.wildcard_names[w].clone());
-        }
-    }
-    out
-}
-
-/// Largest-span wildcard wins over a generic "group these N" hint: a single
-/// long live-range is usually the actionable refactor, while a multi-wildcard
-/// crossing typically can't be resolved without restructuring the predicate.
-fn refactor_suggestion_for(
-    crossing: &[String],
-    ordered_wcs: &[HashSet<String>],
-) -> Option<RefactorSuggestion> {
-    if crossing.is_empty() {
-        return None;
-    }
-    let mut spans: Vec<(String, usize, usize, usize)> = Vec::new();
-    for wildcard in crossing {
-        let mut first_use = None;
-        let mut last_use = None;
-        for (i, wcs) in ordered_wcs.iter().enumerate() {
-            if wcs.contains(wildcard) {
-                if first_use.is_none() {
-                    first_use = Some(i);
-                }
-                last_use = Some(i);
-            }
-        }
-        if let (Some(first), Some(last)) = (first_use, last_use) {
-            spans.push((wildcard.clone(), first, last, last - first));
-        }
-    }
-    spans.sort_by(|a, b| b.3.cmp(&a.3));
-    if let Some((wildcard, first, last, span)) = spans.first() {
-        if *span > 3 {
-            return Some(RefactorSuggestion::ReduceWildcardSpan {
-                wildcard: wildcard.clone(),
-                first_use: *first,
-                last_use: *last,
-                span: *span,
-            });
-        }
-    }
-    if crossing.len() > 1 {
-        let mut sorted = crossing.to_vec();
-        sorted.sort();
-        return Some(RefactorSuggestion::GroupWildcardUsages { wildcards: sorted });
-    }
-    None
-}
-
-/// Run the bucket walk on the lowest-cost ordering and convert the first cap
-/// violation it finds into a detailed `SplittingError`. Falls back to
-/// `Infeasible` only when the walk finds no overflow at all (a feasible greedy
-/// partition the DP somehow missed).
-fn diagnose_dp_failure(
-    predicate: &str,
-    input: &SplitInput,
-    orderings: &[Vec<usize>],
-    params: &Params,
-) -> SplittingError {
-    let n = input.n;
-    let max_args = Params::max_statement_args();
-    let max_wildcards = params.max_custom_predicate_wildcards;
-
-    let ordering = orderings
-        .first()
-        .cloned()
-        .unwrap_or_else(|| (0..n).collect());
-
-    let wcs_per_stmt = wildcards_per_statement(input);
-    let ordered_wcs: Vec<HashSet<String>> =
-        ordering.iter().map(|&s| wcs_per_stmt[s].clone()).collect();
-
-    match first_cap_violation(&ordered_wcs, &input.original_public_args, params) {
-        Some(CapViolation::PublicArgs {
-            link_index,
-            statement_range,
-            incoming_public,
-            crossing_wildcards,
-            total_public,
-        }) => {
-            let suggestion =
-                refactor_suggestion_for(&crossing_wildcards, &ordered_wcs).map(Box::new);
-            SplittingError::TooManyPublicArgsAtSplit {
-                predicate: predicate.to_string(),
-                context: Box::new(SplitContext {
-                    split_index: link_index,
-                    statement_range,
-                    incoming_public,
-                    crossing_wildcards,
-                    total_public,
-                }),
-                max_allowed: max_args,
-                suggestion,
-            }
-        }
-        Some(CapViolation::TotalArgs {
-            link_index,
-            public_count,
-            private_count,
-            total_count,
-        }) => SplittingError::TooManyTotalArgsInChainLink {
-            predicate: predicate.to_string(),
-            link_index,
-            public_count,
-            private_count,
-            total_count,
-            max_allowed: max_wildcards,
-        },
-        None => SplittingError::Infeasible {
-            predicate: predicate.to_string(),
-            max_links: n,
-            max_statement_args: max_args,
-            max_wildcards,
-        },
-    }
-}
-
 /// Split a predicate into a chain via DP partitioning. Tries every K from
 /// `K_min` to `n` across a small set of heuristic orderings, returning the
 /// first feasible chain. If every (ordering, K) pair fails, walks the
 /// lowest-cost ordering bucket-by-bucket and emits the first cap violation
-/// as a detailed [`SplittingError`]; falls back to [`SplittingError::Infeasible`]
-/// only if even that walk doesn't surface a cap overflow.
+/// as a detailed [`SplittingError`].
 fn split_into_chain(
     pred: &CustomPredicateDef,
     params: &Params,
 ) -> Result<(Vec<CustomPredicateDef>, SplitChainInfo), SplittingError> {
-    use rand::{Rng, SeedableRng};
+    use rand::{seq::SliceRandom, SeedableRng};
     use rand_chacha::ChaCha20Rng;
 
     let original_name = pred.name.name.clone();
@@ -929,6 +705,11 @@ fn split_into_chain(
     // from a different seed. Tight predicates (4 public args, dense private
     // wildcard pool > max_arity) have narrow feasibility basins that a
     // single refinement from the RCM optimum routinely misses.
+    //
+    // Cost 0 means every position fits the public-args cap, but DP also
+    // checks the total-wildcards cap which cost doesn't model, so all seeds
+    // are refined unconditionally; the DP search picks the first one that
+    // satisfies both caps.
     let mut refined_seeds: Vec<Vec<usize>> = orderings.clone();
     refined_seeds.sort_by_key(|o| cost(o));
     refined_seeds.truncate(REFINE_STARTS);
@@ -937,29 +718,28 @@ fn split_into_chain(
     let mut shuffle_rng = ChaCha20Rng::seed_from_u64(seed_from_ordering(&identity));
     for _ in 0..REFINE_RANDOM_STARTS {
         let mut shuffled: Vec<usize> = (0..n).collect();
-        for i in (1..n).rev() {
-            let j = shuffle_rng.gen_range(0..=i);
-            shuffled.swap(i, j);
-        }
+        shuffled.shuffle(&mut shuffle_rng);
         refined_seeds.push(shuffled);
     }
 
-    let mut refined: Vec<Vec<usize>> = refined_seeds
+    let mut refined: Vec<(Vec<usize>, usize)> = refined_seeds
         .into_iter()
         .map(|seed| {
-            refine_ordering(
+            let r = refine_ordering(
                 seed,
                 &input.statements_using,
                 &input.is_original_public,
                 max_args,
                 REFINE_ITERATIONS,
-            )
+            );
+            let c = cost(&r);
+            (r, c)
         })
         .collect();
     // Refined orderings go first so DP probes the lowest-bandwidth candidates
     // before the bulk RCM list.
-    refined.sort_by_key(|o| cost(o));
-    for r in refined.into_iter().rev() {
+    refined.sort_by_key(|(_, c)| *c);
+    for (r, _) in refined.into_iter().rev() {
         if !orderings.contains(&r) {
             orderings.insert(0, r);
         }
@@ -982,16 +762,13 @@ fn split_into_chain(
     let (_k, assignment) = match found {
         Some(f) => f,
         None => {
-            return Err(diagnose_dp_failure(
-                &original_name,
-                &input,
-                &orderings,
-                params,
-            ))
+            // Lowest-cost ordering is at orderings[0] by construction.
+            let chosen = orderings.first().map(|o| o.as_slice()).unwrap_or(&identity);
+            return Err(diagnose_dp_failure(&original_name, &input, chosen, params));
         }
     };
 
-    // Reorder map: original index → position in flattened chain.
+    // Reorder map: original index -> position in flattened chain.
     let mut reorder_map = vec![0usize; n];
     {
         let mut flat = 0usize;
@@ -1175,6 +952,250 @@ fn validate_chain(chain: &[CustomPredicateDef], params: &Params) {
             total,
             params.max_custom_predicate_wildcards,
         );
+    }
+}
+
+// ============================================================================
+// Failure path. Everything below runs only when the DP exhausts every
+// (ordering, K) pair without finding a feasible partition. It walks the
+// lowest-cost ordering bucket-by-bucket to surface the first cap that
+// overflows and renders a structured error. Not on the critical path: a bug
+// here makes diagnostics worse, not splits wrong.
+//
+// `first_cap_violation` mirrors the per-link cap rules in `try_dp_at_k`; if
+// those rules change, update both.
+// ============================================================================
+
+/// First per-link cap violation produced by a greedy bucket walk over a fixed
+/// ordering.
+enum CapViolation {
+    PublicArgs {
+        link_index: usize,
+        statement_range: (usize, usize),
+        incoming_public: Vec<String>,
+        crossing_wildcards: Vec<String>,
+        total_public: usize,
+    },
+    TotalArgs {
+        link_index: usize,
+        public_count: usize,
+        private_count: usize,
+        total_count: usize,
+    },
+}
+
+/// Walk buckets of `ordered_wcs` applying the same cap rules the DP enforces,
+/// returning the first violation or `None` if the ordering admits a feasible
+/// chain.
+fn first_cap_violation(
+    ordered_wcs: &[HashSet<String>],
+    original_public_args: &[String],
+    params: &Params,
+) -> Option<CapViolation> {
+    let n = ordered_wcs.len();
+    let max_arity = Params::max_custom_predicate_arity();
+    let max_args = Params::max_statement_args();
+    let max_wildcards = params.max_custom_predicate_wildcards;
+
+    if n <= max_arity {
+        return None;
+    }
+
+    // Suffix unions: suffix_wcs[p] is the union of ordered_wcs[p..n].
+    // Precomputed so each bucket's `live` set is an O(segment) intersection
+    // instead of an O(n) re-flat-map.
+    let mut suffix_wcs: Vec<HashSet<String>> = vec![HashSet::new(); n + 1];
+    for p in (0..n).rev() {
+        suffix_wcs[p] = suffix_wcs[p + 1].clone();
+        suffix_wcs[p].extend(ordered_wcs[p].iter().cloned());
+    }
+
+    let mut incoming_public: Vec<String> = original_public_args.to_vec();
+    let mut incoming_set: HashSet<String> = incoming_public.iter().cloned().collect();
+    let mut pos = 0;
+    let mut link_index = 0;
+
+    while pos < n {
+        let remaining = n - pos;
+        let is_last = remaining <= max_arity;
+        let bucket_size = if is_last { remaining } else { max_arity - 1 };
+        let end = pos + bucket_size;
+
+        let segment_wcs: HashSet<String> = ordered_wcs[pos..end]
+            .iter()
+            .flat_map(|s| s.iter().cloned())
+            .collect();
+
+        let live: HashSet<String> = if is_last {
+            HashSet::new()
+        } else {
+            segment_wcs
+                .intersection(&suffix_wcs[end])
+                .cloned()
+                .collect()
+        };
+
+        let mut new_promotions: Vec<String> = live
+            .iter()
+            .filter(|w| !incoming_set.contains(*w))
+            .cloned()
+            .collect();
+        new_promotions.sort();
+        let total_public = incoming_public.len() + new_promotions.len();
+        if total_public > max_args {
+            return Some(CapViolation::PublicArgs {
+                link_index,
+                statement_range: (pos, end),
+                incoming_public,
+                crossing_wildcards: new_promotions,
+                total_public,
+            });
+        }
+
+        let private_args: Vec<String> = segment_wcs
+            .difference(&incoming_set)
+            .filter(|w| !live.contains(*w))
+            .cloned()
+            .collect();
+        let private_count = private_args.len();
+        let total_count = total_public + private_count;
+        if total_count > max_wildcards {
+            return Some(CapViolation::TotalArgs {
+                link_index,
+                public_count: total_public,
+                private_count,
+                total_count,
+            });
+        }
+
+        incoming_set.extend(new_promotions.iter().cloned());
+        incoming_public.extend(new_promotions);
+        pos = end;
+        link_index += 1;
+    }
+
+    None
+}
+
+/// Per-statement wildcard names, indexed by original statement position. The
+/// inverse of `SplitInput::statements_using`; resolving names once up front
+/// is cheaper than `stmts.contains(&s)` scans inside the ordering loop.
+fn wildcards_per_statement(input: &SplitInput) -> Vec<HashSet<String>> {
+    let mut out: Vec<HashSet<String>> = vec![HashSet::new(); input.n];
+    for (w, stmts) in input.statements_using.iter().enumerate() {
+        for &s in stmts {
+            out[s].insert(input.wildcard_names[w].clone());
+        }
+    }
+    out
+}
+
+/// Largest-span wildcard wins over a generic "group these N" hint: a single
+/// long live-range is usually the actionable refactor, while a multi-wildcard
+/// crossing typically can't be resolved without restructuring the predicate.
+fn refactor_suggestion_for(
+    crossing: &[String],
+    ordered_wcs: &[HashSet<String>],
+) -> Option<RefactorSuggestion> {
+    if crossing.is_empty() {
+        return None;
+    }
+    let mut spans: Vec<(String, usize, usize, usize)> = Vec::new();
+    for wildcard in crossing {
+        let mut first_use = None;
+        let mut last_use = None;
+        for (i, wcs) in ordered_wcs.iter().enumerate() {
+            if wcs.contains(wildcard) {
+                if first_use.is_none() {
+                    first_use = Some(i);
+                }
+                last_use = Some(i);
+            }
+        }
+        if let (Some(first), Some(last)) = (first_use, last_use) {
+            spans.push((wildcard.clone(), first, last, last - first));
+        }
+    }
+    spans.sort_by(|a, b| b.3.cmp(&a.3));
+    if let Some((wildcard, first, last, span)) = spans.first() {
+        // A span longer than `max_arity - 2` necessarily crosses at least one
+        // link boundary regardless of where the split is placed, which is the
+        // case where "reduce this wildcard's live range" is actionable advice.
+        if *span > 3 {
+            return Some(RefactorSuggestion::ReduceWildcardSpan {
+                wildcard: wildcard.clone(),
+                first_use: *first,
+                last_use: *last,
+                span: *span,
+            });
+        }
+    }
+    if crossing.len() > 1 {
+        let mut sorted = crossing.to_vec();
+        sorted.sort();
+        return Some(RefactorSuggestion::GroupWildcardUsages { wildcards: sorted });
+    }
+    None
+}
+
+/// Run the bucket walk on the lowest-cost ordering and convert the first cap
+/// violation it finds into a detailed `SplittingError`. `first_cap_violation`
+/// is guaranteed to return `Some` here: the bucket walk is a strict subset of
+/// the partitions the DP searches, so if the DP failed for every (ordering, K),
+/// greedy must also fail on the chosen ordering.
+fn diagnose_dp_failure(
+    predicate: &str,
+    input: &SplitInput,
+    ordering: &[usize],
+    params: &Params,
+) -> SplittingError {
+    let max_args = Params::max_statement_args();
+    let max_wildcards = params.max_custom_predicate_wildcards;
+
+    let wcs_per_stmt = wildcards_per_statement(input);
+    let ordered_wcs: Vec<HashSet<String>> =
+        ordering.iter().map(|&s| wcs_per_stmt[s].clone()).collect();
+
+    match first_cap_violation(&ordered_wcs, &input.original_public_args, params) {
+        Some(CapViolation::PublicArgs {
+            link_index,
+            statement_range,
+            incoming_public,
+            crossing_wildcards,
+            total_public,
+        }) => {
+            let suggestion =
+                refactor_suggestion_for(&crossing_wildcards, &ordered_wcs).map(Box::new);
+            SplittingError::TooManyPublicArgsAtSplit {
+                predicate: predicate.to_string(),
+                context: Box::new(SplitContext {
+                    split_index: link_index,
+                    statement_range,
+                    incoming_public,
+                    crossing_wildcards,
+                    total_public,
+                }),
+                max_allowed: max_args,
+                suggestion,
+            }
+        }
+        Some(CapViolation::TotalArgs {
+            link_index,
+            public_count,
+            private_count,
+            total_count,
+        }) => SplittingError::TooManyTotalArgsInChainLink {
+            predicate: predicate.to_string(),
+            link_index,
+            public_count,
+            private_count,
+            total_count,
+            max_allowed: max_wildcards,
+        },
+        None => unreachable!(
+            "DP failed for every (ordering, K) but greedy walk found no cap violation on '{}'",
+            predicate
+        ),
     }
 }
 
@@ -1457,7 +1478,7 @@ mod tests {
         let pred = parse_predicate(input);
         let params = Params::default();
 
-        let result = split_predicate_if_needed(&pred, &params);
+        let result = split_predicate_if_needed(pred, &params);
         assert!(result.is_ok());
 
         let split_result = result.unwrap();
@@ -1481,7 +1502,7 @@ mod tests {
         let pred = parse_predicate(input);
         let params = Params::default(); // max_custom_predicate_arity = 5
 
-        let result = split_predicate_if_needed(&pred, &params);
+        let result = split_predicate_if_needed(pred, &params);
         assert!(result.is_ok());
 
         let split_result = result.unwrap();
@@ -1530,7 +1551,7 @@ mod tests {
         let pred = parse_predicate(input);
         let params = Params::default(); // max_custom_predicate_arity = 5
 
-        let result = split_predicate_if_needed(&pred, &params);
+        let result = split_predicate_if_needed(pred, &params);
         assert!(result.is_ok());
 
         let split_result = result.unwrap();
@@ -1579,7 +1600,7 @@ mod tests {
         let pred = parse_predicate(input);
         let params = Params::default();
 
-        let result = split_predicate_if_needed(&pred, &params);
+        let result = split_predicate_if_needed(pred, &params);
         assert!(result.is_ok());
 
         let split_result = result.unwrap();
@@ -1607,8 +1628,6 @@ mod tests {
         );
     }
 
-    // --- Regression tests ---
-
     /// Statements that reference only public args should be deferred until private-wildcard
     /// statements have been clustered, so they don't consume bucket slots that would reduce
     /// liveness at split boundaries.
@@ -1619,7 +1638,7 @@ mod tests {
     #[test]
     fn test_split_succeeds_with_four_public_args_and_public_only_statements() {
         // Optimal split: bucket0={0,1,2,3}, bucket1={4,5,6}
-        // Only W1 crosses (used in 0,1 and 4), total = 4 public + 1 crossing = 5 ✓
+        // Only W1 crosses (used in 0,1 and 4), total = 4 public + 1 crossing = 5 (OK)
         let input = r#"
             pred(A, B, C, D, private: W1, W2) = AND(
                 Equal(W1["x"], A["v"])
@@ -1635,10 +1654,10 @@ mod tests {
         let pred = parse_predicate(input);
         let params = Params::default();
 
-        let result = split_predicate_if_needed(&pred, &params);
+        let result = split_predicate_if_needed(pred, &params);
         assert!(
             result.is_ok(),
-            "Should find a valid split with ≤1 crossing wildcard, got: {:?}",
+            "Should find a valid split with <=1 crossing wildcard, got: {:?}",
             result.err()
         );
     }
@@ -1664,7 +1683,7 @@ mod tests {
         let pred = parse_predicate(input);
         let params = Params::default();
 
-        let result = split_predicate_if_needed(&pred, &params).unwrap();
+        let result = split_predicate_if_needed(pred, &params).unwrap();
         // chain[0] is the continuation (_1 suffix), chain[1] is the original
         let continuation = result
             .predicates
@@ -1759,7 +1778,7 @@ mod tests {
     /// 6 statements with 2 public args (A0, A1) and 5 private wildcards
     /// (T0..T4). A feasible 4+2 chain exists where exactly 3 wildcards cross
     /// the boundary (3 promotions + 2 incoming = 5 total public, hitting the
-    /// cap). The splitter must find one — a partition that puts an extra
+    /// cap). The splitter must find one: a partition that puts an extra
     /// wildcard across the boundary fails the per-link public-arg cap.
     ///
     /// Found by random search with seed 0xC0FFEE; inlined for determinism.
@@ -1780,7 +1799,7 @@ mod tests {
         );
         let params = Params::default();
 
-        let result = split_predicate_if_needed(&pred, &params);
+        let result = split_predicate_if_needed(pred, &params);
         assert!(
             result.is_ok(),
             "splitter rejected a known-feasible input: {}",
@@ -1810,7 +1829,7 @@ mod tests {
         );
         let params = Params::default();
 
-        let err = split_predicate_if_needed(&pred, &params).expect_err("splitter should fail");
+        let err = split_predicate_if_needed(pred, &params).expect_err("splitter should fail");
         match err {
             SplittingError::TooManyTotalArgsInChainLink {
                 predicate,
@@ -1892,7 +1911,7 @@ mod tests {
         }
     }
 
-    /// 51-statement predicate with a 13-link wildcard chain — modelled on
+    /// 51-statement predicate with a 13-link wildcard chain, modelled on
     /// `CraftRefineryCracked` from the zk-craft episode-1 plugin. K_min = 13
     /// with `max_custom_predicate_arity = 5`. Acts as a real-world-shaped
     /// stress test for splitter latency.
@@ -1993,7 +2012,7 @@ mod tests {
             ],
         );
         let params = Params::default();
-        let result = split_predicate_if_needed(&pred, &params);
+        let result = split_predicate_if_needed(pred, &params);
         assert!(result.is_ok(), "split failed: {:?}", result.err());
     }
 
@@ -2008,6 +2027,8 @@ mod tests {
     /// crowded. Shapes that almost always fit easily are uninteresting here.
     ///
     /// Run with `cargo test --release dp_milp_parity -- --ignored --nocapture`.
+    /// `#[ignore]`d because it runs MILP 1200 times (~90s on a developer laptop).
+    /// Last run clean on 2026-05-11: 1200 trials, 1177 MILP-feasible, 0 DP divergences.
     #[test]
     #[ignore]
     fn dp_milp_parity() {
@@ -2089,7 +2110,7 @@ mod tests {
                         }
 
                         let dp_start = std::time::Instant::now();
-                        let dp_result = split_predicate_if_needed(&pred, &params);
+                        let dp_result = split_predicate_if_needed(pred, &params);
                         let dp_elapsed = dp_start.elapsed();
                         dp_total += dp_elapsed;
                         if dp_elapsed > dp_max {
