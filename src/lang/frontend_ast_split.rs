@@ -6,50 +6,46 @@
 //! that span a split boundary must be promoted to public arguments on the
 //! continuation, since they need the same binding on both sides.
 //!
-//! The split is computed by an MILP that, for a given number of links K:
+//! The split is computed by a dynamic-programming partitioner. The pipeline:
 //!
-//! - Assigns each statement to exactly one link.
-//! - Tracks which wildcards are used and where, derives "live ranges," and
-//!   counts each link's declared public/private wildcards.
-//! - Caps each link's public-arg count at `max_statement_args` and total
-//!   declared wildcards at `max_custom_predicate_wildcards`.
-//! - Reserves a chain-call slot on every non-last link.
+//! 1. **Ordering search.** Try the source order, then a handful of (R)CM
+//!    orderings (Reverse Cuthill-McKee on the projected wildcard-statement
+//!    adjacency graph), then one local-search refinement pass on the
+//!    lowest-cost ordering. RCM is designed to minimise bandwidth, which is
+//!    exactly what we want at split boundaries.
+//! 2. **DP partition.** For each (ordering, K) pair with K running from
+//!    `K_min` upward, place K-1 boundaries to satisfy the per-link caps:
+//!    statement count at most `max_arity` (or `max_arity - 1` on non-last
+//!    links to reserve a chain-call slot), public-args-in at most
+//!    `max_statement_args`, and total declared wildcards at most
+//!    `max_custom_predicate_wildcards`. The DP is exact for a fixed ordering;
+//!    the only heuristic is the ordering itself.
+//! 3. **Diagnostic on failure.** If no (ordering, K) pair yields a feasible
+//!    partition, walk the lowest-cost ordering bucket-by-bucket and emit
+//!    [`SplittingError::TooManyPublicArgsAtSplit`] or
+//!    [`SplittingError::TooManyTotalArgsInChainLink`] for the first cap
+//!    overflow, with an actionable [`RefactorSuggestion`] when one applies.
 //!
-//! We try `K = K_min, K_min+1, ...` and stop at the first feasible K. The
-//! objective is a tiny `Σ (n-s) · i · assign[s][i]` tiebreaker that biases
-//! statements with low original index toward low-index links — so the chain
-//! roughly follows source order when nothing else forces a rearrangement.
+//! Determinism: all heuristics are seeded from the input (RCM start nodes,
+//! refinement RNG), so the same input always produces the same chain across
+//! clients and platforms.
 //!
-//! On infeasibility for every K up to `n`, we emit
-//! [`SplittingError::Infeasible`].
+//! A test-only MILP oracle (`mod milp_oracle`) is kept alongside this module
+//! to cross-validate the DP partitioner: whenever MILP finds a feasible K,
+//! DP must also find one (possibly at a larger K).
 
 #![allow(clippy::needless_range_loop)]
 
-use std::{
-    collections::{HashMap, HashSet, VecDeque},
-    fmt,
-};
-
-use good_lp::{
-    constraint, solvers::scip::SCIPProblem, variable, Expression, ProblemVariables, Solution,
-    SolverModel, Variable,
-};
-use itertools::Itertools;
-
-/// Solver random-seed shift. Pinning this gives within-version reproducibility
-/// against any internal SCIP heuristics that consult the seed (random
-/// branching, restart shuffles, etc.). Cross-version determinism still
-/// depends on SCIP not changing its algorithms; pin russcip in `Cargo.toml`
-/// to control that.
-const SCIP_RANDOM_SEED: i32 = 0;
+use std::collections::{HashMap, HashSet, VecDeque};
 
 pub use crate::lang::error::SplittingError;
-use crate::{lang::frontend_ast::*, middleware::Params};
-
-/// Threshold for interpreting MILP solver's floating-point results as binary.
-/// The solver returns continuous values in [0, 1] for binary variables;
-/// values > 0.5 are interpreted as "true" (1), otherwise "false" (0).
-const SOLVER_BINARY_THRESHOLD: f64 = 0.5;
+use crate::{
+    lang::{
+        error::{RefactorSuggestion, SplitContext},
+        frontend_ast::*,
+    },
+    middleware::Params,
+};
 
 /// A link in the predicate chain
 #[derive(Debug, Clone)]
@@ -98,68 +94,6 @@ pub struct SplitResult {
     pub chain_info: Option<SplitChainInfo>,
 }
 
-/// Per-link bottleneck found by [`analyze_infeasibility`]: how far each
-/// binding link overshoots the per-link caps, and which wildcards crowd it.
-#[derive(Debug, Clone)]
-pub struct LinkOvershoot {
-    pub link_index: usize,
-    /// Number of public-args slots over `max_statement_args` for this link.
-    pub public_args_overflow: usize,
-    /// Number of total declared-wildcard slots over `max_custom_predicate_wildcards`.
-    pub total_args_overflow: usize,
-    /// Wildcards passed in to this link as public args (in the elastic solution).
-    pub public_args_in: Vec<String>,
-    /// Wildcards declared as private at this link (in the elastic solution).
-    pub private_args: Vec<String>,
-}
-
-/// Diagnostic report explaining why [`split_predicate_if_needed`] returned
-/// [`SplittingError::Infeasible`]. Produced by [`analyze_infeasibility`] on
-/// demand — the splitter itself doesn't compute it, since computing it
-/// requires a second LP solve.
-#[derive(Debug, Clone)]
-pub struct InfeasibilityReport {
-    pub predicate: String,
-    /// Number of links the elastic LP was solved at (the minimum K).
-    pub k: usize,
-    /// Per-link overshoots in link-index order. Links not over any cap are omitted.
-    pub overshoots: Vec<LinkOvershoot>,
-}
-
-impl fmt::Display for InfeasibilityReport {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        writeln!(
-            f,
-            "Predicate '{}' cannot be split into {} link(s) without overflowing per-link caps:",
-            self.predicate, self.k
-        )?;
-        let max_args = Params::max_statement_args();
-        for o in &self.overshoots {
-            if o.public_args_overflow > 0 {
-                writeln!(
-                    f,
-                    "  link {}: public_args_in = [{}] ({} args, {} over the {}-arg cap)",
-                    o.link_index,
-                    o.public_args_in.join(", "),
-                    o.public_args_in.len(),
-                    o.public_args_overflow,
-                    max_args
-                )?;
-            }
-            if o.total_args_overflow > 0 {
-                writeln!(
-                    f,
-                    "  link {}: declared {} wildcards (public_args_in + private_args), {} over the cap",
-                    o.link_index,
-                    o.public_args_in.len() + o.private_args.len(),
-                    o.total_args_overflow,
-                )?;
-            }
-        }
-        Ok(())
-    }
-}
-
 /// Early validation: Check if predicate is fundamentally splittable
 pub fn validate_predicate_is_splittable(pred: &CustomPredicateDef) -> Result<(), SplittingError> {
     let public_args = pred.args.public_args.len();
@@ -184,7 +118,6 @@ pub fn split_predicate_if_needed(
     params: &Params,
 ) -> Result<SplitResult, SplittingError> {
     validate_predicate_is_splittable(pred)?;
-    eprintln!("Splitting predicate: {}", pred);
 
     if pred.statements.len() <= Params::max_custom_predicate_arity() {
         return Ok(SplitResult {
@@ -194,16 +127,6 @@ pub fn split_predicate_if_needed(
     }
 
     let (predicates, chain_info) = split_into_chain(pred, params)?;
-
-    eprintln!(
-        "Split result: {}",
-        predicates
-            .clone()
-            .into_iter()
-            .map(|p| format!("{}", p))
-            .join("\n\n")
-    );
-
     Ok(SplitResult {
         predicates,
         chain_info: Some(chain_info),
@@ -376,9 +299,8 @@ fn ordering_excess_cost(
 ) -> usize {
     let n = ordering.len();
     let num_wildcards = is_original_public.len();
-    let WildcardLifetimes {
-        prefix, suffix, ..
-    } = wildcard_lifetimes(ordering, statements_using, num_wildcards);
+    let WildcardLifetimes { prefix, suffix, .. } =
+        wildcard_lifetimes(ordering, statements_using, num_wildcards);
     let mut total: usize = 0;
     for p in 1..n {
         let mut bw: usize = 0;
@@ -559,274 +481,11 @@ fn try_dp_at_k(
     Some(links)
 }
 
-/// MILP outcome for a single K: `links[i]` is the list of original statement
+/// Per-link statement assignment: `links[i]` is the list of original statement
 /// indices placed in link i, in original order.
 type LinkAssignment = Vec<Vec<usize>>;
 
-/// MILP variables shared by the strict feasibility solve and the elastic
-/// diagnostic solve.
-///
-/// All variables are binary. Constraints (C1..C7 below) make every variable
-/// other than `assign` an exact function of the assignment, so the strict and
-/// elastic models differ only in how they handle the per-link caps (C8/C9).
-struct MilpVars {
-    n: usize,
-    k: usize,
-    num_wildcards: usize,
-    /// `assign[s][i]`: statement `s` placed in link `i`.
-    assign: Vec<Vec<Variable>>,
-    /// `u[w][i]`: wildcard `w` referenced by some statement at link `i`.
-    u: Vec<Vec<Variable>>,
-    /// `before[w][i]`: cumulative OR of `u[w][·]` from the left — w is used at link ≤ i.
-    before: Vec<Vec<Variable>>,
-    /// `after[w][i]`: cumulative OR of `u[w][·]` from the right — w is used at link ≥ i.
-    after: Vec<Vec<Variable>>,
-    /// `pubin[w][i]`: w appears in link i's `public_args_in`.
-    pubin: Vec<Vec<Variable>>,
-    /// `privin[w][i]`: w appears in link i's `private_args` list.
-    privin: Vec<Vec<Variable>>,
-}
-
-fn mk_binary_grid(vars: &mut ProblemVariables, rows: usize, cols: usize) -> Vec<Vec<Variable>> {
-    (0..rows)
-        .map(|_| (0..cols).map(|_| vars.add(variable().binary())).collect())
-        .collect()
-}
-
-fn declare_milp_vars(
-    vars: &mut ProblemVariables,
-    n: usize,
-    k: usize,
-    num_wildcards: usize,
-) -> MilpVars {
-    MilpVars {
-        n,
-        k,
-        num_wildcards,
-        assign: mk_binary_grid(vars, n, k),
-        u: mk_binary_grid(vars, num_wildcards, k),
-        before: mk_binary_grid(vars, num_wildcards, k),
-        after: mk_binary_grid(vars, num_wildcards, k),
-        pubin: mk_binary_grid(vars, num_wildcards, k),
-        privin: mk_binary_grid(vars, num_wildcards, k),
-    }
-}
-
-/// Source-order tiebreaker: prefers low-original-index statements at low-link
-/// indices, so the chain roughly preserves source order when nothing else
-/// forces a rearrangement.
-///
-/// Coefficient `(n - s)` is strictly positive for every statement, so every
-/// pairwise swap of distinct `(s, i)` assignments changes the objective by a
-/// non-zero amount. That makes the tiebreaker uniquely-optimising — the
-/// solver can't pick between equivalent placements of any single statement.
-fn source_order_tiebreaker(v: &MilpVars) -> Expression {
-    (0..v.n)
-        .flat_map(|s| (0..v.k).map(move |i| (s, i)))
-        .map(|(s, i)| ((v.n - s) as f64) * (i as f64) * v.assign[s][i])
-        .sum()
-}
-
-/// Build a SCIP model with the splitter's deterministic-build settings:
-/// pinned random seed and silent output. When `accept_first_feasible` is
-/// true, SCIP terminates as soon as it has an integer-feasible solution
-/// rather than proving optimality — used by the strict MILP, where the
-/// objective is just a tiebreaker. The elastic diagnostic LP needs proper
-/// optimisation (minimum slack) so it must pass `false`.
-fn build_scip_model(
-    vars: ProblemVariables,
-    objective: Expression,
-    accept_first_feasible: bool,
-) -> SCIPProblem {
-    let mut model = vars
-        .minimise(objective)
-        .using(good_lp::solvers::scip::scip)
-        .set_option("randomization/randomseedshift", SCIP_RANDOM_SEED)
-        .set_verbose(false);
-    if accept_first_feasible {
-        // Huge gap → any integer-feasible incumbent satisfies the gap limit,
-        // so SCIP exits with `GapLimit` after the first feasible solution.
-        // ~10× faster than proving optimality on the dense, weakly-objective
-        // models we hand SCIP, and the tiebreaker still steers the primal
-        // heuristics toward source-ordered partitions.
-        model = model
-            .set_option("limits/gap", 1e20_f64)
-            // Cuts tighten the LP bound, but with gap=∞ we don't need a
-            // tight bound — only a feasible integer solution. Disabling
-            // separation alone roughly halves solve time on the tested cases.
-            .set_option("separating/maxrounds", 0_i32)
-            .set_option("separating/maxroundsroot", 0_i32);
-    }
-    model
-}
-
-/// Add the MILP's structural constraints (C1..C7): assignment, link size,
-/// `u`/`before`/`after`/`pubin`/`privin` definitions. Cap constraints (C8/C9)
-/// are added by the caller — the strict and elastic versions differ there.
-fn add_structural_constraints<M: SolverModel>(
-    model: &mut M,
-    v: &MilpVars,
-    statements_using: &[Vec<usize>],
-    is_original_public: &[bool],
-) {
-    let max_arity = Params::max_custom_predicate_arity();
-    let MilpVars {
-        n,
-        k,
-        num_wildcards,
-        assign,
-        u,
-        before,
-        after,
-        pubin,
-        privin,
-    } = v;
-    let (n, k, num_wildcards) = (*n, *k, *num_wildcards);
-
-    // C1: Each statement assigned to exactly one link.
-    for s in 0..n {
-        let sum: Expression = (0..k).map(|i| assign[s][i]).sum();
-        model.add_constraint(constraint!(sum == 1));
-    }
-
-    // C2: Per-link statement count. Non-last links reserve a slot for the
-    // chain call. Also require at least one statement per link.
-    for i in 0..k {
-        let cap = if i + 1 < k { max_arity - 1 } else { max_arity };
-        let sum_le: Expression = (0..n).map(|s| assign[s][i]).sum();
-        model.add_constraint(constraint!(sum_le <= cap as f64));
-        let sum_ge: Expression = (0..n).map(|s| assign[s][i]).sum();
-        model.add_constraint(constraint!(sum_ge >= 1));
-    }
-
-    // C3: u[w][i] is exactly the OR over s referencing w of assign[s][i].
-    for w in 0..num_wildcards {
-        for i in 0..k {
-            for &s in &statements_using[w] {
-                model.add_constraint(constraint!(u[w][i] >= assign[s][i]));
-            }
-            let upper: Expression = statements_using[w]
-                .iter()
-                .map(|&s| Expression::from(assign[s][i]))
-                .sum();
-            model.add_constraint(constraint!(u[w][i] <= upper));
-        }
-    }
-
-    // C4: before[w][i] = u[w][0] OR u[w][1] OR ... OR u[w][i].
-    for w in 0..num_wildcards {
-        model.add_constraint(constraint!(before[w][0] == u[w][0]));
-        for i in 1..k {
-            model.add_constraint(constraint!(before[w][i] >= before[w][i - 1]));
-            model.add_constraint(constraint!(before[w][i] >= u[w][i]));
-            model.add_constraint(constraint!(before[w][i] <= before[w][i - 1] + u[w][i]));
-        }
-    }
-
-    // C5: after[w][i] = u[w][i] OR u[w][i+1] OR ... OR u[w][k-1].
-    for w in 0..num_wildcards {
-        model.add_constraint(constraint!(after[w][k - 1] == u[w][k - 1]));
-        for i in (0..k - 1).rev() {
-            model.add_constraint(constraint!(after[w][i] >= after[w][i + 1]));
-            model.add_constraint(constraint!(after[w][i] >= u[w][i]));
-            model.add_constraint(constraint!(after[w][i] <= after[w][i + 1] + u[w][i]));
-        }
-    }
-
-    // C6: pubin definitions.
-    for w in 0..num_wildcards {
-        if is_original_public[w] {
-            // Original public args: declared at link 0 (predicate signature)
-            // and forwarded to link i iff used at some link ≥ i.
-            model.add_constraint(constraint!(pubin[w][0] == 1));
-            for i in 1..k {
-                model.add_constraint(constraint!(pubin[w][i] == after[w][i]));
-            }
-        } else {
-            // Private wildcards: pubin[w][i] = before[w][i-1] AND after[w][i]
-            // (used somewhere strictly before AND somewhere at i or later).
-            model.add_constraint(constraint!(pubin[w][0] == 0));
-            for i in 1..k {
-                model.add_constraint(constraint!(pubin[w][i] <= before[w][i - 1]));
-                model.add_constraint(constraint!(pubin[w][i] <= after[w][i]));
-                model.add_constraint(constraint!(
-                    pubin[w][i] >= before[w][i - 1] + after[w][i] - 1
-                ));
-            }
-        }
-    }
-
-    // C7: privin definitions.
-    for w in 0..num_wildcards {
-        if is_original_public[w] {
-            for i in 0..k {
-                model.add_constraint(constraint!(privin[w][i] == 0));
-            }
-        } else {
-            // privin[w][0] = u[w][0]: at link 0 there is no "before," so a
-            // private wildcard used at link 0 is necessarily declared private.
-            model.add_constraint(constraint!(privin[w][0] == u[w][0]));
-            for i in 1..k {
-                // privin[w][i] = u[w][i] AND NOT before[w][i-1]
-                model.add_constraint(constraint!(privin[w][i] <= u[w][i]));
-                model.add_constraint(constraint!(privin[w][i] <= 1 - before[w][i - 1]));
-                model.add_constraint(constraint!(privin[w][i] >= u[w][i] - before[w][i - 1]));
-            }
-        }
-    }
-}
-
-/// Try to partition `n` statements into exactly `k` links using MILP.
-///
-/// Returns `Some(assignment)` if a feasible partition exists, `None` if the
-/// model is infeasible at this K (caller should try a larger K).
-fn solve_milp_for_k(
-    n: usize,
-    k: usize,
-    statements_using: &[Vec<usize>],
-    is_original_public: &[bool],
-    params: &Params,
-) -> Option<LinkAssignment> {
-    let max_args = Params::max_statement_args();
-    let max_wildcards = params.max_custom_predicate_wildcards;
-    let num_wildcards = is_original_public.len();
-
-    let mut vars = ProblemVariables::new();
-    let v = declare_milp_vars(&mut vars, n, k, num_wildcards);
-    let objective = source_order_tiebreaker(&v);
-    let mut model = build_scip_model(vars, objective, true);
-    add_structural_constraints(&mut model, &v, statements_using, is_original_public);
-
-    // C8: per-link public-args cap (incoming chain-call args).
-    for i in 0..k {
-        let sum: Expression = (0..num_wildcards).map(|w| v.pubin[w][i]).sum();
-        model.add_constraint(constraint!(sum <= max_args as f64));
-    }
-
-    // C9: per-link total declared wildcards cap.
-    for i in 0..k {
-        let sum: Expression = (0..num_wildcards)
-            .map(|w| Expression::from(v.pubin[w][i]) + v.privin[w][i])
-            .sum();
-        model.add_constraint(constraint!(sum <= max_wildcards as f64));
-    }
-
-    let solution = model.solve().ok()?;
-
-    // Extract per-link statement lists in original-index order.
-    let mut links: LinkAssignment = vec![Vec::new(); k];
-    for s in 0..n {
-        for i in 0..k {
-            if solution.value(v.assign[s][i]) > SOLVER_BINARY_THRESHOLD {
-                links[i].push(s);
-                break;
-            }
-        }
-    }
-    Some(links)
-}
-
-/// Convert an MILP link assignment into [`ChainLink`]s, computing each link's
+/// Convert a link assignment into [`ChainLink`]s, computing each link's
 /// public/private/promoted wildcards from the assignment plus the original
 /// public-args list.
 fn build_chain_links_from_assignment(
@@ -907,9 +566,9 @@ fn build_chain_links_from_assignment(
     result
 }
 
-/// Numeric encoding of a predicate's wildcard graph, ready for either the
-/// strict MILP or the elastic diagnostic LP.
-struct MilpInput {
+/// Numeric encoding of a predicate's wildcard graph, ready for the DP
+/// partitioner (and for the test-only MILP oracle).
+struct SplitInput {
     n: usize,
     wildcard_names: Vec<String>,
     statements_using: Vec<Vec<usize>>,
@@ -917,7 +576,7 @@ struct MilpInput {
     original_public_args: Vec<String>,
 }
 
-fn prepare_milp_input(pred: &CustomPredicateDef) -> MilpInput {
+fn prepare_split_input(pred: &CustomPredicateDef) -> SplitInput {
     let original_public_args: Vec<String> = pred
         .args
         .public_args
@@ -960,7 +619,7 @@ fn prepare_milp_input(pred: &CustomPredicateDef) -> MilpInput {
         is_original_public[wildcard_index[name]] = true;
     }
 
-    MilpInput {
+    SplitInput {
         n: pred.statements.len(),
         wildcard_names,
         statements_using,
@@ -969,106 +628,251 @@ fn prepare_milp_input(pred: &CustomPredicateDef) -> MilpInput {
     }
 }
 
-/// Solve the elastic LP at the given K, returning per-link slack and
-/// wildcard membership for the binding links. Slack variables on each cap
-/// turn the otherwise-infeasible model into one that minimises constraint
-/// violation, exposing exactly which links are over their caps and by how
-/// much.
-fn solve_elastic_lp(k: usize, input: &MilpInput, params: &Params) -> Option<Vec<LinkOvershoot>> {
+/// First per-link cap violation produced by a greedy bucket walk over a fixed
+/// ordering. Production code uses it to render a detailed error; the test
+/// helper uses it as the boolean "does this ordering admit a feasible chain".
+enum CapViolation {
+    PublicArgs {
+        link_index: usize,
+        statement_range: (usize, usize),
+        incoming_public: Vec<String>,
+        crossing_wildcards: Vec<String>,
+        total_public: usize,
+    },
+    TotalArgs {
+        link_index: usize,
+        public_count: usize,
+        private_count: usize,
+        total_count: usize,
+    },
+}
+
+/// Walk buckets of `ordered_wcs` applying the same cap rules the DP enforces,
+/// returning the first violation or `None` if the ordering admits a feasible
+/// chain. Shared between the production diagnostic and the brute-force
+/// completeness probe in the test module.
+fn first_cap_violation(
+    ordered_wcs: &[HashSet<String>],
+    original_public_args: &[String],
+    params: &Params,
+) -> Option<CapViolation> {
+    let n = ordered_wcs.len();
+    let max_arity = Params::max_custom_predicate_arity();
     let max_args = Params::max_statement_args();
     let max_wildcards = params.max_custom_predicate_wildcards;
-    let num_wildcards = input.wildcard_names.len();
+
+    if n <= max_arity {
+        return None;
+    }
+
+    // Suffix unions: suffix_wcs[p] is the union of ordered_wcs[p..n].
+    // Precomputed so each bucket's `live` set is an O(segment) intersection
+    // instead of an O(n) re-flat-map.
+    let mut suffix_wcs: Vec<HashSet<String>> = vec![HashSet::new(); n + 1];
+    for p in (0..n).rev() {
+        suffix_wcs[p] = suffix_wcs[p + 1].clone();
+        suffix_wcs[p].extend(ordered_wcs[p].iter().cloned());
+    }
+
+    let mut incoming_public: Vec<String> = original_public_args.to_vec();
+    let mut incoming_set: HashSet<String> = incoming_public.iter().cloned().collect();
+    let mut pos = 0;
+    let mut link_index = 0;
+
+    while pos < n {
+        let remaining = n - pos;
+        let is_last = remaining <= max_arity;
+        let bucket_size = if is_last { remaining } else { max_arity - 1 };
+        let end = pos + bucket_size;
+
+        let segment_wcs: HashSet<String> = ordered_wcs[pos..end]
+            .iter()
+            .flat_map(|s| s.iter().cloned())
+            .collect();
+
+        let live: HashSet<String> = if is_last {
+            HashSet::new()
+        } else {
+            segment_wcs
+                .intersection(&suffix_wcs[end])
+                .cloned()
+                .collect()
+        };
+
+        let mut new_promotions: Vec<String> = live
+            .iter()
+            .filter(|w| !incoming_set.contains(*w))
+            .cloned()
+            .collect();
+        new_promotions.sort();
+        let total_public = incoming_public.len() + new_promotions.len();
+        if total_public > max_args {
+            return Some(CapViolation::PublicArgs {
+                link_index,
+                statement_range: (pos, end),
+                incoming_public,
+                crossing_wildcards: new_promotions,
+                total_public,
+            });
+        }
+
+        let private_args: Vec<String> = segment_wcs
+            .difference(&incoming_set)
+            .filter(|w| !live.contains(*w))
+            .cloned()
+            .collect();
+        let private_count = private_args.len();
+        let total_count = total_public + private_count;
+        if total_count > max_wildcards {
+            return Some(CapViolation::TotalArgs {
+                link_index,
+                public_count: total_public,
+                private_count,
+                total_count,
+            });
+        }
+
+        incoming_set.extend(new_promotions.iter().cloned());
+        incoming_public.extend(new_promotions);
+        pos = end;
+        link_index += 1;
+    }
+
+    None
+}
+
+/// Per-statement wildcard names, indexed by original statement position. The
+/// inverse of `SplitInput::statements_using`; resolving names once up front
+/// is cheaper than `stmts.contains(&s)` scans inside the ordering loop.
+fn wildcards_per_statement(input: &SplitInput) -> Vec<HashSet<String>> {
+    let mut out: Vec<HashSet<String>> = vec![HashSet::new(); input.n];
+    for (w, stmts) in input.statements_using.iter().enumerate() {
+        for &s in stmts {
+            out[s].insert(input.wildcard_names[w].clone());
+        }
+    }
+    out
+}
+
+/// Largest-span wildcard wins over a generic "group these N" hint: a single
+/// long live-range is usually the actionable refactor, while a multi-wildcard
+/// crossing typically can't be resolved without restructuring the predicate.
+fn refactor_suggestion_for(
+    crossing: &[String],
+    ordered_wcs: &[HashSet<String>],
+) -> Option<RefactorSuggestion> {
+    if crossing.is_empty() {
+        return None;
+    }
+    let mut spans: Vec<(String, usize, usize, usize)> = Vec::new();
+    for wildcard in crossing {
+        let mut first_use = None;
+        let mut last_use = None;
+        for (i, wcs) in ordered_wcs.iter().enumerate() {
+            if wcs.contains(wildcard) {
+                if first_use.is_none() {
+                    first_use = Some(i);
+                }
+                last_use = Some(i);
+            }
+        }
+        if let (Some(first), Some(last)) = (first_use, last_use) {
+            spans.push((wildcard.clone(), first, last, last - first));
+        }
+    }
+    spans.sort_by(|a, b| b.3.cmp(&a.3));
+    if let Some((wildcard, first, last, span)) = spans.first() {
+        if *span > 3 {
+            return Some(RefactorSuggestion::ReduceWildcardSpan {
+                wildcard: wildcard.clone(),
+                first_use: *first,
+                last_use: *last,
+                span: *span,
+            });
+        }
+    }
+    if crossing.len() > 1 {
+        let mut sorted = crossing.to_vec();
+        sorted.sort();
+        return Some(RefactorSuggestion::GroupWildcardUsages { wildcards: sorted });
+    }
+    None
+}
+
+/// Run the bucket walk on the lowest-cost ordering and convert the first cap
+/// violation it finds into a detailed `SplittingError`. Falls back to
+/// `Infeasible` only when the walk finds no overflow at all (a feasible greedy
+/// partition the DP somehow missed).
+fn diagnose_dp_failure(
+    predicate: &str,
+    input: &SplitInput,
+    orderings: &[Vec<usize>],
+    params: &Params,
+) -> SplittingError {
     let n = input.n;
+    let max_args = Params::max_statement_args();
+    let max_wildcards = params.max_custom_predicate_wildcards;
 
-    let mut vars = ProblemVariables::new();
-    let v = declare_milp_vars(&mut vars, n, k, num_wildcards);
-    let slack_pub: Vec<Variable> = (0..k).map(|_| vars.add(variable().min(0.0))).collect();
-    let slack_total: Vec<Variable> = (0..k).map(|_| vars.add(variable().min(0.0))).collect();
+    let ordering = orderings
+        .first()
+        .cloned()
+        .unwrap_or_else(|| (0..n).collect());
 
-    let slack_term: Expression = (0..k)
-        .map(|i| Expression::from(slack_pub[i]) + slack_total[i])
-        .sum();
-    // Tiebreaker bound is n²k². Scale so even the worst-case tiebreaker total
-    // is < 1 — never enough to outweigh a single unit of slack.
-    let scale = 1.0 / ((n * n * k * k + 1) as f64);
-    let objective = slack_term + scale * source_order_tiebreaker(&v);
+    let wcs_per_stmt = wildcards_per_statement(input);
+    let ordered_wcs: Vec<HashSet<String>> =
+        ordering.iter().map(|&s| wcs_per_stmt[s].clone()).collect();
 
-    let mut model = build_scip_model(vars, objective, false);
-    add_structural_constraints(
-        &mut model,
-        &v,
-        &input.statements_using,
-        &input.is_original_public,
-    );
-
-    // C8 elastic: Σ pubin[w][i] ≤ max_args + slack_pub[i].
-    for i in 0..k {
-        let sum: Expression = (0..num_wildcards).map(|w| v.pubin[w][i]).sum();
-        model.add_constraint(constraint!(sum <= max_args as f64 + slack_pub[i]));
-    }
-
-    // C9 elastic: Σ (pubin + privin)[w][i] ≤ max_wildcards + slack_total[i].
-    for i in 0..k {
-        let sum: Expression = (0..num_wildcards)
-            .map(|w| Expression::from(v.pubin[w][i]) + v.privin[w][i])
-            .sum();
-        model.add_constraint(constraint!(sum <= max_wildcards as f64 + slack_total[i]));
-    }
-
-    let solution = model.solve().ok()?;
-
-    let mut overshoots = Vec::new();
-    for i in 0..k {
-        let pub_overflow = solution.value(slack_pub[i]).round() as usize;
-        let total_overflow = solution.value(slack_total[i]).round() as usize;
-        if pub_overflow == 0 && total_overflow == 0 {
-            continue;
-        }
-        let mut public_args_in = Vec::new();
-        let mut private_args = Vec::new();
-        for w in 0..num_wildcards {
-            if solution.value(v.pubin[w][i]) > SOLVER_BINARY_THRESHOLD {
-                public_args_in.push(input.wildcard_names[w].clone());
-            }
-            if solution.value(v.privin[w][i]) > SOLVER_BINARY_THRESHOLD {
-                private_args.push(input.wildcard_names[w].clone());
+    match first_cap_violation(&ordered_wcs, &input.original_public_args, params) {
+        Some(CapViolation::PublicArgs {
+            link_index,
+            statement_range,
+            incoming_public,
+            crossing_wildcards,
+            total_public,
+        }) => {
+            let suggestion =
+                refactor_suggestion_for(&crossing_wildcards, &ordered_wcs).map(Box::new);
+            SplittingError::TooManyPublicArgsAtSplit {
+                predicate: predicate.to_string(),
+                context: Box::new(SplitContext {
+                    split_index: link_index,
+                    statement_range,
+                    incoming_public,
+                    crossing_wildcards,
+                    total_public,
+                }),
+                max_allowed: max_args,
+                suggestion,
             }
         }
-        public_args_in.sort();
-        private_args.sort();
-        overshoots.push(LinkOvershoot {
-            link_index: i,
-            public_args_overflow: pub_overflow,
-            total_args_overflow: total_overflow,
-            public_args_in,
-            private_args,
-        });
-    }
-    Some(overshoots)
-}
-
-/// Diagnose why the splitter rejected `pred`. Runs an elastic version of the
-/// MILP that allows the per-link caps to be violated by non-negative slack
-/// and minimises total slack — the result tells you exactly which links
-/// overshoot which caps and by how much.
-///
-/// Only meaningful to call on inputs that produced
-/// [`SplittingError::Infeasible`]. On feasible inputs the report's
-/// `overshoots` will be empty.
-pub fn analyze_infeasibility(pred: &CustomPredicateDef, params: &Params) -> InfeasibilityReport {
-    let input = prepare_milp_input(pred);
-    let k = compute_min_links(input.n);
-    let overshoots = solve_elastic_lp(k, &input, params).unwrap_or_default();
-    InfeasibilityReport {
-        predicate: pred.name.name.clone(),
-        k,
-        overshoots,
+        Some(CapViolation::TotalArgs {
+            link_index,
+            public_count,
+            private_count,
+            total_count,
+        }) => SplittingError::TooManyTotalArgsInChainLink {
+            predicate: predicate.to_string(),
+            link_index,
+            public_count,
+            private_count,
+            total_count,
+            max_allowed: max_wildcards,
+        },
+        None => SplittingError::Infeasible {
+            predicate: predicate.to_string(),
+            max_links: n,
+            max_statement_args: max_args,
+            max_wildcards,
+        },
     }
 }
 
-/// Split a predicate into a chain via MILP. Tries `K = K_min, K_min+1, ...`,
-/// returning the first feasible chain or [`SplittingError::Infeasible`] if
-/// no `K` up to `n` works.
+/// Split a predicate into a chain via DP partitioning. Tries every K from
+/// `K_min` to `n` across a small set of heuristic orderings, returning the
+/// first feasible chain. If every (ordering, K) pair fails, walks the
+/// lowest-cost ordering bucket-by-bucket and emits the first cap violation
+/// as a detailed [`SplittingError`]; falls back to [`SplittingError::Infeasible`]
+/// only if even that walk doesn't surface a cap overflow.
 fn split_into_chain(
     pred: &CustomPredicateDef,
     params: &Params,
@@ -1077,7 +881,7 @@ fn split_into_chain(
     let conjunction = pred.conjunction_type;
     let real_statement_count = pred.statements.len();
 
-    let input = prepare_milp_input(pred);
+    let input = prepare_split_input(pred);
     let n = input.n;
 
     let k_min = compute_min_links(n);
@@ -1113,9 +917,6 @@ fn split_into_chain(
             orderings.insert(0, refined);
         }
     }
-    // Try DP across the full K range starting from K_min: an extra link is
-    // cheap, MILP at any K is not. If no ordering admits feasibility at any
-    // K, fall back to MILP.
     'dp_search: for k in k_min..=n {
         for ordering in &orderings {
             if let Some(assignment) = try_dp_at_k(
@@ -1131,27 +932,17 @@ fn split_into_chain(
         }
     }
 
-    if found.is_none() {
-        for k in k_min..=n {
-            if let Some(assignment) = solve_milp_for_k(
-                n,
-                k,
-                &input.statements_using,
-                &input.is_original_public,
+    let (_k, assignment) = match found {
+        Some(f) => f,
+        None => {
+            return Err(diagnose_dp_failure(
+                &original_name,
+                &input,
+                &orderings,
                 params,
-            ) {
-                found = Some((k, assignment));
-                break;
-            }
+            ))
         }
-    }
-
-    let (_k, assignment) = found.ok_or_else(|| SplittingError::Infeasible {
-        predicate: original_name.clone(),
-        max_links: n,
-        max_statement_args: Params::max_statement_args(),
-        max_wildcards: params.max_custom_predicate_wildcards,
-    })?;
+    };
 
     // Reorder map: original index → position in flattened chain.
     let mut reorder_map = vec![0usize; n];
@@ -1337,6 +1128,238 @@ fn validate_chain(chain: &[CustomPredicateDef], params: &Params) {
             total,
             params.max_custom_predicate_wildcards,
         );
+    }
+}
+
+/// Test-only MILP oracle used to cross-validate the DP partitioner. Not part
+/// of any production code path; the DP partitioner is the sole production
+/// algorithm. The oracle exists so randomized tests can assert that whenever
+/// MILP finds a feasible split at some K, DP also finds one at some K
+/// (possibly larger, since DP is exact only over the chosen ordering).
+#[cfg(test)]
+mod milp_oracle {
+    use good_lp::{
+        constraint, solvers::scip::SCIPProblem, variable, Expression, ProblemVariables, Solution,
+        SolverModel, Variable,
+    };
+
+    use super::LinkAssignment;
+    use crate::middleware::Params;
+
+    const SCIP_RANDOM_SEED: i32 = 0;
+    const SOLVER_BINARY_THRESHOLD: f64 = 0.5;
+
+    /// MILP variables. All binary; constraints C1..C7 in `add_structural_constraints`
+    /// pin every variable other than `assign` to be an exact function of the
+    /// assignment.
+    struct MilpVars {
+        n: usize,
+        k: usize,
+        num_wildcards: usize,
+        assign: Vec<Vec<Variable>>,
+        u: Vec<Vec<Variable>>,
+        before: Vec<Vec<Variable>>,
+        after: Vec<Vec<Variable>>,
+        pubin: Vec<Vec<Variable>>,
+        privin: Vec<Vec<Variable>>,
+    }
+
+    fn mk_binary_grid(vars: &mut ProblemVariables, rows: usize, cols: usize) -> Vec<Vec<Variable>> {
+        (0..rows)
+            .map(|_| (0..cols).map(|_| vars.add(variable().binary())).collect())
+            .collect()
+    }
+
+    fn declare_milp_vars(
+        vars: &mut ProblemVariables,
+        n: usize,
+        k: usize,
+        num_wildcards: usize,
+    ) -> MilpVars {
+        MilpVars {
+            n,
+            k,
+            num_wildcards,
+            assign: mk_binary_grid(vars, n, k),
+            u: mk_binary_grid(vars, num_wildcards, k),
+            before: mk_binary_grid(vars, num_wildcards, k),
+            after: mk_binary_grid(vars, num_wildcards, k),
+            pubin: mk_binary_grid(vars, num_wildcards, k),
+            privin: mk_binary_grid(vars, num_wildcards, k),
+        }
+    }
+
+    fn source_order_tiebreaker(v: &MilpVars) -> Expression {
+        (0..v.n)
+            .flat_map(|s| (0..v.k).map(move |i| (s, i)))
+            .map(|(s, i)| ((v.n - s) as f64) * (i as f64) * v.assign[s][i])
+            .sum()
+    }
+
+    fn build_scip_model(vars: ProblemVariables, objective: Expression) -> SCIPProblem {
+        vars.minimise(objective)
+            .using(good_lp::solvers::scip::scip)
+            .set_option("randomization/randomseedshift", SCIP_RANDOM_SEED)
+            .set_verbose(false)
+            // Huge gap: any integer-feasible incumbent satisfies the gap
+            // limit, so SCIP exits with `GapLimit` after the first feasible
+            // solution.
+            .set_option("limits/gap", 1e20_f64)
+            .set_option("separating/maxrounds", 0_i32)
+            .set_option("separating/maxroundsroot", 0_i32)
+    }
+
+    fn add_structural_constraints<M: SolverModel>(
+        model: &mut M,
+        v: &MilpVars,
+        statements_using: &[Vec<usize>],
+        is_original_public: &[bool],
+    ) {
+        let max_arity = Params::max_custom_predicate_arity();
+        let MilpVars {
+            n,
+            k,
+            num_wildcards,
+            assign,
+            u,
+            before,
+            after,
+            pubin,
+            privin,
+        } = v;
+        let (n, k, num_wildcards) = (*n, *k, *num_wildcards);
+
+        // C1: Each statement assigned to exactly one link.
+        for s in 0..n {
+            let sum: Expression = (0..k).map(|i| assign[s][i]).sum();
+            model.add_constraint(constraint!(sum == 1));
+        }
+
+        // C2: Per-link statement count. Non-last links reserve a slot for the
+        // chain call. Also require at least one statement per link.
+        for i in 0..k {
+            let cap = if i + 1 < k { max_arity - 1 } else { max_arity };
+            let sum_le: Expression = (0..n).map(|s| assign[s][i]).sum();
+            model.add_constraint(constraint!(sum_le <= cap as f64));
+            let sum_ge: Expression = (0..n).map(|s| assign[s][i]).sum();
+            model.add_constraint(constraint!(sum_ge >= 1));
+        }
+
+        // C3: u[w][i] is exactly the OR over s referencing w of assign[s][i].
+        for w in 0..num_wildcards {
+            for i in 0..k {
+                for &s in &statements_using[w] {
+                    model.add_constraint(constraint!(u[w][i] >= assign[s][i]));
+                }
+                let upper: Expression = statements_using[w]
+                    .iter()
+                    .map(|&s| Expression::from(assign[s][i]))
+                    .sum();
+                model.add_constraint(constraint!(u[w][i] <= upper));
+            }
+        }
+
+        // C4: before[w][i] = u[w][0] OR ... OR u[w][i].
+        for w in 0..num_wildcards {
+            model.add_constraint(constraint!(before[w][0] == u[w][0]));
+            for i in 1..k {
+                model.add_constraint(constraint!(before[w][i] >= before[w][i - 1]));
+                model.add_constraint(constraint!(before[w][i] >= u[w][i]));
+                model.add_constraint(constraint!(before[w][i] <= before[w][i - 1] + u[w][i]));
+            }
+        }
+
+        // C5: after[w][i] = u[w][i] OR ... OR u[w][k-1].
+        for w in 0..num_wildcards {
+            model.add_constraint(constraint!(after[w][k - 1] == u[w][k - 1]));
+            for i in (0..k - 1).rev() {
+                model.add_constraint(constraint!(after[w][i] >= after[w][i + 1]));
+                model.add_constraint(constraint!(after[w][i] >= u[w][i]));
+                model.add_constraint(constraint!(after[w][i] <= after[w][i + 1] + u[w][i]));
+            }
+        }
+
+        // C6: pubin definitions.
+        for w in 0..num_wildcards {
+            if is_original_public[w] {
+                model.add_constraint(constraint!(pubin[w][0] == 1));
+                for i in 1..k {
+                    model.add_constraint(constraint!(pubin[w][i] == after[w][i]));
+                }
+            } else {
+                model.add_constraint(constraint!(pubin[w][0] == 0));
+                for i in 1..k {
+                    model.add_constraint(constraint!(pubin[w][i] <= before[w][i - 1]));
+                    model.add_constraint(constraint!(pubin[w][i] <= after[w][i]));
+                    model.add_constraint(constraint!(
+                        pubin[w][i] >= before[w][i - 1] + after[w][i] - 1
+                    ));
+                }
+            }
+        }
+
+        // C7: privin definitions.
+        for w in 0..num_wildcards {
+            if is_original_public[w] {
+                for i in 0..k {
+                    model.add_constraint(constraint!(privin[w][i] == 0));
+                }
+            } else {
+                model.add_constraint(constraint!(privin[w][0] == u[w][0]));
+                for i in 1..k {
+                    model.add_constraint(constraint!(privin[w][i] <= u[w][i]));
+                    model.add_constraint(constraint!(privin[w][i] <= 1 - before[w][i - 1]));
+                    model.add_constraint(constraint!(privin[w][i] >= u[w][i] - before[w][i - 1]));
+                }
+            }
+        }
+    }
+
+    /// Try to partition `n` statements into exactly `k` links using MILP.
+    /// Returns `Some(assignment)` if feasible, `None` if infeasible at this K.
+    pub(super) fn solve_milp_for_k(
+        n: usize,
+        k: usize,
+        statements_using: &[Vec<usize>],
+        is_original_public: &[bool],
+        params: &Params,
+    ) -> Option<LinkAssignment> {
+        let max_args = Params::max_statement_args();
+        let max_wildcards = params.max_custom_predicate_wildcards;
+        let num_wildcards = is_original_public.len();
+
+        let mut vars = ProblemVariables::new();
+        let v = declare_milp_vars(&mut vars, n, k, num_wildcards);
+        let objective = source_order_tiebreaker(&v);
+        let mut model = build_scip_model(vars, objective);
+        add_structural_constraints(&mut model, &v, statements_using, is_original_public);
+
+        // C8: per-link public-args cap.
+        for i in 0..k {
+            let sum: Expression = (0..num_wildcards).map(|w| v.pubin[w][i]).sum();
+            model.add_constraint(constraint!(sum <= max_args as f64));
+        }
+
+        // C9: per-link total declared wildcards cap.
+        for i in 0..k {
+            let sum: Expression = (0..num_wildcards)
+                .map(|w| Expression::from(v.pubin[w][i]) + v.privin[w][i])
+                .sum();
+            model.add_constraint(constraint!(sum <= max_wildcards as f64));
+        }
+
+        let solution = model.solve().ok()?;
+
+        let mut links: LinkAssignment = vec![Vec::new(); k];
+        for s in 0..n {
+            for i in 0..k {
+                if solution.value(v.assign[s][i]) > SOLVER_BINARY_THRESHOLD {
+                    links[i].push(s);
+                    break;
+                }
+            }
+        }
+        Some(links)
     }
 }
 
@@ -1669,6 +1692,23 @@ mod tests {
     // `split_into_chain` to check whether a feasible chain exists at all.
     // ===================================================================
 
+    /// Tiny LCG used by randomized tests; pulling in `rand` as a dev-dep is
+    /// avoided to keep MILP-vs-DP and counterexample sweeps deterministic and
+    /// dependency-free.
+    struct Lcg(u64);
+    impl Lcg {
+        fn next(&mut self) -> u64 {
+            self.0 = self
+                .0
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            self.0
+        }
+        fn rand_in(&mut self, n: usize) -> usize {
+            (self.next() as usize) % n
+        }
+    }
+
     fn build_pred(
         name: &str,
         public_args: &[&str],
@@ -1736,75 +1776,18 @@ mod tests {
         }
     }
 
-    /// Replicates the bucket-fill constraint check from `split_into_chain` for
-    /// a *fixed* ordering of statements. Returns Ok if the ordering produces a
-    /// valid chain, Err otherwise.
+    /// Returns whether `ordered` admits a feasible greedy chain under the
+    /// per-link caps. Shares the bucket walk with the production diagnostic.
     fn check_ordering_feasible(
         ordered: &[StatementTmpl],
         original_public_args: &[String],
         params: &Params,
     ) -> bool {
-        if ordered.len() <= Params::max_custom_predicate_arity() {
-            return true;
-        }
-
-        let mut pos = 0;
-        let mut incoming_public: Vec<String> = original_public_args.to_vec();
-
-        while pos < ordered.len() {
-            let remaining = ordered.len() - pos;
-            let is_last = remaining <= Params::max_custom_predicate_arity();
-            let bucket_size = if is_last {
-                remaining
-            } else {
-                Params::max_custom_predicate_arity() - 1
-            };
-            let end = pos + bucket_size;
-
-            let live: HashSet<String> = if is_last {
-                HashSet::new()
-            } else {
-                let before: HashSet<String> = ordered[pos..end]
-                    .iter()
-                    .flat_map(collect_wildcards_from_statement)
-                    .collect();
-                let after: HashSet<String> = ordered[end..]
-                    .iter()
-                    .flat_map(collect_wildcards_from_statement)
-                    .collect();
-                before.intersection(&after).cloned().collect()
-            };
-
-            let incoming_set: HashSet<String> = incoming_public.iter().cloned().collect();
-            let new_promotions: Vec<String> = live
-                .iter()
-                .filter(|w| !incoming_set.contains(*w))
-                .cloned()
-                .collect();
-            let total_public = incoming_public.len() + new_promotions.len();
-            if total_public > Params::max_statement_args() {
-                return false;
-            }
-
-            let segment_wildcards: HashSet<String> = ordered[pos..end]
-                .iter()
-                .flat_map(collect_wildcards_from_statement)
-                .collect();
-            let private_args: Vec<String> = segment_wildcards
-                .difference(&incoming_set)
-                .filter(|w| !live.contains(*w))
-                .cloned()
-                .collect();
-            let total_args = total_public + private_args.len();
-            if total_args > params.max_custom_predicate_wildcards {
-                return false;
-            }
-
-            pos = end;
-            incoming_public.extend(new_promotions);
-        }
-
-        true
+        let ordered_wcs: Vec<HashSet<String>> = ordered
+            .iter()
+            .map(collect_wildcards_from_statement)
+            .collect();
+        first_cap_violation(&ordered_wcs, original_public_args, params).is_none()
     }
 
     /// Brute-force search over all permutations of the predicate's statements
@@ -1877,12 +1860,12 @@ mod tests {
     }
 
     /// A predicate with one statement that references 9 distinct wildcards
-    /// is unsplittable: any link containing that statement declares ≥ 9
-    /// wildcards, exceeding the per-link cap of 8. `analyze_infeasibility`
-    /// must surface this as a non-zero `total_args_overflow` and list the
-    /// crowded link's private args.
+    /// is unsplittable: any link containing that statement declares 9
+    /// wildcards, exceeding the per-link cap of 8. The DP-failure diagnostic
+    /// must surface this as a `TooManyTotalArgsInChainLink` pinpointing the
+    /// link that holds the dense statement.
     #[test]
-    fn test_analyze_infeasibility_reports_total_args_overflow() {
+    fn test_dp_failure_reports_total_args_in_chain_link() {
         let pred = build_pred(
             "dense",
             &["A"],
@@ -1898,42 +1881,86 @@ mod tests {
         );
         let params = Params::default();
 
-        // Sanity: regular splitter rejects this input.
-        assert!(matches!(
-            split_predicate_if_needed(&pred, &params),
-            Err(SplittingError::Infeasible { .. })
-        ));
+        let err = split_predicate_if_needed(&pred, &params).expect_err("splitter should fail");
+        match err {
+            SplittingError::TooManyTotalArgsInChainLink {
+                predicate,
+                link_index,
+                private_count,
+                total_count,
+                max_allowed,
+                ..
+            } => {
+                assert_eq!(predicate, "dense");
+                assert_eq!(link_index, 0, "dense statement should fall in link 0");
+                assert!(
+                    private_count >= 8,
+                    "link 0 should declare W1..W8 as private, got private_count={}",
+                    private_count
+                );
+                assert!(
+                    total_count > max_allowed,
+                    "total_count {} should exceed max_allowed {}",
+                    total_count,
+                    max_allowed
+                );
+            }
+            other => panic!("expected TooManyTotalArgsInChainLink, got: {:?}", other),
+        }
+    }
 
-        let report = analyze_infeasibility(&pred, &params);
-        assert_eq!(report.predicate, "dense");
-        assert_eq!(report.k, 2);
+    /// Direct unit test of the bucket-walk diagnostic. Hand-crafted ordering
+    /// puts 6 distinct wildcards live across the first boundary, forcing the
+    /// per-link public-arg cap of 5 to overflow at link 0. Tests
+    /// `first_cap_violation` directly because hand-constructing a predicate
+    /// the DP can't split (across every ordering and every K) is brittle:
+    /// the DP is too good at clustering related wildcards into one link.
+    #[test]
+    fn test_first_cap_violation_reports_public_args_at_split() {
+        let mk =
+            |names: &[&str]| -> HashSet<String> { names.iter().map(|s| s.to_string()).collect() };
+        // 9 positions, 6 private wildcards each used in both halves so they
+        // all cross the K=2 boundary at position 4. The bucket walk then
+        // sees 6 promotions on top of the 0 incoming publics -> 6 > 5.
+        let ordered_wcs: Vec<HashSet<String>> = vec![
+            mk(&["T0", "T1"]),
+            mk(&["T2", "T3"]),
+            mk(&["T4", "T5"]),
+            mk(&["T0", "T2"]),
+            mk(&["T1", "T3"]),
+            mk(&["T4", "T5"]),
+            mk(&["T0", "T4"]),
+            mk(&["T1", "T5"]),
+            mk(&["T2", "T3"]),
+        ];
+        let params = Params::default();
+        let violation =
+            first_cap_violation(&ordered_wcs, &[], &params).expect("expected a violation");
 
-        let total_overflow: usize = report
-            .overshoots
-            .iter()
-            .map(|o| o.total_args_overflow)
-            .sum();
-        assert!(
-            total_overflow >= 1,
-            "expected ≥1 total-args overflow, got {} (overshoots: {:?})",
-            total_overflow,
-            report.overshoots
-        );
-
-        // The dense statement forces W1..W8 into one link as private args.
-        let crowded_link_has_dense_privates = report
-            .overshoots
-            .iter()
-            .any(|o| o.private_args.iter().filter(|w| w.starts_with('W')).count() >= 8);
-        assert!(
-            crowded_link_has_dense_privates,
-            "expected a binding link to declare 8+ W-wildcards as private; got {:?}",
-            report.overshoots
-        );
-
-        // Display impl shouldn't panic and should mention the predicate name.
-        let formatted = format!("{}", report);
-        assert!(formatted.contains("dense"));
+        match violation {
+            CapViolation::PublicArgs {
+                link_index,
+                total_public,
+                crossing_wildcards,
+                ..
+            } => {
+                assert_eq!(link_index, 0);
+                assert!(
+                    total_public > Params::max_statement_args(),
+                    "total_public {} should exceed cap of {}",
+                    total_public,
+                    Params::max_statement_args()
+                );
+                assert!(
+                    crossing_wildcards.len() >= 6,
+                    "expected >=6 crossings, got {:?}",
+                    crossing_wildcards
+                );
+            }
+            CapViolation::TotalArgs { .. } => {
+                panic!("expected PublicArgs violation, got TotalArgs")
+            }
+        }
     }
 
     /// 30-statement predicate with a 7-link wildcard chain (`chain0..chain6,
@@ -2128,21 +2155,6 @@ mod tests {
     #[test]
     #[ignore]
     fn search_splitter_counterexample() {
-        // Tiny LCG so we don't pull rand as a dep.
-        struct Lcg(u64);
-        impl Lcg {
-            fn next(&mut self) -> u64 {
-                self.0 = self
-                    .0
-                    .wrapping_mul(6364136223846793005)
-                    .wrapping_add(1442695040888963407);
-                self.0
-            }
-            fn rand_in(&mut self, n: usize) -> usize {
-                (self.next() as usize) % n
-            }
-        }
-
         let params = Params::default();
         let mut rng = Lcg(0xC0FFEE);
         let mut checked = 0;
@@ -2230,5 +2242,114 @@ mod tests {
         if found == 0 {
             eprintln!("No counterexamples found.");
         }
+    }
+
+    /// DP-vs-MILP parity sweep. For randomized predicates, asserts:
+    /// whenever MILP finds a feasible K, DP also finds a feasible split
+    /// (possibly at a larger K, since DP is exact only over the chosen
+    /// ordering).
+    ///
+    /// Run with `cargo test --release dp_milp_parity -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn dp_milp_parity() {
+        let params = Params::default();
+        let mut rng = Lcg(0xDEADBEEF);
+        let mut checked = 0usize;
+        let mut milp_feasible = 0usize;
+        let mut divergences = 0usize;
+
+        for &n_stmts in &[7usize, 8, 9, 10, 11] {
+            for &n_pub in &[1usize, 2, 3] {
+                for &n_priv in &[2usize, 3, 4] {
+                    let pub_names: Vec<String> = (0..n_pub).map(|i| format!("A{}", i)).collect();
+                    let priv_names: Vec<String> = (0..n_priv).map(|i| format!("T{}", i)).collect();
+                    let all_names: Vec<String> =
+                        pub_names.iter().chain(priv_names.iter()).cloned().collect();
+
+                    for trial in 0..40 {
+                        let stmt_wildcards: Vec<Vec<String>> = (0..n_stmts)
+                            .map(|_| {
+                                let arity = 2 + rng.rand_in(2);
+                                let mut chosen = Vec::new();
+                                let mut tries = 0;
+                                while chosen.len() < arity && tries < 20 {
+                                    let pick = all_names[rng.rand_in(all_names.len())].clone();
+                                    if !chosen.contains(&pick) {
+                                        chosen.push(pick);
+                                    }
+                                    tries += 1;
+                                }
+                                chosen
+                            })
+                            .collect();
+
+                        let stmt_refs: Vec<Vec<&str>> = stmt_wildcards
+                            .iter()
+                            .map(|v| v.iter().map(|s| s.as_str()).collect())
+                            .collect();
+                        let stmt_slices: Vec<&[&str]> =
+                            stmt_refs.iter().map(|v| v.as_slice()).collect();
+                        let pub_refs: Vec<&str> = pub_names.iter().map(|s| s.as_str()).collect();
+                        let priv_refs: Vec<&str> = priv_names.iter().map(|s| s.as_str()).collect();
+
+                        let pred = build_pred("p", &pub_refs, &priv_refs, &stmt_slices);
+                        if validate_predicate_is_splittable(&pred).is_err() {
+                            continue;
+                        }
+                        checked += 1;
+
+                        let input = prepare_split_input(&pred);
+                        let n = input.n;
+                        let mut milp_ok = false;
+                        for k in compute_min_links(n)..=n {
+                            if super::milp_oracle::solve_milp_for_k(
+                                n,
+                                k,
+                                &input.statements_using,
+                                &input.is_original_public,
+                                &params,
+                            )
+                            .is_some()
+                            {
+                                milp_ok = true;
+                                break;
+                            }
+                        }
+
+                        let dp_result = split_predicate_if_needed(&pred, &params);
+                        let dp_ok = dp_result.is_ok();
+
+                        if milp_ok {
+                            milp_feasible += 1;
+                        }
+                        if milp_ok && !dp_ok {
+                            divergences += 1;
+                            eprintln!(
+                                "\n=== DIVERGENCE #{} (n={}, n_pub={}, n_priv={}, trial={}) ===",
+                                divergences, n_stmts, n_pub, n_priv, trial
+                            );
+                            for (i, wcs) in stmt_wildcards.iter().enumerate() {
+                                eprintln!("  s{}: {:?}", i, wcs);
+                            }
+                            eprintln!(
+                                "  MILP: feasible, DP: {}",
+                                dp_result.as_ref().err().unwrap()
+                            );
+                        }
+                    }
+                }
+            }
+        }
+
+        eprintln!(
+            "Parity sweep: checked={}, milp_feasible={}, dp_divergences={}",
+            checked, milp_feasible, divergences
+        );
+        assert_eq!(
+            divergences, 0,
+            "DP failed where MILP succeeded on {} predicates",
+            divergences
+        );
     }
 }

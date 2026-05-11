@@ -40,10 +40,7 @@ use std::sync::Arc;
 
 pub use diagnostics::render_error;
 pub use error::{LangError, LangErrorKind};
-pub use frontend_ast_split::{
-    analyze_infeasibility, InfeasibilityReport, LinkOvershoot, SplitChainInfo, SplitChainPiece,
-    SplitResult,
-};
+pub use frontend_ast_split::{SplitChainInfo, SplitChainPiece, SplitResult};
 pub use module::{Module, MultiOperationError};
 pub use parser::{parse_podlang, Pairs, ParseError, Rule};
 pub use pretty_print::PrettyPrint;
