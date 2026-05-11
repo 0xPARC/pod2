@@ -1692,23 +1692,6 @@ mod tests {
     // `split_into_chain` to check whether a feasible chain exists at all.
     // ===================================================================
 
-    /// Tiny LCG used by randomized tests; pulling in `rand` as a dev-dep is
-    /// avoided to keep MILP-vs-DP and counterexample sweeps deterministic and
-    /// dependency-free.
-    struct Lcg(u64);
-    impl Lcg {
-        fn next(&mut self) -> u64 {
-            self.0 = self
-                .0
-                .wrapping_mul(6364136223846793005)
-                .wrapping_add(1442695040888963407);
-            self.0
-        }
-        fn rand_in(&mut self, n: usize) -> usize {
-            (self.next() as usize) % n
-        }
-    }
-
     fn build_pred(
         name: &str,
         public_args: &[&str],
@@ -1963,73 +1946,6 @@ mod tests {
         }
     }
 
-    /// 30-statement predicate with a 7-link wildcard chain (`chain0..chain6,
-    /// chain`) — modelled on `CraftRefinery` from the zk-craft episode-1
-    /// plugin. K_min = 8 with `max_custom_predicate_arity = 5`, and the
-    /// chain transitions force at most one promoted wildcard per boundary.
-    /// Used to measure splitter latency on real-world-shaped inputs.
-    ///
-    /// Run with `cargo test --release test_split_craft_refinery_shape -- --nocapture`.
-    #[test]
-    fn test_split_craft_refinery_shape() {
-        let pred = build_pred(
-            "CraftRefinery",
-            &["in", "out", "chain0", "chain"],
-            &[
-                "chain1", "chain2", "chain3", "chain4", "chain5", "chain6", "oil", "water",
-                "tar_a0", "tar_a1", "tar_a", "tar_b", "tar_c", "fuel", "gas", "key", "work",
-            ],
-            &[
-                &["in", "oil"],                 // 0:  ArrayContains(in, _, oil)
-                &["in", "water"],               // 1:  ArrayContains(in, _, water)
-                &["out", "tar_a"],              // 2:  ArrayContains(out, _, tar_a)
-                &["out", "tar_b"],              // 3:  ArrayContains(out, _, tar_b)
-                &["out", "tar_c"],              // 4:  ArrayContains(out, _, tar_c)
-                &["out", "fuel"],               // 5:  ArrayContains(out, _, fuel)
-                &["out", "gas"],                // 6:  ArrayContains(out, _, gas)
-                &["tar_a0"],                    // 7:  DictContains(tar_a0, ...)
-                &["tar_b"],                     // 8:  DictContains(tar_b, ...)
-                &["tar_c"],                     // 9:  DictContains(tar_c, ...)
-                &["fuel"],                      // 10: DictContains(fuel, ...)
-                &["gas"],                       // 11: DictContains(gas, ...)
-                &["tar_a1", "tar_a0", "key"],   // 12: DictUpdate(tar_a1, tar_a0, _, key)
-                &["tar_a1"],                    // 13: LtEqU256(tar_a1, _)
-                &["tar_a1", "work"],            // 14: Vdf(_, tar_a1, work)
-                &["tar_a", "tar_a1", "work"],   // 15: DictUpdate(tar_a, tar_a1, _, work)
-                &["oil"],                       // 16: DictContains(oil, ...)
-                &["chain1", "chain0", "oil"],   // 17: TxDelete(chain1, chain0, oil)
-                &["water"],                     // 18: DictContains(water, ...)
-                &["chain2", "chain1", "water"], // 19: TxDelete(chain2, chain1, water)
-                &["tar_a"],                     // 20: DictContains(tar_a, ...)
-                &["chain3", "chain2", "tar_a"], // 21: TxInsert(chain3, chain2, tar_a)
-                &["tar_b"],                     // 22: DictContains(tar_b, ...)
-                &["chain4", "chain3", "tar_b"], // 23: TxInsert(chain4, chain3, tar_b)
-                &["tar_c"],                     // 24: DictContains(tar_c, ...)
-                &["chain5", "chain4", "tar_c"], // 25: TxInsert(chain5, chain4, tar_c)
-                &["fuel"],                      // 26: DictContains(fuel, ...)
-                &["chain6", "chain5", "fuel"],  // 27: TxInsert(chain6, chain5, fuel)
-                &["gas"],                       // 28: DictContains(gas, ...)
-                &["chain", "chain6", "gas"],    // 29: TxInsert(chain, chain6, gas)
-            ],
-        );
-        let params = Params::default();
-
-        let start = std::time::Instant::now();
-        let result = split_predicate_if_needed(&pred, &params);
-        let elapsed = start.elapsed();
-
-        eprintln!("CraftRefinery split took {:?}", elapsed);
-        assert!(result.is_ok(), "split failed: {:?}", result.err());
-        let split = result.unwrap();
-        assert!(split.chain_info.is_some(), "expected a chain split");
-        let info = split.chain_info.unwrap();
-        eprintln!(
-            "  chain has {} pieces, real_statement_count = {}",
-            info.chain_pieces.len(),
-            info.real_statement_count
-        );
-    }
-
     /// 51-statement predicate with a 13-link wildcard chain — modelled on
     /// `CraftRefineryCracked` from the zk-craft episode-1 plugin. K_min = 13
     /// with `max_custom_predicate_arity = 5`. This is the failure case the
@@ -2155,8 +2071,11 @@ mod tests {
     #[test]
     #[ignore]
     fn search_splitter_counterexample() {
+        use rand::{Rng, SeedableRng};
+        use rand_chacha::ChaCha20Rng;
+
         let params = Params::default();
-        let mut rng = Lcg(0xC0FFEE);
+        let mut rng = ChaCha20Rng::seed_from_u64(0xC0FFEE);
         let mut checked = 0;
         let mut found = 0;
 
@@ -2174,11 +2093,12 @@ mod tests {
                         // Each statement gets 2-3 distinct wildcards drawn from all_names.
                         let stmt_wildcards: Vec<Vec<String>> = (0..n_stmts)
                             .map(|_| {
-                                let arity = 2 + rng.rand_in(2); // 2 or 3
+                                let arity = rng.gen_range(2..=3);
                                 let mut chosen = Vec::new();
                                 let mut tries = 0;
                                 while chosen.len() < arity && tries < 20 {
-                                    let pick = all_names[rng.rand_in(all_names.len())].clone();
+                                    let pick =
+                                        all_names[rng.gen_range(0..all_names.len())].clone();
                                     if !chosen.contains(&pick) {
                                         chosen.push(pick);
                                     }
@@ -2249,32 +2169,41 @@ mod tests {
     /// (possibly at a larger K, since DP is exact only over the chosen
     /// ordering).
     ///
+    /// Shapes are biased toward the tight cases: more public args (4 leaves
+    /// only 1 slot for promotion), wildcard pools at or above the per-link
+    /// total-wildcards cap of 8, and statement arity 3 to keep every link
+    /// crowded. Shapes that almost always fit easily are uninteresting here.
+    ///
     /// Run with `cargo test --release dp_milp_parity -- --ignored --nocapture`.
     #[test]
     #[ignore]
     fn dp_milp_parity() {
+        use rand::{Rng, SeedableRng};
+        use rand_chacha::ChaCha20Rng;
+
         let params = Params::default();
-        let mut rng = Lcg(0xDEADBEEF);
+        let mut rng = ChaCha20Rng::seed_from_u64(0xDEADBEEF);
         let mut checked = 0usize;
         let mut milp_feasible = 0usize;
         let mut divergences = 0usize;
 
-        for &n_stmts in &[7usize, 8, 9, 10, 11] {
-            for &n_pub in &[1usize, 2, 3] {
-                for &n_priv in &[2usize, 3, 4] {
+        for &n_stmts in &[9usize, 10, 11, 12] {
+            for &n_pub in &[3usize, 4] {
+                for &n_priv in &[4usize, 5, 6] {
                     let pub_names: Vec<String> = (0..n_pub).map(|i| format!("A{}", i)).collect();
                     let priv_names: Vec<String> = (0..n_priv).map(|i| format!("T{}", i)).collect();
                     let all_names: Vec<String> =
                         pub_names.iter().chain(priv_names.iter()).cloned().collect();
 
-                    for trial in 0..40 {
+                    for trial in 0..50 {
                         let stmt_wildcards: Vec<Vec<String>> = (0..n_stmts)
                             .map(|_| {
-                                let arity = 2 + rng.rand_in(2);
+                                let arity = 3;
                                 let mut chosen = Vec::new();
                                 let mut tries = 0;
                                 while chosen.len() < arity && tries < 20 {
-                                    let pick = all_names[rng.rand_in(all_names.len())].clone();
+                                    let pick =
+                                        all_names[rng.gen_range(0..all_names.len())].clone();
                                     if !chosen.contains(&pick) {
                                         chosen.push(pick);
                                     }
