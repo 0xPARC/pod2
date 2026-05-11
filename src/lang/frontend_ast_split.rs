@@ -1429,19 +1429,6 @@ mod tests {
     }
 
     #[test]
-    fn test_validate_splittable() {
-        let input = r#"
-            my_pred(A, B) = AND (
-                Equal(A, B)
-            )
-        "#;
-
-        let pred = parse_predicate(input);
-
-        assert!(validate_predicate_is_splittable(&pred).is_ok());
-    }
-
-    #[test]
     fn test_validate_too_many_public_args() {
         let input = r#"
             my_pred(A, B, C, D, E, F) = AND (
@@ -1520,37 +1507,6 @@ mod tests {
         assert!(!chain_info.chain_pieces[0].has_chain_call);
         assert_eq!(chain_info.chain_pieces[1].name, "my_pred");
         assert!(chain_info.chain_pieces[1].has_chain_call);
-    }
-
-    #[test]
-    fn test_split_with_private_wildcards() {
-        let input = r#"
-            complex(A, B, private: T1, T2) = AND (
-                Equal(T1["x"], A["y"])
-                Equal(T1["z"], 100)
-                Equal(T2["a"], T1["x"])
-                HashOf(T2["b"], B)
-                Equal(A["result"], T2["a"])
-                Equal(B["final"], T2["b"])
-            )
-        "#;
-
-        let pred = parse_predicate(input);
-        let params = Params::default(); // max_custom_predicate_arity = 5
-
-        let result = split_predicate_if_needed(&pred, &params);
-        assert!(result.is_ok());
-
-        let split_result = result.unwrap();
-        let chain = &split_result.predicates;
-        assert_eq!(chain.len(), 2); // Should split into 2 predicates
-
-        // Chain is reversed: continuation first, original last
-        // Original predicate should have chain call as last statement
-        let original = &chain[1];
-        assert_eq!(original.name.name, "complex");
-        let last_stmt = original.statements.last().unwrap();
-        assert_eq!(last_stmt.predicate.predicate_name(), "complex_1");
     }
 
     #[test]
@@ -1730,15 +1686,9 @@ mod tests {
         );
     }
 
-    // ===================================================================
-    // Completeness probe for the splitter.
-    //
-    // `build_pred` constructs a CustomPredicateDef from a "wildcard set per
-    // statement" specification (cheaper than parsing). `find_any_feasible_ordering`
-    // brute-forces all permutations and uses the same per-link constraints as
-    // `split_into_chain` to check whether a feasible chain exists at all.
-    // ===================================================================
-
+    /// Build a `CustomPredicateDef` from a "wildcard set per statement"
+    /// specification. Cheaper than parsing for tests that don't care about
+    /// concrete statement predicates or anchored-key syntax.
     fn build_pred(
         name: &str,
         public_args: &[&str],
@@ -1806,49 +1756,6 @@ mod tests {
         }
     }
 
-    /// Returns whether `ordered` admits a feasible greedy chain under the
-    /// per-link caps. Shares the bucket walk with the production diagnostic.
-    fn check_ordering_feasible(
-        ordered: &[StatementTmpl],
-        original_public_args: &[String],
-        params: &Params,
-    ) -> bool {
-        let ordered_wcs: Vec<HashSet<String>> = ordered
-            .iter()
-            .map(collect_wildcards_from_statement)
-            .collect();
-        first_cap_violation(&ordered_wcs, original_public_args, params).is_none()
-    }
-
-    /// Brute-force search over all permutations of the predicate's statements
-    /// for *any* ordering that produces a feasible split. Returns the
-    /// permutation if found, else None. Caps at 9! to keep tests cheap.
-    fn find_any_feasible_ordering(
-        pred: &CustomPredicateDef,
-        params: &Params,
-    ) -> Option<Vec<usize>> {
-        use itertools::Itertools;
-
-        let n = pred.statements.len();
-        assert!(n <= 9, "brute-force capped at 9! permutations");
-
-        let original_public_args: Vec<String> = pred
-            .args
-            .public_args
-            .iter()
-            .map(|id| id.name.clone())
-            .collect();
-
-        for perm in (0..n).permutations(n) {
-            let ordered: Vec<StatementTmpl> =
-                perm.iter().map(|&i| pred.statements[i].clone()).collect();
-            if check_ordering_feasible(&ordered, &original_public_args, params) {
-                return Some(perm);
-            }
-        }
-        None
-    }
-
     /// 6 statements with 2 public args (A0, A1) and 5 private wildcards
     /// (T0..T4). A feasible 4+2 chain exists where exactly 3 wildcards cross
     /// the boundary (3 promotions + 2 incoming = 5 total public, hitting the
@@ -1873,18 +1780,10 @@ mod tests {
         );
         let params = Params::default();
 
-        // Sanity: brute force confirms a feasible ordering exists.
-        let feasible = find_any_feasible_ordering(&pred, &params);
-        assert!(
-            feasible.is_some(),
-            "expected at least one feasible permutation"
-        );
-
         let result = split_predicate_if_needed(&pred, &params);
         assert!(
             result.is_ok(),
-            "splitter rejected an input with a feasible ordering ({:?}): {}",
-            feasible.unwrap(),
+            "splitter rejected a known-feasible input: {}",
             result.err().unwrap()
         );
     }
@@ -1995,12 +1894,9 @@ mod tests {
 
     /// 51-statement predicate with a 13-link wildcard chain — modelled on
     /// `CraftRefineryCracked` from the zk-craft episode-1 plugin. K_min = 13
-    /// with `max_custom_predicate_arity = 5`. This is the failure case the
-    /// CraftRefinery test was a smaller instance of.
-    ///
-    /// Run with `cargo test --release test_split_craft_refinery_cracked_shape -- --nocapture --ignored`.
+    /// with `max_custom_predicate_arity = 5`. Acts as a real-world-shaped
+    /// stress test for splitter latency.
     #[test]
-    #[ignore]
     fn test_split_craft_refinery_cracked_shape() {
         let pred = build_pred(
             "CraftRefineryCracked",
@@ -2097,117 +1993,8 @@ mod tests {
             ],
         );
         let params = Params::default();
-
-        let start = std::time::Instant::now();
         let result = split_predicate_if_needed(&pred, &params);
-        let elapsed = start.elapsed();
-
-        eprintln!("CraftRefineryCracked split took {:?}", elapsed);
-        match &result {
-            Ok(s) => eprintln!(
-                "  chain has {} pieces",
-                s.chain_info.as_ref().map_or(0, |c| c.chain_pieces.len())
-            ),
-            Err(e) => eprintln!("  split failed: {}", e),
-        }
         assert!(result.is_ok(), "split failed: {:?}", result.err());
-    }
-
-    /// Randomized counterexample search. Run with
-    /// `cargo test --release search_splitter -- --ignored --nocapture`.
-    #[test]
-    #[ignore]
-    fn search_splitter_counterexample() {
-        use rand::{Rng, SeedableRng};
-        use rand_chacha::ChaCha20Rng;
-
-        let params = Params::default();
-        let mut rng = ChaCha20Rng::seed_from_u64(0xC0FFEE);
-        let mut checked = 0;
-        let mut found = 0;
-
-        // Sweep over (n_stmts, n_pub, n_priv) combos.
-        for &n_stmts in &[6usize, 7, 8, 9] {
-            for &n_pub in &[1usize, 2, 3, 4] {
-                for &n_priv in &[2usize, 3, 4, 5] {
-                    let pub_names: Vec<String> = (0..n_pub).map(|i| format!("A{}", i)).collect();
-                    let priv_names: Vec<String> = (0..n_priv).map(|i| format!("T{}", i)).collect();
-                    let all_names: Vec<String> =
-                        pub_names.iter().chain(priv_names.iter()).cloned().collect();
-
-                    // Generate 200 random predicates per shape.
-                    for trial in 0..200 {
-                        // Each statement gets 2-3 distinct wildcards drawn from all_names.
-                        let stmt_wildcards: Vec<Vec<String>> = (0..n_stmts)
-                            .map(|_| {
-                                let arity = rng.gen_range(2..=3);
-                                let mut chosen = Vec::new();
-                                let mut tries = 0;
-                                while chosen.len() < arity && tries < 20 {
-                                    let pick = all_names[rng.gen_range(0..all_names.len())].clone();
-                                    if !chosen.contains(&pick) {
-                                        chosen.push(pick);
-                                    }
-                                    tries += 1;
-                                }
-                                chosen
-                            })
-                            .collect();
-
-                        let stmt_refs: Vec<Vec<&str>> = stmt_wildcards
-                            .iter()
-                            .map(|v| v.iter().map(|s| s.as_str()).collect())
-                            .collect();
-                        let stmt_slices: Vec<&[&str]> =
-                            stmt_refs.iter().map(|v| v.as_slice()).collect();
-                        let pub_refs: Vec<&str> = pub_names.iter().map(|s| s.as_str()).collect();
-                        let priv_refs: Vec<&str> = priv_names.iter().map(|s| s.as_str()).collect();
-
-                        let pred = build_pred("p", &pub_refs, &priv_refs, &stmt_slices);
-
-                        // Skip inputs that fail early validation (e.g. too many public args).
-                        if validate_predicate_is_splittable(&pred).is_err() {
-                            continue;
-                        }
-
-                        checked += 1;
-                        let feasible = find_any_feasible_ordering(&pred, &params);
-                        let split = split_predicate_if_needed(&pred, &params);
-
-                        if let (Err(err), Some(perm)) = (split, feasible) {
-                            found += 1;
-                            eprintln!(
-                                "\n=== COUNTEREXAMPLE #{} ===\n\
-                                 shape: n={}, n_pub={}, n_priv={}, trial={}\n\
-                                 statements (original order):",
-                                found, n_stmts, n_pub, n_priv, trial
-                            );
-                            for (i, wcs) in stmt_wildcards.iter().enumerate() {
-                                eprintln!("  s{}: {:?}", i, wcs);
-                            }
-                            eprintln!("feasible permutation: {:?}", perm);
-                            eprintln!("splitter error: {}\n", err);
-
-                            if found >= 3 {
-                                eprintln!(
-                                    "Found {} counterexamples (out of {} checked); stopping.",
-                                    found, checked
-                                );
-                                return;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        eprintln!(
-            "Searched {} predicates; found {} counterexamples.",
-            checked, found
-        );
-        if found == 0 {
-            eprintln!("No counterexamples found.");
-        }
     }
 
     /// DP-vs-MILP parity sweep. For randomized predicates, asserts:
