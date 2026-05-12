@@ -1,11 +1,13 @@
 use std::{fmt, iter};
 
+use plonky2::{hash::poseidon::PoseidonHash, plonk::config::Hasher};
 use serde::{Deserialize, Serialize};
 
 use crate::{
     backends::plonky2::error::{Error, Result},
     middleware::{
-        self, NativePredicate, Predicate, StatementArg, ToFields, Value, ValueRef, BASE_PARAMS,
+        self, Hash, NativePredicate, Predicate, StatementArg, ToFields, Value, ValueRef,
+        BASE_PARAMS,
     },
 };
 
@@ -28,6 +30,9 @@ impl Statement {
             None => vec![],
             Some(i) => self.1[0..i + 1].to_vec(),
         }
+    }
+    pub fn hash(&self) -> Hash {
+        Hash(PoseidonHash::hash_no_pad(&self.to_fields()).elements)
     }
 }
 

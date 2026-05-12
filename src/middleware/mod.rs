@@ -994,10 +994,12 @@ pub trait Pod: fmt::Debug + DynClone + Sync + Send + Any + EqualsAny {
     // TODO: String instead of &str
     /// Return a uuid of the pod type and its name.  The name is only used as metadata.
     fn pod_type(&self) -> (usize, &'static str);
+    // Container array of self public statements
+    fn pub_self_statements_array(&self) -> Array;
     /// Statements as internally generated, where intro statements don't encode the verifier data
     /// hash.  The serialization of these statements is used to calculate the statements root.
     fn pub_self_statements(&self) -> Vec<Statement>;
-    /// Normalized statements, where intro statements get the corresponding verified data hash.
+    /// Normalized statements, where intro statements get the corresponding verifier data hash.
     fn pub_statements(&self) -> Vec<Statement> {
         let verifier_data_hash = self.verifier_data_hash();
         self.pub_self_statements()
@@ -1052,11 +1054,12 @@ pub trait Signer {
 #[derive(Debug)]
 pub struct MainPodInputs<'a> {
     pub pods: &'a [&'a dyn Pod],
+    pub extend_pod0_public_statements: bool,
     pub statements: &'a [Statement],
     pub operations: &'a [Operation],
-    /// Statements that need to be made public (they can come from input pods or input
-    /// statements)
-    pub public_statements: &'a [Statement],
+    /// Statements that need to be made public
+    // TODO: Maybe there's a better API instead of passing a slice of booleans.
+    pub public_statements: &'a [bool],
     pub vd_set: VDSet,
 }
 

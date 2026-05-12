@@ -37,9 +37,9 @@ use crate::{
         serialize_proof, serialize_verifier_only,
     },
     middleware::{
-        self, value_from_op, CustomPredicateRef, Error as MiddlewareError, Hash, MainPodInputs,
-        MainPodProver, NativeOperation, OperationType, Params, Pod, RawValue, StatementArg,
-        ToFields, VDSet, Value, ValueRef,
+        self, containers::Array, value_from_op, CustomPredicateRef, Error as MiddlewareError, Hash,
+        MainPodInputs, MainPodProver, NativeOperation, OperationType, Params, Pod, RawValue,
+        StatementArg, ToFields, VDSet, Value, ValueRef,
     },
     timed,
 };
@@ -372,13 +372,12 @@ fn pad_operation_args(args: &mut Vec<OperationArg>) {
 }
 
 /// Returns the statements from the given MainPodInputs, padding to the respective max lengths
-/// defined at the given Params.  Also returns a copy of the dynamic-length public statements from
-/// the list of statements.
+/// defined at the given Params.
 pub(crate) fn layout_statements(
     params: &Params,
     mock: bool,
     inputs: &MainPodInputs,
-) -> Result<(Vec<Statement>, Vec<Statement>)> {
+) -> Result<Vec<Statement>> {
     let mut statements = Vec::new();
 
     // Statement at index 0 is always None to be used for padding operation arguments in custom
@@ -427,24 +426,10 @@ pub(crate) fn layout_statements(
         statements.push(st);
     }
 
-    // Public statements
-    assert!(inputs.public_statements.len() <= params.max_public_statements);
-    for i in 0..params.max_public_statements {
-        let mut st = inputs
-            .public_statements
-            .get(i)
-            .unwrap_or(&middleware::Statement::None)
-            .clone()
-            .into();
-        pad_statement(&mut st);
-        statements.push(st);
-    }
+    // Validate public statements length
+    assert_eq!(inputs.public_statements.len(), inputs.statements.len());
 
-    let offset_public_statements = statements.len() - params.max_public_statements;
-    let public_statements = statements
-        [offset_public_statements..offset_public_statements + inputs.public_statements.len()]
-        .to_vec();
-    Ok((statements, public_statements))
+    Ok(statements)
 }
 
 pub(crate) fn process_private_statements_operations(
@@ -566,7 +551,7 @@ impl MainPodProver for Prover {
         let signed_bys =
             extract_signatures(params, &mut aux_list, inputs.operations, inputs.statements)?;
 
-        let (statements, public_statements) = layout_statements(params, false, &inputs)?;
+        let statements = layout_statements(params, false, &inputs)?;
         let operations = process_private_statements_operations(
             params,
             &statements,
@@ -575,8 +560,32 @@ impl MainPodProver for Prover {
         )?;
         let operations = process_public_statements_operations(params, &statements, operations)?;
 
-        // get the id out of the public statements
-        let sts_hash = calculate_statements_hash(&public_statements);
+        // Build the new statements root
+        let (init_sts, init_sts_mt): (Vec<Statement>, Array) =
+            if inputs.extend_pod0_public_statements {
+                if !inputs.pods[0].is_main() {
+                    return Err(Error::custom(
+                        "inherit public statements not allowed with intro pod",
+                    ));
+                }
+                (
+                    inputs.pods[0]
+                        .pub_statements()
+                        .iter()
+                        .map(|st| st.clone().into())
+                        .collect(),
+                    inputs.pods[0].pub_self_statements_array(),
+                )
+            } else {
+                (Vec::new(), Array::new(Vec::new()))
+            };
+        let (mut pub_sts, mut pub_sts_mt) = (init_sts, init_sts_mt);
+        for (is_public, statement) in inputs.public_statements.iter().zip_eq(&statements) {
+            if *is_public {
+                pub_sts_mt.insert(pub_sts.len(), Value::from(statement.hash()))?;
+                pub_sts.push(statement.clone());
+            }
+        }
 
         let common_hash: String = cache_get_rec_main_pod_common_hash(params).clone();
         let proofs = inputs
@@ -640,9 +649,9 @@ impl MainPodProver for Prover {
             params: params.clone(),
             verifier_only: circuit_data.verifier_only.clone(),
             common_hash,
-            sts_hash,
+            pub_sts_root: pub_sts_mt.commitment(),
             vd_set: inputs.vd_set,
-            public_statements,
+            public_statements: pub_sts,
             proof: proof_with_pis.proof,
         }))
     }
@@ -651,7 +660,7 @@ impl MainPodProver for Prover {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MainPod {
     params: Params,
-    sts_hash: Hash,
+    pub_sts_root: Hash,
     verifier_only: VerifierOnlyCircuitData,
     common_hash: String,
     /// vds_root is the merkle-root of the `VDSet`, which contains the

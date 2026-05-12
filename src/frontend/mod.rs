@@ -134,9 +134,10 @@ pub struct MainPodBuilder {
     pub params: Params,
     pub vd_set: VDSet,
     pub input_pods: Vec<MainPod>,
-    pub statements: Vec<Statement>,
+    pub extend_input_pod0_public_statements: bool,
+    /// Vec of (is_public, statement)
+    pub statements: Vec<(bool, Statement)>,
     pub operations: Vec<Operation>,
-    pub public_statements: Vec<Statement>,
     // Internal state
     contains: Vec<(RawValue, RawValue)>, // (root, key)
 }
@@ -150,7 +151,7 @@ impl fmt::Display for MainPodBuilder {
         }
         writeln!(f, "  statements:")?;
         for (st, op) in self.statements.iter().zip_eq(self.operations.iter()) {
-            write!(f, "    - {} <- ", st)?;
+            write!(f, "    - {} {} <- ", if st.0 { "pub" } else { "prv" }, st.1)?;
             write!(f, "{}", op)?;
             writeln!(f)?;
         }
@@ -171,7 +172,6 @@ impl MainPodBuilder {
             input_pods: Vec::new(),
             statements: Vec::new(),
             operations: Vec::new(),
-            public_statements: Vec::new(),
             contains: Vec::new(),
         }
     }
@@ -190,6 +190,9 @@ impl MainPodBuilder {
             )),
             _ => Ok(()),
         }
+    }
+    pub fn extend_input_pod0_public_statements(&mut self) {
+        self.extend_input_pod0_public_statements = true;
     }
 
     // If we're adding a Contains statement with literal arguments (an Entry), track it in
@@ -211,7 +214,7 @@ impl MainPodBuilder {
         let (st, op) = st_op;
         self.track_contains(&st);
 
-        self.statements.push(st);
+        self.statements.push((false, st));
         self.operations.push(op);
         if self.statements.len() > self.params.max_statements {
             return Err(Error::too_many_statements(
@@ -719,6 +722,7 @@ impl MainPodBuilder {
 
         let inputs = MainPodInputs {
             pods: &self.input_pods.iter().map(|p| p.pod.as_ref()).collect_vec(),
+            extend_pod0_public_statements: self.extend_input_pod0_public_statements,
             statements: &statements,
             operations: &operations,
             public_statements: &public_statements,
@@ -763,7 +767,7 @@ impl MainPod {
 struct MainPodCompilerInputs<'a> {
     pub statements: &'a [Statement],
     pub operations: &'a [Operation],
-    pub public_statements: &'a [Statement],
+    pub public_statements: &'a [bool],
 }
 
 /// The compiler converts frontend::Operation into middleware::Operation
@@ -835,7 +839,7 @@ impl MainPodCompiler {
     ) -> Result<(
         Vec<Statement>, // input statements
         Vec<middleware::Operation>,
-        Vec<Statement>, // public statements
+        Vec<bool>, // public statements
     )> {
         let MainPodCompilerInputs {
             statements,
