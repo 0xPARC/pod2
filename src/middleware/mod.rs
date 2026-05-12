@@ -987,6 +987,7 @@ pub trait Pod: fmt::Debug + DynClone + Sync + Send + Any + EqualsAny {
     fn is_main(&self) -> bool {
         false
     }
+    // TODO: Remove?  Is this even used?
     /// Root of the public statements.  Different pods can have the same `statements_root` if they
     /// expose the same public statements even if they arrive to them through different private
     /// inputs.
@@ -994,6 +995,7 @@ pub trait Pod: fmt::Debug + DynClone + Sync + Send + Any + EqualsAny {
     // TODO: String instead of &str
     /// Return a uuid of the pod type and its name.  The name is only used as metadata.
     fn pod_type(&self) -> (usize, &'static str);
+    // TODO: Add default implementation from pub_self_statements
     // Container array of self public statements
     fn pub_self_statements_array(&self) -> Array;
     /// Statements as internally generated, where intro statements don't encode the verifier data
@@ -1054,12 +1056,10 @@ pub trait Signer {
 #[derive(Debug)]
 pub struct MainPodInputs<'a> {
     pub pods: &'a [&'a dyn Pod],
-    pub extend_pod0_public_statements: bool,
-    pub statements: &'a [Statement],
+    pub extend_pod0_pub_statements: bool,
+    /// Slice of (is_public, statement)
+    pub statements: &'a [(bool, Statement)],
     pub operations: &'a [Operation],
-    /// Statements that need to be made public
-    // TODO: Maybe there's a better API instead of passing a slice of booleans.
-    pub public_statements: &'a [bool],
     pub vd_set: VDSet,
 }
 

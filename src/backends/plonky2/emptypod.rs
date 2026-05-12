@@ -29,8 +29,8 @@ use crate::{
     },
     cache::{self, CacheEntry},
     middleware::{
-        self, Hash, IntroPredicateRef, Params, Pod, PodType, Statement, ToFields, VDSet,
-        VerifierOnlyCircuitData, EMPTY_HASH, F, HASH_SIZE,
+        self, containers::Array, Hash, IntroPredicateRef, Params, Pod, PodType, Statement,
+        ToFields, VDSet, Value, VerifierOnlyCircuitData, EMPTY_HASH, F, HASH_SIZE,
     },
     timed,
 };
@@ -173,7 +173,7 @@ impl Pod for EmptyPod {
             .collect_vec();
         let sts_hash = calculate_statements_hash(&statements);
         if sts_hash != self.sts_hash {
-            return Err(Error::statements_hash_not_equal(self.sts_hash, sts_hash));
+            return Err(Error::statements_root_not_equal(self.sts_hash, sts_hash));
         }
 
         let public_inputs = sts_hash
@@ -197,6 +197,10 @@ impl Pod for EmptyPod {
     }
     fn pod_type(&self) -> (usize, &'static str) {
         (PodType::Empty as usize, "Empty")
+    }
+
+    fn pub_self_statements_array(&self) -> Array {
+        Array::new(vec![Value::from(empty_statement().hash())])
     }
 
     fn pub_self_statements(&self) -> Vec<middleware::Statement> {

@@ -1,13 +1,12 @@
 use std::{fmt, iter};
 
-use plonky2::{hash::poseidon::PoseidonHash, plonk::config::Hasher};
 use serde::{Deserialize, Serialize};
 
 use crate::{
     backends::plonky2::error::{Error, Result},
     middleware::{
-        self, Hash, NativePredicate, Predicate, StatementArg, ToFields, Value, ValueRef,
-        BASE_PARAMS,
+        self, hash_fields, Hash, NativePredicate, Predicate, StatementArg, ToFields, Value,
+        ValueRef, BASE_PARAMS,
     },
 };
 
@@ -17,6 +16,9 @@ pub struct Statement(pub Predicate, pub Vec<StatementArg>);
 impl Eq for Statement {}
 
 impl Statement {
+    pub fn none() -> Self {
+        Self(Predicate::Native(NativePredicate::None), Vec::new())
+    }
     pub fn is_none(&self) -> bool {
         self.0 == Predicate::Native(NativePredicate::None)
     }
@@ -32,7 +34,7 @@ impl Statement {
         }
     }
     pub fn hash(&self) -> Hash {
-        Hash(PoseidonHash::hash_no_pad(&self.to_fields()).elements)
+        hash_fields(&self.to_fields())
     }
 }
 

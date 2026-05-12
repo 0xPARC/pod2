@@ -29,6 +29,11 @@ pub enum OperationAux {
     None,
     MerkleProof(MerkleProof),
     MerkleTreeStateTransitionProof(MerkleTreeStateTransitionProof),
+    PodInputMerkleProof {
+        pod_index: usize,
+        index: usize,
+        pf: MerkleProof,
+    },
     Signature(Signature),
 }
 
@@ -41,6 +46,15 @@ impl fmt::Display for OperationAux {
             Self::MerkleTreeStateTransitionProof(pf) => {
                 write!(f, "merkle_tree_state_transition_proof({:?})", pf)?
             }
+            Self::PodInputMerkleProof {
+                pod_index,
+                index,
+                pf,
+            } => write!(
+                f,
+                "pod_input_merkle_proof({}, {}, {:?})",
+                pod_index, index, pf
+            )?,
             Self::Signature(sig) => write!(f, "signature({:?})", sig)?,
         }
         Ok(())

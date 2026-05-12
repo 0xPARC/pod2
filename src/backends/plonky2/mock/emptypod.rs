@@ -6,7 +6,10 @@ use crate::{
         error::{Error, Result},
         mainpod::{self, calculate_statements_hash},
     },
-    middleware::{Hash, IntroPredicateRef, Params, Pod, PodType, Statement, VDSet, EMPTY_HASH},
+    middleware::{
+        containers::Array, Hash, IntroPredicateRef, Params, Pod, PodType, Statement, VDSet, Value,
+        EMPTY_HASH,
+    },
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -51,7 +54,7 @@ impl Pod for MockEmptyPod {
             .collect_vec();
         let sts_hash = calculate_statements_hash(&statements);
         if sts_hash != self.sts_hash {
-            return Err(Error::statements_hash_not_equal(self.sts_hash, sts_hash));
+            return Err(Error::statements_root_not_equal(self.sts_hash, sts_hash));
         }
         Ok(())
     }
@@ -61,6 +64,11 @@ impl Pod for MockEmptyPod {
     fn pod_type(&self) -> (usize, &'static str) {
         (PodType::MockEmpty as usize, "MockEmpty")
     }
+
+    fn pub_self_statements_array(&self) -> Array {
+        Array::new(vec![Value::from(empty_statement().hash())])
+    }
+
     fn pub_self_statements(&self) -> Vec<Statement> {
         vec![empty_statement()]
     }
