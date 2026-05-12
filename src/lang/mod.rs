@@ -31,6 +31,8 @@ pub mod error;
 pub mod frontend_ast;
 pub mod frontend_ast_lower;
 pub mod frontend_ast_split;
+#[cfg(test)]
+mod frontend_ast_split_milp;
 pub mod frontend_ast_validate;
 pub mod module;
 pub mod parser;
