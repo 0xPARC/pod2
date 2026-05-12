@@ -1337,6 +1337,58 @@ pub mod tests {
     }
 
     #[test]
+    fn test_record_typed_dot_real_prover() {
+        // Real-prover counterpart to `test_e2e_record_typed_dot_proves_via_mock`
+        // in src/lang/mod.rs. MockProver runs middleware checks only and never
+        // executes the circuit's template verification, so the wildcard-
+        // heuristic issue with integer keys is invisible there. This test
+        // exercises the real circuit and is expected to fail.
+
+        let params = middleware::Params::default();
+        // Record `Inputs` declares two entries: `x` at index 0, `y` at index 1.
+        // The predicate `at_x_is(arr, val)` asserts that `arr.x` (the entry at
+        // index 0 of `arr`) equals `val`. Lowering produces the template
+        // `Equal(AnchoredKey(arr, IndexKey(0)), val)`, which is the shape that
+        // triggers the wildcard-heuristic misfire in the circuit.
+        let module = load_module(
+            r#"
+            record Inputs = (x, y)
+            at_x_is(arr Inputs, val) = AND(
+                Equal(arr.x, val)
+            )
+            "#,
+            "records_dot_real",
+            &params,
+            &[],
+        )
+        .unwrap();
+        let at_x_is = module.batch.predicate_ref_by_name("at_x_is").unwrap();
+
+        // Concrete witness: arr[0] = 7, arr[1] = 13. So `arr.x` is 7.
+        let arr = middleware::containers::Array::new(vec![Value::from(7i64), Value::from(13i64)]);
+
+        let mut vds = DEFAULT_VD_LIST.clone();
+        vds.push(rec_main_pod_circuit_data(&params).1.verifier_only.clone());
+        let vd_set = VDSet::new(&vds);
+
+        let mut builder = MainPodBuilder::new(&params, &vd_set);
+        // Show that arr contains 7 at index 0, then that that value equals 7.
+        let contains_st = builder
+            .priv_op(frontend::Operation::array_contains(arr, 0i64, 7i64))
+            .unwrap();
+        let equal_st = builder
+            .priv_op(frontend::Operation::eq(contains_st, 7i64))
+            .unwrap();
+        // Publicly claim `at_x_is(arr, 7)` via the custom predicate.
+        builder
+            .pub_op(frontend::Operation::custom(at_x_is, [equal_st]))
+            .unwrap();
+        let prover = Prover {};
+        let pod = builder.prove(&prover).unwrap();
+        pod.pod.verify().unwrap();
+    }
+
+    #[test]
     fn test_replace_value_with_entry() {
         let params = middleware::Params::default();
         let vd_set = &*DEFAULT_VD_SET;
