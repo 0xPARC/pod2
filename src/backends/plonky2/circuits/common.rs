@@ -448,39 +448,6 @@ impl PredicateTarget {
     }
 }
 
-/// Mirrors `middleware::KeyOrWildcard`
-#[derive(Clone)]
-pub struct LiteralOrWildcardTarget {
-    pub elements: [Target; VALUE_SIZE],
-}
-
-impl LiteralOrWildcardTarget {
-    fn from_slice(v: &[Target]) -> Self {
-        Self {
-            elements: v.try_into().expect("len is VALUE_SIZE"),
-        }
-    }
-    /// cases: ((is_key, key), (is_wildcard, wildcard_index))
-    pub fn cases(
-        &self,
-        builder: &mut CircuitBuilder,
-    ) -> ((BoolTarget, ValueTarget), (BoolTarget, Target)) {
-        let zero = builder.zero();
-        let is_zero_tail: Vec<_> = (1..4)
-            .map(|i| builder.is_equal(self.elements[i], zero))
-            .collect();
-        let is_wildcard = is_zero_tail
-            .into_iter()
-            .reduce(|acc, x| builder.and(acc, x))
-            .expect("len > 1");
-        let is_key = builder.not(is_wildcard);
-        let key = ValueTarget::from_slice(&self.elements);
-        let wildcard_index = self.elements[0];
-
-        ((is_key, key), (is_wildcard, wildcard_index))
-    }
-}
-
 #[derive(Clone, Serialize, Deserialize)]
 pub struct StatementTmplArgTarget {
     #[serde(with = "serde_arrays")]
@@ -503,12 +470,12 @@ impl StatementTmplArgTarget {
     pub fn as_anchored_key(
         &self,
         builder: &mut CircuitBuilder,
-    ) -> (BoolTarget, Target, LiteralOrWildcardTarget) {
+    ) -> (BoolTarget, Target, ValueTarget) {
         let prefix = builder.constant(F::from(StatementTmplArgPrefix::AnchoredKey));
         let case_ok = builder.is_equal(self.elements[0], prefix);
         let id_wildcard_index = self.elements[1];
-        let value_key_or_wildcard = LiteralOrWildcardTarget::from_slice(&self.elements[5..9]);
-        (case_ok, id_wildcard_index, value_key_or_wildcard)
+        let key = ValueTarget::from_slice(&self.elements[5..9]);
+        (case_ok, id_wildcard_index, key)
     }
 
     pub fn as_wildcard_literal(&self, builder: &mut CircuitBuilder) -> (BoolTarget, Target) {

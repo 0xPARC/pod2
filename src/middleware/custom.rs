@@ -72,10 +72,10 @@ impl From<StatementTmplArgPrefix> for F {
 impl ToFields for StatementTmplArg {
     fn to_fields(&self) -> Vec<F> {
         // Encoding:
-        // None =>                         (0,          0, 0, 0, 0,  0, 0, 0, 0)
-        // Literal(v) =>                   (1,        [v         ],  0, 0, 0, 0)
-        // Key(wc_index, key_or_wc) =>     (2, [wc_index], 0, 0, 0, [key_or_wc])
-        // WildcardLiteral(wc_index) =>    (3, [wc_index], 0, 0, 0,  0, 0, 0, 0)
+        // None =>                          (0,          0, 0, 0, 0,  0, 0, 0, 0)
+        // Literal(v) =>                    (1,        [v         ],  0, 0, 0, 0)
+        // AnchoredKey(wc_index, key) =>    (2, [wc_index], 0, 0, 0, [key      ])
+        // WildcardLiteral(wc_index) =>     (3, [wc_index], 0, 0, 0,  0, 0, 0, 0)
         // SelfPredicateHash(pred_index) => (4, pred_index, 0, 0, 0,  0, 0, 0, 0)
         // In all cases, we pad to 2 * hash_size + 1 = 9 field elements
         match self {
@@ -88,11 +88,11 @@ impl ToFields for StatementTmplArg {
                 .chain(iter::repeat(F::ZERO))
                 .take(Params::statement_tmpl_arg_size())
                 .collect_vec(),
-            StatementTmplArg::AnchoredKey(wc1, kw2) => {
+            StatementTmplArg::AnchoredKey(wc, key) => {
                 iter::once(F::from(StatementTmplArgPrefix::AnchoredKey))
-                    .chain(wc1.to_fields())
+                    .chain(wc.to_fields())
                     .chain(iter::repeat(F::ZERO).take(VALUE_SIZE - 1))
-                    .chain(kw2.to_fields())
+                    .chain(key.to_fields())
                     .collect_vec()
             }
             StatementTmplArg::Wildcard(wc) => {
