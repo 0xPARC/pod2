@@ -11,17 +11,17 @@ use crate::{
         basetypes::{Proof, VerifierOnlyCircuitData},
         error::{Error, Result},
         mainpod::{
-            extract_merkle_proofs, extract_merkle_transition_proofs, extract_signatures,
-            layout_statements, process_private_statements_operations, process_public_statements,
-            process_public_statements_operations, MerkleProofs, MerkleTransitionProofs, Operation,
-            OperationAux, SignedBy, Statement,
+            extract_merkle_proofs, extract_merkle_transition_proofs, extract_open_input_statements,
+            extract_signatures, layout_statements, process_public_statements,
+            process_public_statements_operations, process_statements_operations, MerkleProofs,
+            MerkleTransitionProofs, Operation, OperationAux, SignedBy, Statement,
         },
         mock::emptypod::MockEmptyPod,
         recursion::hash_verifier_data,
     },
     middleware::{
-        self, containers::Array, deserialize_pod, Hash, MainPodInputs, MainPodProver, Params, Pod,
-        PodType, VDSet, EMPTY_HASH,
+        self, containers::Array, deserialize_pod, Hash, InputPodOpenStatement, MainPodInputs,
+        MainPodProver, Params, Pod, PodType, VDSet, EMPTY_HASH,
     },
 };
 
@@ -42,12 +42,13 @@ pub struct MockMainPod {
     statements_is_pub: Vec<bool>,
     statements: Vec<Statement>,
     operations: Vec<Operation>,
-    // public subset of the `statements` vector
     public_statements: Vec<Statement>,
+    public_statements_mt: Array,
     // All Merkle proofs for containers
     merkle_proofs: MerkleProofs,
     // All Merkle tree state transition proofs for containers
     merkle_transition_proofs: MerkleTransitionProofs,
+    open_input_statements: Vec<InputPodOpenStatement>,
     // All verified signatures
     signatures: Vec<SignedBy>,
 }
@@ -101,19 +102,21 @@ fn fmt_statement_index(
 struct Data {
     // TODO: Change to inherited pub statements to reduce data
     public_statements: Vec<Statement>,
+    public_statements_mt: Array,
     operations: Vec<Operation>,
     statements_is_pub: Vec<bool>,
     statements: Vec<Statement>,
     merkle_proofs: MerkleProofs,
     merkle_transition_proofs: MerkleTransitionProofs,
+    open_input_statements: Vec<InputPodOpenStatement>,
     signatures: Vec<SignedBy>,
     input_pods: Vec<(usize, Params, Hash, VDSet, serde_json::Value)>,
 }
 
 impl MockMainPod {
-    fn offset_input_statements(&self) -> usize {
-        1
-    }
+    // fn offset_input_statements(&self) -> usize {
+    //     1
+    // }
 
     pub fn new(params: &Params, inputs: MainPodInputs) -> Result<Self> {
         let (statements_is_pub, statements) = layout_statements(params, true, &inputs)?;
@@ -123,22 +126,20 @@ impl MockMainPod {
             .into_iter()
             .map(|(_, st)| st.clone())
             .collect();
-        let mut aux_list = vec![OperationAux::None; params.max_priv_statements()];
+        let mut aux_list = vec![OperationAux::None; params.max_statements];
         // Extract Merkle proofs and pad.
         let merkle_proofs =
             extract_merkle_proofs(params, &mut aux_list, inputs.operations, &input_statements)?;
         // Similarly for Merkle state transition proofs.
         let merkle_transition_proofs =
             extract_merkle_transition_proofs(params, &mut aux_list, inputs.operations)?;
+        let open_input_statements =
+            extract_open_input_statements(params, &mut aux_list, inputs.operations)?;
         let signatures =
             extract_signatures(params, &mut aux_list, inputs.operations, &input_statements)?;
 
-        let operations = process_private_statements_operations(
-            params,
-            &statements,
-            &aux_list,
-            inputs.operations,
-        )?;
+        let operations =
+            process_statements_operations(params, &statements, &aux_list, inputs.operations)?;
         let operations = process_public_statements_operations(params, &statements, operations)?;
 
         let (pub_sts_mt, pub_sts) = process_public_statements(&inputs)?;
@@ -157,11 +158,13 @@ impl MockMainPod {
             vd_set: inputs.vd_set,
             input_pods,
             public_statements: pub_sts,
+            public_statements_mt: pub_sts_mt,
             statements_is_pub,
             statements,
             operations,
             merkle_proofs,
             merkle_transition_proofs,
+            open_input_statements,
             signatures,
         })
     }
@@ -221,24 +224,30 @@ impl Pod for MockMainPod {
             }
         }
 
-        let input_statement_offset = self.offset_input_statements();
+        // let input_statement_offset = self.offset_input_statements();
         // get the input_statements from the self.statements
-        let input_statements = &self.statements[input_statement_offset..];
+        // let input_statements = &self.statements[input_statement_offset..];
 
         // 5. verify that all `input_statements` are correctly generated
         // by `self.operations` (where each operation can only access previous statements)
-        let statement_check = input_statements
+        let statement_check = self.statements
             .iter()
             .enumerate()
             .map(|(i, s)| {
-                self.operations[i]
-                    .deref(
-                        &self.statements[..input_statement_offset + i],
-                        &self.signatures,
-                        &self.merkle_proofs,
-                        &self.merkle_transition_proofs,
-                    )?
-                    .check_and_log(&self.params, &s.clone().try_into()?)
+                let op = self.operations[i].deref(
+                    &self.statements,
+                    &self.signatures,
+                    &self.merkle_proofs,
+                    &self.merkle_transition_proofs,
+                    &self.open_input_statements,
+                )?;
+                if let middleware::Operation::OpenInputStatement(InputPodOpenStatement{pod_index, sts_root, ..}) = op {
+                    let sts_root0 = self.input_pods[pod_index].statements_root();
+                    if sts_root0 != sts_root {
+                        return Err(Error::custom(format!("OpenInputStatement uses a statements root different than the input pod one: {} != {}", sts_root, sts_root0)));
+                    }
+                }
+                op.check_and_log(&self.params, &s.clone().try_into()?)
                     .map_err(|e| e.into())
             })
             .collect::<Result<Vec<_>>>()?;
@@ -255,7 +264,7 @@ impl Pod for MockMainPod {
         (PodType::MockMain as usize, "MockMain")
     }
     fn pub_self_statements_array(&self) -> Array {
-        todo!()
+        self.public_statements_mt.clone()
     }
 
     fn pub_self_statements(&self) -> Vec<middleware::Statement> {
@@ -298,11 +307,13 @@ impl Pod for MockMainPod {
             .collect();
         serde_json::to_value(Data {
             public_statements: self.public_statements.clone(),
+            public_statements_mt: self.public_statements_mt.clone(),
             operations: self.operations.clone(),
             statements_is_pub: self.statements_is_pub.clone(),
             statements: self.statements.clone(),
             merkle_proofs: self.merkle_proofs.clone(),
             merkle_transition_proofs: self.merkle_transition_proofs.clone(),
+            open_input_statements: self.open_input_statements.clone(),
             signatures: self.signatures.clone(),
             input_pods,
         })
@@ -319,11 +330,13 @@ impl Pod for MockMainPod {
     ) -> Result<Self> {
         let Data {
             public_statements,
+            public_statements_mt, // TODO: Derive this from public_statements
             operations,
             statements,
             statements_is_pub,
             merkle_proofs,
             merkle_transition_proofs,
+            open_input_statements,
             signatures,
             input_pods,
         } = serde_json::from_value(data)?;
@@ -339,11 +352,13 @@ impl Pod for MockMainPod {
             vd_set,
             input_pods,
             public_statements,
+            public_statements_mt,
             operations,
             statements_is_pub,
             statements,
             merkle_proofs,
             merkle_transition_proofs,
+            open_input_statements,
             signatures,
         })
     }

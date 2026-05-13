@@ -1288,7 +1288,12 @@ impl IndexTarget {
     }
 
     pub fn set_targets(&self, pw: &mut PartialWitness<F>, index: usize) -> Result<()> {
-        assert!(index == 0 || index < self.max_array_len);
+        assert!(
+            index == 0 || index < self.max_array_len,
+            "index = {}, max = {}",
+            index,
+            self.max_array_len
+        );
         pw.set_target(self.low, F::from_canonical_usize(index & ((1 << 6) - 1)))?;
         pw.set_target(self.high, F::from_canonical_usize(index >> 6))?;
         Ok(())
@@ -1753,7 +1758,12 @@ impl CircuitBuilderPod<F, D> for CircuitBuilder {
 
     fn random_access_long(&mut self, i: &IndexTarget, array: &[Target]) -> Target {
         const CHUNK_LEN: usize = 64; // Max size of a single gate native random access
-        assert!(array.len() <= i.max_array_len);
+        assert!(
+            array.len() <= i.max_array_len,
+            "array.len = {}, max = {}",
+            array.len(),
+            i.max_array_len
+        );
         // Limit to 4 chunks (combination of 4 random_access of CHUNK_LEN elements) to avoid
         // abusing this method.
         assert!(array.len() <= 4 * CHUNK_LEN);

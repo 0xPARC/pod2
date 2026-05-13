@@ -15,10 +15,10 @@ pub use serialization::SerializedMainPod;
 use crate::middleware::{
     self, check_custom_pred,
     containers::{Container, Dictionary},
-    fill_wildcard_values, hash_op, max_op, prod_op, root_key_to_ak, sum_op, AnchoredKey, Hash, Key,
-    MainPodInputs, MainPodProver, NativeOperation, OperationAux, OperationType, Params, PublicKey,
-    RawValue, Signature, Signer, Statement, StatementArg, VDSet, Value, ValueRef, BASE_PARAMS,
-    EMPTY_VALUE,
+    fill_wildcard_values, hash_op, max_op, prod_op, root_key_to_ak, sum_op, AnchoredKey, Hash,
+    InputPodOpenStatement, Key, MainPodInputs, MainPodProver, NativeOperation, OperationAux,
+    OperationType, Params, PublicKey, RawValue, Signature, Signer, Statement, StatementArg, VDSet,
+    Value, ValueRef, BASE_PARAMS, EMPTY_VALUE,
 };
 
 mod custom;
@@ -602,6 +602,16 @@ impl MainPodBuilder {
                             .collect::<Result<Vec<_>>>()?;
                         Statement::from_args(st.predicate(), new_st_args)?
                     }
+                    (
+                        OpenInputStatement,
+                        &[],
+                        OperationAux::OpenInputStatement(InputPodOpenStatement {
+                            pod_index,
+                            st_index: index,
+                            ..
+                        }),
+                        // TODO: validate proof
+                    ) => self.input_pods[*pod_index].public_statements[*index].clone(),
                     (t, _, _) => {
                         if t.is_syntactic_sugar() {
                             return Err(Error::custom(format!(
@@ -677,7 +687,22 @@ impl MainPodBuilder {
         Ok(())
     }
 
-    // TODO: Add method to open input pod statements
+    fn op_input_st(&self, pod_index: usize, st_index: usize) -> Result<Operation> {
+        let pod = &self.input_pods[pod_index];
+        let sts_mt = pod.pod.pub_self_statements_array();
+        let (_, mt_proof) = sts_mt.prove(st_index)?;
+        Ok(Operation(
+            OperationType::Native(NativeOperation::OpenInputStatement),
+            vec![],
+            OperationAux::OpenInputStatement(InputPodOpenStatement {
+                pod_index,
+                sts_root: sts_mt.commitment(),
+                st_index,
+                proof: mt_proof,
+            }),
+        ))
+    }
+
     pub fn open_input_st(
         &mut self,
         public: bool,
@@ -685,21 +710,29 @@ impl MainPodBuilder {
         st: &Statement,
     ) -> Result<Statement> {
         let pod = &self.input_pods[pod_index];
-        if let Some(i) = pod.public_statements.iter().position(|st0| st0 == st) {
-            let (_, mt_proof) = pod.pod.pub_self_statements_array().prove(i)?;
-            let op = Operation(
-                OperationType::Native(NativeOperation::OpenInputStatement),
-                vec![],
-                OperationAux::PodInputMerkleProof {
-                    pod_index,
-                    index: i,
-                    pf: mt_proof,
-                },
-            );
+        if let Some(st_index) = pod.public_statements.iter().position(|st0| st0 == st) {
+            let op = self.op_input_st(pod_index, st_index)?;
             self.op(public, Vec::new(), op)
         } else {
             panic!("TODO")
         }
+    }
+
+    /// Ensure that the statement exists in the pod.  First search among loaded statements.  If not
+    /// found, search among public statements from input pods and if found, load the statement via
+    /// the OpenInputStatement operation.
+    fn ensure_statement(&mut self, st: &Statement) -> Result<()> {
+        if self.statements.iter().find(|(_, st0)| st0 == st).is_some() {
+            return Ok(());
+        }
+        for (pod_index, pod) in self.input_pods.iter().enumerate() {
+            if let Some(st_index) = pod.public_statements.iter().position(|st0| st0 == st) {
+                let op = self.op_input_st(pod_index, st_index)?;
+                self.op(false, Vec::new(), op)?;
+                return Ok(());
+            }
+        }
+        Err(Error::custom(format!("statement {} not found", st)))
     }
 
     /// `wildcard_values`: wildcard values to use instead of EMPTY_VALUE for unresolved wildcards
@@ -710,8 +743,12 @@ impl MainPodBuilder {
         op: Operation,
     ) -> Result<Statement> {
         self.add_entries_contains(&op)?;
-        // TODO: Automatically open dependencies from inputs if they are not in the pod?
         let op = Self::fill_in_aux(Self::lower_op(op)?)?;
+        for arg in &op.1 {
+            if let OperationArg::Statement(st) = arg {
+                self.ensure_statement(st)?;
+            }
+        }
         let st = self.op_statement(wildcard_values, op.clone())?;
         // Skip adding the statement and operation if it already exists
         if let Some((public0, _st0)) = self.statements.iter().find(|(_public0, st0)| st0 == &st) {
@@ -984,9 +1021,8 @@ pub mod tests {
     #[test]
     fn test_ethdos_recursive() -> Result<()> {
         let params = Params {
-            max_input_pods_public_statements: 8,
             max_statements: 24,
-            max_public_statements: 8,
+            max_open_input_statements: 8,
             ..Default::default()
         };
         let vd_set = &*MOCK_VD_SET;

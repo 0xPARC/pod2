@@ -24,16 +24,20 @@ pub enum OperationType {
     Custom(CustomPredicateRef),
 }
 
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct InputPodOpenStatement {
+    pub pod_index: usize,
+    pub sts_root: Hash,
+    pub st_index: usize,
+    pub proof: MerkleProof,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum OperationAux {
     None,
     MerkleProof(MerkleProof),
     MerkleTreeStateTransitionProof(MerkleTreeStateTransitionProof),
-    PodInputMerkleProof {
-        pod_index: usize,
-        index: usize,
-        pf: MerkleProof,
-    },
+    OpenInputStatement(InputPodOpenStatement),
     Signature(Signature),
 }
 
@@ -46,14 +50,15 @@ impl fmt::Display for OperationAux {
             Self::MerkleTreeStateTransitionProof(pf) => {
                 write!(f, "merkle_tree_state_transition_proof({:?})", pf)?
             }
-            Self::PodInputMerkleProof {
+            Self::OpenInputStatement(InputPodOpenStatement {
                 pod_index,
-                index,
-                pf,
-            } => write!(
+                sts_root,
+                st_index,
+                proof,
+            }) => write!(
                 f,
-                "pod_input_merkle_proof({}, {}, {:?})",
-                pod_index, index, pf
+                "pod_input_merkle_proof({}, {}, {}, {:?})",
+                pod_index, sts_root, st_index, proof
             )?,
             Self::Signature(sig) => write!(f, "signature({:?})", sig)?,
         }
@@ -241,11 +246,7 @@ pub enum Operation {
         /* Contains/None len=max_statement_args */ Vec<Statement>,
         /* to copy */ Statement,
     ),
-    OpenInputStatement(
-        Statement,
-        usize, // pod input index
-        MerkleProof,
-    ),
+    OpenInputStatement(InputPodOpenStatement),
     Custom(CustomPredicateRef, Vec<Statement>),
 }
 
@@ -298,7 +299,7 @@ impl Operation {
             }
             Self::ContainerDeleteFromEntries(_, _, _, _) => OT::Native(ContainerDeleteFromEntries),
             Self::ReplaceValueWithEntry(_, _) => OT::Native(ReplaceValueWithEntry),
-            Self::OpenInputStatement(_, _, _) => OT::Native(OpenInputStatement),
+            Self::OpenInputStatement { .. } => OT::Native(OpenInputStatement),
             Self::Custom(cpr, _) => OT::Custom(cpr.clone()),
         }
     }
@@ -329,7 +330,7 @@ impl Operation {
                 sts.push(s);
                 sts
             }
-            Self::OpenInputStatement(_, _, _) => vec![],
+            Self::OpenInputStatement { .. } => vec![],
             Self::Custom(_, args) => args,
         }
     }
@@ -424,6 +425,9 @@ impl Operation {
                     let st = args.pop().expect("valid vec len");
                     Self::ReplaceValueWithEntry(args, st)
                 }
+                (NO::OpenInputStatement, &[], OA::OpenInputStatement(input_pod_open_statement)) => {
+                    Self::OpenInputStatement(input_pod_open_statement)
+                }
                 _ => Err(Error::custom(format!(
                     "Ill-formed operation {:?} with {} arguments {:?} and aux {:?}.",
                     op_code,
@@ -513,6 +517,9 @@ impl Operation {
                 _ => Err(deduction_err()),
             }
         };
+        // if self.op_type() != OperationType::Native(NativeOperation::None) {
+        //     println!("DBG check {:?}", self.op_type());
+        // }
         let b = match (self, output_statement) {
             (Self::None, None) => true,
             (Self::CopyStatement(s1), s2) => s1 == s2,
@@ -633,6 +640,16 @@ impl Operation {
             }
             (Self::ReplaceValueWithEntry(entries, st_in), st_out) => {
                 Self::check_replace_value_with_entry(entries, st_in, st_out)?
+            }
+            (Self::OpenInputStatement(data), st) => {
+                let st_hash = st.hash();
+                MerkleTree::verify(
+                    data.sts_root,
+                    &data.proof,
+                    &Value::from(data.st_index as i64).raw(),
+                    &st_hash.raw(),
+                )
+                .is_ok()
             }
             _ => return Err(deduction_err()),
         };

@@ -161,7 +161,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             st_points_total,
             st_gt_9000,
         ],
-    ));
+    ))?;
+    // println!("# Builder:\n{}\n", builder);
     let pod_alice_over_9000 = builder.prove(prover).unwrap();
     println!("# pod_alice_over_9000\n:{}", pod_alice_over_9000);
     pod_alice_over_9000.pod.verify().unwrap();

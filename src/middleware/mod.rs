@@ -832,9 +832,10 @@ impl Default for ParamsContainers {
 #[serde(rename_all = "camelCase")]
 pub struct Params {
     pub max_input_pods: usize,
-    pub max_input_pods_public_statements: usize,
+    // pub max_input_pods_public_statements: usize,
     pub max_statements: usize,
-    pub max_public_statements: usize,
+    // pub max_public_statements: usize,
+    pub max_open_input_statements: usize,
     // max number of different custom predicates that can be used in a MainPod
     pub max_custom_predicates: usize,
     // max number of operations using custom predicates that can be verified in the MainPod
@@ -856,9 +857,10 @@ impl Default for Params {
     fn default() -> Self {
         Self {
             max_input_pods: 2,
-            max_input_pods_public_statements: 8,
+            // max_input_pods_public_statements: 8,
             max_statements: 48,
-            max_public_statements: 8,
+            // max_public_statements: 8,
+            max_open_input_statements: 20,
             max_custom_predicates: 8,
             max_custom_predicate_verifications: 8,
             max_custom_predicate_wildcards: 8,
@@ -886,9 +888,9 @@ impl Params {
         2usize.pow(BASE_PARAMS.max_depth_custom_batch_mt as u32)
     }
 
-    pub fn max_priv_statements(&self) -> usize {
-        self.max_statements - self.max_public_statements
-    }
+    // pub fn max_priv_statements(&self) -> usize {
+    //     self.max_statements - self.max_public_statements
+    // }
 
     pub const fn statement_tmpl_arg_size() -> usize {
         2 * HASH_SIZE + 1
@@ -923,10 +925,9 @@ impl Params {
         BASE_PARAMS.max_depth_custom_batch_mt
     }
 
-    /// Total size of the statement table including None, input statements from signed pods and
-    /// input recursive pods and new statements (public & private)
+    /// Total size of the statement table including None
     pub fn statement_table_size(&self) -> usize {
-        1 + self.max_input_pods * self.max_input_pods_public_statements + self.max_statements
+        1 + self.max_statements
     }
 
     pub fn print_serialized_sizes(&self) {
@@ -996,6 +997,7 @@ pub trait Pod: fmt::Debug + DynClone + Sync + Send + Any + EqualsAny {
     /// Return a uuid of the pod type and its name.  The name is only used as metadata.
     fn pod_type(&self) -> (usize, &'static str);
     // TODO: Add default implementation from pub_self_statements
+    // TODO: Maybe rename to "mt" instead of "array"?  Be consistent with the names!
     // Container array of self public statements
     fn pub_self_statements_array(&self) -> Array;
     /// Statements as internally generated, where intro statements don't encode the verifier data

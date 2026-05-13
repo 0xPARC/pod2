@@ -20,7 +20,7 @@ use crate::{
         deserialize_proof, deserialize_verifier_only,
         error::{Error, Result},
         hash_common_data,
-        mainpod::{self, calculate_statements_hash},
+        mainpod::{self},
         recursion::pad_circuit,
         serialization::{
             CircuitDataSerializer, VerifierCircuitDataSerializer, VerifierOnlyCircuitDataSerializer,
@@ -166,12 +166,12 @@ impl Pod for EmptyPod {
         &self.params
     }
     fn verify(&self) -> Result<()> {
-        let statements = self
+        let _statements = self
             .pub_self_statements()
             .into_iter()
             .map(mainpod::Statement::from)
             .collect_vec();
-        let sts_hash = calculate_statements_hash(&statements);
+        let sts_hash = EMPTY_HASH; // TODO
         if sts_hash != self.sts_hash {
             return Err(Error::statements_root_not_equal(self.sts_hash, sts_hash));
         }

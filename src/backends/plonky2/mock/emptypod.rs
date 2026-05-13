@@ -4,7 +4,7 @@ use crate::{
     backends::plonky2::{
         basetypes::{Proof, VerifierOnlyCircuitData},
         error::{Error, Result},
-        mainpod::{self, calculate_statements_hash},
+        mainpod::{self},
     },
     middleware::{
         containers::Array, Hash, IntroPredicateRef, Params, Pod, PodType, Statement, VDSet, Value,
@@ -32,8 +32,8 @@ fn empty_statement() -> Statement {
 
 impl MockEmptyPod {
     pub fn new_boxed(params: &Params, vd_set: VDSet) -> Box<dyn Pod> {
-        let statements = [mainpod::Statement::from(empty_statement())];
-        let sts_hash = calculate_statements_hash(&statements);
+        let _statements = [mainpod::Statement::from(empty_statement())];
+        let sts_hash = EMPTY_HASH; // TODO
         Box::new(Self {
             params: params.clone(),
             sts_hash,
@@ -47,12 +47,12 @@ impl Pod for MockEmptyPod {
         &self.params
     }
     fn verify(&self) -> Result<()> {
-        let statements = self
+        let _statements = self
             .pub_self_statements()
             .into_iter()
             .map(mainpod::Statement::from)
             .collect_vec();
-        let sts_hash = calculate_statements_hash(&statements);
+        let sts_hash = EMPTY_HASH; // TODO
         if sts_hash != self.sts_hash {
             return Err(Error::statements_root_not_equal(self.sts_hash, sts_hash));
         }

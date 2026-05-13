@@ -260,9 +260,8 @@ mod tests {
 
     fn build_ethdos_pod() -> Result<MainPod> {
         let params = Params {
-            max_input_pods_public_statements: 8,
             max_statements: 24,
-            max_public_statements: 8,
+            max_open_input_statements: 8,
             ..Default::default()
         };
         let vd_set = &*MOCK_VD_SET;
