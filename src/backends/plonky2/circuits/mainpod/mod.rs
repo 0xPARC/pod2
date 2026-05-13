@@ -57,9 +57,10 @@ use crate::{
     },
     measure_gates_begin, measure_gates_end,
     middleware::{
-        CustomPredicate, CustomPredicateBatch, CustomPredicateRef, InputPodOpenStatement,
+        CustomPredicate, CustomPredicateBatch, CustomPredicateRef, Hash, InputPodOpenStatement,
         NativeOperation, NativePredicate, Params, PredicatePrefix, Statement,
-        StatementTmplArgPrefix, ToFields, Value, BASE_PARAMS, F, HASH_SIZE, VALUE_SIZE,
+        StatementTmplArgPrefix, ToFields, Value, BASE_PARAMS, EMPTY_VALUE, F, HASH_SIZE,
+        VALUE_SIZE,
     },
 };
 //
@@ -1793,13 +1794,6 @@ fn verify_main_pod_circuit(
 
     let measure = measure_gates_begin!(builder, "MainPodVerify");
 
-    // Build the statement array
-    let mut statements = Vec::new();
-    // Statement at index 0 is always None to be used for padding operation arguments in custom
-    // predicate statements
-    let st_none = StatementTarget::new_native(builder, params, NativePredicate::None, &[]);
-    statements.push(st_none);
-
     // 1a. Verify all input recursive pods
     for (verified_proof, vd_mt_proof) in izip!(
         verified_proofs,
@@ -1880,10 +1874,10 @@ fn verify_main_pod_circuit(
         measure_gates_end!(builder, measure_in_pod);
     }
 
-    // Add the input (private and public) statements
-    for statement in &main_pod.statements {
-        statements.push(statement.clone());
-    }
+    let mut sts_root = HashOutTarget {
+        elements: builder.constant_value(EMPTY_VALUE).elements,
+    };
+
     // let public_statements_offset = main_pod.input_statements.len() - params.max_public_statements;
     // let pub_statements = &main_pod.input_statements[public_statements_offset..];
 
@@ -1900,35 +1894,36 @@ fn verify_main_pod_circuit(
 
     // 2. Calculate the Pod Id from the public statements
     // let sts_hash = calculate_statements_hash_circuit(builder, pub_statements);
-    let sts_hash = HashOutTarget {
-        elements: ValueTarget::zero(builder).elements,
-    }; // TODO
+    // let sts_hash = HashOutTarget {
+    //     elements: ValueTarget::zero(builder).elements,
+    // }; // TODO
+
+    // Statement at index 0 is always None to be used for padding operation arguments in custom
+    // predicate statements
+    let st_none = StatementTarget::new_native(builder, params, NativePredicate::None, &[]);
+    let statements = iter::once(&st_none).chain(main_pod.statements.iter());
 
     // Precompute flattened statements and their hashes once, then resolve operation args using
     // projected lookups. Reusing the flattened forms avoids re-flattening per op-arg lookup.
-    let statement_flatteneds: Vec<Vec<Target>> = statements.iter().map(|st| st.flatten()).collect();
+    let statement_flatteneds: Vec<Vec<Target>> =
+        statements.clone().map(|st| st.flatten()).collect();
     let statement_hashes = statement_flatteneds
         .iter()
         .map(|flat| builder.hash_n_to_hash_no_pad::<PoseidonHash>(flat.clone()))
         .collect_vec();
 
     // 5. Verify statements
-    // Skip first statement as an optimization because it's a hardcoded None
-    assert_eq!(statements.len(), main_pod.operations.len() + 1);
-    for ((i, st), op) in statements
-        .iter()
-        .enumerate()
-        .skip(1)
-        .zip(&main_pod.operations)
+    for (j, (is_pub, st_insert_proof, st, op)) in izip!(
+        &main_pod.statements_is_pub,
+        &main_pod.sts_mt_proofs,
+        &main_pod.statements,
+        &main_pod.operations
+    )
+    .enumerate()
     {
+        let i = j + 1; // Previous statement have a hardcoded None at index 0
         let prev_statement_flatteneds = &statement_flatteneds[..i];
         let prev_statement_hashes = &statement_hashes[..i];
-        assert_eq!(prev_statement_flatteneds.len(), prev_statement_hashes.len());
-        println!(
-            "DBG verify_op {} prev_len={}",
-            i,
-            prev_statement_flatteneds.len()
-        );
         // if i < public_statements_offset {
         verify_operation_circuit(
             params,
@@ -1949,10 +1944,15 @@ fn verify_main_pod_circuit(
         //         prev_statement_hashes,
         //     )?;
         // }
+        // TODO: Connect the proof to real data and verify it
+        // verify_merkle_state_transition_circuit(builder, insert_proof);
+        let new_sts_root =
+            builder.select_flattenable(params, *is_pub, &st_insert_proof.new_root, &sts_root);
+        sts_root = new_sts_root;
     }
 
     measure_gates_end!(builder, measure);
-    Ok(sts_hash)
+    Ok(sts_root)
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -2143,8 +2143,10 @@ pub struct MainPodVerifyTarget {
     vd_mt_proofs: Vec<MerkleProofExistenceTarget>,
     // input_pods_self_statements: Vec<Vec<StatementTarget>>,
     // The KEY_TYPE statement must be the first public one
+    statements_is_pub: Vec<BoolTarget>,
     statements: Vec<StatementTarget>,
     operations: Vec<OperationTarget>,
+    sts_mt_proofs: Vec<MerkleTreeStateTransitionProofTarget>,
     custom_predicates: Vec<CustomPredicateInBatchTarget>,
     aux_table_input: AuxTableInputTargets,
     // merkle_proofs: MerkleProofsTarget,
@@ -2169,11 +2171,22 @@ impl MainPodVerifyTarget {
             //             .collect_vec()
             //     })
             //     .collect(),
+            statements_is_pub: (0..params.max_statements)
+                .map(|_| builder.add_virtual_bool_target_safe())
+                .collect(),
             statements: (0..params.max_statements)
                 .map(|_| builder.add_virtual_statement(false))
                 .collect(),
             operations: (0..params.max_statements)
                 .map(|_| builder.add_virtual_operation(params))
+                .collect(),
+            sts_mt_proofs: (0..params.max_statements)
+                .map(|_| {
+                    MerkleTreeStateTransitionProofTarget::new_virtual(
+                        BASE_PARAMS.max_depth_public_statements_mt,
+                        builder,
+                    )
+                })
                 .collect(),
             custom_predicates: (0..params.max_custom_predicates)
                 .map(|_| CustomPredicateInBatchTarget::new_virtual(builder))
@@ -2220,8 +2233,10 @@ pub struct MainPodVerifyInput {
     /// the RecursiveCircuit, we don't have access to the used verifier_datas.
     pub vd_mt_proofs: Vec<MerkleClaimAndProof>,
     // pub input_pods_pub_self_statements: Vec<Vec<Statement>>,
+    pub statements_is_pub: Vec<bool>,
     pub statements: Vec<mainpod::Statement>,
     pub operations: Vec<mainpod::Operation>,
+    pub sts_roots: Vec<Hash>,
     pub custom_predicates_with_mpt_proofs: Vec<(CustomPredicateRef, MerkleProof)>,
     pub aux_table_input: AuxTableInput,
 }
@@ -2307,12 +2322,20 @@ impl InnerCircuit for MainPodVerifyTarget {
         // }
 
         // Skip statement and operation 0 wich are a hardcoded None
+        let statements_is_pub = &input.statements_is_pub[1..];
         let statements = &input.statements[1..];
         let operations = &input.operations[1..];
         assert_eq!(statements.len(), self.params.max_statements);
-        for (i, (st, op)) in zip_eq(statements, operations).enumerate() {
+        for (i, ((is_pub, st), op)) in
+            zip_eq(zip_eq(statements_is_pub, statements), operations).enumerate()
+        {
+            pw.set_bool_target(self.statements_is_pub[i], *is_pub)?;
             self.statements[i].set_targets(pw, st)?;
             self.operations[i].set_targets(pw, &self.params, op)?;
+            // TODO
+            let mut proof = MerkleTreeStateTransitionProof::pad();
+            proof.new_root = input.sts_roots[1 + i];
+            self.sts_mt_proofs[i].set_targets(pw, &proof)?;
         }
 
         assert!(input.custom_predicates_with_mpt_proofs.len() <= self.params.max_custom_predicates);

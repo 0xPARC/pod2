@@ -69,7 +69,11 @@ use crate::{
 //     Hash(PoseidonHash::hash_no_pad(&field_elems).elements)
 // }
 
-pub fn process_public_statements(inputs: &MainPodInputs) -> Result<(Array, Vec<Statement>)> {
+pub fn process_public_statements(
+    inputs: &MainPodInputs,
+    statements_is_pub: &[bool],
+    statements: &[Statement],
+) -> Result<(Array, Vec<Hash>, Vec<Statement>)> {
     // Build the public statements tree
     let (init_sts, init_sts_mt): (Vec<Statement>, Array) = if inputs.extend_pod0_pub_statements {
         if !inputs.pods[0].is_main() {
@@ -89,13 +93,15 @@ pub fn process_public_statements(inputs: &MainPodInputs) -> Result<(Array, Vec<S
         (Vec::new(), Array::new(Vec::new()))
     };
     let (mut pub_sts, mut pub_sts_mt) = (init_sts, init_sts_mt);
-    for (is_public, statement) in inputs.statements.iter() {
-        if *is_public {
-            pub_sts_mt.insert(pub_sts.len(), Value::from(statement.hash()))?;
-            pub_sts.push(statement.clone().into());
+    let mut pub_sts_roots = Vec::new();
+    for (is_pub, st) in zip_eq(statements_is_pub, statements) {
+        if *is_pub {
+            pub_sts_mt.insert(pub_sts.len(), Value::from(st.hash()))?;
+            pub_sts.push(st.clone().into());
         }
+        pub_sts_roots.push(pub_sts_mt.commitment());
     }
-    Ok((pub_sts_mt, pub_sts))
+    Ok((pub_sts_mt, pub_sts_roots, pub_sts))
 }
 
 /// Extracts unique `CustomPredicate`s from Custom ops.
@@ -625,12 +631,13 @@ impl MainPodProver for Prover {
         let signed_bys =
             extract_signatures(params, &mut aux_list, inputs.operations, &input_statements)?;
 
-        let (_statements_is_pub, statements) = layout_statements(params, false, &inputs)?;
+        let (statements_is_pub, statements) = layout_statements(params, false, &inputs)?;
         let operations =
             process_statements_operations(params, &statements, &aux_list, inputs.operations)?;
         let operations = process_public_statements_operations(params, &statements, operations)?;
 
-        let (pub_sts_mt, pub_sts) = process_public_statements(&inputs)?;
+        let (pub_sts_mt, pub_sts_roots, pub_sts) =
+            process_public_statements(&inputs, &statements_is_pub, &statements)?;
 
         let common_hash: String = cache_get_rec_main_pod_common_hash(params).clone();
         let proofs = inputs
@@ -676,8 +683,10 @@ impl MainPodProver for Prover {
             vds_set: inputs.vd_set.clone(),
             vd_mt_proofs,
             // input_pods_pub_self_statements,
+            statements_is_pub,
             statements,
             operations,
+            sts_roots: pub_sts_roots,
             custom_predicates_with_mpt_proofs,
             aux_table_input,
         };

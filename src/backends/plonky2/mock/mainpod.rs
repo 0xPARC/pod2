@@ -142,7 +142,8 @@ impl MockMainPod {
             process_statements_operations(params, &statements, &aux_list, inputs.operations)?;
         let operations = process_public_statements_operations(params, &statements, operations)?;
 
-        let (pub_sts_mt, pub_sts) = process_public_statements(&inputs)?;
+        let (pub_sts_mt, _, pub_sts) =
+            process_public_statements(&inputs, &statements_is_pub, &statements)?;
 
         let pad_pod = MockEmptyPod::new_boxed(params, inputs.vd_set.clone());
         let input_pods: Vec<Box<dyn Pod>> = inputs

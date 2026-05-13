@@ -1847,6 +1847,7 @@ impl CircuitBuilderPod<F, D> for CircuitBuilder {
         )
     }
 
+    /// Selects `x` or `y` based on `b`, i.e., this returns `if b { x } else { y }`.
     fn select_flattenable<T: Flattenable>(
         &mut self,
         params: &Params,
