@@ -39,8 +39,8 @@ use crate::{
     middleware::{
         self, containers::Array, value_from_op, wildcard_values_from_op_st, CustomPredicateRef,
         Error as MiddlewareError, Hash, InputPodOpenStatement, MainPodInputs, MainPodProver,
-        NativeOperation, OperationType, Params, Pod, PodType, RawValue, StatementArg, ToFields,
-        VDSet, Value, ValueRef, BASE_PARAMS,
+        NativeOperation, OperationType, Params, Pod, PodType, RawValue, StatementArg, VDSet, Value,
+        ValueRef, BASE_PARAMS,
     },
     timed,
 };
@@ -648,7 +648,11 @@ impl MainPodProver for Prover {
                 assert_eq!(inputs.vd_set.root(), pod.vd_set().root());
                 ProofWithPublicInputs {
                     proof: pod.proof(),
-                    public_inputs: [pod.statements_root().0, inputs.vd_set.root().0].concat(),
+                    public_inputs: public_inputs(
+                        pod.statements_root(),
+                        inputs.vd_set.root(),
+                        pod.is_main(),
+                    ),
                 }
             })
             .collect_vec();
@@ -820,6 +824,16 @@ impl MainPod {
     }
 }
 
+fn public_inputs(pub_sts_root: Hash, vd_set_root: Hash, is_main: bool) -> Vec<F> {
+    pub_sts_root
+        .0
+        .iter()
+        .chain(vd_set_root.0.iter())
+        .cloned()
+        .chain(iter::once(F(if is_main { 1 } else { 0 })))
+        .collect_vec()
+}
+
 impl Pod for MainPod {
     fn params(&self) -> &Params {
         &self.params
@@ -864,13 +878,7 @@ impl Pod for MainPod {
         // 1, 3, 4, 5 verification via the zkSNARK proof
         let rec_main_pod_verifier_circuit_data =
             &*cache_get_rec_main_pod_verifier_circuit_data(&self.params);
-        let public_inputs = pub_sts_mt
-            .commitment()
-            .to_fields()
-            .iter()
-            .chain(self.vd_set.root().0.iter())
-            .cloned()
-            .collect_vec();
+        let public_inputs = public_inputs(pub_sts_mt.commitment(), self.vd_set.root(), true);
         rec_main_pod_verifier_circuit_data
             .verify(ProofWithPublicInputs {
                 proof: self.proof.clone(),

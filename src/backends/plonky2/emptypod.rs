@@ -15,7 +15,7 @@ use crate::{
         cache_get_standard_rec_main_pod_common_circuit_data,
         circuits::{
             common::{Flattenable, StatementTarget},
-            mainpod::{calculate_statements_hash_circuit, PI_OFFSET_STATEMENTS_HASH},
+            mainpod::{calculate_statements_hash_circuit, PI_OFFSET_STATEMENTS_ROOT},
         },
         deserialize_proof, deserialize_verifier_only,
         error::{Error, Result},
@@ -72,6 +72,8 @@ fn verify_empty_pod_circuit(
     let sts_hash = calculate_statements_hash_circuit(builder, &[empty_statement]);
     builder.register_public_inputs(&sts_hash.elements);
     builder.register_public_inputs(&empty_pod.vds_root.elements);
+    let is_main = builder._false();
+    builder.register_public_input(is_main.target);
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -132,7 +134,7 @@ impl EmptyPod {
         let proof = timed!("EmptyPod prove", data.prove(pw)?);
         let sts_hash = {
             let v = &proof.public_inputs
-                [PI_OFFSET_STATEMENTS_HASH..PI_OFFSET_STATEMENTS_HASH + HASH_SIZE];
+                [PI_OFFSET_STATEMENTS_ROOT..PI_OFFSET_STATEMENTS_ROOT + HASH_SIZE];
             Hash([v[0], v[1], v[2], v[3]])
         };
         let common_hash = hash_common_data(&data.common).expect("hash ok");

@@ -67,12 +67,14 @@ use crate::{
 // MainPod verification
 //
 
-/// Offset in public inputs where we store the statements hash
-pub const PI_OFFSET_STATEMENTS_HASH: usize = 0;
+/// Offset in public inputs where we store the statements root
+pub const PI_OFFSET_STATEMENTS_ROOT: usize = 0;
 /// Offset in public inputs where we store the verified data array root
 pub const PI_OFFSET_VDSROOT: usize = 4;
+/// Offset in public inputs where we store the is_main flag
+pub const PI_OFFSET_IS_MAIN: usize = 8;
 
-pub const NUM_PUBLIC_INPUTS: usize = 8;
+pub const NUM_PUBLIC_INPUTS: usize = 9;
 
 const MAX_VALUE_ARGS: usize = 5;
 
@@ -1811,25 +1813,8 @@ fn verify_main_pod_circuit(
         // )
         // .expect("4 elements");
 
-        // NOTE: We use an EmptyPod for padding input pod slots.  The EmptyPod is an introduction
-        // pod that declares a statement with no arguments.
-        // let st0_is_intro = input_pod_self_statements[0].pred_is_blank_intro(builder);
-        let st0_is_intro = builder._true(); // TODO.  We need to add a mechanism to figure out if a
-                                            // pod is intro or not without inspecting the
-                                            // statements
-
-        // Introduction pods can only have Introduction or None statements
-        let intro_ok = st0_is_intro;
-        // for self_st in &input_pod_self_statements[1..] {
-        //     let st_is_intro = self_st.pred_is_blank_intro(builder);
-        //     let st_is_none = self_st.has_native_type(builder, NativePredicate::None);
-        //     let st_is_intro_or_none = builder.or(st_is_intro, st_is_none);
-        //     intro_ok = builder.and(intro_ok, st_is_intro_or_none);
-        // }
-        builder.connect(st0_is_intro.target, intro_ok.target);
-
-        let is_not_main = st0_is_intro;
-        let is_main = builder.not(is_not_main);
+        let is_main = BoolTarget::new_unsafe(verified_proof.public_inputs[PI_OFFSET_IS_MAIN]);
+        builder.assert_bool(is_main);
         // for self_st in input_pod_self_statements {
         //     let normalized_st = normalize_statement_circuit(
         //         params,
@@ -1924,7 +1909,6 @@ fn verify_main_pod_circuit(
         let i = j + 1; // Previous statement have a hardcoded None at index 0
         let prev_statement_flatteneds = &statement_flatteneds[..i];
         let prev_statement_hashes = &statement_hashes[..i];
-        // if i < public_statements_offset {
         verify_operation_circuit(
             params,
             builder,
@@ -1934,16 +1918,6 @@ fn verify_main_pod_circuit(
             prev_statement_hashes,
             &aux_table,
         )?;
-        // } else {
-        //     verify_operation_public_statement_circuit(
-        //         params,
-        //         builder,
-        //         st,
-        //         op,
-        //         prev_statement_flatteneds,
-        //         prev_statement_hashes,
-        //     )?;
-        // }
         // TODO: Connect the proof to real data and verify it
         // verify_merkle_state_transition_circuit(builder, insert_proof);
         let new_sts_root =
@@ -2279,6 +2253,8 @@ impl InnerCircuit for MainPodVerifyTarget {
         let sts_hash = verify_main_pod_circuit(builder, &main_pod, verified_proofs)?;
         builder.register_public_inputs(&sts_hash.elements);
         builder.register_public_inputs(&main_pod.vds_root.elements);
+        let is_main = builder._true();
+        builder.register_public_input(is_main.target);
         Ok(main_pod)
     }
 
