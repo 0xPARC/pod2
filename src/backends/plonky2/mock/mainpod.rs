@@ -264,7 +264,7 @@ impl Pod for MockMainPod {
     fn pod_type(&self) -> (usize, &'static str) {
         (PodType::MockMain as usize, "MockMain")
     }
-    fn pub_self_statements_array(&self) -> Array {
+    fn pub_self_statements_mt(&self) -> Array {
         self.public_statements_mt.clone()
     }
 

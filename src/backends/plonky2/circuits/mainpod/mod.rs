@@ -4,10 +4,7 @@ use itertools::{izip, zip_eq, Itertools};
 use num::{BigUint, One};
 use plonky2::{
     field::types::Field,
-    hash::{
-        hash_types::HashOutTarget,
-        poseidon::{PoseidonHash, PoseidonPermutation},
-    },
+    hash::{hash_types::HashOutTarget, poseidon::PoseidonHash},
     iop::{
         target::{BoolTarget, Target},
         witness::{PartialWitness, WitnessWrite},
@@ -31,7 +28,6 @@ use crate::{
                 PredicateHashOrWildcardTarget, PredicateTarget, StatementArgTarget,
                 StatementTarget, StatementTmplArgTarget, StatementTmplTarget, ValueTarget,
             },
-            hash::{hash_from_state_circuit, precompute_hash_state},
             mux_table::{MuxTableTarget, TableEntryTarget},
         },
         error::Result,
@@ -59,8 +55,7 @@ use crate::{
     middleware::{
         CustomPredicate, CustomPredicateBatch, CustomPredicateRef, Hash, InputPodOpenStatement,
         NativeOperation, NativePredicate, Params, PredicatePrefix, Statement,
-        StatementTmplArgPrefix, ToFields, Value, BASE_PARAMS, EMPTY_VALUE, F, HASH_SIZE,
-        VALUE_SIZE,
+        StatementTmplArgPrefix, Value, BASE_PARAMS, EMPTY_VALUE, F, HASH_SIZE, VALUE_SIZE,
     },
 };
 //
@@ -1646,39 +1641,39 @@ fn _normalize_statement_circuit(
     StatementTarget::new(new_pred_hash, statement.args.clone())
 }
 
-/// `params.num_public_statements_hash` is the total number of statements that will be hashed.
-/// The statements hash is calculated with front-padded none-statements and then the input
-/// statements reversed.  The part of the hash from the front-padded none-statements is
-/// precomputed.
-pub fn calculate_statements_hash_circuit(
-    builder: &mut CircuitBuilder,
-    // These statements will be padded to reach `num_statements`
-    statements: &[StatementTarget],
-) -> HashOutTarget {
-    assert!(statements.len() <= Params::num_public_statements_hash());
-    let measure = measure_gates_begin!(builder, "CalculateStsHash");
-    let statements_rev_flattened = statements.iter().rev().flat_map(|s| s.flatten());
-    let mut none_st = mainpod::Statement::from(Statement::None);
-    pad_statement(&mut none_st);
-    let front_pad_elts = iter::repeat(&none_st)
-        .take(Params::num_public_statements_hash() - statements.len())
-        .flat_map(|s| s.to_fields())
-        .collect_vec();
-    let (perm, front_pad_elts_rem) =
-        precompute_hash_state::<F, PoseidonPermutation<F>>(&front_pad_elts);
-
-    // Precompute the Poseidon state for the initial padding chunks
-    let inputs = front_pad_elts_rem
-        .iter()
-        .map(|v| builder.constant(*v))
-        .chain(statements_rev_flattened)
-        .collect_vec();
-    let sts_hash =
-        hash_from_state_circuit::<PoseidonHash, PoseidonPermutation<F>>(builder, perm, &inputs);
-
-    measure_gates_end!(builder, measure);
-    sts_hash
-}
+// /// `params.num_public_statements_hash` is the total number of statements that will be hashed.
+// /// The statements hash is calculated with front-padded none-statements and then the input
+// /// statements reversed.  The part of the hash from the front-padded none-statements is
+// /// precomputed.
+// pub fn calculate_statements_hash_circuit(
+//     builder: &mut CircuitBuilder,
+//     // These statements will be padded to reach `num_statements`
+//     statements: &[StatementTarget],
+// ) -> HashOutTarget {
+//     assert!(statements.len() <= Params::num_public_statements_hash());
+//     let measure = measure_gates_begin!(builder, "CalculateStsHash");
+//     let statements_rev_flattened = statements.iter().rev().flat_map(|s| s.flatten());
+//     let mut none_st = mainpod::Statement::from(Statement::None);
+//     pad_statement(&mut none_st);
+//     let front_pad_elts = iter::repeat(&none_st)
+//         .take(Params::num_public_statements_hash() - statements.len())
+//         .flat_map(|s| s.to_fields())
+//         .collect_vec();
+//     let (perm, front_pad_elts_rem) =
+//         precompute_hash_state::<F, PoseidonPermutation<F>>(&front_pad_elts);
+//
+//     // Precompute the Poseidon state for the initial padding chunks
+//     let inputs = front_pad_elts_rem
+//         .iter()
+//         .map(|v| builder.constant(*v))
+//         .chain(statements_rev_flattened)
+//         .collect_vec();
+//     let sts_hash =
+//         hash_from_state_circuit::<PoseidonHash, PoseidonPermutation<F>>(builder, perm, &inputs);
+//
+//     measure_gates_end!(builder, measure);
+//     sts_hash
+// }
 
 // Replace BatchSelf predicates with the corresponding Custom(batch_id, index), and
 // SelfPredicateHash args with Literal(hash(Custom(batch_id, index))).

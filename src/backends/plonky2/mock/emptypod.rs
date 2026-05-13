@@ -65,7 +65,7 @@ impl Pod for MockEmptyPod {
         (PodType::MockEmpty as usize, "MockEmpty")
     }
 
-    fn pub_self_statements_array(&self) -> Array {
+    fn pub_self_statements_mt(&self) -> Array {
         Array::new(vec![Value::from(empty_statement().hash())])
     }
 

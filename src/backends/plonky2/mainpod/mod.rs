@@ -87,7 +87,7 @@ pub fn process_public_statements(
                 .iter()
                 .map(|st| st.clone().into())
                 .collect(),
-            inputs.pods[0].pub_self_statements_array(),
+            inputs.pods[0].pub_self_statements_mt(),
         )
     } else {
         (Vec::new(), Array::new(Vec::new()))
@@ -824,7 +824,7 @@ impl MainPod {
     }
 }
 
-fn public_inputs(pub_sts_root: Hash, vd_set_root: Hash, is_main: bool) -> Vec<F> {
+pub fn public_inputs(pub_sts_root: Hash, vd_set_root: Hash, is_main: bool) -> Vec<F> {
     pub_sts_root
         .0
         .iter()
@@ -894,7 +894,7 @@ impl Pod for MainPod {
         (PodType::Main as usize, "Main")
     }
 
-    fn pub_self_statements_array(&self) -> Array {
+    fn pub_self_statements_mt(&self) -> Array {
         todo!()
     }
 
