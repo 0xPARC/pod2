@@ -1,0 +1,1560 @@
+//! Multi-POD builder for the Merkle statement tree design.
+//!
+//! See `docs/multipod_merkle_statement_tree.md` for the design overview.
+//!
+//! This is a parallel implementation alongside `super::multi_pod`. The old
+//! solver remains in place during development; once the new POD circuit
+//! lands, this module replaces `multi_pod` and that module is removed.
+//!
+//! The solver is purely symbolic: it consumes a positional [`InputShape`]
+//! and produces a positional [`OutputShape`]. The build layer in this
+//! module translates between user-facing builder state and the symbolic
+//! representation, holding an internal side table that maps positional
+//! indices back to concrete pod hashes and external premises.
+//!
+//! `prove()` is gated on the new POD circuit landing; until then it
+//! returns [`Error::ProveNotImplemented`]. `solve()` works fully.
+//!
+//! The module is not yet re-exported from `frontend::mod`; until it is,
+//! the public surface is reachable only from tests, so we silence
+//! dead-code warnings module-wide.
+
+#![allow(dead_code)]
+
+use std::{
+    collections::{hash_map::Entry, BTreeSet, HashMap, HashSet},
+    fmt,
+};
+
+use crate::{
+    frontend::{MainPod, MainPodBuilder, Operation},
+    middleware::{Hash, MainPodProver, Params, Statement, VDSet, Value},
+};
+
+mod cost;
+mod deps;
+mod diagnostics;
+mod partition;
+#[cfg(test)]
+mod partition_milp;
+mod shape;
+
+use cost::StatementCost;
+use deps::{DependencyGraph, ExternalDependency, StatementSource};
+pub use diagnostics::{ResourceSummary, SolutionBreakdown};
+pub use shape::{AbstractDep, InputShape, OutputShape};
+
+#[derive(Debug, thiserror::Error)]
+pub enum Error {
+    Custom(String),
+    Frontend(#[from] crate::frontend::Error),
+    NoFeasiblePartition(String),
+    ProveNotImplemented,
+}
+
+impl fmt::Display for Error {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Error::Custom(msg) => write!(f, "Custom error: {}", msg),
+            Error::Frontend(e) => write!(f, "Frontend error: {}", e),
+            Error::NoFeasiblePartition(msg) => {
+                write!(f, "No feasible partition: {}", msg)
+            }
+            Error::ProveNotImplemented => write!(
+                f,
+                "prove() not implemented: the Merkle statement tree POD \
+                 circuit is not yet available. Use solve() to inspect the \
+                 partition."
+            ),
+        }
+    }
+}
+
+pub type Result<T> = std::result::Result<T, Error>;
+
+/// Side table pairing an [`OutputShape`]'s positional external indices
+/// with the concrete pod hashes and premises they refer to. The solver
+/// never sees concrete data; the build layer uses this index to reattach
+/// hashes when materialising a [`MultiPodResult`] from a partition.
+#[derive(Clone, Debug)]
+struct ExternalIndex {
+    pods: Vec<Hash>,
+    premises: Vec<ExternalDependency>,
+}
+
+pub struct MultiPodBuilder {
+    params: Params,
+    vd_set: VDSet,
+    input_pods: Vec<MainPod>,
+    operations_wildcard_values: HashMap<usize, Vec<(usize, Value)>>,
+    output_public_indices: Vec<usize>,
+    builder: MainPodBuilder,
+}
+
+impl MultiPodBuilder {
+    pub fn new(params: &Params, vd_set: &VDSet) -> Self {
+        let unlimited_params = Params {
+            max_statements: usize::MAX / 2,
+            max_public_statements: usize::MAX / 2,
+            max_input_pods: usize::MAX / 2,
+            max_input_pods_public_statements: usize::MAX / 2,
+            ..params.clone()
+        };
+        let builder = MainPodBuilder::new(&unlimited_params, vd_set);
+        Self {
+            params: params.clone(),
+            vd_set: vd_set.clone(),
+            input_pods: Vec::new(),
+            operations_wildcard_values: HashMap::new(),
+            output_public_indices: Vec::new(),
+            builder,
+        }
+    }
+
+    pub fn add_pod(&mut self, pod: MainPod) -> Result<()> {
+        self.builder.add_pod(pod.clone())?;
+        self.input_pods.push(pod);
+        Ok(())
+    }
+
+    pub fn pub_op(&mut self, op: Operation) -> Result<Statement> {
+        self.op(true, vec![], op)
+    }
+
+    pub fn priv_op(&mut self, op: Operation) -> Result<Statement> {
+        self.op(false, vec![], op)
+    }
+
+    pub fn op(
+        &mut self,
+        public: bool,
+        wildcard_values: Vec<(usize, Value)>,
+        op: Operation,
+    ) -> Result<Statement> {
+        let (stmt, idx) = self.add_operation(wildcard_values, op)?;
+        if public {
+            self.mark_public(idx);
+        }
+        Ok(stmt)
+    }
+
+    fn add_operation(
+        &mut self,
+        wildcard_values: Vec<(usize, Value)>,
+        op: Operation,
+    ) -> Result<(Statement, usize)> {
+        let stmt = self.builder.op(false, wildcard_values.clone(), op)?;
+        let idx = self.stmt_index(&stmt);
+        self.operations_wildcard_values.insert(idx, wildcard_values);
+        Ok((stmt, idx))
+    }
+
+    fn stmt_index(&self, stmt: &Statement) -> usize {
+        self.builder
+            .statements
+            .iter()
+            .position(|s| s == stmt)
+            .expect("statement exists in builder")
+    }
+
+    fn mark_public(&mut self, idx: usize) {
+        if !self.output_public_indices.contains(&idx) {
+            self.output_public_indices.push(idx);
+        }
+    }
+
+    pub fn reveal(&mut self, stmt: &Statement) -> Result<()> {
+        let idx = self
+            .builder
+            .statements
+            .iter()
+            .position(|s| s == stmt)
+            .ok_or_else(|| {
+                Error::Custom("reveal() called with statement not found in builder".to_string())
+            })?;
+        self.mark_public(idx);
+        Ok(())
+    }
+
+    pub fn stmt_len(&self) -> usize {
+        self.builder.stmt_len()
+    }
+
+    /// Read-only view of the inner builder's recorded operations. Same
+    /// indexing as [`InputShape::costs`] / [`InputShape::dep_edges`], so
+    /// callers can map a positional cost back to the operation that
+    /// produced it.
+    pub fn operations(&self) -> &[Operation] {
+        &self.builder.operations
+    }
+
+    /// Read-only view of the inner builder's recorded statements. Same
+    /// indexing as [`Self::operations`].
+    pub fn statements(&self) -> &[Statement] {
+        &self.builder.statements
+    }
+
+    /// Read-only view of the input PODs this builder will reference as
+    /// external sources. Indices match the `pod` field of
+    /// [`AbstractDep::External`] entries in [`Self::input_shape`].
+    pub fn input_pods(&self) -> &[MainPod] {
+        &self.input_pods
+    }
+
+    /// Compute the symbolic [`InputShape`] without running the
+    /// partitioner. Useful for capturing fixtures from a real builder
+    /// run and inspecting the shape before solving.
+    pub fn input_shape(&self) -> InputShape {
+        let external_pod_statements = build_external_statement_map(&self.input_pods);
+        let deps = DependencyGraph::build(
+            &self.builder.statements,
+            &self.builder.operations,
+            &external_pod_statements,
+        );
+        let (shape, _) = build_shape_and_index(
+            &self.builder.operations,
+            &deps,
+            &self.output_public_indices,
+            &self.params,
+        );
+        shape
+    }
+
+    /// Pre-solve resource summary. Aggregates per-statement costs against
+    /// per-POD limits and identifies the bottleneck resource.
+    pub fn resource_summary(&self) -> ResourceSummary {
+        let costs: Vec<StatementCost> = self
+            .builder
+            .operations
+            .iter()
+            .map(|op| StatementCost::from_operation(op, &self.params))
+            .collect();
+        ResourceSummary::from_costs(costs.iter(), &self.params)
+    }
+
+    /// Solve the partitioning problem. Builds the [`InputShape`] from the
+    /// current builder state (including the external-republish pre-pass),
+    /// runs the DP partitioner, and returns a [`SolvedMultiPod`] that
+    /// holds the partition and the side data needed to materialise PODs
+    /// (once the circuit is available).
+    pub fn solve(self) -> Result<SolvedMultiPod> {
+        let MainPodBuilder {
+            statements,
+            operations,
+            ..
+        } = self.builder;
+
+        let external_pod_statements = build_external_statement_map(&self.input_pods);
+        let deps = DependencyGraph::build(&statements, &operations, &external_pod_statements);
+
+        let (shape, external_index) = build_shape_and_index(
+            &operations,
+            &deps,
+            &self.output_public_indices,
+            &self.params,
+        );
+
+        let mut output = partition::partition(&shape).ok_or_else(|| {
+            Error::NoFeasiblePartition(
+                "the DP partitioner could not find a feasible partition under \
+                 the current params; run diagnose_failure() for details"
+                    .to_string(),
+            )
+        })?;
+
+        // Synthetic republish statements appear at positions >= operations.len()
+        // in the augmented shape, each with one External dep recording its
+        // premise. Whichever POD a synthetic lands in republishes that premise.
+        let n_orig = operations.len();
+        let mut new_republished: Vec<BTreeSet<usize>> = vec![BTreeSet::new(); output.pod_count];
+        for (pod_idx, stmts) in output.pod_statements.iter().enumerate() {
+            for &s in stmts {
+                if s >= n_orig {
+                    if let AbstractDep::External { premise, .. } = shape.dep_edges[s][0] {
+                        new_republished[pod_idx].insert(premise);
+                    }
+                }
+            }
+        }
+        output.pod_republished_externals = new_republished;
+
+        Ok(SolvedMultiPod {
+            params: self.params,
+            vd_set: self.vd_set,
+            input_pods: self.input_pods,
+            statements,
+            operations,
+            output_public_indices: self.output_public_indices,
+            operations_wildcard_values: self.operations_wildcard_values,
+            shape,
+            output,
+            external_index,
+        })
+    }
+}
+
+/// A solved multi-POD problem. Carries the partition plus everything
+/// needed to materialise concrete PODs once the new circuit lands.
+pub struct SolvedMultiPod {
+    params: Params,
+    vd_set: VDSet,
+    input_pods: Vec<MainPod>,
+    statements: Vec<Statement>,
+    operations: Vec<Operation>,
+    output_public_indices: Vec<usize>,
+    operations_wildcard_values: HashMap<usize, Vec<(usize, Value)>>,
+    shape: InputShape,
+    output: OutputShape,
+    external_index: ExternalIndex,
+}
+
+impl SolvedMultiPod {
+    pub fn input_shape(&self) -> &InputShape {
+        &self.shape
+    }
+
+    pub fn solution(&self) -> &OutputShape {
+        &self.output
+    }
+
+    pub fn solution_breakdown(&self) -> SolutionBreakdown {
+        SolutionBreakdown::from_solution(&self.shape, &self.output)
+    }
+
+    /// Number of original user-added operations. Statement positions in
+    /// `solution().pod_statements` at or beyond this index are synthetic
+    /// republish statements (zero cost, one external dep).
+    pub fn num_original_statements(&self) -> usize {
+        self.operations.len()
+    }
+
+    /// Build and prove all PODs in the partition. Gated on the new POD
+    /// circuit landing; returns [`Error::ProveNotImplemented`] until then.
+    pub fn prove(self, _prover: &dyn MainPodProver) -> Result<MultiPodResult> {
+        Err(Error::ProveNotImplemented)
+    }
+}
+
+pub struct MultiPodResult {
+    pub pods: Vec<MainPod>,
+}
+
+impl MultiPodResult {
+    pub fn output_pod(&self) -> &MainPod {
+        self.pods.last().expect("at least one POD")
+    }
+
+    pub fn intermediate_pods(&self) -> &[MainPod] {
+        &self.pods[..self.pods.len() - 1]
+    }
+}
+
+/// Index every public statement of every input POD by content. The dep
+/// graph uses this to recognise when a statement argument refers to an
+/// externally-provided POD's public statement rather than a locally-built
+/// one.
+fn build_external_statement_map(input_pods: &[MainPod]) -> HashMap<Statement, Hash> {
+    let mut map = HashMap::new();
+    for pod in input_pods {
+        let pod_hash = pod.statements_hash();
+        for stmt in pod.pod.pub_statements() {
+            map.insert(stmt, pod_hash);
+        }
+    }
+    map
+}
+
+/// Convert a concrete `DependencyGraph` into the positional `InputShape`
+/// the solver consumes.
+///
+/// Also runs the external-republish pre-pass: external premises with two
+/// or more downstream consumers are rewritten as synthetic "republish"
+/// statements (zero cost, one `External` dep) appended after the original
+/// statement list. Consumers' deps that pointed at those premises become
+/// `Internal` references to the synthetic position. Whichever POD the DP
+/// places a synthetic into pays one external-input slot for that premise;
+/// every downstream consumer reaches it via slot 0 (chain) for one import
+/// slot. With multiple consumers, this saves at least one external-input
+/// slot net.
+///
+/// Returns the [`InputShape`] and the side-table [`ExternalIndex`]. Each
+/// synthetic statement's single [`AbstractDep::External`] dep records the
+/// premise it republishes, so callers can recover the synthetic-to-premise
+/// mapping from `shape.dep_edges` directly.
+fn build_shape_and_index(
+    operations: &[Operation],
+    deps: &DependencyGraph,
+    output_public_indices: &[usize],
+    params: &Params,
+) -> (InputShape, ExternalIndex) {
+    let n_orig = operations.len();
+
+    let mut external_pods: Vec<Hash> = Vec::new();
+    let mut pod_idx: HashMap<Hash, usize> = HashMap::new();
+    let mut external_premises: Vec<ExternalDependency> = Vec::new();
+    let mut premise_idx: HashMap<ExternalDependency, usize> = HashMap::new();
+    let mut premise_pod: Vec<usize> = Vec::new();
+
+    for edges in &deps.statement_deps {
+        for src in edges {
+            if let StatementSource::External(ext) = src {
+                if let Entry::Vacant(e) = pod_idx.entry(ext.pod_hash) {
+                    e.insert(external_pods.len());
+                    external_pods.push(ext.pod_hash);
+                }
+                if let Entry::Vacant(e) = premise_idx.entry(ext.clone()) {
+                    e.insert(external_premises.len());
+                    external_premises.push(ext.clone());
+                    premise_pod.push(pod_idx[&ext.pod_hash]);
+                }
+            }
+        }
+    }
+
+    // Count downstream consumers per premise. Dedupe within a single
+    // statement's dep list (multiple deps on the same premise from one
+    // statement still count as one consumer).
+    let mut premise_consumer_count = vec![0_usize; external_premises.len()];
+    for edges in &deps.statement_deps {
+        let mut seen: HashSet<usize> = HashSet::new();
+        for src in edges {
+            if let StatementSource::External(ext) = src {
+                let u = premise_idx[ext];
+                if seen.insert(u) {
+                    premise_consumer_count[u] += 1;
+                }
+            }
+        }
+    }
+
+    // Feasibility-driven republish: a statement's POD imports one slot
+    // for chain (if any dep flows through it) plus one slot per distinct
+    // external pod the statement directly references. When the sum
+    // exceeds `max_input_pods`, the POD cannot fit -- we must republish
+    // enough of the statement's externals so they reach the consumer
+    // through the chain instead. Mark those premises here; the synthetic
+    // allocation loop below unions this with the 2+ consumers rule.
+    //
+    // Republishing any premise forces chain use at the consumer site,
+    // so the post-republish budget is `(K - R) + 1 <= max_input_pods`,
+    // i.e. `R >= K - max_input_pods + 1` whenever the original
+    // `K + chain_used` would have busted the cap.
+    let max_input_pods = params.max_input_pods;
+    let mut must_republish: Vec<bool> = vec![false; external_premises.len()];
+    for edges in &deps.statement_deps {
+        let mut distinct_pods: BTreeSet<usize> = BTreeSet::new();
+        let mut has_internal = false;
+        let mut premises_by_pod: HashMap<usize, Vec<usize>> = HashMap::new();
+        for src in edges {
+            match src {
+                StatementSource::Internal(_) => has_internal = true,
+                StatementSource::External(ext) => {
+                    let pod = pod_idx[&ext.pod_hash];
+                    let premise = premise_idx[ext];
+                    distinct_pods.insert(pod);
+                    premises_by_pod.entry(pod).or_default().push(premise);
+                }
+            }
+        }
+        let k = distinct_pods.len();
+        let chain_already_used = if has_internal { 1 } else { 0 };
+        if k + chain_already_used <= max_input_pods {
+            continue;
+        }
+        // Republish R pods. After republishing, chain is in use, so we
+        // need (K - R) + 1 <= max_input_pods.
+        let r = k + 1 - max_input_pods;
+        // Pick the highest-numbered pods first (deterministic). The
+        // chosen pods drop out of the consumer's direct refs.
+        for pod in distinct_pods.iter().rev().take(r) {
+            for &premise in &premises_by_pod[pod] {
+                must_republish[premise] = true;
+            }
+        }
+    }
+
+    // Opportunistic external-pod bundling: if any premise of external pod
+    // E is already being republished (multi-consumer or feasibility),
+    // republish all of E's used premises. The synth-hosting POD already
+    // pays one input-pod slot for E, so bundling its other premises is
+    // marginal cost there and frees downstream consumers from re-
+    // referencing E. See `docs/multipod_merkle_statement_tree.md`.
+    let mut bundled_pods: HashSet<usize> = HashSet::new();
+    for u in 0..external_premises.len() {
+        if premise_consumer_count[u] >= 2 || must_republish[u] {
+            bundled_pods.insert(premise_pod[u]);
+        }
+    }
+    for u in 0..external_premises.len() {
+        if bundled_pods.contains(&premise_pod[u]) {
+            must_republish[u] = true;
+        }
+    }
+
+    // Allocate a synthetic statement for each premise with 2+ consumers
+    // OR flagged by the feasibility pre-pass above.
+    // synthetic_to_premise[i] = premise index of the (n_orig + i)-th statement.
+    let mut synthetic_to_premise: Vec<usize> = Vec::new();
+    let mut premise_to_synthetic: Vec<Option<usize>> = vec![None; external_premises.len()];
+    for u in 0..external_premises.len() {
+        if premise_consumer_count[u] >= 2 || must_republish[u] {
+            let synth_idx = n_orig + synthetic_to_premise.len();
+            premise_to_synthetic[u] = Some(synth_idx);
+            synthetic_to_premise.push(u);
+        }
+    }
+    let n_synth = synthetic_to_premise.len();
+
+    // Augmented costs: originals + zero costs for synthetics.
+    let mut costs: Vec<StatementCost> = operations
+        .iter()
+        .map(|op| StatementCost::from_operation(op, params))
+        .collect();
+    costs.extend((0..n_synth).map(|_| StatementCost::default()));
+
+    // Augmented dep_edges. Original statements: External(pod, premise)
+    // becomes Internal(synth_idx) when the premise is being republished.
+    // Synthetic statements: each has one External dep to its premise.
+    let mut dep_edges: Vec<Vec<AbstractDep>> = deps
+        .statement_deps
+        .iter()
+        .map(|edges| {
+            edges
+                .iter()
+                .map(|src| match src {
+                    StatementSource::Internal(d) => AbstractDep::Internal(*d),
+                    StatementSource::External(ext) => {
+                        let u = premise_idx[ext];
+                        if let Some(synth_idx) = premise_to_synthetic[u] {
+                            AbstractDep::Internal(synth_idx)
+                        } else {
+                            AbstractDep::External {
+                                pod: pod_idx[&ext.pod_hash],
+                                premise: u,
+                            }
+                        }
+                    }
+                })
+                .collect()
+        })
+        .collect();
+    for &u in &synthetic_to_premise {
+        let ext = &external_premises[u];
+        dep_edges.push(vec![AbstractDep::External {
+            pod: pod_idx[&ext.pod_hash],
+            premise: u,
+        }]);
+    }
+
+    let shape = InputShape {
+        costs,
+        dep_edges,
+        output_public_indices: output_public_indices.to_vec(),
+        num_external_pods: external_pods.len(),
+        premise_pod,
+        params: params.clone(),
+    };
+    let index = ExternalIndex {
+        pods: external_pods,
+        premises: external_premises,
+    };
+    (shape, index)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{examples::MOCK_VD_SET, frontend::Operation as FrontendOp};
+
+    #[test]
+    fn end_to_end_solve_single_pod() {
+        let params = Params::default();
+        let vd_set = &*MOCK_VD_SET;
+
+        let mut builder = MultiPodBuilder::new(&params, vd_set);
+        builder.pub_op(FrontendOp::eq(1, 1)).expect("op should add");
+
+        let solved = builder.solve().expect("should solve");
+        assert_eq!(solved.solution().pod_count, 1);
+        assert_eq!(solved.solution().pod_statements[0].len(), 1);
+    }
+
+    #[test]
+    fn end_to_end_solve_forces_split() {
+        // Tight max_priv_statements forces splitting into 2 PODs.
+        let params = Params {
+            max_statements: 4,
+            max_public_statements: 2,
+            ..Params::default()
+        };
+        let vd_set = &*MOCK_VD_SET;
+
+        let mut builder = MultiPodBuilder::new(&params, vd_set);
+        // 3 independent statements need 2 PODs at max_priv_statements = 2.
+        for i in 0..3_i64 {
+            builder.priv_op(FrontendOp::eq(i, i)).expect("priv op");
+        }
+        builder.pub_op(FrontendOp::eq(100, 100)).expect("pub op");
+
+        let solved = builder.solve().expect("should solve");
+        assert!(solved.solution().pod_count >= 2);
+    }
+
+    /// Captured `multi_pod_tree::InputShape` for zk-craft's
+    /// `CraftRefineryCracked` action (episode-1 plugin). Used to
+    /// stress-test the partitioner against a realistic, large input.
+    /// See `sdk/src/tests.rs::capture_cracked_refinery_input_shape`
+    /// in the zk-craft repo for how the fixture is regenerated.
+    const CRACKED_REFINERY_FIXTURE: &str = include_str!("tests/fixtures/cracked_refinery.json");
+
+    /// Pins partition quality on the cracked-refinery fixture. The
+    /// resource-induced lower bound (`max_r ceil(total_r / cap_r)` over
+    /// per-statement-summable resources) is K=12, driven by 96
+    /// custom-predicate verifications at cap 8/POD (statement count is
+    /// the secondary bound at `ceil(345/40) = 9`). The heuristic
+    /// reaches K=13, leaving a 1-POD gap to MILP's K=12 optimum. See
+    /// `docs/multipod_merkle_statement_tree.md` ("Custom predicate
+    /// body+head locality" and "Future generators under consideration")
+    /// for the structural reason and candidates that might close it.
+    #[test]
+    fn cracked_refinery_fixture_partitions() {
+        let shape: InputShape =
+            serde_json::from_str(CRACKED_REFINERY_FIXTURE).expect("fixture deserializes");
+        assert_eq!(shape.num_statements(), 345);
+
+        let outcome = partition::partition(&shape);
+        match outcome {
+            Some(out) => {
+                eprintln!(
+                    "cracked refinery partitioned into {} PODs, sizes={:?}",
+                    out.pod_count,
+                    out.pod_statements
+                        .iter()
+                        .map(|v| v.len())
+                        .collect::<Vec<_>>()
+                );
+                let breakdown = diagnostics::SolutionBreakdown::from_solution(&shape, &out);
+                eprintln!("{}", breakdown);
+                let total_placed: usize = out.pod_statements.iter().map(|v| v.len()).sum();
+                assert_eq!(total_placed, shape.num_statements());
+                assert_eq!(
+                    out.pod_count, 13,
+                    "expected 13 PODs (heuristic; MILP optimum is 12)"
+                );
+            }
+            None => {
+                let diag = diagnostics::diagnose_failure(&shape);
+                panic!(
+                    "partition() returned None; diagnosis: {}",
+                    diag.as_ref()
+                        .map(|v| v.to_string())
+                        .unwrap_or_else(|| "None".to_string())
+                );
+            }
+        }
+    }
+
+    /// Probe: is K=13 feasible on cracked-refinery under the current
+    /// caps? K=13 is the resource floor and is now reached by the
+    /// default heuristic as well. `#[ignore]`d because SCIP takes ~23s.
+    /// Kept as a regression check: if the fixture or caps change and
+    /// the resource floor moves, this probe (manually run) re-establishes
+    /// the optimum and any new gap is then visible against it.
+    #[test]
+    #[ignore]
+    fn cracked_refinery_fixture_milp() {
+        let shape: InputShape =
+            serde_json::from_str(CRACKED_REFINERY_FIXTURE).expect("fixture deserializes");
+        let out = partition_milp::solve_for_k(&shape, 12);
+        match out {
+            Some(o) => eprintln!(
+                "MILP found feasible partition: pod_count={}, sizes={:?}",
+                o.pod_count,
+                o.pod_statements.iter().map(|v| v.len()).collect::<Vec<_>>()
+            ),
+            None => eprintln!("MILP returned no solution (infeasible or timed out)"),
+        }
+    }
+
+    /// Probe: can the DP find K=12 on cracked-refinery if we feed it the
+    /// "right" ordering derived from MILP's K=12 partition? Builds an
+    /// ordering by sorting statements by (pod_index in MILP's solution,
+    /// position in a baseline topological sort), so each MILP POD is a
+    /// contiguous block. If DP returns K=12, the ordering layer is the
+    /// whole gap (the DP can hit the optimum if generation produces this
+    /// layout). If DP returns K>12, something else is going on.
+    /// `#[ignore]`'d because it calls SCIP.
+    #[test]
+    #[ignore]
+    fn cracked_refinery_milp_ordering_probe() {
+        let shape: InputShape =
+            serde_json::from_str(CRACKED_REFINERY_FIXTURE).expect("fixture deserializes");
+        let milp_out = partition_milp::solve_for_k(&shape, 12)
+            .expect("MILP must find K=12 (regression in fixture or MILP formulation otherwise)");
+
+        let n = shape.num_statements();
+        let mut pod_of: Vec<usize> = vec![usize::MAX; n];
+        for (p, stmts) in milp_out.pod_statements.iter().enumerate() {
+            for &s in stmts {
+                pod_of[s] = p;
+            }
+        }
+
+        // Baseline global topo order. Within each MILP POD, we'll keep
+        // statements in this order; across PODs, the lower POD index
+        // comes first. The MILP's topo precedence constraint guarantees
+        // this concatenation is itself a valid topological ordering.
+        let identity_priority: Vec<usize> = (0..n).collect();
+        let global_topo = partition::kahn_with_priority(&shape, &identity_priority)
+            .expect("statement DAG must be acyclic");
+        let mut pos_in_global = vec![0_usize; n];
+        for (i, &s) in global_topo.iter().enumerate() {
+            pos_in_global[s] = i;
+        }
+
+        let mut ordering: Vec<usize> = (0..n).collect();
+        ordering.sort_by_key(|&s| (pod_of[s], pos_in_global[s]));
+
+        let dp_out = partition::partition_with_ordering(&shape, &ordering)
+            .expect("DP must produce a partition on a valid topo ordering");
+
+        eprintln!(
+            "MILP-derived ordering: DP returns K={}, sizes={:?}",
+            dp_out.pod_count,
+            dp_out
+                .pod_statements
+                .iter()
+                .map(|v| v.len())
+                .collect::<Vec<_>>()
+        );
+
+        let prod_out = partition::partition(&shape).expect("production partition");
+        eprintln!("production K = {}", prod_out.pod_count);
+
+        assert_eq!(
+            dp_out.pod_count, 12,
+            "DP should reach the MILP optimum K=12 when given the MILP-derived ordering; \
+             if it doesn't, the gap is not purely an ordering-generation problem"
+        );
+    }
+
+    /// Cross-reference: where do heuristic's POD 3 statements (the
+    /// stmt-saturated, CPV-light cluster suspected to drive the K=13/K=12
+    /// gap) end up in MILP's K=12 partition? If MILP spreads them across
+    /// many PODs, the "import-heavy cluster needs to be split" hypothesis
+    /// holds; if MILP also keeps them together, the gap is elsewhere.
+    /// `#[ignore]`'d (calls SCIP).
+    #[test]
+    #[ignore]
+    fn cracked_refinery_pod3_dispersion() {
+        let shape: InputShape =
+            serde_json::from_str(CRACKED_REFINERY_FIXTURE).expect("fixture deserializes");
+        let n = shape.num_statements();
+
+        let heur = partition::partition(&shape).expect("heuristic partitions");
+        assert_eq!(heur.pod_count, 13);
+        let heur_pod3: Vec<usize> = heur.pod_statements[3].clone();
+        eprintln!("Heuristic POD 3: {} statements", heur_pod3.len());
+
+        let milp_out = partition_milp::solve_for_k(&shape, 12).expect("MILP must find K=12");
+        let mut milp_of: Vec<usize> = vec![usize::MAX; n];
+        for (p, stmts) in milp_out.pod_statements.iter().enumerate() {
+            for &s in stmts {
+                milp_of[s] = p;
+            }
+        }
+
+        let mut dispersion: std::collections::BTreeMap<usize, usize> =
+            std::collections::BTreeMap::new();
+        for &s in &heur_pod3 {
+            *dispersion.entry(milp_of[s]).or_insert(0) += 1;
+        }
+        eprintln!(
+            "  Their MILP POD distribution (milp_pod -> count): {:?}",
+            dispersion
+        );
+
+        // Also compute per-MILP-POD CPV totals to see how MILP balances.
+        eprintln!("\nMILP POD CPV totals:");
+        for (p, stmts) in milp_out.pod_statements.iter().enumerate() {
+            let cpv: usize = stmts
+                .iter()
+                .map(|&s| shape.costs[s].custom_pred_verifications)
+                .sum();
+            let n_stmts = stmts.len();
+            eprintln!("  POD {}: {} stmts, {} CPV", p, n_stmts, cpv);
+        }
+
+        // For comparison, heuristic CPV per POD.
+        eprintln!("\nHeuristic POD CPV totals:");
+        for (p, stmts) in heur.pod_statements.iter().enumerate() {
+            let cpv: usize = stmts
+                .iter()
+                .map(|&s| shape.costs[s].custom_pred_verifications)
+                .sum();
+            let n_stmts = stmts.len();
+            eprintln!("  POD {}: {} stmts, {} CPV", p, n_stmts, cpv);
+        }
+    }
+
+    /// Detailed partition-diff between heuristic K=13 and MILP K=12 for
+    /// cracked-refinery. Prints (1) the transfer matrix of statements,
+    /// (2) which heuristic POD is "dissolved" in MILP's solution, (3) for
+    /// each scattered statement, its heuristic ordering position and MILP
+    /// target POD, and (4) the heuristic-vs-MILP ordering positions to
+    /// gauge how far the heuristic ordering is from MILP's effective one.
+    /// `#[ignore]`'d (calls SCIP).
+    #[test]
+    #[ignore]
+    fn cracked_refinery_partition_diff() {
+        let shape: InputShape =
+            serde_json::from_str(CRACKED_REFINERY_FIXTURE).expect("fixture deserializes");
+        let n = shape.num_statements();
+
+        // Heuristic K=13 + its ordering. Run bin-packing directly so we can
+        // pin the ordering it was generated from for position-by-position
+        // comparison.
+        let identity: Vec<usize> = (0..n).collect();
+        let bp_ordering = partition::kahn_bin_packing(&shape, &identity)
+            .expect("bin-packing must produce an ordering");
+        let heur = partition::partition_with_ordering(&shape, &bp_ordering)
+            .expect("DP must produce a partition on bin-packing ordering");
+        assert_eq!(heur.pod_count, 13);
+        let mut heur_pod_of: Vec<usize> = vec![usize::MAX; n];
+        for (p, stmts) in heur.pod_statements.iter().enumerate() {
+            for &s in stmts {
+                heur_pod_of[s] = p;
+            }
+        }
+        let mut heur_pos: Vec<usize> = vec![usize::MAX; n];
+        for (i, &s) in bp_ordering.iter().enumerate() {
+            heur_pos[s] = i;
+        }
+
+        // MILP K=12 partition.
+        let milp = partition_milp::solve_for_k(&shape, 12).expect("MILP K=12 must be feasible");
+        let mut milp_pod_of: Vec<usize> = vec![usize::MAX; n];
+        for (p, stmts) in milp.pod_statements.iter().enumerate() {
+            for &s in stmts {
+                milp_pod_of[s] = p;
+            }
+        }
+
+        // Transfer matrix: rows = MILP POD, cols = heur POD.
+        let mut transfer = vec![vec![0_usize; 13]; 12];
+        for s in 0..n {
+            transfer[milp_pod_of[s]][heur_pod_of[s]] += 1;
+        }
+        eprintln!("Transfer matrix (rows=MILP POD, cols=heur POD):");
+        eprint!("            ");
+        for q in 0..13 {
+            eprint!("h{:<3} ", q);
+        }
+        eprintln!();
+        for (p, row) in transfer.iter().enumerate() {
+            eprint!("  MILP{:2}:  ", p);
+            for &v in row.iter() {
+                if v == 0 {
+                    eprint!("   . ");
+                } else {
+                    eprint!("{:4} ", v);
+                }
+            }
+            let total: usize = row.iter().sum();
+            eprintln!(" (total {})", total);
+        }
+
+        // Greedy max-overlap matching: for each MILP POD, find best
+        // heuristic POD. The unmatched heuristic POD is the "dissolved" one.
+        let mut milp_match = [usize::MAX; 12];
+        let mut used = [false; 13];
+        let mut pairs: Vec<(usize, usize, usize)> = Vec::new();
+        for (p, row) in transfer.iter().enumerate() {
+            for (q, &v) in row.iter().enumerate() {
+                pairs.push((v, p, q));
+            }
+        }
+        pairs.sort_by(|a, b| b.0.cmp(&a.0));
+        for (_, p, q) in pairs {
+            if milp_match[p] == usize::MAX && !used[q] {
+                milp_match[p] = q;
+                used[q] = true;
+            }
+        }
+        let dissolved: Vec<usize> = (0..13).filter(|&q| !used[q]).collect();
+        eprintln!("MILP POD -> best-matching heur POD:");
+        for p in 0..12 {
+            let q = milp_match[p];
+            let kept = transfer[p][q];
+            let total: usize = transfer[p].iter().sum();
+            eprintln!(
+                "  MILP{:2} -> heur{:2}  ({} of {} kept; {} migrated in)",
+                p,
+                q,
+                kept,
+                total,
+                total - kept
+            );
+        }
+        eprintln!("Dissolved heuristic PODs: {:?}", dissolved);
+
+        // Heuristic-POD-CPV vs MILP-POD-CPV (for context).
+        eprintln!("\nHeur POD CPV/stmt counts:");
+        for p in 0..13 {
+            let stmts = &heur.pod_statements[p];
+            let cpv: usize = stmts
+                .iter()
+                .map(|&s| shape.costs[s].custom_pred_verifications)
+                .sum();
+            eprintln!("  heur{:2}: {:2} stmts, {} CPV", p, stmts.len(), cpv);
+        }
+        eprintln!("MILP POD CPV/stmt counts:");
+        for p in 0..12 {
+            let stmts = &milp.pod_statements[p];
+            let cpv: usize = stmts
+                .iter()
+                .map(|&s| shape.costs[s].custom_pred_verifications)
+                .sum();
+            eprintln!("  MILP{:2}: {:2} stmts, {} CPV", p, stmts.len(), cpv);
+        }
+
+        // Construct a MILP-derived ordering: concatenate statements by
+        // (milp_pod_of, topo_pos). Use bp_ordering's position as the
+        // intra-POD topo order; it's a valid topo sort and stable.
+        let mut milp_ordering: Vec<usize> = (0..n).collect();
+        milp_ordering.sort_by_key(|&s| (milp_pod_of[s], heur_pos[s]));
+        let mut milp_pos: Vec<usize> = vec![usize::MAX; n];
+        for (i, &s) in milp_ordering.iter().enumerate() {
+            milp_pos[s] = i;
+        }
+
+        // Sanity check: is the MILP-derived ordering itself a valid topo
+        // ordering? (MILP's pod-precedence + bp_ordering tiebreak should
+        // give a valid one, but verify.)
+        let mut topo_valid = true;
+        for s in 0..n {
+            for dep in &shape.dep_edges[s] {
+                if let AbstractDep::Internal(d) = dep {
+                    if milp_pos[*d] >= milp_pos[s] {
+                        topo_valid = false;
+                        break;
+                    }
+                }
+            }
+            if !topo_valid {
+                break;
+            }
+        }
+        eprintln!("\nMILP-derived ordering is topo-valid: {}", topo_valid);
+
+        // DP K on the MILP-derived ordering.
+        if topo_valid {
+            let milp_dp = partition::partition_with_ordering(&shape, &milp_ordering);
+            eprintln!(
+                "DP K on MILP-derived ordering: {:?}",
+                milp_dp.as_ref().map(|o| o.pod_count)
+            );
+        }
+
+        // Position diff distribution: how far does each statement move
+        // between bp_ordering and milp_ordering?
+        let mut diffs: Vec<i64> = (0..n)
+            .map(|s| milp_pos[s] as i64 - heur_pos[s] as i64)
+            .collect();
+        let absdiffs: Vec<i64> = diffs.iter().map(|d| d.abs()).collect();
+        let max_diff = absdiffs.iter().copied().max().unwrap_or(0);
+        let mean_diff = absdiffs.iter().sum::<i64>() as f64 / n as f64;
+        let unchanged = diffs.iter().filter(|&&d| d == 0).count();
+        let small_move = diffs.iter().filter(|&&d| d.abs() <= 5 && d != 0).count();
+        let medium_move = diffs
+            .iter()
+            .filter(|&&d| d.abs() > 5 && d.abs() <= 50)
+            .count();
+        let large_move = diffs.iter().filter(|&&d| d.abs() > 50).count();
+        eprintln!(
+            "Position diff bp->milp: max={} mean={:.1} | unchanged={} small(<=5)={} medium(6-50)={} large(>50)={}",
+            max_diff, mean_diff, unchanged, small_move, medium_move, large_move
+        );
+
+        // Kendall tau (number of pairwise inversions) is too expensive at
+        // n=345; report a sample-based proxy instead: how often does
+        // (bp_ordering[i] < bp_ordering[j]) match
+        // (milp_pos[bp_ordering[i]] < milp_pos[bp_ordering[j]])?
+        let sample_pairs = 5000;
+        let mut rng_state = 0xDEADBEEF_u64;
+        let mut concord = 0;
+        let mut discord = 0;
+        for _ in 0..sample_pairs {
+            rng_state = rng_state
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            let i = (rng_state >> 33) as usize % n;
+            rng_state = rng_state
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            let j = (rng_state >> 33) as usize % n;
+            if i == j {
+                continue;
+            }
+            let s_i = bp_ordering[i.min(j)];
+            let s_j = bp_ordering[i.max(j)];
+            if milp_pos[s_i] < milp_pos[s_j] {
+                concord += 1;
+            } else {
+                discord += 1;
+            }
+        }
+        let total = concord + discord;
+        eprintln!(
+            "Pairwise concord (random {} pairs): {} concordant / {} = {:.1}%",
+            total,
+            concord,
+            total,
+            100.0 * concord as f64 / total as f64
+        );
+        diffs.sort();
+        eprintln!(
+            "Diff percentiles: p10={} p25={} p50={} p75={} p90={}",
+            diffs[n * 10 / 100],
+            diffs[n * 25 / 100],
+            diffs[n * 50 / 100],
+            diffs[n * 75 / 100],
+            diffs[n * 90 / 100],
+        );
+
+        // Probe: how few statements need to be at their MILP position
+        // (with the rest preserving bp_ordering's relative order) for
+        // DP K to drop to 12? Largest movers first.
+        let mut indices: Vec<usize> = (0..n).collect();
+        indices
+            .sort_by_key(|&s| std::cmp::Reverse((milp_pos[s] as i64 - heur_pos[s] as i64).abs()));
+        eprintln!("\nGreedy 'minimum critical commits' probe:");
+        eprintln!("  Commit top-K largest movers to their MILP positions; rest fill in bp_ordering order.");
+        eprintln!("  {:<10} {:<10} {:<8}", "committed", "topo_ok", "dp_k");
+        for k_commit in [0, 5, 10, 20, 40, 60, 80, 120, 160, 200, 240, 345] {
+            let k_commit = k_commit.min(n);
+            let committed: HashSet<usize> = indices.iter().take(k_commit).copied().collect();
+            let mut slot: Vec<usize> = vec![usize::MAX; n];
+            for &s in &committed {
+                slot[milp_pos[s]] = s;
+            }
+            let remaining: Vec<usize> = bp_ordering
+                .iter()
+                .copied()
+                .filter(|s| !committed.contains(s))
+                .collect();
+            let mut ri = 0;
+            for s in slot.iter_mut() {
+                if *s == usize::MAX {
+                    *s = remaining[ri];
+                    ri += 1;
+                }
+            }
+            // Topo check.
+            let mut pos_new = vec![0_usize; n];
+            for (i, &s) in slot.iter().enumerate() {
+                pos_new[s] = i;
+            }
+            let mut topo_ok = true;
+            for s in 0..n {
+                for dep in &shape.dep_edges[s] {
+                    if let AbstractDep::Internal(d) = dep {
+                        if pos_new[*d] >= pos_new[s] {
+                            topo_ok = false;
+                            break;
+                        }
+                    }
+                }
+                if !topo_ok {
+                    break;
+                }
+            }
+            let dp_k = if topo_ok {
+                partition::partition_with_ordering(&shape, &slot).map(|o| o.pod_count)
+            } else {
+                None
+            };
+            eprintln!("  {:<10} {:<10} {:?}", k_commit, topo_ok, dp_k);
+        }
+
+        // List statements that move and where they go.
+        let mut moves: Vec<(usize, usize, usize)> = Vec::new();
+        for s in 0..n {
+            let q = heur_pod_of[s];
+            let p = milp_pod_of[s];
+            let q_target_for_p = milp_match[p];
+            if q != q_target_for_p {
+                moves.push((s, q, p));
+            }
+        }
+        eprintln!(
+            "\nStatements moving across heur->MILP (relative to greedy POD match): {}",
+            moves.len()
+        );
+        eprintln!("(stmt | heur_pod heur_pos | milp_pod milp_match | cpv | mp | mst | sb | cps)");
+        for (s, heur_p, milp_p) in &moves {
+            let c = &shape.costs[*s];
+            eprintln!(
+                "  s={:3} | heur{:2} pos {:3} | MILP{:2} (match heur{:2}) | cpv={} mp_s={} mp_m={} mst_s={} mst_m={} sb={} cps={}",
+                s,
+                heur_p,
+                heur_pos[*s],
+                milp_p,
+                milp_match[*milp_p],
+                c.custom_pred_verifications,
+                c.merkle_proofs_small,
+                c.merkle_proofs_medium,
+                c.merkle_state_transitions_small,
+                c.merkle_state_transitions_medium,
+                c.signed_by,
+                c.custom_predicates_ids.len(),
+            );
+        }
+    }
+
+    /// Probe: characterise cracked-refinery's CPV block structure. For
+    /// each CPV head, count direct Internal deps that have no other
+    /// consumers (the "exclusive body") and report the block-size
+    /// histogram. Then estimate the minimum K achievable by atomic
+    /// block packing (CPV head + body bundled inseparably) via
+    /// first-fit-decreasing. Used to decide whether a pure block-based
+    /// generator is viable for this fixture or whether atomic packing
+    /// would regress.
+    #[test]
+    fn cracked_refinery_block_size_probe() {
+        let shape: InputShape =
+            serde_json::from_str(CRACKED_REFINERY_FIXTURE).expect("fixture deserializes");
+        let n = shape.num_statements();
+
+        // Inverse of dep_edges: for each statement, who depends on it.
+        let mut consumers: Vec<Vec<usize>> = vec![Vec::new(); n];
+        for (i, edges) in shape.dep_edges.iter().enumerate() {
+            for dep in edges {
+                if let AbstractDep::Internal(d) = dep {
+                    consumers[*d].push(i);
+                }
+            }
+        }
+
+        // For each CPV head, compute exclusive vs shared direct-body counts.
+        let mut block_sizes: Vec<usize> = Vec::new();
+        let mut cpv_count: usize = 0;
+        let mut total_exclusive: usize = 0;
+        let mut total_shared: usize = 0;
+        let mut total_external_deps: usize = 0;
+        for (i, cost) in shape.costs.iter().enumerate() {
+            if cost.custom_pred_verifications == 0 {
+                continue;
+            }
+            cpv_count += 1;
+            let mut excl = 0;
+            let mut shared = 0;
+            let mut ext = 0;
+            for dep in &shape.dep_edges[i] {
+                match dep {
+                    AbstractDep::Internal(d) => {
+                        if consumers[*d].len() == 1 && consumers[*d][0] == i {
+                            excl += 1;
+                        } else {
+                            shared += 1;
+                        }
+                    }
+                    AbstractDep::External { .. } => ext += 1,
+                }
+            }
+            block_sizes.push(1 + excl);
+            total_exclusive += excl;
+            total_shared += shared;
+            total_external_deps += ext;
+        }
+
+        eprintln!("Total CPV heads: {}", cpv_count);
+        eprintln!("Total exclusive direct body stmts: {}", total_exclusive);
+        eprintln!("Total shared direct body stmts: {}", total_shared);
+        eprintln!(
+            "Total external direct deps on CPVs: {}",
+            total_external_deps
+        );
+        let mean_block: f64 = block_sizes.iter().sum::<usize>() as f64 / cpv_count.max(1) as f64;
+        eprintln!("Mean block size (head + exclusive body): {:.2}", mean_block);
+
+        let mut hist: std::collections::BTreeMap<usize, usize> = std::collections::BTreeMap::new();
+        for &sz in &block_sizes {
+            *hist.entry(sz).or_insert(0) += 1;
+        }
+        eprintln!("Block-size histogram:");
+        for (sz, count) in &hist {
+            eprintln!("  size {:>2}: {:>3} blocks", sz, count);
+        }
+
+        // Estimate K under atomic block-based packing via FFD.
+        // Caps: max_priv_statements stmts/POD, max_custom_pred_verifications
+        // CPVs/POD. Each block contributes block_size stmts and 1 CPV.
+        let p = &shape.params;
+        let max_stmts = p.max_priv_statements();
+        let max_cpvs = p.max_custom_predicate_verifications;
+        let mut sorted = block_sizes.clone();
+        sorted.sort_unstable();
+        sorted.reverse();
+        let mut bins: Vec<(usize, usize)> = Vec::new();
+        for &b in &sorted {
+            let mut placed = false;
+            for bin in bins.iter_mut() {
+                if bin.0 + b <= max_stmts && bin.1 < max_cpvs {
+                    bin.0 += b;
+                    bin.1 += 1;
+                    placed = true;
+                    break;
+                }
+            }
+            if !placed {
+                bins.push((b, 1));
+            }
+        }
+        eprintln!("FFD atomic block packing (CPV blocks only, ignoring all other stmts):");
+        eprintln!("  bins used: {}", bins.len());
+        let cpv_floor = cpv_count.div_ceil(max_cpvs);
+        eprintln!(
+            "  CPV-cap floor (cpvs / cap): {} (current heuristic K = 13, MILP K = 12)",
+            cpv_floor
+        );
+
+        // Verdict.
+        let max_block = sorted.first().copied().unwrap_or(0);
+        let threshold_block = max_stmts / max_cpvs; // 40/8 = 5
+        let total_block_stmts: usize = sorted.iter().sum();
+        let free_stmts = n.saturating_sub(total_block_stmts);
+        eprintln!(
+            "Block stmts: {}; free (non-block) stmts: ~{}",
+            total_block_stmts, free_stmts,
+        );
+        eprintln!(
+            "Largest block = {}; uniform-block threshold for atomic safety = {}",
+            max_block, threshold_block,
+        );
+        if bins.len() <= cpv_floor {
+            eprintln!(
+                "  -> FFD on CPV blocks alone matches CPV floor (={}). Atomic block-based packing is",
+                cpv_floor,
+            );
+            eprintln!(
+                "     viable in principle for this fixture's actual block mix; the open question is"
+            );
+            eprintln!(
+                "     whether the {} free statements + topo + other-resource caps fit within {} PODs.",
+                free_stmts, bins.len(),
+            );
+            if max_block > threshold_block {
+                eprintln!(
+                    "  -> Caveat: largest block = {} > {} means a uniform workload at this block size"
+                , max_block, threshold_block);
+                eprintln!(
+                    "     would regress. The mix (esp. {} small blocks at sizes 1-2) is what makes it work.",
+                    hist.get(&1).copied().unwrap_or(0) + hist.get(&2).copied().unwrap_or(0),
+                );
+            }
+        } else {
+            eprintln!(
+                "  -> FFD on CPV blocks alone needs {} bins > CPV floor {}: atomic block-based",
+                bins.len(),
+                cpv_floor,
+            );
+            eprintln!("     packing regresses.");
+        }
+    }
+
+    /// Probe: does pre-emptively synth-ifying every external premise on
+    /// cracked-refinery drop K from 13 to 12? The fixture has 2 external
+    /// pods x 1 premise x 1 consumer each (so the existing 2+-consumer
+    /// and feasibility republish rules don't fire). User's hypothesis is
+    /// that proactively republishing into the chain lets the partition
+    /// place the externals in PODs with spare capacity instead of forcing
+    /// the consumer POD to open the external pod.
+    #[test]
+    fn cracked_refinery_preemptive_synth_probe() {
+        use cost::StatementCost;
+        let shape: InputShape =
+            serde_json::from_str(CRACKED_REFINERY_FIXTURE).expect("fixture deserializes");
+        let n_orig = shape.num_statements();
+        let num_premises = shape.premise_pod.len();
+        assert_eq!(num_premises, 2, "cracked-refinery has 2 external premises");
+
+        // Build augmented dep_edges: replace each External with
+        // Internal(n_orig + premise).
+        let mut new_dep_edges: Vec<Vec<AbstractDep>> = shape
+            .dep_edges
+            .iter()
+            .map(|edges| {
+                edges
+                    .iter()
+                    .map(|dep| match dep {
+                        AbstractDep::Internal(d) => AbstractDep::Internal(*d),
+                        AbstractDep::External { premise, .. } => {
+                            AbstractDep::Internal(n_orig + *premise)
+                        }
+                    })
+                    .collect()
+            })
+            .collect();
+        // Append synth statements with the External dep moved to them.
+        for premise in 0..num_premises {
+            new_dep_edges.push(vec![AbstractDep::External {
+                pod: shape.premise_pod[premise],
+                premise,
+            }]);
+        }
+        let mut new_costs: Vec<StatementCost> = shape.costs.clone();
+        for _ in 0..num_premises {
+            new_costs.push(StatementCost::default());
+        }
+        let augmented = InputShape {
+            costs: new_costs,
+            dep_edges: new_dep_edges,
+            output_public_indices: shape.output_public_indices.clone(),
+            num_external_pods: shape.num_external_pods,
+            premise_pod: shape.premise_pod.clone(),
+            params: shape.params.clone(),
+        };
+
+        let baseline = partition::partition(&shape).expect("baseline partitions");
+        let augmented_out = partition::partition(&augmented).expect("augmented partitions");
+        eprintln!(
+            "baseline K = {}, sizes = {:?}",
+            baseline.pod_count,
+            baseline
+                .pod_statements
+                .iter()
+                .map(|v| v.len())
+                .collect::<Vec<_>>(),
+        );
+        eprintln!(
+            "augmented (default prio) K = {}, sizes = {:?}",
+            augmented_out.pod_count,
+            augmented_out
+                .pod_statements
+                .iter()
+                .map(|v| v.len())
+                .collect::<Vec<_>>(),
+        );
+
+        // Probe synth-first priority: give synths priority 0..S, originals
+        // priority S..n. This forces bin-packing to place synths in the
+        // earliest segment with capacity.
+        let n_aug = augmented.num_statements();
+        let mut prio: Vec<usize> = vec![0; n_aug];
+        for (rank, p) in (n_orig..n_aug).enumerate() {
+            prio[p] = rank;
+        }
+        for (rank, slot) in prio.iter_mut().take(n_orig).enumerate() {
+            *slot = num_premises + rank;
+        }
+        let ord = partition::kahn_bin_packing(&augmented, &prio)
+            .expect("synth-first bin-packing must produce an ordering");
+        let synth_first_out = partition::partition_with_ordering(&augmented, &ord)
+            .expect("DP must partition synth-first ordering");
+        eprintln!(
+            "augmented + synth-first prio bp K = {}, sizes = {:?}",
+            synth_first_out.pod_count,
+            synth_first_out
+                .pod_statements
+                .iter()
+                .map(|v| v.len())
+                .collect::<Vec<_>>(),
+        );
+
+        // Per-POD CPV totals (synth-first augmented).
+        let cpvs: Vec<usize> = synth_first_out
+            .pod_statements
+            .iter()
+            .map(|stmts| {
+                stmts
+                    .iter()
+                    .map(|&s| augmented.costs[s].custom_pred_verifications)
+                    .sum()
+            })
+            .collect();
+        eprintln!("  synth-first per-POD CPV: {:?}", cpvs);
+
+        // Also try other generators with synth-first priority.
+        if let Some(ord_prio) = partition::kahn_with_priority(&augmented, &prio) {
+            if let Some(out) = partition::partition_with_ordering(&augmented, &ord_prio) {
+                eprintln!("augmented + synth-first prio kahn K = {}", out.pod_count);
+            }
+        }
+    }
+
+    #[test]
+    fn prove_is_stubbed() {
+        let params = Params::default();
+        let vd_set = &*MOCK_VD_SET;
+
+        let mut builder = MultiPodBuilder::new(&params, vd_set);
+        builder.pub_op(FrontendOp::eq(1, 1)).expect("op should add");
+        let solved = builder.solve().expect("should solve");
+
+        use crate::backends::plonky2::mock::mainpod::MockProver;
+        let prover = MockProver {};
+        let result = solved.prove(&prover);
+        assert!(matches!(result, Err(Error::ProveNotImplemented)));
+    }
+
+    /// Hand-construct a `DependencyGraph` so we can exercise the pre-pass
+    /// without rigging up a `MainPodBuilder` and prover.
+    mod prepass_tests {
+        use crate::{
+            frontend::{
+                multi_pod_tree::{
+                    build_shape_and_index,
+                    deps::{DependencyGraph, ExternalDependency, StatementSource},
+                    shape::AbstractDep,
+                },
+                Operation as FrontendOp,
+            },
+            middleware::{
+                Hash, NativeOperation, OperationAux, OperationType, Params, RawValue, Statement,
+                Value, ValueRef,
+            },
+        };
+
+        fn noop_op() -> FrontendOp {
+            FrontendOp(
+                OperationType::Native(NativeOperation::None),
+                vec![],
+                OperationAux::None,
+            )
+        }
+
+        fn ext_premise(pod_seed: i64, val: i64) -> ExternalDependency {
+            // A unique pod hash per seed and a literal-Equal statement per
+            // value. The statement contents are arbitrary as long as
+            // different premises hash differently.
+            ExternalDependency {
+                pod_hash: Hash::from(RawValue::from(pod_seed)),
+                statement: Statement::Equal(
+                    ValueRef::Literal(Value::from(val)),
+                    ValueRef::Literal(Value::from(val)),
+                ),
+            }
+        }
+
+        #[test]
+        fn single_consumer_does_not_republish() {
+            let ext = ext_premise(1, 1);
+            let deps = DependencyGraph {
+                statement_deps: vec![vec![StatementSource::External(ext)]],
+            };
+            let operations = vec![noop_op()];
+            let (shape, _index) =
+                build_shape_and_index(&operations, &deps, &[], &Params::default());
+            assert_eq!(shape.num_statements(), 1);
+            assert!(matches!(
+                shape.dep_edges[0][0],
+                AbstractDep::External { .. }
+            ));
+        }
+
+        #[test]
+        fn two_consumers_trigger_republish() {
+            let ext = ext_premise(1, 1);
+            let deps = DependencyGraph {
+                statement_deps: vec![
+                    vec![StatementSource::External(ext.clone())],
+                    vec![StatementSource::External(ext)],
+                ],
+            };
+            let operations = vec![noop_op(), noop_op()];
+            let (shape, _index) =
+                build_shape_and_index(&operations, &deps, &[], &Params::default());
+
+            assert_eq!(shape.num_statements(), 3);
+            let synth_idx = 2;
+            assert_eq!(shape.dep_edges[0], vec![AbstractDep::Internal(synth_idx)]);
+            assert_eq!(shape.dep_edges[1], vec![AbstractDep::Internal(synth_idx)]);
+            assert!(matches!(
+                shape.dep_edges[synth_idx][0],
+                AbstractDep::External { .. }
+            ));
+        }
+
+        #[test]
+        fn opportunistic_bundling_republishes_single_consumer_siblings() {
+            // External pod 1 has premise A (2 consumers) and premise B (1
+            // consumer). A triggers the basic 2+-consumer rule. Opportunistic
+            // bundling should pull B in too: the synth-hosting POD pays for
+            // pod 1 once regardless, so bundling B costs only one extra
+            // statement slot and frees B's consumer from referencing pod 1
+            // directly.
+            let ext_a = ext_premise(1, 1);
+            let ext_b = ext_premise(1, 2);
+            let deps = DependencyGraph {
+                statement_deps: vec![
+                    vec![StatementSource::External(ext_a.clone())],
+                    vec![StatementSource::External(ext_a)],
+                    vec![StatementSource::External(ext_b.clone())],
+                ],
+            };
+            let operations = vec![noop_op(), noop_op(), noop_op()];
+            let (shape, _index) =
+                build_shape_and_index(&operations, &deps, &[], &Params::default());
+
+            // 3 originals + 2 synths (one per premise of pod 1) = 5.
+            assert_eq!(shape.num_statements(), 5);
+            // Every original's external dep should be rewritten to Internal.
+            for orig in 0..3 {
+                assert!(
+                    matches!(shape.dep_edges[orig][0], AbstractDep::Internal(_)),
+                    "orig {} should reference a synth after bundling",
+                    orig
+                );
+            }
+        }
+
+        #[test]
+        fn bundling_does_not_cross_pods() {
+            // Two separate external pods. Pod 1 has a premise with 2
+            // consumers (triggers republish). Pod 2 has a premise with 1
+            // consumer. Pod 2's premise should NOT be republished;
+            // bundling is per-pod.
+            let p1 = ext_premise(1, 1);
+            let p2 = ext_premise(2, 1);
+            let deps = DependencyGraph {
+                statement_deps: vec![
+                    vec![StatementSource::External(p1.clone())],
+                    vec![StatementSource::External(p1)],
+                    vec![StatementSource::External(p2)],
+                ],
+            };
+            let operations = vec![noop_op(), noop_op(), noop_op()];
+            let (shape, _index) =
+                build_shape_and_index(&operations, &deps, &[], &Params::default());
+
+            // 3 originals + 1 synth (only pod 1's premise) = 4.
+            assert_eq!(shape.num_statements(), 4);
+            // The pod-2 consumer keeps its External dep.
+            assert!(matches!(
+                shape.dep_edges[2][0],
+                AbstractDep::External { .. }
+            ));
+        }
+
+        #[test]
+        fn distinct_premises_get_distinct_synthetics() {
+            let ext_a = ext_premise(1, 1);
+            let ext_b = ext_premise(1, 2);
+            let deps = DependencyGraph {
+                statement_deps: vec![
+                    vec![StatementSource::External(ext_a.clone())],
+                    vec![StatementSource::External(ext_a)],
+                    vec![StatementSource::External(ext_b.clone())],
+                    vec![StatementSource::External(ext_b)],
+                ],
+            };
+            let operations = vec![noop_op(), noop_op(), noop_op(), noop_op()];
+            let (shape, index) = build_shape_and_index(&operations, &deps, &[], &Params::default());
+
+            assert_eq!(shape.num_statements(), 6);
+            assert_eq!(index.premises.len(), 2);
+            assert_eq!(shape.num_external_pods, 1);
+        }
+    }
+}

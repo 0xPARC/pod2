@@ -78,12 +78,12 @@ fn aggregate_rows<'a>(
         UtilizationRow {
             name: "merkle proofs",
             used: merkle_proofs,
-            limit: params.containers.state.max_medium,
+            limit: params.containers.state.max_small + params.containers.state.max_medium,
         },
         UtilizationRow {
             name: "merkle state transitions",
             used: merkle_state_transitions,
-            limit: params.containers.transition.max_medium,
+            limit: params.containers.transition.max_small + params.containers.transition.max_medium,
         },
         UtilizationRow {
             name: "custom pred verifications",
