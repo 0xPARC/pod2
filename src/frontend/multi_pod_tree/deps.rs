@@ -1,0 +1,172 @@
+//! Dependency analysis for statements and operations.
+//!
+//! Builds the statement dependency graph in concrete form. The conversion
+//! to the positional [`AbstractDep`](super::shape::AbstractDep) form, and
+//! the external-republish pre-pass that introduces synthetic statements
+//! for externals with multiple consumers, both live in
+//! `mod.rs::build_shape_and_index`.
+
+use std::collections::HashMap;
+
+use crate::{
+    frontend::{Operation, OperationArg},
+    middleware::{Hash, Statement},
+};
+
+/// Reference to a statement sourced from an external input POD.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct ExternalDependency {
+    /// Hash of the external POD containing `statement` in its public set.
+    pub pod_hash: Hash,
+    /// The statement value itself.
+    pub statement: Statement,
+}
+
+/// Concrete source of a statement dependency. The canonicalisation step
+/// converts this to a positional `AbstractDep`.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum StatementSource {
+    /// Statement created within this builder at the given index.
+    Internal(usize),
+    /// Statement from an external input POD.
+    External(ExternalDependency),
+}
+
+/// Dependency graph for all statements in a builder. `statement_deps[i]` is
+/// the list of dependencies of statement `i`, in argument order.
+#[derive(Clone, Debug)]
+pub struct DependencyGraph {
+    pub statement_deps: Vec<Vec<StatementSource>>,
+}
+
+impl DependencyGraph {
+    /// Build the dependency graph from parallel `statements` and
+    /// `operations` arrays (where `operations[i]` produces `statements[i]`)
+    /// plus a `statement -> pod hash` map for recognising external
+    /// references.
+    pub fn build(
+        statements: &[Statement],
+        operations: &[Operation],
+        external_pod_statements: &HashMap<Statement, Hash>,
+    ) -> Self {
+        let mut statement_deps = Vec::with_capacity(statements.len());
+
+        // Map statement content to its first-occurrence index. The "first"
+        // matters for CopyStatement: if `statements[0] = A` and
+        // `statements[2] = copy(A) = A`, the lookup must return 0 (the
+        // original) so the copy's dependency points at the original
+        // rather than itself.
+        let mut statement_to_index: HashMap<&Statement, usize> = HashMap::new();
+        for (i, s) in statements.iter().enumerate() {
+            if !s.is_none() {
+                statement_to_index.entry(s).or_insert(i);
+            }
+        }
+
+        for (idx, op) in operations.iter().enumerate() {
+            let mut deps = Vec::new();
+
+            for arg in &op.1 {
+                if let OperationArg::Statement(ref dep_stmt) = arg {
+                    if dep_stmt.is_none() {
+                        continue;
+                    }
+
+                    if let Some(&dep_idx) = statement_to_index.get(dep_stmt) {
+                        assert!(
+                            dep_idx <= idx,
+                            "Statement at index {} depends on future statement at index {}",
+                            idx,
+                            dep_idx
+                        );
+
+                        if dep_idx < idx {
+                            deps.push(StatementSource::Internal(dep_idx));
+                            continue;
+                        }
+                        // dep_idx == idx: the first occurrence of this
+                        // statement content is at the current position,
+                        // meaning this operation both takes and produces
+                        // it (e.g. CopyStatement on an external). Fall
+                        // through to the external lookup below.
+                    }
+
+                    if let Some(&pod_hash) = external_pod_statements.get(dep_stmt) {
+                        deps.push(StatementSource::External(ExternalDependency {
+                            pod_hash,
+                            statement: dep_stmt.clone(),
+                        }));
+                    } else {
+                        unreachable!(
+                            "Statement argument not found in internal statements or external PODs: {:?}",
+                            dep_stmt
+                        );
+                    }
+                }
+            }
+
+            statement_deps.push(deps);
+        }
+
+        Self { statement_deps }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        frontend::Operation as FrontendOp,
+        middleware::{NativeOperation, OperationAux, OperationType, Value, ValueRef},
+    };
+
+    fn equal_stmt(n: i64) -> Statement {
+        Statement::Equal(
+            ValueRef::Literal(Value::from(n)),
+            ValueRef::Literal(Value::from(n)),
+        )
+    }
+
+    fn none_op() -> FrontendOp {
+        FrontendOp(
+            OperationType::Native(NativeOperation::None),
+            vec![],
+            OperationAux::None,
+        )
+    }
+
+    fn copy_op(stmt: Statement) -> FrontendOp {
+        FrontendOp(
+            OperationType::Native(NativeOperation::CopyStatement),
+            vec![OperationArg::Statement(stmt)],
+            OperationAux::None,
+        )
+    }
+
+    #[test]
+    fn copy_creates_dependency_on_original() {
+        // CopyStatement(s) produces s. The copy's dependency points at
+        // where s first appears, not at the copy itself.
+        let s = equal_stmt(1);
+        let statements = vec![s.clone(), s.clone()];
+        let operations = vec![none_op(), copy_op(s)];
+
+        let graph = DependencyGraph::build(&statements, &operations, &HashMap::new());
+
+        assert!(graph.statement_deps[0].is_empty());
+        assert_eq!(graph.statement_deps[1], vec![StatementSource::Internal(0)]);
+    }
+
+    #[test]
+    fn multiple_copies_depend_on_original() {
+        let s = equal_stmt(1);
+        let statements = vec![s.clone(), s.clone(), s.clone()];
+        let operations = vec![none_op(), copy_op(s.clone()), copy_op(s)];
+
+        let graph = DependencyGraph::build(&statements, &operations, &HashMap::new());
+
+        assert!(graph.statement_deps[0].is_empty());
+        assert_eq!(graph.statement_deps[1], vec![StatementSource::Internal(0)]);
+        assert_eq!(graph.statement_deps[2], vec![StatementSource::Internal(0)]);
+    }
+}
