@@ -533,6 +533,49 @@ impl MultiPodBuilder {
         self.builder.stmt_len()
     }
 
+    /// Skip the MILP partitioner and prove a single MainPod directly
+    /// via the inner `MainPodBuilder`. Useful for fixture-capture flows
+    /// where the multi-POD decomposition is irrelevant and the slow
+    /// solver dominates wall time. The resulting pod will exceed real
+    /// per-POD limits and is only safe under `MockProver` (the internal
+    /// builder is constructed with `usize::MAX / 2` for all per-POD
+    /// caps, so it accepts arbitrary statement counts).
+    pub fn prove_into_single_pod(mut self, prover: &dyn MainPodProver) -> Result<MainPod> {
+        let statements_to_reveal: Vec<Statement> = self
+            .output_public_indices
+            .iter()
+            .map(|&i| self.builder.statements[i].clone())
+            .collect();
+        for st in statements_to_reveal {
+            self.builder.reveal(&st)?;
+        }
+        self.builder.prove(prover).map_err(Error::from)
+    }
+
+    /// Replay this builder's accumulated operations onto a fresh
+    /// [`multi_pod_tree::MultiPodBuilder`](crate::frontend::multi_pod_tree::MultiPodBuilder).
+    /// Useful for side-by-side debugging and fixture capture: the
+    /// resulting tree builder represents the same problem and can be
+    /// inspected via `input_shape()` without running the partitioner.
+    pub fn replay_into_tree(&self) -> crate::frontend::multi_pod_tree::MultiPodBuilder {
+        let mut tree =
+            crate::frontend::multi_pod_tree::MultiPodBuilder::new(&self.params, &self.vd_set);
+        for pod in &self.input_pods {
+            tree.add_pod(pod.clone()).expect("add_pod replays cleanly");
+        }
+        for (idx, op) in self.builder.operations.iter().enumerate() {
+            let public = self.output_public_indices.contains(&idx);
+            let wildcard_values = self
+                .operations_wildcard_values
+                .get(&idx)
+                .cloned()
+                .unwrap_or_default();
+            tree.op(public, wildcard_values, op.clone())
+                .expect("op replays cleanly");
+        }
+        tree
+    }
+
     /// Compute a pre-solve resource summary showing aggregate demand vs. per-POD limits.
     ///
     /// This is useful for understanding which resource category is the bottleneck
