@@ -23,8 +23,8 @@ use crate::{
     frontend::{self, literal, CustomPredicateBatchBuilder, StatementTmplBuilder},
     middleware::{
         self, hash_values, AnchoredKey, Hash, Key, OperationType, Predicate, PredicateOrWildcard,
-        RawValue, StatementArg, StatementTmpl, StatementTmplArg, ValueRef, Wildcard, BASE_PARAMS,
-        EMPTY_VALUE,
+        RawValue, Statement, StatementArg, StatementTmpl, StatementTmplArg, ValueRef, Wildcard,
+        BASE_PARAMS, EMPTY_VALUE,
     },
 };
 
@@ -70,6 +70,7 @@ fn operation_verify(
     aux: Aux,
 ) -> Result<()> {
     let params = Params {
+        max_input_pods: 0,
         max_public_key_of: aux.secret_keys.len(),
         max_signed_by: aux.signed_bys.len(),
         containers: middleware::ParamsContainers {
@@ -86,6 +87,7 @@ fn operation_verify(
         },
         max_custom_predicate_verifications: 0,
         max_custom_predicates: 0,
+        max_open_input_statements: 0,
         ..Default::default()
     };
 
@@ -149,12 +151,13 @@ fn operation_verify(
     let aux_table_inputs = AuxTableInputTargets {
         merkle_proofs: merkle_proofs_target,
         merkle_transition_proofs: merkle_transition_proofs_target,
+        open_input_statements: Vec::new(),
         public_key_of_sks: secret_keys_target,
         signed_bys: signed_by_targets,
         custom_predicate_verifications: Vec::new(),
     };
     let aux_table =
-        build_operation_aux_table_circuit(&params, &mut builder, &[], &aux_table_inputs)?;
+        build_operation_aux_table_circuit(&params, &mut builder, &[], &[], &aux_table_inputs)?;
 
     verify_operation_circuit(
         &params,

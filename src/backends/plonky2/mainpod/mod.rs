@@ -1149,7 +1149,7 @@ pub mod tests {
     fn test_mainpod_small_empty() {
         let params = middleware::Params {
             max_signed_by: 0,
-            max_input_pods: 0,
+            max_input_pods: 1,
             max_statements: 5,
             max_open_input_statements: 2,
             max_custom_predicates: 2,

@@ -30,6 +30,7 @@ pub struct InputPodOpenStatement {
     pub sts_root: Hash,
     pub st_index: usize,
     pub proof: MerkleProof,
+    pub raw_statement: Statement,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -55,10 +56,11 @@ impl fmt::Display for OperationAux {
                 sts_root,
                 st_index,
                 proof,
+                raw_statement,
             }) => write!(
                 f,
-                "pod_input_merkle_proof({}, {}, {}, {:?})",
-                pod_index, sts_root, st_index, proof
+                "pod_input_merkle_proof({}, {}, {}, {:?}, {})",
+                pod_index, sts_root, st_index, proof, raw_statement
             )?,
             Self::Signature(sig) => write!(f, "signature({:?})", sig)?,
         }

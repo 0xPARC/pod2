@@ -786,6 +786,7 @@ impl Flattenable for InputPodEntryTarget {
         self.sts_root
             .elements
             .iter()
+            .chain(self.vd_hash.elements.iter())
             .chain(iter::once(&self.is_main.target))
             .cloned()
             .collect()
@@ -794,11 +795,12 @@ impl Flattenable for InputPodEntryTarget {
         assert_eq!(vs.len(), Self::size(params));
         Self {
             sts_root: HashOutTarget::from_flattened(params, &vs[0..4]),
-            is_main: BoolTarget::new_unsafe(vs[4]),
+            vd_hash: HashOutTarget::from_flattened(params, &vs[4..8]),
+            is_main: BoolTarget::new_unsafe(vs[8]),
         }
     }
     fn size(params: &Params) -> usize {
-        HashOutTarget::size(params) + 1
+        2 * HashOutTarget::size(params) + 1
     }
 }
 
@@ -1809,7 +1811,7 @@ impl CircuitBuilderPod<F, D> for CircuitBuilder {
         let num_chunks = array.len().div_ceil(CHUNK_LEN);
         for chunk in array.chunks(CHUNK_LEN) {
             let mut index_chunk = i.low;
-            // If we have several chunks and the last one is smaller (it's index needs less than 6
+            // If we have several chunks and the last one is smaller (its index needs less than 6
             // bits), make it zero except when it's used so that the range check over the index
             // passes.
             if chunk.len() <= CHUNK_LEN / 2 && num_chunks > 1 {
@@ -1825,6 +1827,7 @@ impl CircuitBuilderPod<F, D> for CircuitBuilder {
     }
 
     fn vec_ref<T: Flattenable>(&mut self, params: &Params, ts: &[T], i: &IndexTarget) -> T {
+        assert!(ts.len() > 0);
         let matrix_row_ref = |builder: &mut CircuitBuilder, m: &[Vec<Target>], i| {
             let num_rows = m.len();
             let num_columns = m

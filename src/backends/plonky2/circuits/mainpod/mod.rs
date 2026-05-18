@@ -23,7 +23,7 @@ use crate::{
             common::{
                 CircuitBuilderPod, CustomPredicateEntryTarget, CustomPredicateInBatchTarget,
                 CustomPredicateTarget, CustomPredicateVerifyEntryTarget,
-                CustomPredicateVerifyQueryTarget, Flattenable, IndexTarget, InputPodEntryTarget,
+                CustomPredicateVerifyQueryTarget, Flattenable, InputPodEntryTarget,
                 MerkleClaimTarget, MerkleTreeStateTransitionClaimTarget, OperationTarget,
                 OperationTypeTarget, PredicateHashOrWildcardTarget, PredicateTarget,
                 StatementArgTarget, StatementTarget, StatementTmplArgTarget, StatementTmplTarget,
@@ -31,8 +31,9 @@ use crate::{
             },
             mux_table::{MuxTableTarget, TableEntryTarget},
         },
+        emptypod::EmptyPod,
         error::Result,
-        mainpod::{self, pad_statement, MerkleProofs, MerkleTransitionProofs, SignedBy, Statement},
+        mainpod::{self, MerkleProofs, MerkleTransitionProofs, SignedBy},
         primitives::{
             ec::{
                 bits::{BigUInt320Target, CircuitBuilderBits},
@@ -54,9 +55,10 @@ use crate::{
     },
     measure_gates_begin, measure_gates_end,
     middleware::{
-        self, CustomPredicate, CustomPredicateBatch, CustomPredicateRef, Hash, HashOut,
+        CustomPredicate, CustomPredicateBatch, CustomPredicateRef, Hash, HashOut,
         InputPodOpenStatement, NativeOperation, NativePredicate, Params, PredicatePrefix,
-        StatementTmplArgPrefix, Value, BASE_PARAMS, EMPTY_VALUE, F, HASH_SIZE, VALUE_SIZE,
+        StatementTmplArgPrefix, Value, BASE_PARAMS, EMPTY_HASH, EMPTY_VALUE, F, HASH_SIZE,
+        VALUE_SIZE,
     },
 };
 //
@@ -254,8 +256,7 @@ fn max_operation_aux_entry_len(params: &Params) -> usize {
             .then(|| MerkleTreeStateTransitionClaimTarget::size(params)),
         (params.max_custom_predicate_verifications > 0)
             .then(|| CustomPredicateVerifyQueryTarget::size(params)),
-        // TODO: Add case for InputPodOpenStatement
-        (params.max_open_input_statements > 0).then(|| 5),
+        (params.max_open_input_statements > 0).then(|| StatementTarget::size(params)),
         (params.max_public_key_of > 0).then(|| PubKeySecKeyTarget::size(params)),
         (params.max_signed_by > 0).then(|| MsgPubKeyTarget::size(params)),
     ]
@@ -324,17 +325,18 @@ impl OpenInputStatementTarget {
         &self,
         pw: &mut PartialWitness<F>,
         data: &InputPodOpenStatement,
-        raw_st: &Statement,
     ) -> Result<()> {
         pw.set_target(
             self.input_pod_table_index,
             F::from_canonical_usize(data.pod_index),
         )?;
-        for (sibling, sibling_target) in zip_eq(&data.proof.siblings, &self.proof_siblings) {
+        for (i, sibling_target) in self.proof_siblings.iter().enumerate() {
+            let sibling = data.proof.siblings.get(i).unwrap_or(&EMPTY_HASH);
             pw.set_hash_target(*sibling_target, HashOut::from(*sibling))?;
         }
         pw.set_target(self.st_index, F::from_canonical_usize(data.st_index))?;
-        self.raw_statement.set_targets(pw, raw_st)?;
+        self.raw_statement
+            .set_targets(pw, &mainpod::Statement::from(data.raw_statement.clone()))?;
         Ok(())
     }
 
@@ -402,7 +404,14 @@ fn append_open_input_statements_aux_table_circuit(
     input_pod_table: &[InputPodEntryTarget],
     open_input_statements: &[OpenInputStatementTarget],
 ) {
-    // TODO: Open Pod input statements
+    if !open_input_statements.is_empty() {
+        assert!(!input_pod_table.is_empty());
+    }
+    assert_eq!(params.max_input_pods, input_pod_table.len());
+    assert_eq!(
+        params.max_open_input_statements,
+        open_input_statements.len()
+    );
     for data in open_input_statements {
         let pod = builder.vec_ref_small(params, input_pod_table, data.input_pod_table_index);
         let key = ValueTarget::from_int_lo(builder, data.st_index);
@@ -713,7 +722,7 @@ fn verify_operation_circuit(
                 &cache.op_args,
             ));
         }
-        if params.max_input_pods > 0 {
+        if params.max_open_input_statements > 0 {
             op_checks.extend_from_slice(&[verify_open_input_statement_circuit(
                 builder,
                 st,
@@ -1964,7 +1973,11 @@ fn verify_main_pod_circuit(
                 [PI_OFFSET_STATEMENTS_ROOT..PI_OFFSET_STATEMENTS_ROOT + HASH_SIZE],
         )
         .expect("4 elements");
-        input_pod_table.push(InputPodEntryTarget { is_main, sts_root });
+        input_pod_table.push(InputPodEntryTarget {
+            is_main,
+            sts_root,
+            vd_hash: verified_proof.verifier_data_hash,
+        });
 
         measure_gates_end!(builder, measure_in_pod);
     }
@@ -2163,6 +2176,7 @@ impl AuxTableInputTargets {
         &self,
         params: &Params,
         pw: &mut PartialWitness<F>,
+        vds_set: &VDSet,
         input: &AuxTableInput,
     ) -> Result<()> {
         self.set_container_mtp_targets(
@@ -2171,6 +2185,29 @@ impl AuxTableInputTargets {
             &input.merkle_proofs,
             &input.merkle_transition_proofs,
         )?;
+
+        assert!(input.open_input_statements.len() <= params.max_open_input_statements);
+        for (i, data) in input.open_input_statements.iter().enumerate() {
+            self.open_input_statements[i].set_targets(pw, data)?;
+        }
+        // Padding
+        let pad_data = if input.open_input_statements.is_empty() {
+            let empty_pod = EmptyPod::new_boxed(vds_set.clone());
+            let (_, proof) = empty_pod.pub_self_statements_mt().prove(0)?;
+            let pad_raw_st = empty_pod.pub_self_statements()[0].clone();
+            InputPodOpenStatement {
+                pod_index: params.max_input_pods - 1,
+                sts_root: empty_pod.statements_root(),
+                st_index: 0,
+                proof: proof,
+                raw_statement: pad_raw_st,
+            }
+        } else {
+            input.open_input_statements[0].clone()
+        };
+        for i in input.open_input_statements.len()..params.max_open_input_statements {
+            self.open_input_statements[i].set_targets(pw, &pad_data)?;
+        }
 
         assert!(input.public_key_of_sks.len() <= params.max_public_key_of);
         for (i, sk) in input.public_key_of_sks.iter().enumerate() {
@@ -2244,6 +2281,10 @@ pub struct MainPodVerifyTarget {
 
 impl MainPodVerifyTarget {
     pub fn new_virtual(params: &Params, builder: &mut CircuitBuilder) -> Self {
+        // Params validation
+        if params.max_open_input_statements > 0 {
+            assert!(params.max_input_pods > 0);
+        }
         MainPodVerifyTarget {
             params: params.clone(),
             vds_root: builder.add_virtual_hash(),
@@ -2331,29 +2372,29 @@ pub struct MainPodVerifyInput {
 }
 
 // TODO
-fn _set_targets_input_pods_self_statements(
-    pw: &mut PartialWitness<F>,
-    _params: &Params,
-    statements_target: &[StatementTarget],
-    statements: &[Statement],
-) -> Result<()> {
-    // assert_eq!(
-    //     statements_target.len(),
-    //     params.max_input_pods_public_statements
-    // );
-    assert!(statements.len() <= Params::num_public_statements_hash());
-
-    for (i, statement) in statements.iter().enumerate() {
-        statements_target[i].set_targets(pw, &statement.clone().into())?;
-    }
-    // Padding
-    let mut none_st = mainpod::Statement::from(middleware::Statement::None);
-    pad_statement(&mut none_st);
-    for statement_target in statements_target.iter().skip(statements.len()) {
-        statement_target.set_targets(pw, &none_st)?;
-    }
-    Ok(())
-}
+// fn _set_targets_input_pods_self_statements(
+//     pw: &mut PartialWitness<F>,
+//     _params: &Params,
+//     statements_target: &[StatementTarget],
+//     statements: &[Statement],
+// ) -> Result<()> {
+//     // assert_eq!(
+//     //     statements_target.len(),
+//     //     params.max_input_pods_public_statements
+//     // );
+//     assert!(statements.len() <= Params::num_public_statements_hash());
+//
+//     for (i, statement) in statements.iter().enumerate() {
+//         statements_target[i].set_targets(pw, &statement.clone().into())?;
+//     }
+//     // Padding
+//     let mut none_st = mainpod::Statement::from(middleware::Statement::None);
+//     pad_statement(&mut none_st);
+//     for statement_target in statements_target.iter().skip(statements.len()) {
+//         statement_target.set_targets(pw, &none_st)?;
+//     }
+//     Ok(())
+// }
 
 impl InnerCircuit for MainPodVerifyTarget {
     type Input = MainPodVerifyInput;
@@ -2396,21 +2437,19 @@ impl InnerCircuit for MainPodVerifyTarget {
         //     )?;
         // }
         // Padding
-        // if input_pods_len != self.params.max_input_pods {
-        //     let empty_pod = EmptyPod::new_boxed(input.vds_set.clone());
-        //     let empty_pod_statements = empty_pod.pub_statements();
-        //     let pad_mt_proof = input.vds_set.get_vds_proof_0();
+        if input_pods_len != self.params.max_input_pods {
+            let pad_mt_proof = input.vds_set.get_vds_proof_0();
 
-        //     for i in input_pods_len..self.params.max_input_pods {
-        //         self.vd_mt_proofs[i].set_targets(pw, &pad_mt_proof)?;
-        //         set_targets_input_pods_self_statements(
-        //             pw,
-        //             &self.params,
-        //             &self.input_pods_self_statements[i],
-        //             &empty_pod_statements,
-        //         )?;
-        //     }
-        // }
+            for i in input_pods_len..self.params.max_input_pods {
+                self.vd_mt_proofs[i].set_targets(pw, &pad_mt_proof)?;
+                //         set_targets_input_pods_self_statements(
+                //             pw,
+                //             &self.params,
+                //             &self.input_pods_self_statements[i],
+                //             &empty_pod_statements,
+                //         )?;
+            }
+        }
 
         // Skip statement and operation 0 wich are a hardcoded None
         let statements_is_pub = &input.statements_is_pub[1..];
@@ -2445,8 +2484,12 @@ impl InnerCircuit for MainPodVerifyTarget {
             self.custom_predicates[i].set_targets(pw, &pad_cp, &pad_mtp)?;
         }
 
-        self.aux_table_input
-            .set_targets(&self.params, pw, &input.aux_table_input)?;
+        self.aux_table_input.set_targets(
+            &self.params,
+            pw,
+            &input.vds_set,
+            &input.aux_table_input,
+        )?;
 
         Ok(())
     }

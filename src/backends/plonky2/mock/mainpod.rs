@@ -179,6 +179,7 @@ impl MockMainPod {
             pod_index,
             sts_root,
             st_index,
+            raw_statement,
             ..
         } = op;
         let pod = &self.input_pods[*pod_index];
@@ -186,15 +187,18 @@ impl MockMainPod {
         if sts_root0 != *sts_root {
             return Err(Error::custom(format!("OpenInputStatement uses a statements root different than the input pod one: {} != {}", sts_root, sts_root0)));
         }
+        let raw_statement0 = &pod.pub_self_statements()[*st_index];
+        if raw_statement0 != raw_statement {
+            return Err(Error::custom(format!("OpenInputStatement uses a raw_statement different than the input pod one: {} != {}", raw_statement0, raw_statement)));
+        }
         // Introduction pods can only have Introduction or None statements
         if !pod.is_main() {
-            let self_st = &pod.pub_self_statements()[*st_index];
-            match self_st {
+            match raw_statement0 {
                 middleware::Statement::None | middleware::Statement::Intro(_, _) => {}
                 _ => {
                     return Err(Error::custom(format!(
                         "Introduction Pod has a non-introduction statement: {}",
-                        self_st,
+                        raw_statement0,
                     )))
                 }
             }
