@@ -248,8 +248,8 @@ impl SolutionBreakdown {
                                     chain_imports.insert(*d);
                                 }
                             }
-                            AbstractDep::External { pod, premise } => {
-                                external_imports.insert(*premise);
+                            AbstractDep::External { pod, statement } => {
+                                external_imports.insert(*statement);
                                 external_pods.insert(*pod);
                             }
                         }
@@ -350,7 +350,7 @@ pub enum CapViolation {
         max_allowed: usize,
     },
     /// A single statement consumes more distinct tree imports (chain
-    /// producers plus external premises) than fit, even in a segment by
+    /// producers plus external statements) than fit, even in a segment by
     /// itself. No partition fixes this; the statement must be refactored.
     Unsplittable {
         stmt: usize,
@@ -387,7 +387,7 @@ impl fmt::Display for CapViolation {
             } => write!(
                 f,
                 "statement {} alone requires {} distinct tree imports \
-                 (chain producers plus external premises), exceeding the \
+                 (chain producers plus external statements), exceeding the \
                  cap of {}",
                 stmt, distinct_imports, max_allowed
             ),
@@ -464,8 +464,8 @@ fn check_unsplittable(input: &InputShape, s: usize) -> Option<CapViolation> {
             AbstractDep::Internal(d) => {
                 chain.insert(*d);
             }
-            AbstractDep::External { premise, .. } => {
-                external.insert(*premise);
+            AbstractDep::External { statement, .. } => {
+                external.insert(*statement);
             }
         }
     }
@@ -559,7 +559,7 @@ mod tests {
             dep_edges: (0..n).map(|_| Vec::new()).collect(),
             output_public_indices: output_public,
             num_external_pods: 0,
-            premise_pod: vec![],
+            statement_pod: vec![],
             params,
         }
     }

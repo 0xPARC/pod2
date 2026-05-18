@@ -9,7 +9,7 @@
 //! - `import_from[d][p]`: binary, statement `d` is imported into POD `p`
 //!   (`d` produced earlier and either consumed by some statement in `p`
 //!   or is an output-public statement and `p` is the output POD).
-//! - `ext_import_from[e_prem][p]`: binary, external premise `e_prem` is
+//! - `ext_import_from[e][p]`: binary, external (input) statement `e` is
 //!   imported into POD `p` (some statement in `p` names it).
 //! - `ext_used[e][p]`: binary, POD `p` references external pod `e`.
 //! - `cp_used[b][p]`: binary, POD `p` uses custom predicate `b`.
@@ -49,7 +49,7 @@ struct MilpVars {
     n: usize,
     k: usize,
     num_ext_pods: usize,
-    num_ext_premises: usize,
+    num_ext_statements: usize,
     num_cps: usize,
     assign: Vec<Vec<Variable>>,
     import_from: Vec<Vec<Variable>>,
@@ -70,18 +70,18 @@ fn declare_vars(
     n: usize,
     k: usize,
     num_ext_pods: usize,
-    num_ext_premises: usize,
+    num_ext_statements: usize,
     num_cps: usize,
 ) -> MilpVars {
     MilpVars {
         n,
         k,
         num_ext_pods,
-        num_ext_premises,
+        num_ext_statements,
         num_cps,
         assign: mk_binary_grid(vars, n, k),
         import_from: mk_binary_grid(vars, n, k),
-        ext_import_from: mk_binary_grid(vars, num_ext_premises, k),
+        ext_import_from: mk_binary_grid(vars, num_ext_statements, k),
         ext_used: mk_binary_grid(vars, num_ext_pods, k),
         cp_used: mk_binary_grid(vars, num_cps, k),
         uses_chain: (0..k).map(|_| vars.add(variable().binary())).collect(),
@@ -176,7 +176,7 @@ fn compute_pod_bounds(input: &InputShape, k: usize) -> Vec<(usize, usize)> {
 pub fn solve_for_k(input: &InputShape, k: usize) -> Option<OutputShape> {
     let n = input.num_statements();
     let num_ext_pods = input.num_external_pods;
-    let num_ext_premises = input.num_external_premises();
+    let num_ext_statements = input.num_external_statements();
 
     // Distinct custom predicate IDs across the problem.
     let mut all_cps: Vec<CustomPredicateId> = input
@@ -212,18 +212,19 @@ pub fn solve_for_k(input: &InputShape, k: usize) -> Option<OutputShape> {
         }
     }
 
-    // External-premise consumer index: ext_premise_consumers[e_prem] = list
-    // of statements with at least one External { premise: e_prem, .. } dep.
-    let mut ext_premise_consumers: Vec<Vec<usize>> = vec![Vec::new(); num_ext_premises];
+    // External-statement consumer index: ext_statement_consumers[e] is
+    // the list of statements with at least one
+    // External { statement: e, .. } dep.
+    let mut ext_statement_consumers: Vec<Vec<usize>> = vec![Vec::new(); num_ext_statements];
     for (s, deps) in input.dep_edges.iter().enumerate() {
-        let mut premises_for_s: HashSet<usize> = HashSet::new();
+        let mut statements_for_s: HashSet<usize> = HashSet::new();
         for dep in deps {
-            if let AbstractDep::External { premise, .. } = dep {
-                premises_for_s.insert(*premise);
+            if let AbstractDep::External { statement, .. } = dep {
+                statements_for_s.insert(*statement);
             }
         }
-        for e in premises_for_s {
-            ext_premise_consumers[e].push(s);
+        for e in statements_for_s {
+            ext_statement_consumers[e].push(s);
         }
     }
 
@@ -231,7 +232,7 @@ pub fn solve_for_k(input: &InputShape, k: usize) -> Option<OutputShape> {
     let last_pod = k - 1;
 
     let mut vars = ProblemVariables::new();
-    let v = declare_vars(&mut vars, n, k, num_ext_pods, num_ext_premises, num_cps);
+    let v = declare_vars(&mut vars, n, k, num_ext_pods, num_ext_statements, num_cps);
     let mut model = build_model(vars);
 
     // (1) Each statement in exactly one POD.
@@ -255,12 +256,12 @@ pub fn solve_for_k(input: &InputShape, k: usize) -> Option<OutputShape> {
 
     // (3) Statement-table cap per POD. Each `OpenInputStatement` op
     // produces a statement, so the table holds `local statements +
-    // chain imports + external-premise imports`, capped by
+    // chain imports + external-statement imports`, capped by
     // `max_statements`.
     for p in 0..k {
         let assign_sum: Expression = (0..n).map(|s| v.assign[s][p]).sum();
         let chain_sum: Expression = (0..n).map(|d| v.import_from[d][p]).sum();
-        let ext_sum: Expression = (0..num_ext_premises)
+        let ext_sum: Expression = (0..num_ext_statements)
             .map(|e_prem| v.ext_import_from[e_prem][p])
             .sum();
         model.add_constraint(constraint!(
@@ -373,19 +374,20 @@ pub fn solve_for_k(input: &InputShape, k: usize) -> Option<OutputShape> {
         }
     }
 
-    // (7a) External-premise import definition. For each (e_prem, p):
-    //   ext_import_from[e_prem][p] = 1 iff some statement in p has an
-    //   External { premise: e_prem, .. } dep. External premises are never
-    //   "produced locally", so there is no `1 - assign[d][p]` slack term.
-    for e_prem in 0..num_ext_premises {
+    // (7a) External-statement import definition. For each (e, p):
+    //   ext_import_from[e][p] = 1 iff some statement in p has an
+    //   External { statement: e, .. } dep. External statements are
+    //   never "produced locally", so there is no `1 - assign[d][p]`
+    //   slack term.
+    for e in 0..num_ext_statements {
         for p in 0..k {
-            let sum: Expression = ext_premise_consumers[e_prem]
+            let sum: Expression = ext_statement_consumers[e]
                 .iter()
                 .map(|&s| v.assign[s][p])
                 .sum();
-            model.add_constraint(constraint!(v.ext_import_from[e_prem][p] <= sum));
-            for &s in &ext_premise_consumers[e_prem] {
-                model.add_constraint(constraint!(v.ext_import_from[e_prem][p] >= v.assign[s][p]));
+            model.add_constraint(constraint!(v.ext_import_from[e][p] <= sum));
+            for &s in &ext_statement_consumers[e] {
+                model.add_constraint(constraint!(v.ext_import_from[e][p] >= v.assign[s][p]));
             }
         }
     }
@@ -396,7 +398,7 @@ pub fn solve_for_k(input: &InputShape, k: usize) -> Option<OutputShape> {
     let max_imports = input.params.max_open_input_statements as f64;
     for p in 0..k {
         let chain_sum: Expression = (0..n).map(|d| v.import_from[d][p]).sum();
-        let ext_sum: Expression = (0..num_ext_premises)
+        let ext_sum: Expression = (0..num_ext_statements)
             .map(|e_prem| v.ext_import_from[e_prem][p])
             .sum();
         model.add_constraint(constraint!(chain_sum + ext_sum <= max_imports));
@@ -502,7 +504,7 @@ mod tests {
             dep_edges: (0..n).map(|_| Vec::new()).collect(),
             output_public_indices: output_public,
             num_external_pods: 0,
-            premise_pod: vec![],
+            statement_pod: vec![],
             params,
         }
     }
@@ -518,18 +520,24 @@ mod tests {
     #[test]
     fn external_imports_count_against_max_open_input_statements() {
         // n statements with one External dep each, all referencing the
-        // same external pod with distinct premises. K=1 must be infeasible
-        // because the combined import cap (chain + external) is busted.
+        // same external pod with distinct input statements. K=1 must be
+        // infeasible because the combined import cap (chain + external)
+        // is busted.
         let params = Params::default();
         let n = params.max_open_input_statements + 1;
         let input = InputShape {
             costs: (0..n).map(|_| StatementCost::default()).collect(),
             dep_edges: (0..n)
-                .map(|i| vec![AbstractDep::External { pod: 0, premise: i }])
+                .map(|i| {
+                    vec![AbstractDep::External {
+                        pod: 0,
+                        statement: i,
+                    }]
+                })
                 .collect(),
             output_public_indices: vec![0],
             num_external_pods: 1,
-            premise_pod: vec![0; n],
+            statement_pod: vec![0; n],
             params,
         };
         assert!(
@@ -559,18 +567,18 @@ mod tests {
 
     /// Random `InputShape` generator. Covers internal dep graphs (up to 2
     /// deps per statement), occasional external deps (drawn from 0-2
-    /// external pods with up to 3 premises each), and per-statement
-    /// resource costs (signed_by / merkle_proofs).
+    /// external pods with up to 3 input statements each), and
+    /// per-statement resource costs (signed_by / merkle_proofs).
     fn random_input(rng: &mut rand_chacha::ChaCha20Rng, n: usize, params: Params) -> InputShape {
         use rand::{seq::SliceRandom, Rng};
 
         let num_external_pods = rng.gen_range(0..=2);
-        let num_premises = if num_external_pods > 0 {
+        let num_statements = if num_external_pods > 0 {
             rng.gen_range(0..=(num_external_pods * 3))
         } else {
             0
         };
-        let premise_pod: Vec<usize> = (0..num_premises)
+        let statement_pod: Vec<usize> = (0..num_statements)
             .map(|_| rng.gen_range(0..num_external_pods))
             .collect();
 
@@ -590,11 +598,11 @@ mod tests {
                         }
                     }
                 }
-                if num_premises > 0 && rng.gen_bool(0.5) {
-                    let premise = rng.gen_range(0..num_premises);
+                if num_statements > 0 && rng.gen_bool(0.5) {
+                    let statement = rng.gen_range(0..num_statements);
                     deps.push(AbstractDep::External {
-                        pod: premise_pod[premise],
-                        premise,
+                        pod: statement_pod[statement],
+                        statement,
                     });
                 }
                 deps
@@ -627,7 +635,7 @@ mod tests {
             dep_edges,
             output_public_indices: indices,
             num_external_pods,
-            premise_pod,
+            statement_pod,
             params,
         }
     }

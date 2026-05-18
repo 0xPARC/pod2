@@ -10,7 +10,9 @@ use std::collections::HashMap;
 
 use crate::{
     frontend::{Operation, OperationArg},
-    middleware::{Hash, Statement},
+    middleware::{
+        Hash, InputPodOpenStatement, NativeOperation, OperationAux, OperationType, Statement,
+    },
 };
 
 /// Reference to a statement sourced from an external input POD.
@@ -102,6 +104,23 @@ impl DependencyGraph {
                             dep_stmt
                         );
                     }
+                }
+            }
+
+            // Staging-time `OpenInputStatement` ops carry no arg statements
+            // (op.1 is empty) but functionally pull an input statement out of an
+            // external POD's public statement tree. Model them like a
+            // synthetic-republish node so the partitioner accounts for the
+            // external pod requirement and the per-POD import budgets.
+            if let OperationType::Native(NativeOperation::OpenInputStatement) = op.0 {
+                if let OperationAux::OpenInputStatement(InputPodOpenStatement {
+                    sts_root, ..
+                }) = &op.2
+                {
+                    deps.push(StatementSource::External(ExternalDependency {
+                        pod_hash: *sts_root,
+                        statement: statements[idx].clone(),
+                    }));
                 }
             }
 
