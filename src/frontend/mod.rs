@@ -16,9 +16,9 @@ use crate::middleware::{
     self, check_custom_pred,
     containers::{Container, Dictionary},
     fill_wildcard_values, hash_op, max_op, prod_op, root_key_to_ak, sum_op, AnchoredKey, Hash,
-    InputPodOpenStatement, Key, MainPodInputs, MainPodProver, NativeOperation, OperationAux,
-    OperationType, Params, PublicKey, RawValue, Signature, Signer, Statement, StatementArg, VDSet,
-    Value, ValueRef, BASE_PARAMS, EMPTY_VALUE,
+    InputPodOpenStatement, MainPodInputs, MainPodProver, NativeOperation, OperationAux,
+    OperationType, Params, PublicKey, RawValue, Signature, Signer, Statement, StatementArg, StrKey,
+    VDSet, Value, ValueRef, BASE_PARAMS, EMPTY_VALUE,
 };
 
 mod custom;
@@ -39,7 +39,7 @@ pub use pod_request::*;
 #[derive(Clone, Debug)]
 pub struct SignedDictBuilder {
     pub params: Params,
-    pub kvs: HashMap<Key, Value>,
+    pub kvs: HashMap<StrKey, Value>,
 }
 
 impl fmt::Display for SignedDictBuilder {
@@ -60,7 +60,7 @@ impl SignedDictBuilder {
         }
     }
 
-    pub fn insert(&mut self, key: impl Into<Key>, value: impl Into<Value>) {
+    pub fn insert(&mut self, key: impl Into<StrKey>, value: impl Into<Value>) {
         self.kvs.insert(key.into(), value.into());
     }
 
@@ -111,12 +111,12 @@ impl SignedDict {
             .then_some(())
             .ok_or(Error::custom("Invalid signature!"))
     }
-    pub fn get(&self, key: impl Into<Key>) -> Option<Value> {
+    pub fn get(&self, key: impl Into<StrKey>) -> Option<Value> {
         self.dict.get(&key.into()).unwrap()
     }
     // Returns the Contains statement that defines key if it exists.
-    pub fn get_statement(&self, key: impl Into<Key>) -> Option<Statement> {
-        let key: Key = key.into();
+    pub fn get_statement(&self, key: impl Into<StrKey>) -> Option<Statement> {
+        let key: StrKey = key.into();
         self.dict.get(&key).unwrap().map(|value| {
             Statement::Contains(
                 ValueRef::Literal(Value::from(self.dict.clone())),
@@ -1203,11 +1203,11 @@ pub mod tests {
                 OperationArg::Statement(st1),
                 OperationArg::Literal(Value::from(1)),
             ],
-            OperationAux::MerkleProof(dict.prove(&Key::from("a")).unwrap().1),
+            OperationAux::MerkleProof(dict.prove(&StrKey::from("a")).unwrap().1),
         ))?;
 
         let mut new_dict = dict.clone();
-        new_dict.insert(&Key::from("d"), &Value::from(4))?;
+        new_dict.insert(&StrKey::from("d"), &Value::from(4))?;
 
         builder.pub_op(Operation(
             OperationType::Native(NativeOperation::DictInsertFromEntries),
@@ -1221,7 +1221,7 @@ pub mod tests {
         ))?;
 
         let mut new_old_dict = new_dict.clone();
-        new_old_dict.delete(&Key::from("d"))?;
+        new_old_dict.delete(&StrKey::from("d"))?;
 
         assert_eq!(new_old_dict, dict);
 
@@ -1235,7 +1235,7 @@ pub mod tests {
             OperationAux::None,
         ))?;
 
-        new_old_dict.update(&Key::from("c"), &55.into())?;
+        new_old_dict.update(&StrKey::from("c"), &55.into())?;
 
         builder.pub_op(Operation(
             OperationType::Native(NativeOperation::DictUpdateFromEntries),

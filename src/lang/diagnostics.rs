@@ -286,6 +286,123 @@ fn render_validation_error(
                 "not allowed here",
             )
         }
+
+        ValidationError::DuplicateRecord {
+            name,
+            first_span,
+            second_span,
+        } => {
+            let title = format!("duplicate record definition: {}", name);
+            render_dual_span(
+                renderer,
+                source,
+                path,
+                &title,
+                first_span.as_ref(),
+                "first definition here",
+                second_span.as_ref(),
+                "duplicate definition",
+            )
+        }
+
+        ValidationError::RecordTooManyEntries {
+            name,
+            count,
+            max,
+            span,
+        } => {
+            let title = format!(
+                "record `{}` has {} entries, exceeding the limit of {}",
+                name, count, max
+            );
+            render_with_optional_span(
+                renderer,
+                source,
+                path,
+                &title,
+                span.as_ref(),
+                "too many entries",
+            )
+        }
+
+        ValidationError::DuplicateRecordEntry {
+            record,
+            entry,
+            span,
+        } => {
+            let title = format!("duplicate entry `{}` in record `{}`", entry, record);
+            render_with_optional_span(
+                renderer,
+                source,
+                path,
+                &title,
+                span.as_ref(),
+                "already declared",
+            )
+        }
+
+        ValidationError::UnknownRecord { name, span } => {
+            let title = format!("unknown record type: {}", name);
+            render_with_optional_span(
+                renderer,
+                source,
+                path,
+                &title,
+                span.as_ref(),
+                "no such record",
+            )
+        }
+
+        ValidationError::UnknownRecordEntry {
+            record,
+            entry,
+            span,
+        } => {
+            let title = format!("record `{}` has no entry `{}`", record, entry);
+            render_with_optional_span(
+                renderer,
+                source,
+                path,
+                &title,
+                span.as_ref(),
+                "unknown entry",
+            )
+        }
+
+        ValidationError::DuplicateLiteralRecordEntry {
+            record,
+            entry,
+            span,
+        } => {
+            let title = format!("duplicate entry `{}` in `{}` literal", entry, record);
+            render_with_optional_span(
+                renderer,
+                source,
+                path,
+                &title,
+                span.as_ref(),
+                "already given",
+            )
+        }
+
+        ValidationError::BracketAccessOnTypedWildcard {
+            wildcard,
+            record,
+            span,
+        } => {
+            let title = format!(
+                "bracket access on `{}` (typed as record `{}`); use `{}.entry` instead",
+                wildcard, record, wildcard
+            );
+            render_with_optional_span(
+                renderer,
+                source,
+                path,
+                &title,
+                span.as_ref(),
+                "string-key access on integer-keyed record",
+            )
+        }
     }
 }
 

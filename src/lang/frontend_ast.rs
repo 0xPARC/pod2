@@ -20,8 +20,17 @@ pub struct Document {
 pub enum DocumentItem {
     UseModuleStatement(UseModuleStatement),
     UseIntroStatement(UseIntroStatement),
+    RecordDef(RecordDef),
     CustomPredicateDef(CustomPredicateDef),
     RequestDef(RequestDef),
+}
+
+/// Record definition: `record Name = (entry1, entry2, ...)`
+#[derive(Debug, Clone, PartialEq)]
+pub struct RecordDef {
+    pub name: Identifier,
+    pub entries: Vec<Identifier>,
+    pub span: Option<Span>,
 }
 
 /// Module import statement: `use module 0xHASH as alias`
@@ -68,9 +77,46 @@ pub struct RequestDef {
 /// Argument section with public and optional private arguments
 #[derive(Debug, Clone, PartialEq)]
 pub struct ArgSection {
-    pub public_args: Vec<Identifier>,
-    pub private_args: Option<Vec<Identifier>>,
+    pub public_args: Vec<TypedArg>,
+    pub private_args: Option<Vec<TypedArg>>,
     pub span: Option<Span>,
+}
+
+/// Predicate argument: `name`, `name TypeName`, or `name module::TypeName`.
+/// The optional `type_name` names a record type whose dot-access entries are
+/// resolved at lowering time.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TypedArg {
+    pub name: String,
+    pub type_name: Option<TypeRef>,
+    pub span: Option<Span>,
+}
+
+/// Reference to a record type — either a local declaration in this module
+/// or an import via `use module ... as alias`.
+#[derive(Debug, Clone, PartialEq)]
+pub enum TypeRef {
+    Local(Identifier),
+    Qualified {
+        module: Identifier,
+        name: Identifier,
+    },
+}
+
+impl TypeRef {
+    pub fn span(&self) -> Option<Span> {
+        match self {
+            TypeRef::Local(id) => id.span,
+            TypeRef::Qualified { name, .. } => name.span,
+        }
+    }
+
+    /// Key used to look this reference up in `SymbolTable.records`: the bare
+    /// name for locals, `alias::Name` for qualified imports. Pairs with
+    /// `qualified_record_key` (which builds the same shape from raw parts).
+    pub fn symbol_table_key(&self) -> String {
+        self.to_string()
+    }
 }
 
 /// Conjunction type for custom predicates
@@ -108,6 +154,13 @@ impl PredicateRef {
             PredicateRef::Qualified { predicate, .. } => &predicate.name,
         }
     }
+
+    pub fn span(&self) -> Option<Span> {
+        match self {
+            PredicateRef::Local(id) => id.span,
+            PredicateRef::Qualified { predicate, .. } => predicate.span,
+        }
+    }
 }
 
 /// Arguments that can be passed to statements
@@ -128,20 +181,15 @@ pub struct AnchoredKey {
     pub span: Option<Span>,
 }
 
-impl AnchoredKey {
-    pub fn key_str(&self) -> &str {
-        match &self.key {
-            AnchoredKeyPath::Bracket(ls) => &ls.value,
-            AnchoredKeyPath::Dot(id) => &id.name,
-        }
-    }
-}
-
 /// Key path in an anchored key
 #[derive(Debug, Clone, PartialEq)]
 pub enum AnchoredKeyPath {
     Bracket(LiteralString), // ["key"]
     Dot(Identifier),        // .key
+    /// Integer-indexed key. Not produced by the parser; introduced by lowering
+    /// when a `Dot` access on a record-typed wildcard is resolved to an entry
+    /// index.
+    Index(i64),
 }
 
 /// Identifier (variable names, predicate names, etc.)
@@ -170,12 +218,20 @@ pub enum LiteralValue {
     Array(LiteralArray),
     Set(LiteralSet),
     Dict(LiteralDict),
+    Record(LiteralRecord),
     /// Hash of a native predicate (resolved immediately).
     NativePredicateHash(Identifier),
     /// Hash of an external module's predicate (resolved immediately).
     ExternalPredicateHash {
         module: Identifier,
         predicate: Identifier,
+    },
+    /// Compile-time integer literal that resolves to the index of a named
+    /// entry in a record schema: `R::foo` (local) or `mod::R::foo` (imported).
+    /// Lowers to `Value::from(idx as i64)` after schema resolution.
+    RecordEntryIndex {
+        record: TypeRef,
+        entry: Identifier,
     },
 }
 
@@ -250,6 +306,23 @@ pub struct DictPair {
     pub span: Option<Span>,
 }
 
+/// Record literal: `Name(Entry: value, ...)` (local) or
+/// `module::Name(Entry: value, ...)` (imported). Entries may appear in any
+/// order; the schema (resolved in validation) maps each to its index.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LiteralRecord {
+    pub name: TypeRef,
+    pub entries: Vec<RecordEntryLiteral>,
+    pub span: Option<Span>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct RecordEntryLiteral {
+    pub name: Identifier,
+    pub value: LiteralValue,
+    pub span: Option<Span>,
+}
+
 /// Source location information for error reporting and formatting
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Span {
@@ -276,6 +349,7 @@ impl fmt::Display for DocumentItem {
         match self {
             DocumentItem::UseModuleStatement(u) => write!(f, "{}", u),
             DocumentItem::UseIntroStatement(u) => write!(f, "{}", u),
+            DocumentItem::RecordDef(r) => write!(f, "{}", r),
             DocumentItem::CustomPredicateDef(c) => write!(f, "{}", c),
             DocumentItem::RequestDef(r) => write!(f, "{}", r),
         }
@@ -362,6 +436,38 @@ impl fmt::Display for ArgSection {
     }
 }
 
+impl fmt::Display for TypedArg {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.name)?;
+        if let Some(t) = &self.type_name {
+            write!(f, " {}", t)?;
+        }
+        Ok(())
+    }
+}
+
+impl fmt::Display for TypeRef {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            TypeRef::Local(id) => write!(f, "{}", id),
+            TypeRef::Qualified { module, name } => write!(f, "{}::{}", module, name),
+        }
+    }
+}
+
+impl fmt::Display for RecordDef {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "record {} = (", self.name)?;
+        for (i, entry) in self.entries.iter().enumerate() {
+            if i > 0 {
+                write!(f, ", ")?;
+            }
+            write!(f, "{}", entry)?;
+        }
+        write!(f, ")")
+    }
+}
+
 impl fmt::Display for ConjunctionType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -418,6 +524,7 @@ impl fmt::Display for AnchoredKey {
         match &self.key {
             AnchoredKeyPath::Bracket(s) => write!(f, "{}[{}]", self.root, s),
             AnchoredKeyPath::Dot(id) => write!(f, "{}.{}", self.root, id),
+            AnchoredKeyPath::Index(i) => write!(f, "{}[{}]", self.root, i),
         }
     }
 }
@@ -434,13 +541,36 @@ impl fmt::Display for LiteralValue {
             LiteralValue::Array(a) => write!(f, "{}", a),
             LiteralValue::Set(s) => write!(f, "{}", s),
             LiteralValue::Dict(d) => write!(f, "{}", d),
+            LiteralValue::Record(r) => write!(f, "{}", r),
             LiteralValue::NativePredicateHash(id) => {
                 write!(f, "@native_predicate({})", id)
             }
             LiteralValue::ExternalPredicateHash {
                 module, predicate, ..
             } => write!(f, "@external_predicate({}, {})", module, predicate),
+            LiteralValue::RecordEntryIndex { record, entry } => {
+                write!(f, "{}::{}", record, entry)
+            }
         }
+    }
+}
+
+impl fmt::Display for LiteralRecord {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}(", self.name)?;
+        for (i, entry) in self.entries.iter().enumerate() {
+            if i > 0 {
+                write!(f, ", ")?;
+            }
+            write!(f, "{}", entry)?;
+        }
+        write!(f, ")")
+    }
+}
+
+impl fmt::Display for RecordEntryLiteral {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}: {}", self.name, self.value)
     }
 }
 
@@ -561,6 +691,9 @@ pub mod parse {
                     items.push(DocumentItem::UseIntroStatement(parse_use_intro_statement(
                         inner_pair,
                     )));
+                }
+                Rule::record_def => {
+                    items.push(DocumentItem::RecordDef(parse_record_def(inner_pair)));
                 }
                 Rule::custom_predicate_def => {
                     items.push(DocumentItem::CustomPredicateDef(
@@ -687,16 +820,16 @@ pub mod parse {
                 Rule::public_arg_list => {
                     public_args = inner_pair
                         .into_inner()
-                        .filter(|p| p.as_rule() == Rule::identifier)
-                        .map(parse_identifier)
+                        .filter(|p| p.as_rule() == Rule::typed_arg)
+                        .map(parse_typed_arg)
                         .collect();
                 }
                 Rule::private_arg_list => {
                     private_args = Some(
                         inner_pair
                             .into_inner()
-                            .filter(|p| p.as_rule() == Rule::identifier)
-                            .map(parse_identifier)
+                            .filter(|p| p.as_rule() == Rule::typed_arg)
+                            .map(parse_typed_arg)
                             .collect(),
                     );
                 }
@@ -707,6 +840,50 @@ pub mod parse {
         ArgSection {
             public_args,
             private_args,
+            span: Some(span),
+        }
+    }
+
+    fn parse_typed_arg(pair: Pair<Rule>) -> TypedArg {
+        assert_eq!(pair.as_rule(), Rule::typed_arg);
+        let span = get_span(&pair);
+        let mut inner = pair.into_inner();
+        let name_pair = inner.next().unwrap();
+        let name = name_pair.as_str().to_string();
+        let type_name = inner.next().map(parse_type_tag);
+        TypedArg {
+            name,
+            type_name,
+            span: Some(span),
+        }
+    }
+
+    fn parse_type_tag(pair: Pair<Rule>) -> TypeRef {
+        assert_eq!(pair.as_rule(), Rule::type_tag);
+        let inner = pair.into_inner().next().expect("type_tag has one child");
+        match inner.as_rule() {
+            Rule::identifier => TypeRef::Local(parse_identifier(inner)),
+            Rule::qualified_type_ref => {
+                let mut idents = inner.into_inner();
+                let module = parse_identifier(idents.next().unwrap());
+                let name = parse_identifier(idents.next().unwrap());
+                TypeRef::Qualified { module, name }
+            }
+            other => unreachable!("unexpected type_tag inner rule: {other:?}"),
+        }
+    }
+
+    fn parse_record_def(pair: Pair<Rule>) -> RecordDef {
+        assert_eq!(pair.as_rule(), Rule::record_def);
+        let span = get_span(&pair);
+        let mut idents = pair
+            .into_inner()
+            .filter(|p| p.as_rule() == Rule::identifier);
+        let name = parse_identifier(idents.next().unwrap());
+        let entries: Vec<_> = idents.map(parse_identifier).collect();
+        RecordDef {
+            name,
+            entries,
             span: Some(span),
         }
     }
@@ -845,6 +1022,7 @@ pub mod parse {
             Rule::literal_array => Ok(LiteralValue::Array(parse_literal_array(inner)?)),
             Rule::literal_set => Ok(LiteralValue::Set(parse_literal_set(inner)?)),
             Rule::literal_dict => Ok(LiteralValue::Dict(parse_literal_dict(inner)?)),
+            Rule::literal_record => Ok(LiteralValue::Record(parse_literal_record(inner)?)),
             Rule::predicate_hash_native => {
                 let id = parse_identifier(inner.into_inner().next().unwrap());
                 Ok(LiteralValue::NativePredicateHash(id))
@@ -855,8 +1033,53 @@ pub mod parse {
                 let predicate = parse_identifier(parts.next().unwrap());
                 Ok(LiteralValue::ExternalPredicateHash { module, predicate })
             }
+            Rule::record_entry_index => {
+                let mut parts = inner.into_inner();
+                let first = parse_identifier(parts.next().unwrap());
+                let second = parse_identifier(parts.next().unwrap());
+                let (record, entry) = match parts.next().map(parse_identifier) {
+                    Some(third) => (
+                        TypeRef::Qualified {
+                            module: first,
+                            name: second,
+                        },
+                        third,
+                    ),
+                    None => (TypeRef::Local(first), second),
+                };
+                Ok(LiteralValue::RecordEntryIndex { record, entry })
+            }
             _ => unreachable!("Unexpected literal value rule: {:?}", inner.as_rule()),
         }
+    }
+
+    fn parse_literal_record(pair: Pair<Rule>) -> Result<LiteralRecord, parser::ParseError> {
+        assert_eq!(pair.as_rule(), Rule::literal_record);
+        let span = get_span(&pair);
+        let mut inner = pair.into_inner();
+        let name = parse_type_tag(inner.next().unwrap());
+        let entries: Result<Vec<_>, _> = inner
+            .filter(|p| p.as_rule() == Rule::record_entry)
+            .map(parse_record_entry)
+            .collect();
+        Ok(LiteralRecord {
+            name,
+            entries: entries?,
+            span: Some(span),
+        })
+    }
+
+    fn parse_record_entry(pair: Pair<Rule>) -> Result<RecordEntryLiteral, parser::ParseError> {
+        assert_eq!(pair.as_rule(), Rule::record_entry);
+        let span = get_span(&pair);
+        let mut inner = pair.into_inner();
+        let name = parse_identifier(inner.next().unwrap());
+        let value = parse_literal_value(inner.next().unwrap())?;
+        Ok(RecordEntryLiteral {
+            name,
+            value,
+            span: Some(span),
+        })
     }
 
     fn parse_literal_int(pair: Pair<Rule>) -> Result<LiteralInt, parser::ParseError> {
@@ -1085,16 +1308,29 @@ mod tests {
                     u.name.span = None;
                     u.intro_hash.span = None;
                 }
+                DocumentItem::RecordDef(r) => {
+                    r.span = None;
+                    r.name.span = None;
+                    for e in &mut r.entries {
+                        e.span = None;
+                    }
+                }
                 DocumentItem::CustomPredicateDef(c) => {
                     c.span = None;
                     c.name.span = None;
                     c.args.span = None;
                     for arg in &mut c.args.public_args {
                         arg.span = None;
+                        if let Some(t) = &mut arg.type_name {
+                            clear_type_ref_spans(t);
+                        }
                     }
                     if let Some(private) = &mut c.args.private_args {
                         for arg in private {
                             arg.span = None;
+                            if let Some(t) = &mut arg.type_name {
+                                clear_type_ref_spans(t);
+                            }
                         }
                     }
                     for stmt in &mut c.statements {
@@ -1107,6 +1343,16 @@ mod tests {
                         clear_statement_spans(stmt);
                     }
                 }
+            }
+        }
+    }
+
+    fn clear_type_ref_spans(t: &mut TypeRef) {
+        match t {
+            TypeRef::Local(id) => id.span = None,
+            TypeRef::Qualified { module, name } => {
+                module.span = None;
+                name.span = None;
             }
         }
     }
@@ -1134,6 +1380,7 @@ mod tests {
                     match &mut ak.key {
                         AnchoredKeyPath::Bracket(s) => s.span = None,
                         AnchoredKeyPath::Dot(id) => id.span = None,
+                        AnchoredKeyPath::Index(_) => {}
                     }
                 }
                 StatementTmplArg::SelfPredicateHash(id) => id.span = None,
@@ -1172,12 +1419,25 @@ mod tests {
                     clear_literal_spans(&mut pair.value);
                 }
             }
+            LiteralValue::Record(r) => {
+                r.span = None;
+                clear_type_ref_spans(&mut r.name);
+                for entry in &mut r.entries {
+                    entry.span = None;
+                    entry.name.span = None;
+                    clear_literal_spans(&mut entry.value);
+                }
+            }
             LiteralValue::NativePredicateHash(id) => id.span = None,
             LiteralValue::ExternalPredicateHash {
                 module, predicate, ..
             } => {
                 module.span = None;
                 predicate.span = None;
+            }
+            LiteralValue::RecordEntryIndex { record, entry } => {
+                clear_type_ref_spans(record);
+                entry.span = None;
             }
         }
     }
@@ -1264,6 +1524,139 @@ mod tests {
         let input = r#"REQUEST(
     Equal(Var["bracket_key"], Other["key2"])
     Equal(Var.dot_key, Other.key3)
+)"#;
+        test_roundtrip(input);
+    }
+
+    #[test]
+    fn test_record_decl() {
+        let input = r#"record ProcInputs = (foo, bar, baz)"#;
+        test_roundtrip(input);
+    }
+
+    #[test]
+    fn test_record_decl_single_entry() {
+        let input = r#"record Singleton = (only)"#;
+        test_roundtrip(input);
+    }
+
+    #[test]
+    fn test_typed_arg_in_predicate() {
+        let input = r#"record ProcInputs = (foo, bar, baz)
+my_pred(in ProcInputs, other) = AND (
+    Equal(in.foo, other)
+)"#;
+        test_roundtrip(input);
+    }
+
+    #[test]
+    fn test_typed_arg_mixed_with_untyped() {
+        let input = r#"record R = (x, y)
+mixed(a, b R, c, private: d, e R) = AND (
+    Equal(a, c)
+)"#;
+        test_roundtrip(input);
+    }
+
+    #[test]
+    fn test_typed_arg_qualified() {
+        // Qualified type tag references an imported record; the parser
+        // accepts it without inspecting the import (validation is downstream).
+        let input = r#"my_pred(in some_module::ProcInputs) = AND (
+    Equal(in.foo, in.bar)
+)"#;
+        test_roundtrip(input);
+    }
+
+    #[test]
+    fn test_record_literal_full() {
+        let input = r#"REQUEST(
+    Equal(A["data"], ProcInputs(foo: 1, bar: 2, baz: 3))
+)"#;
+        test_roundtrip(input);
+    }
+
+    #[test]
+    fn test_record_literal_sparse() {
+        let input = r#"REQUEST(
+    Equal(A["data"], ProcInputs(bar: 42))
+)"#;
+        test_roundtrip(input);
+    }
+
+    #[test]
+    fn test_record_literal_empty_rejected() {
+        // Record literals require at least one entry — an empty literal
+        // would never validate (no schema has zero entries), so reject at
+        // parse time for a clearer error.
+        let input = r#"REQUEST(
+    Equal(A["data"], Empty())
+)"#;
+        let parsed = crate::lang::parser::parse_podlang(input);
+        assert!(
+            parsed.is_err(),
+            "expected empty record literal `Empty()` to be rejected"
+        );
+    }
+
+    #[test]
+    fn test_record_entry_index_local() {
+        // `R::foo` resolves to the entry's integer index at compile time.
+        let input = r#"REQUEST(
+    Contains(A, R::foo, 7)
+)"#;
+        test_roundtrip(input);
+    }
+
+    #[test]
+    fn test_record_entry_index_qualified() {
+        // `mod::R::foo` for an imported record.
+        let input = r#"REQUEST(
+    Contains(A, some_mod::R::foo, 7)
+)"#;
+        test_roundtrip(input);
+    }
+
+    #[test]
+    fn test_record_literal_nested_value() {
+        let input = r#"REQUEST(
+    Equal(A["data"], R(items: [1, 2, 3], other: {"k": "v"}))
+)"#;
+        test_roundtrip(input);
+    }
+
+    #[test]
+    fn test_record_literal_qualified() {
+        // Imported record literal: `module::R(foo: 1)`. Parses with
+        // `TypeRef::Qualified` as the head; PEG ordering means the
+        // `module::R` prefix is consumed by `literal_record` rather than
+        // shadowed by `record_entry_index`.
+        let input = r#"REQUEST(
+    Equal(A["data"], some_mod::R(foo: 1, bar: 2))
+)"#;
+        test_roundtrip(input);
+    }
+
+    #[test]
+    fn test_record_keyword_reserved() {
+        // `record` may not appear as an identifier name.
+        let input = r#"record record = (foo)"#;
+        let parsed = crate::lang::parser::parse_podlang(input);
+        assert!(
+            parsed.is_err(),
+            "expected `record` to be rejected as an identifier"
+        );
+    }
+
+    #[test]
+    fn test_reserved_word_prefix_allowed_as_identifier() {
+        // The reserved-word check is anchored at a word boundary, so only
+        // the exact keyword is rejected. Identifiers that merely begin with
+        // a reserved word (`record_count`, `recorder`, `record_field`, the
+        // predicate name `record_using_pred`) must parse normally.
+        let input = r#"record Outer = (record_field, recorder)
+record_using_pred(record_count, recordOwner) = AND (
+    Equal(record_count, recordOwner)
 )"#;
         test_roundtrip(input);
     }

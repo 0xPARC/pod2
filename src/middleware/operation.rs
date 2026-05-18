@@ -491,10 +491,13 @@ impl Operation {
                         ValueRef::Literal(key),
                         ValueRef::Literal(v),
                     ),
-                ) if v == &v_in => Ok(StatementArg::Key(AnchoredKey::new(
-                    Hash::from(root.raw()),
-                    Key::from(key.as_str().ok_or_else(|| Error::custom("not a string"))?),
-                ))),
+                ) if v == &v_in => {
+                    root_key_to_ak(root, key)
+                        .map(StatementArg::Key)
+                        .ok_or_else(|| {
+                            Error::custom("ReplaceValueWithEntry: key must be a string or integer")
+                        })
+                }
                 _ => Err(Error::custom(
                     "invalid statement argument in ReplaceValueWithEntry",
                 )),
@@ -900,8 +903,12 @@ impl fmt::Display for Operation {
 
 pub(crate) fn root_key_to_ak(root: &Value, key: &Value) -> Option<AnchoredKey> {
     let root_hash = Hash::from(root.raw());
-    key.as_str()
-        .map(|s| AnchoredKey::new(root_hash, Key::from(s)))
+    if let Some(s) = key.as_str() {
+        Some(AnchoredKey::new(root_hash, Key::from(s)))
+    } else {
+        key.as_int()
+            .map(|i| AnchoredKey::new(root_hash, Key::from(i)))
+    }
 }
 
 /// Returns the value associated with `output_ref`.

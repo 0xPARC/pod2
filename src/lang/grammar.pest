@@ -11,7 +11,11 @@ WHITESPACE = _{ (" " | "\t" | NEWLINE)+ }
 // COMMENT matches a line comment (//...\n) or block comment (/*...*/).
 COMMENT = _{ ("//" ~ (!NEWLINE ~ ANY)* | "/*" ~ (!"*/" ~ ANY)* ~ "*/" ) }
 
-reserved_identifier = { "private" | "true" | "false" }
+// Word-boundary anchor: the reserved word must not be followed by an
+// identifier character, otherwise prefixes like `record_count` or `recorder`
+// would be wrongly rejected by the `!reserved_identifier` lookahead in
+// `identifier`.
+reserved_identifier = @{ ("private" | "true" | "false" | "record") ~ !(ASCII_ALPHANUMERIC | "_") }
 
 // Define rules for identifiers (predicate names, wildcard names)
 // Must start with alpha or _, followed by alpha, numeric, or _
@@ -23,10 +27,19 @@ arg_section = {
     public_arg_list ~ ("," ~ private_kw ~ private_arg_list)?
 }
 
-public_arg_list = { identifier ~ ("," ~ identifier)* } 
-private_arg_list = { identifier ~ ("," ~ identifier)* }
+// `name` or `name TypeName` or `name module::TypeName`. The optional `type_tag`
+// is a record type, either local or imported via a `use module ... as alias`.
+typed_arg = { identifier ~ type_tag? }
+type_tag = { qualified_type_ref | identifier }
+qualified_type_ref = { identifier ~ "::" ~ identifier }
+public_arg_list = { typed_arg ~ ("," ~ typed_arg)* }
+private_arg_list = { typed_arg ~ ("," ~ typed_arg)* }
 
-document = { SOI ~ (use_module_statement | use_intro_statement | custom_predicate_def | request_def)* ~ EOI }
+record_def = {
+    "record" ~ identifier ~ "=" ~ "(" ~ identifier ~ ("," ~ identifier)* ~ ")"
+}
+
+document = { SOI ~ (use_module_statement | use_intro_statement | record_def | custom_predicate_def | request_def)* ~ EOI }
 
 use_module_statement = { "use" ~ "module" ~ hash_hex ~ "as" ~ identifier }
 
@@ -83,7 +96,25 @@ literal_value = {
     literal_string |
     predicate_hash_native |
     predicate_hash_external |
+    literal_record |
+    record_entry_index |
     literal_int
+}
+
+// Record literal: `Name(Field: value, ...)` or `module::Name(...)`. Ordering
+// in `literal_value` matters: must come after `Name(...)`-shaped prefix
+// literals (PublicKey, SecretKey, Raw) so PEG doesn't shadow them, and BEFORE
+// `record_entry_index` so `module::R(...)` isn't consumed as a 2-segment
+// entry index — Pest backtracks to `record_entry_index` when no `(` follows.
+literal_record = {
+    type_tag ~ "(" ~ record_entry ~ ("," ~ record_entry)* ~ ")"
+}
+record_entry = { identifier ~ ":" ~ literal_value }
+
+// Compile-time entry-index lookup: `R::foo` or `module::R::foo`. Resolves to
+// the integer index of the named entry in the (possibly imported) record.
+record_entry_index = {
+    identifier ~ "::" ~ identifier ~ ("::" ~ identifier)?
 }
 
 // Primitive literal types

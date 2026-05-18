@@ -84,6 +84,7 @@ fn load_module_inner(
     let validated = frontend_ast_validate::validate(
         document,
         &available_modules_map,
+        params,
         frontend_ast_validate::ParseMode::Module,
     )?;
     let module = frontend_ast_lower::lower_module(validated, params, name)?;
@@ -124,6 +125,7 @@ fn parse_request_inner(
     let validated = frontend_ast_validate::validate(
         document,
         &available_modules_map,
+        params,
         frontend_ast_validate::ParseMode::Request,
     )?;
     let request = frontend_ast_lower::lower_request(validated, params)?;
@@ -1072,5 +1074,249 @@ mod tests {
             },
             e => panic!("Expected LangError::Validation, but got {:?}", e),
         }
+    }
+
+    // ---- Records: cross-module export -------------------------------------
+
+    #[test]
+    fn test_e2e_record_imported_predicate_compiles() -> Result<(), LangError> {
+        // Module A defines a record + a predicate that uses it.
+        // Module B imports A and writes its own predicate using
+        // `in a::ProcInputs`. B should compile without errors.
+        let params = Params::default();
+        let module_a_src = r#"
+            record ProcInputs = (foo, bar, baz)
+            uses_record(in ProcInputs) = AND(
+                Equal(in.foo, in.baz)
+            )
+        "#;
+        let module_a = Arc::new(load_module(module_a_src, "module_a", &params, &[])?);
+        let a_hash = module_a.id().encode_hex::<String>();
+
+        let module_b_src = format!(
+            r#"
+            use module 0x{} as a
+
+            wraps_a(in a::ProcInputs) = AND(
+                Equal(in.bar, 7)
+            )
+            "#,
+            a_hash
+        );
+        let module_b = load_module(&module_b_src, "module_b", &params, &[module_a])?;
+        assert_eq!(module_b.batch.predicates().len(), 1);
+        assert_eq!(module_b.batch.predicates()[0].name, "wraps_a");
+        Ok(())
+    }
+
+    #[test]
+    fn test_e2e_imported_record_predicate_hash_matches_handwritten() -> Result<(), LangError> {
+        // Module B's predicate using `in a::ProcInputs` must hash identically
+        // to the same predicate built directly with an integer-keyed
+        // anchored key. Schema lives in A; the integer index is what gets
+        // baked into B's predicate body.
+        use crate::{
+            frontend::{BuilderArg, CustomPredicateBatchBuilder, StatementTmplBuilder},
+            middleware::Key,
+        };
+
+        let params = Params::default();
+        let module_a_src = r#"
+            record ProcInputs = (foo, bar, baz)
+            stub(A) = AND(Equal(A["x"], 1))
+        "#;
+        let module_a = Arc::new(load_module(module_a_src, "module_a", &params, &[])?);
+        let a_hash = module_a.id().encode_hex::<String>();
+
+        let module_b_src = format!(
+            r#"
+            use module 0x{} as a
+
+            uses(in a::ProcInputs) = AND(
+                Equal(in.bar, 7)
+            )
+            "#,
+            a_hash
+        );
+        let module_b = load_module(&module_b_src, "module_b", &params, &[module_a])?;
+
+        let mut hand = CustomPredicateBatchBuilder::new(params.clone(), "module_b".into());
+        let stb = StatementTmplBuilder::new_from_pred(NativePredicate::Equal)
+            .arg(BuilderArg::Key("in".into(), Key::from(1i64)))
+            .arg(BuilderArg::Literal(Value::from(7i64)));
+        hand.predicate_and("uses", &["in"], &[], &[stb])
+            .expect("predicate_and");
+        let hand_batch = hand.finish().expect("finish");
+
+        assert_eq!(module_b.batch.id(), hand_batch.id());
+        Ok(())
+    }
+
+    #[test]
+    fn test_e2e_imported_record_literal_matches_array_root() -> Result<(), LangError> {
+        // Qualified record literal: `a::ProcInputs(...)` in the importer's
+        // body lowers to the same `Array` root as a local record literal
+        // built from the same schema, with entries placed at their schema
+        // indices.
+        use crate::middleware::{containers::Array, StatementTmplArg};
+
+        let params = Params::default();
+        let module_a_src = r#"
+            record ProcInputs = (foo, bar, baz)
+            stub(A) = AND(Equal(A["x"], 1))
+        "#;
+        let module_a = Arc::new(load_module(module_a_src, "module_a", &params, &[])?);
+        let a_hash = module_a.id().encode_hex::<String>();
+
+        // Source order is intentionally not schema order — the schema lookup
+        // through the qualified key has to map each entry back to its index.
+        let module_b_src = format!(
+            r#"
+            use module 0x{} as a
+
+            uses(A) = AND(
+                Equal(A["data"], a::ProcInputs(baz: 30, foo: 10, bar: 20))
+            )
+            "#,
+            a_hash
+        );
+        let module_b = load_module(&module_b_src, "module_b", &params, &[module_a])?;
+
+        let pred = &module_b.batch.predicates()[0];
+        let stmt = &pred.statements()[0];
+        let lowered = match &stmt.args()[1] {
+            StatementTmplArg::Literal(v) => v.clone(),
+            other => panic!("expected Literal at arg 1, got {other:?}"),
+        };
+
+        let expected = Value::from(Array::new(vec![
+            Value::from(10i64),
+            Value::from(20i64),
+            Value::from(30i64),
+        ]));
+
+        assert_eq!(lowered.raw(), expected.raw());
+        Ok(())
+    }
+
+    #[test]
+    fn test_e2e_imported_record_literal_unknown_module_rejected() -> Result<(), LangError> {
+        // A literal that names a module the importer didn't bind must be
+        // rejected — the qualified key never gets into the symbol table,
+        // so validation surfaces `UnknownRecord` rather than producing a
+        // bogus lowered value.
+        use crate::lang::frontend_ast_validate::ValidationError;
+
+        let params = Params::default();
+        let module_a_src = r#"
+            record ProcInputs = (foo, bar)
+            stub(A) = AND(Equal(A["x"], 1))
+        "#;
+        let module_a = Arc::new(load_module(module_a_src, "module_a", &params, &[])?);
+        let a_hash = module_a.id().encode_hex::<String>();
+
+        // Imported as `a`, but the literal references `b::ProcInputs`.
+        let module_b_src = format!(
+            r#"
+            use module 0x{} as a
+
+            uses(A) = AND(
+                Equal(A["data"], b::ProcInputs(foo: 1, bar: 2))
+            )
+            "#,
+            a_hash
+        );
+        let err = load_module(&module_b_src, "module_b", &params, &[module_a]).unwrap_err();
+        match err.kind {
+            LangErrorKind::Validation(e) => match *e {
+                ValidationError::UnknownRecord { name, .. } => {
+                    assert_eq!(name, "b::ProcInputs");
+                }
+                other => panic!("expected UnknownRecord, got {other:?}"),
+            },
+            other => panic!("expected Validation, got {other:?}"),
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_e2e_record_entry_index_proves_via_mock() -> Result<(), LangError> {
+        // End-to-end: a record-using predicate is satisfied by an Array
+        // value, with `Inputs::x` resolving the entry's integer index.
+        // MockProver runs the full proving path.
+        use crate::{
+            backends::plonky2::mock::mainpod::MockProver,
+            frontend::{MainPodBuilder, Operation},
+            middleware::{containers::Array, VDSet},
+        };
+
+        let params = Params::default();
+        let module = load_module(
+            r#"
+            record Inputs = (x, y)
+            at_x_is(arr, val) = AND(
+                Contains(arr, Inputs::x, val)
+            )
+            "#,
+            "records_e2e",
+            &params,
+            &[],
+        )?;
+        let at_x_is = module.batch.predicate_ref_by_name("at_x_is").unwrap();
+
+        // Build a 2-entry Array; arr[0] = 7 (Inputs::x), arr[1] = 13 (Inputs::y).
+        let arr = Array::new(vec![Value::from(7i64), Value::from(13i64)]);
+
+        let vd_set = VDSet::new(&[]);
+        let mut builder = MainPodBuilder::new(&params, &vd_set);
+        let contains_st = builder
+            .priv_op(Operation::array_contains(arr, 0i64, 7i64))
+            .unwrap();
+        builder
+            .pub_op(Operation::custom(at_x_is, [contains_st]))
+            .unwrap();
+        let pod = builder.prove(&MockProver {}).unwrap();
+        pod.pod.verify().unwrap();
+        Ok(())
+    }
+
+    #[test]
+    fn test_e2e_record_typed_dot_proves_via_mock() -> Result<(), LangError> {
+        // End-to-end: typed dot access is satisfied by an Array entry opened
+        // with an integer key, then used as an AnchoredKey in an Equal statement.
+        use crate::{
+            backends::plonky2::mock::mainpod::MockProver,
+            frontend::{MainPodBuilder, Operation},
+            middleware::{containers::Array, VDSet},
+        };
+
+        let params = Params::default();
+        let module = load_module(
+            r#"
+            record Inputs = (x, y)
+            at_x_is(arr Inputs, val) = AND(
+                Equal(arr.x, val)
+            )
+            "#,
+            "records_dot_e2e",
+            &params,
+            &[],
+        )?;
+        let at_x_is = module.batch.predicate_ref_by_name("at_x_is").unwrap();
+
+        let arr = Array::new(vec![Value::from(7i64), Value::from(13i64)]);
+
+        let vd_set = VDSet::new(&[]);
+        let mut builder = MainPodBuilder::new(&params, &vd_set);
+        let contains_st = builder
+            .priv_op(Operation::array_contains(arr, 0i64, 7i64))
+            .unwrap();
+        let equal_st = builder.priv_op(Operation::eq(contains_st, 7i64)).unwrap();
+        builder
+            .pub_op(Operation::custom(at_x_is, [equal_st]))
+            .unwrap();
+        let pod = builder.prove(&MockProver {}).unwrap();
+        pod.pod.verify().unwrap();
+        Ok(())
     }
 }
