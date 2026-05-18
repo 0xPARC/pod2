@@ -147,7 +147,8 @@ pub(super) fn kahn_bin_packing(
                 }
                 let cost = &input.costs[s];
                 let deps = &input.dep_edges[s];
-                if state.can_extend(cost, deps, &pos_built, params) && prio < best_fit_prio {
+                if state.can_extend(cost, deps, &pos_built, params).is_some() && prio < best_fit_prio
+                {
                     best_fit_prio = prio;
                     best_fit = Some(i);
                 }
@@ -246,16 +247,18 @@ impl GreedyState {
     }
 
     /// Would the current segment still satisfy all per-POD caps after
-    /// adding `cost` / `deps`? Callers that want to peek before
-    /// committing (like the bin-packing ordering generator) use this
-    /// directly. Mutates only the `scratch_*` fields.
+    /// adding `cost` / `deps`? On success, returns the number of *new*
+    /// import slots (chain + external) the admission would consume — used
+    /// by the bin-packing tiebreak to prefer admissions that don't drag
+    /// fresh imports into the segment. `None` means infeasible. Mutates
+    /// only the `scratch_*` fields.
     fn can_extend(
         &mut self,
         cost: &StatementCost,
         deps: &[AbstractDep],
         pos_of: &[usize],
         params: &Params,
-    ) -> bool {
+    ) -> Option<usize> {
         let new_cp_count = cost
             .custom_predicates_ids
             .iter()
@@ -265,7 +268,7 @@ impl GreedyState {
         tentative.add(cost);
         tentative.distinct_custom_predicates = self.distinct_cps.len() + new_cp_count;
         if !tentative.fits_in_pod(params) {
-            return false;
+            return None;
         }
 
         self.scratch_new_producers.clear();
@@ -297,7 +300,16 @@ impl GreedyState {
         let n_producers = self.prev_pod_producers.len() + self.scratch_new_producers.len();
         let n_ext_imports = self.external_imports.len() + self.scratch_new_ext_imports.len();
         let n_ext_pods = self.external_pods.len() + self.scratch_new_ext_pods.len();
-        tree_imports_ok(n_producers, n_ext_imports, n_ext_pods, params)
+        if !tree_imports_ok(n_producers, n_ext_imports, n_ext_pods, params) {
+            return None;
+        }
+        // Statement-table cap: local segment statements plus chain and
+        // external imports together share `max_statements`, because each
+        // `OpenInputStatement` op produces a statement in the POD's table.
+        if tentative.num_statements + n_producers + n_ext_imports > params.max_statements {
+            return None;
+        }
+        Some(self.scratch_new_producers.len() + self.scratch_new_ext_imports.len())
     }
 
     /// Apply the extension to the segment. Caller must have verified
