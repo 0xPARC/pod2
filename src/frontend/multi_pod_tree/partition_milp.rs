@@ -30,7 +30,7 @@ use good_lp::{
 };
 
 use super::{
-    cost::{CustomPredicateId, ResourceTotals, MAX_TREE_IMPORTS},
+    cost::{CustomPredicateId, ResourceTotals},
     shape::{AbstractDep, InputShape, OutputShape},
 };
 
@@ -256,9 +256,7 @@ pub fn solve_for_k(input: &InputShape, k: usize) -> Option<OutputShape> {
     // (3) Statement count per POD.
     for p in 0..k {
         let sum: Expression = (0..n).map(|s| v.assign[s][p]).sum();
-        model.add_constraint(constraint!(
-            sum <= input.params.max_priv_statements() as f64
-        ));
+        model.add_constraint(constraint!(sum <= input.params.max_statements as f64));
     }
 
     // (4) Multi-dim resource caps per POD. Merkle dimensions are
@@ -384,14 +382,15 @@ pub fn solve_for_k(input: &InputShape, k: usize) -> Option<OutputShape> {
     }
 
     // (7b) Combined import cap: chain + external imports share the
-    // MAX_TREE_IMPORTS budget (POD circuit reads both kinds through the
-    // same input-tree slots).
+    // `max_open_input_statements` budget (POD circuit reads both kinds
+    // through the same input-tree slots).
+    let max_imports = input.params.max_open_input_statements as f64;
     for p in 0..k {
         let chain_sum: Expression = (0..n).map(|d| v.import_from[d][p]).sum();
         let ext_sum: Expression = (0..num_ext_premises)
             .map(|e_prem| v.ext_import_from[e_prem][p])
             .sum();
-        model.add_constraint(constraint!(chain_sum + ext_sum <= MAX_TREE_IMPORTS as f64));
+        model.add_constraint(constraint!(chain_sum + ext_sum <= max_imports));
     }
 
     // (8) External-pod tracking.
@@ -508,11 +507,12 @@ mod tests {
     }
 
     #[test]
-    fn external_imports_count_against_max_tree_imports() {
+    fn external_imports_count_against_max_open_input_statements() {
         // n statements with one External dep each, all referencing the
         // same external pod with distinct premises. K=1 must be infeasible
         // because the combined import cap (chain + external) is busted.
-        let n = MAX_TREE_IMPORTS + 1;
+        let params = Params::default();
+        let n = params.max_open_input_statements + 1;
         let input = InputShape {
             costs: (0..n).map(|_| StatementCost::default()).collect(),
             dep_edges: (0..n)
@@ -521,11 +521,11 @@ mod tests {
             output_public_indices: vec![0],
             num_external_pods: 1,
             premise_pod: vec![0; n],
-            params: Params::default(),
+            params,
         };
         assert!(
             solve_for_k(&input, 1).is_none(),
-            "MILP must reject K=1 when external imports exceed MAX_TREE_IMPORTS"
+            "MILP must reject K=1 when external imports exceed max_open_input_statements"
         );
         assert!(
             solve_for_k(&input, 2).is_some(),
@@ -536,11 +536,10 @@ mod tests {
     #[test]
     fn splits_into_two_pods_when_count_exceeds_cap() {
         let params = Params {
-            max_statements: 4,
-            max_public_statements: 2,
+            max_statements: 2,
             ..Params::default()
         };
-        // max_priv_statements = 2, so 3 statements must split.
+        // max_statements = 2, so 3 statements must split.
         let input = independent(3, vec![2], params);
         let out = solve(&input).expect("MILP should find a feasible partition");
         assert_eq!(out.pod_count, 2);
@@ -647,8 +646,7 @@ mod tests {
             (
                 "tight",
                 Params {
-                    max_statements: 5,
-                    max_public_statements: 2,
+                    max_statements: 3,
                     max_input_pods: 2,
                     ..Params::default()
                 },
@@ -656,8 +654,7 @@ mod tests {
             (
                 "medium",
                 Params {
-                    max_statements: 8,
-                    max_public_statements: 3,
+                    max_statements: 5,
                     max_input_pods: 3,
                     ..Params::default()
                 },
@@ -665,8 +662,7 @@ mod tests {
             (
                 "resource-pressure",
                 Params {
-                    max_statements: 10,
-                    max_public_statements: 2,
+                    max_statements: 8,
                     max_input_pods: 3,
                     max_signed_by: 2,
                     ..Params::default()

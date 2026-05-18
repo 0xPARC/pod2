@@ -16,12 +16,6 @@ use crate::{
     },
 };
 
-/// Maximum number of statements a POD may import from its input trees
-/// (chain predecessor in slot 0 and external PODs in slots 1+ combined).
-///
-/// Stubbed here until the field lands in `middleware::Params`.
-pub const MAX_TREE_IMPORTS: usize = 20;
-
 /// Depth of each POD's Merkle statement tree. Capacity is `2^TREE_DEPTH`.
 pub const TREE_DEPTH: usize = 10;
 
@@ -134,11 +128,7 @@ impl ResourceTotals {
             }
         };
 
-        bump(
-            &mut bound,
-            self.num_statements,
-            params.max_priv_statements(),
-        );
+        bump(&mut bound, self.num_statements, params.max_statements);
         bump(
             &mut bound,
             self.custom_pred_verifications,
@@ -197,7 +187,7 @@ impl ResourceTotals {
     pub fn fits_in_pod(&self, params: &Params) -> bool {
         let state = &params.containers.state;
         let transition = &params.containers.transition;
-        self.num_statements <= params.max_priv_statements()
+        self.num_statements <= params.max_statements
             && self.merkle_proofs_medium <= state.max_medium
             && self.merkle_proofs_small + self.merkle_proofs_medium <= state.max_total()
             && self.merkle_state_transitions_medium <= transition.max_medium
@@ -284,7 +274,8 @@ impl StatementCost {
                 | NativeOperation::GtEqFromEntries
                 | NativeOperation::GtFromEntries
                 | NativeOperation::GtToNotEqual
-                | NativeOperation::ReplaceValueWithEntry => {}
+                | NativeOperation::ReplaceValueWithEntry
+                | NativeOperation::OpenInputStatement => {}
             },
             OperationType::Custom(cpr) => {
                 cost.custom_pred_verifications = 1;

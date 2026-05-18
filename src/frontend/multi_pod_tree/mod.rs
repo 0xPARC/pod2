@@ -95,9 +95,8 @@ impl MultiPodBuilder {
     pub fn new(params: &Params, vd_set: &VDSet) -> Self {
         let unlimited_params = Params {
             max_statements: usize::MAX / 2,
-            max_public_statements: usize::MAX / 2,
             max_input_pods: usize::MAX / 2,
-            max_input_pods_public_statements: usize::MAX / 2,
+            max_open_input_statements: usize::MAX / 2,
             ..params.clone()
         };
         let builder = MainPodBuilder::new(&unlimited_params, vd_set);
@@ -153,7 +152,7 @@ impl MultiPodBuilder {
         self.builder
             .statements
             .iter()
-            .position(|s| s == stmt)
+            .position(|(_, s)| s == stmt)
             .expect("statement exists in builder")
     }
 
@@ -168,7 +167,7 @@ impl MultiPodBuilder {
             .builder
             .statements
             .iter()
-            .position(|s| s == stmt)
+            .position(|(_, s)| s == stmt)
             .ok_or_else(|| {
                 Error::Custom("reveal() called with statement not found in builder".to_string())
             })?;
@@ -188,10 +187,14 @@ impl MultiPodBuilder {
         &self.builder.operations
     }
 
-    /// Read-only view of the inner builder's recorded statements. Same
+    /// Snapshot of the inner builder's recorded statements. Same
     /// indexing as [`Self::operations`].
-    pub fn statements(&self) -> &[Statement] {
-        &self.builder.statements
+    pub fn statements(&self) -> Vec<Statement> {
+        self.builder
+            .statements
+            .iter()
+            .map(|(_, s)| s.clone())
+            .collect()
     }
 
     /// Read-only view of the input PODs this builder will reference as
@@ -206,8 +209,14 @@ impl MultiPodBuilder {
     /// run and inspecting the shape before solving.
     pub fn input_shape(&self) -> InputShape {
         let external_pod_statements = build_external_statement_map(&self.input_pods);
+        let statements: Vec<Statement> = self
+            .builder
+            .statements
+            .iter()
+            .map(|(_, s)| s.clone())
+            .collect();
         let deps = DependencyGraph::build(
-            &self.builder.statements,
+            &statements,
             &self.builder.operations,
             &external_pod_statements,
         );
@@ -239,10 +248,11 @@ impl MultiPodBuilder {
     /// (once the circuit is available).
     pub fn solve(self) -> Result<SolvedMultiPod> {
         let MainPodBuilder {
-            statements,
+            statements: stmt_pairs,
             operations,
             ..
         } = self.builder;
+        let statements: Vec<Statement> = stmt_pairs.into_iter().map(|(_, s)| s).collect();
 
         let external_pod_statements = build_external_statement_map(&self.input_pods);
         let deps = DependencyGraph::build(&statements, &operations, &external_pod_statements);
@@ -581,16 +591,15 @@ mod tests {
 
     #[test]
     fn end_to_end_solve_forces_split() {
-        // Tight max_priv_statements forces splitting into 2 PODs.
+        // Tight max_statements forces splitting into 2 PODs.
         let params = Params {
-            max_statements: 4,
-            max_public_statements: 2,
+            max_statements: 2,
             ..Params::default()
         };
         let vd_set = &*MOCK_VD_SET;
 
         let mut builder = MultiPodBuilder::new(&params, vd_set);
-        // 3 independent statements need 2 PODs at max_priv_statements = 2.
+        // 3 independent statements need 2 PODs at max_statements = 2.
         for i in 0..3_i64 {
             builder.priv_op(FrontendOp::eq(i, i)).expect("priv op");
         }
@@ -1188,10 +1197,10 @@ mod tests {
         }
 
         // Estimate K under atomic block-based packing via FFD.
-        // Caps: max_priv_statements stmts/POD, max_custom_pred_verifications
+        // Caps: max_statements stmts/POD, max_custom_pred_verifications
         // CPVs/POD. Each block contributes block_size stmts and 1 CPV.
         let p = &shape.params;
-        let max_stmts = p.max_priv_statements();
+        let max_stmts = p.max_statements;
         let max_cpvs = p.max_custom_predicate_verifications;
         let mut sorted = block_sizes.clone();
         sorted.sort_unstable();
