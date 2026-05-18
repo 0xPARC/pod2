@@ -23,16 +23,16 @@ use crate::{
             common::{
                 CircuitBuilderPod, CustomPredicateEntryTarget, CustomPredicateInBatchTarget,
                 CustomPredicateTarget, CustomPredicateVerifyEntryTarget,
-                CustomPredicateVerifyQueryTarget, Flattenable, InputPodEntryTarget,
-                MerkleClaimTarget, MerkleTreeStateTransitionClaimTarget,
-                OpenInputStatementQueryTarget, OperationTarget, OperationTypeTarget,
-                PredicateHashOrWildcardTarget, PredicateTarget, StatementArgTarget,
-                StatementTarget, StatementTmplArgTarget, StatementTmplTarget, ValueTarget,
+                CustomPredicateVerifyQueryTarget, Flattenable, IndexTarget, InputPodEntryTarget,
+                MerkleClaimTarget, MerkleTreeStateTransitionClaimTarget, OperationTarget,
+                OperationTypeTarget, PredicateHashOrWildcardTarget, PredicateTarget,
+                StatementArgTarget, StatementTarget, StatementTmplArgTarget, StatementTmplTarget,
+                ValueTarget,
             },
             mux_table::{MuxTableTarget, TableEntryTarget},
         },
         error::Result,
-        mainpod::{self, pad_statement, MerkleProofs, MerkleTransitionProofs, SignedBy},
+        mainpod::{self, pad_statement, MerkleProofs, MerkleTransitionProofs, SignedBy, Statement},
         primitives::{
             ec::{
                 bits::{BigUInt320Target, CircuitBuilderBits},
@@ -54,8 +54,8 @@ use crate::{
     },
     measure_gates_begin, measure_gates_end,
     middleware::{
-        CustomPredicate, CustomPredicateBatch, CustomPredicateRef, Hash, InputPodOpenStatement,
-        NativeOperation, NativePredicate, Params, PredicatePrefix, Statement,
+        self, CustomPredicate, CustomPredicateBatch, CustomPredicateRef, Hash, HashOut,
+        InputPodOpenStatement, NativeOperation, NativePredicate, Params, PredicatePrefix,
         StatementTmplArgPrefix, Value, BASE_PARAMS, EMPTY_VALUE, F, HASH_SIZE, VALUE_SIZE,
     },
 };
@@ -311,6 +311,45 @@ impl SignedByTarget {
     }
 }
 
+#[derive(Clone, Serialize, Deserialize)]
+struct OpenInputStatementTarget {
+    input_pod_table_index: Target,
+    proof_siblings: Vec<HashOutTarget>,
+    st_index: Target,
+    raw_statement: StatementTarget,
+}
+
+impl OpenInputStatementTarget {
+    pub fn set_targets(
+        &self,
+        pw: &mut PartialWitness<F>,
+        data: &InputPodOpenStatement,
+        raw_st: &Statement,
+    ) -> Result<()> {
+        pw.set_target(
+            self.input_pod_table_index,
+            F::from_canonical_usize(data.pod_index),
+        )?;
+        for (sibling, sibling_target) in zip_eq(&data.proof.siblings, &self.proof_siblings) {
+            pw.set_hash_target(*sibling_target, HashOut::from(*sibling))?;
+        }
+        pw.set_target(self.st_index, F::from_canonical_usize(data.st_index))?;
+        self.raw_statement.set_targets(pw, raw_st)?;
+        Ok(())
+    }
+
+    pub fn new_virtual(builder: &mut CircuitBuilder) -> Self {
+        Self {
+            input_pod_table_index: builder.add_virtual_target(),
+            proof_siblings: (0..BASE_PARAMS.max_depth_public_statements_mt)
+                .map(|_| builder.add_virtual_hash())
+                .collect(),
+            st_index: builder.add_virtual_target(),
+            raw_statement: builder.add_virtual_statement(true),
+        }
+    }
+}
+
 fn append_container_proofs_operation_aux_table_circuit(
     builder: &mut CircuitBuilder,
     table: &mut MuxTableTarget,
@@ -356,6 +395,46 @@ fn append_container_proofs_operation_aux_table_circuit(
     }
 }
 
+fn append_open_input_statements_aux_table_circuit(
+    params: &Params,
+    builder: &mut CircuitBuilder,
+    table: &mut MuxTableTarget,
+    input_pod_table: &[InputPodEntryTarget],
+    open_input_statements: &[OpenInputStatementTarget],
+) {
+    // TODO: Open Pod input statements
+    for data in open_input_statements {
+        let pod = builder.vec_ref_small(params, input_pod_table, data.input_pod_table_index);
+        let key = ValueTarget::from_int_lo(builder, data.st_index);
+        let raw_st_hash =
+            builder.hash_n_to_hash_no_pad::<PoseidonHash>(data.raw_statement.flatten());
+        let value = ValueTarget {
+            elements: raw_st_hash.elements,
+        };
+        let proof = MerkleProofExistenceTarget {
+            max_depth: BASE_PARAMS.max_depth_public_statements_mt,
+            root: pod.sts_root,
+            key,
+            value,
+            siblings: data.proof_siblings.clone(),
+        };
+        verify_merkle_proof_existence_circuit(builder, &proof);
+        let is_intro = builder.not(pod.is_main);
+        let st = normalize_statement_circuit(
+            params,
+            builder,
+            &data.raw_statement,
+            is_intro,
+            &pod.vd_hash,
+        );
+        table.push(
+            builder,
+            OperationAuxTableTag::OpenInputStatement as u32,
+            &st,
+        );
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn build_operation_aux_table_circuit(
     params: &Params,
@@ -366,6 +445,7 @@ fn build_operation_aux_table_circuit(
     // signed_bys: &[SignedByTarget],
     // custom_predicate_verifications: &[CustomPredicateVerifyEntryTarget],
     custom_predicate_table: &[HashOutTarget],
+    input_pod_table: &[InputPodEntryTarget],
     input: &AuxTableInputTargets,
 ) -> Result<MuxTableTarget> {
     let measure = measure_gates_begin!(builder, "BuildOpAuxTbl");
@@ -394,14 +474,13 @@ fn build_operation_aux_table_circuit(
         &input.merkle_transition_proofs,
     );
 
-    // TODO: Open Pod input statements
-    for _ in 0..params.max_open_input_statements {
-        table.push_flattened(
-            builder,
-            OperationAuxTableTag::OpenInputStatement as u32,
-            &[],
-        );
-    }
+    append_open_input_statements_aux_table_circuit(
+        params,
+        builder,
+        &mut table,
+        &input_pod_table,
+        &input.open_input_statements,
+    );
 
     // CustomPredVerify: verify custom predicate statements verification against operations
     for entry in &input.custom_predicate_verifications {
@@ -993,16 +1072,12 @@ fn verify_open_input_statement_circuit(
     aux: &TableEntryTarget,
 ) -> BoolTarget {
     let measure = measure_gates_begin!(builder, "OpOpenInputSt");
-    // let (aux_tag_ok, resolved_query) = aux.as_type::<OpenInputStatementQueryTarget>(
-    //     builder,
-    //     OperationAuxTableTag::OpenInputStatement as u32,
-    // );
-
-    // let query_ok = builder.is_equal_flattenable(&resolved_query, &OpenInputStatementQueryTarget {});
-    // let ok = builder.all([aux_tag_ok, query_ok]);
-    // ok
+    let (aux_tag_ok, resolved_statement) =
+        aux.as_type::<StatementTarget>(builder, OperationAuxTableTag::OpenInputStatement as u32);
     let op_code_ok = op_type.has_native(builder, NativeOperation::OpenInputStatement);
-    let ok = builder.all([op_code_ok]);
+    let query_ok = builder.is_equal_flattenable(&resolved_statement, &st);
+
+    let ok = builder.all([op_code_ok, aux_tag_ok, query_ok]);
     measure_gates_end!(builder, measure);
     ok
 }
@@ -1654,21 +1729,23 @@ fn make_custom_statement_circuit(
     Ok((statement_with_pred, op_type))
 }
 
-// TODO
 /// Replace the blank verifier_data_hash slots in intro predicates by `vd_hash`
-fn _normalize_statement_circuit(
+fn normalize_statement_circuit(
     params: &Params,
     builder: &mut CircuitBuilder,
-    statement: &StatementTarget,
+    raw_st: &StatementTarget,
+    is_intro: BoolTarget,
     vd_hash: &HashOutTarget,
 ) -> StatementTarget {
-    let is_blank_intro = statement.pred_is_blank_intro(builder);
-    let old_pred_hash = statement.pred_hash();
+    let is_none = raw_st.pred_is_none(params, builder);
+    let is_not_none = builder.not(is_none);
+    let replace = builder.and(is_intro, is_not_none);
+    let old_pred_hash = raw_st.pred_hash();
     let intro_pred_hash = PredicateTarget::new_intro(builder, *vd_hash).hash(builder);
     let new_pred_hash =
-        builder.select_flattenable(params, is_blank_intro, &intro_pred_hash, old_pred_hash);
+        builder.select_flattenable(params, replace, &intro_pred_hash, old_pred_hash);
 
-    StatementTarget::new(new_pred_hash, statement.args.clone())
+    StatementTarget::new(new_pred_hash, raw_st.args.clone())
 }
 
 // /// `params.num_public_statements_hash` is the total number of statements that will be hashed.
@@ -1821,7 +1898,7 @@ fn verify_main_pod_circuit(
 
     let measure = measure_gates_begin!(builder, "MainPodVerify");
 
-    let mut input_pods_table = Vec::with_capacity(params.max_input_pods);
+    let mut input_pod_table = Vec::with_capacity(params.max_input_pods);
     // 1a. Verify all input recursive pods
     for (verified_proof, vd_mt_proof) in izip!(
         verified_proofs,
@@ -1887,7 +1964,7 @@ fn verify_main_pod_circuit(
                 [PI_OFFSET_STATEMENTS_ROOT..PI_OFFSET_STATEMENTS_ROOT + HASH_SIZE],
         )
         .expect("4 elements");
-        input_pods_table.push(InputPodEntryTarget { is_main, sts_root });
+        input_pod_table.push(InputPodEntryTarget { is_main, sts_root });
 
         measure_gates_end!(builder, measure_in_pod);
     }
@@ -1907,6 +1984,7 @@ fn verify_main_pod_circuit(
         params,
         builder,
         &custom_predicate_table,
+        &input_pod_table,
         &main_pod.aux_table_input,
     )?;
 
@@ -2024,6 +2102,7 @@ impl MerkleTransitionProofsTarget {
 struct AuxTableInputTargets {
     merkle_proofs: MerkleProofsTarget,
     merkle_transition_proofs: MerkleTransitionProofsTarget,
+    open_input_statements: Vec<OpenInputStatementTarget>,
     public_key_of_sks: Vec<BigUInt320Target>,
     signed_bys: Vec<SignedByTarget>,
     custom_predicate_verifications: Vec<CustomPredicateVerifyEntryTarget>,
@@ -2203,6 +2282,9 @@ impl MainPodVerifyTarget {
                 merkle_transition_proofs: MerkleTransitionProofsTarget::new_virtual(
                     params, builder,
                 ),
+                open_input_statements: (0..params.max_open_input_statements)
+                    .map(|_| OpenInputStatementTarget::new_virtual(builder))
+                    .collect(),
                 public_key_of_sks: (0..params.max_public_key_of)
                     .map(|_| builder.add_virtual_biguint320_target())
                     .collect(),
@@ -2265,7 +2347,7 @@ fn _set_targets_input_pods_self_statements(
         statements_target[i].set_targets(pw, &statement.clone().into())?;
     }
     // Padding
-    let mut none_st = mainpod::Statement::from(Statement::None);
+    let mut none_st = mainpod::Statement::from(middleware::Statement::None);
     pad_statement(&mut none_st);
     for statement_target in statements_target.iter().skip(statements.len()) {
         statement_target.set_targets(pw, &none_st)?;

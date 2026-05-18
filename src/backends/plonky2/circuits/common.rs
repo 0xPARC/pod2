@@ -74,21 +74,21 @@ impl ValueTarget {
     }
 
     pub fn one(builder: &mut CircuitBuilder) -> Self {
-        Self {
-            elements: array::from_fn(|i| {
-                if i == 0 {
-                    builder.one()
-                } else {
-                    builder.zero()
-                }
-            }),
-        }
+        let one = builder.one();
+        Self::from_int_lo(builder, one)
     }
 
     pub fn from_slice(xs: &[Target]) -> Self {
         assert_eq!(xs.len(), VALUE_SIZE);
         Self {
             elements: array::from_fn(|i| xs[i]),
+        }
+    }
+
+    pub fn from_int_lo(builder: &mut CircuitBuilder, x: Target) -> Self {
+        let zero = builder.zero();
+        Self {
+            elements: [x, zero, zero, zero],
         }
     }
 
@@ -240,6 +240,12 @@ impl StatementTarget {
         });
         let blank_intro = PredicateTarget::new_intro(builder, zero_hash).hash(builder);
         builder.is_equal_flattenable(&self.pred_hash, &blank_intro)
+    }
+
+    pub fn pred_is_none(&self, params: &Params, builder: &mut CircuitBuilder) -> BoolTarget {
+        let none =
+            PredicateTarget::new_native(builder, params, NativePredicate::None).hash(builder);
+        builder.is_equal_flattenable(&self.pred_hash, &none)
     }
 
     pub fn has_native_type(&self, builder: &mut CircuitBuilder, t: NativePredicate) -> BoolTarget {
@@ -770,8 +776,30 @@ impl CustomPredicateInBatchTarget {
 /// Input pod table entry
 #[derive(Clone, Serialize, Deserialize)]
 pub struct InputPodEntryTarget {
-    pub is_main: BoolTarget,
     pub sts_root: HashOutTarget,
+    pub vd_hash: HashOutTarget,
+    pub is_main: BoolTarget,
+}
+
+impl Flattenable for InputPodEntryTarget {
+    fn flatten(&self) -> Vec<Target> {
+        self.sts_root
+            .elements
+            .iter()
+            .chain(iter::once(&self.is_main.target))
+            .cloned()
+            .collect()
+    }
+    fn from_flattened(params: &Params, vs: &[Target]) -> Self {
+        assert_eq!(vs.len(), Self::size(params));
+        Self {
+            sts_root: HashOutTarget::from_flattened(params, &vs[0..4]),
+            is_main: BoolTarget::new_unsafe(vs[4]),
+        }
+    }
+    fn size(params: &Params) -> usize {
+        HashOutTarget::size(params) + 1
+    }
 }
 
 /// Custom predicate table entry
@@ -923,22 +951,6 @@ impl CustomPredicateVerifyEntryTarget {
             op_arg_target.set_targets(pw, op_arg)?
         }
         Ok(())
-    }
-}
-
-/// Query for the Open input statement table
-#[derive(Clone, Serialize, Deserialize)]
-pub struct OpenInputStatementQueryTarget {}
-
-impl Flattenable for OpenInputStatementQueryTarget {
-    fn flatten(&self) -> Vec<Target> {
-        todo!()
-    }
-    fn from_flattened(params: &Params, vs: &[Target]) -> Self {
-        todo!()
-    }
-    fn size(params: &Params) -> usize {
-        todo!()
     }
 }
 
