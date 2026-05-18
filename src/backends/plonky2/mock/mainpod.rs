@@ -173,6 +173,34 @@ impl MockMainPod {
     pub fn params(&self) -> &Params {
         &self.params
     }
+
+    fn precheck_open_input_statement(&self, op: &InputPodOpenStatement) -> Result<()> {
+        let InputPodOpenStatement {
+            pod_index,
+            sts_root,
+            st_index,
+            ..
+        } = op;
+        let pod = &self.input_pods[*pod_index];
+        let sts_root0 = pod.statements_root();
+        if sts_root0 != *sts_root {
+            return Err(Error::custom(format!("OpenInputStatement uses a statements root different than the input pod one: {} != {}", sts_root, sts_root0)));
+        }
+        // Introduction pods can only have Introduction or None statements
+        if !pod.is_main() {
+            let self_st = &pod.pub_self_statements()[*st_index];
+            match self_st {
+                middleware::Statement::None | middleware::Statement::Intro(_, _) => {}
+                _ => {
+                    return Err(Error::custom(format!(
+                        "Introduction Pod has a non-introduction statement: {}",
+                        self_st,
+                    )))
+                }
+            }
+        }
+        Ok(())
+    }
 }
 
 impl Pod for MockMainPod {
@@ -231,7 +259,8 @@ impl Pod for MockMainPod {
 
         // 5. verify that all `input_statements` are correctly generated
         // by `self.operations` (where each operation can only access previous statements)
-        let statement_check = self.statements
+        let statement_check = self
+            .statements
             .iter()
             .enumerate()
             .map(|(i, s)| {
@@ -242,11 +271,8 @@ impl Pod for MockMainPod {
                     &self.merkle_transition_proofs,
                     &self.open_input_statements,
                 )?;
-                if let middleware::Operation::OpenInputStatement(InputPodOpenStatement{pod_index, sts_root, ..}) = op {
-                    let sts_root0 = self.input_pods[pod_index].statements_root();
-                    if sts_root0 != sts_root {
-                        return Err(Error::custom(format!("OpenInputStatement uses a statements root different than the input pod one: {} != {}", sts_root, sts_root0)));
-                    }
+                if let middleware::Operation::OpenInputStatement(op) = op {
+                    self.precheck_open_input_statement(&op)?;
                 }
                 op.check_and_log(&self.params, &s.clone().try_into()?)
                     .map_err(|e| e.into())

@@ -695,13 +695,13 @@ impl MainPodProver for Prover {
             aux_table_input,
         };
 
-        println!("DBG");
-        for i in 0..input.statements.len() {
-            let st = &input.statements[i];
-            let op = &input.operations[i];
-            println!("{:02} {}", i, st);
-            println!("   {:?}", op);
-        }
+        // println!("DBG");
+        // for i in 0..input.statements.len() {
+        //     let st = &input.statements[i];
+        //     let op = &input.operations[i];
+        //     println!("{:02} {}", i, st);
+        //     println!("   {:?}", op);
+        // }
 
         let (main_pod_target, circuit_data) = &*cache_get_rec_main_pod_circuit_data(params);
         let proof_with_pis = timed!(
@@ -722,6 +722,7 @@ impl MainPodProver for Prover {
             pub_sts_root: pub_sts_mt.commitment(),
             vd_set: inputs.vd_set,
             public_statements: pub_sts,
+            public_statements_mt: pub_sts_mt,
             proof: proof_with_pis.proof,
         }))
     }
@@ -730,7 +731,7 @@ impl MainPodProver for Prover {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MainPod {
     params: Params,
-    pub_sts_root: Hash, // TODO: This is redundant with `public_statements`
+    pub_sts_root: Hash, // TODO: This is redundant with `public_statements`, no need to serialize
     verifier_only: VerifierOnlyCircuitData,
     common_hash: String,
     /// vds_root is the merkle-root of the `VDSet`, which contains the
@@ -740,6 +741,8 @@ pub struct MainPod {
     /// use one of the verifier_data's contained in the VDSet.
     vd_set: VDSet,
     public_statements: Vec<Statement>,
+    public_statements_mt: Array, // TODO: This is redundant with `public_statements`, no need to
+    // serialize
     proof: Proof,
 }
 
@@ -809,6 +812,7 @@ pub fn cache_get_rec_main_pod_common_hash(params: &Params) -> CacheEntry<String>
 #[derive(Serialize, Deserialize)]
 struct Data {
     public_statements: Vec<Statement>,
+    public_statements_mt: Array,
     proof: String,
     verifier_only: String,
     common_hash: String,
@@ -895,7 +899,7 @@ impl Pod for MainPod {
     }
 
     fn pub_self_statements_mt(&self) -> Array {
-        todo!()
+        self.public_statements_mt.clone()
     }
 
     fn pub_self_statements(&self) -> Vec<middleware::Statement> {
@@ -923,6 +927,7 @@ impl Pod for MainPod {
         serde_json::to_value(Data {
             proof: serialize_proof(&self.proof),
             public_statements: self.public_statements.clone(),
+            public_statements_mt: self.public_statements_mt.clone(),
             verifier_only: serialize_verifier_only(&self.verifier_only),
             common_hash: self.common_hash.clone(),
         })
@@ -946,6 +951,7 @@ impl Pod for MainPod {
             vd_set,
             proof,
             public_statements: data.public_statements,
+            public_statements_mt: data.public_statements_mt,
         })
     }
 }

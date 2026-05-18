@@ -722,6 +722,10 @@ impl MainPodBuilder {
     /// found, search among public statements from input pods and if found, load the statement via
     /// the OpenInputStatement operation.
     fn ensure_statement(&mut self, st: &Statement) -> Result<()> {
+        if matches!(st, Statement::None) {
+            // An implicit None always exists at index 0
+            return Ok(());
+        }
         if self.statements.iter().find(|(_, st0)| st0 == st).is_some() {
             return Ok(());
         }
@@ -751,12 +755,15 @@ impl MainPodBuilder {
         }
         let st = self.op_statement(wildcard_values, op.clone())?;
         // Skip adding the statement and operation if it already exists
-        if let Some((public0, _st0)) = self.statements.iter().find(|(_public0, st0)| st0 == &st) {
-            if *public0 != public {
-                return Err(Error::custom(format!(
-                    "statement {} already exists with different visibility",
-                    st
-                )));
+        if let Some((public0, _st0)) = self
+            .statements
+            .iter_mut()
+            .find(|(_public0, st0)| st0 == &st)
+        {
+            // If the statement already exists, only update it to make it public, never to make it
+            // private, so that making a statement public can't be undone.
+            if public && !*public0 {
+                *public0 = true;
             }
         } else {
             self.insert(public, (st.clone(), op))?;
