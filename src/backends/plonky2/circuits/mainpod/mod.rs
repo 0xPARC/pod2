@@ -23,8 +23,9 @@ use crate::{
             common::{
                 CircuitBuilderPod, CustomPredicateEntryTarget, CustomPredicateInBatchTarget,
                 CustomPredicateTarget, CustomPredicateVerifyEntryTarget,
-                CustomPredicateVerifyQueryTarget, Flattenable, MerkleClaimTarget,
-                MerkleTreeStateTransitionClaimTarget, OperationTarget, OperationTypeTarget,
+                CustomPredicateVerifyQueryTarget, Flattenable, InputPodEntryTarget,
+                MerkleClaimTarget, MerkleTreeStateTransitionClaimTarget,
+                OpenInputStatementQueryTarget, OperationTarget, OperationTypeTarget,
                 PredicateHashOrWildcardTarget, PredicateTarget, StatementArgTarget,
                 StatementTarget, StatementTmplArgTarget, StatementTmplTarget, ValueTarget,
             },
@@ -633,6 +634,14 @@ fn verify_operation_circuit(
                 &cache.op_args,
             ));
         }
+        if params.max_input_pods > 0 {
+            op_checks.extend_from_slice(&[verify_open_input_statement_circuit(
+                builder,
+                st,
+                &op.op_type,
+                &resolved_aux,
+            )]);
+        }
     }
 
     let ok = builder.any(op_checks);
@@ -973,6 +982,27 @@ fn verify_custom_circuit(
         },
     );
     let ok = builder.all([aux_tag_ok, query_ok]);
+    measure_gates_end!(builder, measure);
+    ok
+}
+
+fn verify_open_input_statement_circuit(
+    builder: &mut CircuitBuilder,
+    st: &StatementTarget,
+    op_type: &OperationTypeTarget,
+    aux: &TableEntryTarget,
+) -> BoolTarget {
+    let measure = measure_gates_begin!(builder, "OpOpenInputSt");
+    // let (aux_tag_ok, resolved_query) = aux.as_type::<OpenInputStatementQueryTarget>(
+    //     builder,
+    //     OperationAuxTableTag::OpenInputStatement as u32,
+    // );
+
+    // let query_ok = builder.is_equal_flattenable(&resolved_query, &OpenInputStatementQueryTarget {});
+    // let ok = builder.all([aux_tag_ok, query_ok]);
+    // ok
+    let op_code_ok = op_type.has_native(builder, NativeOperation::OpenInputStatement);
+    let ok = builder.all([op_code_ok]);
     measure_gates_end!(builder, measure);
     ok
 }
@@ -1791,6 +1821,7 @@ fn verify_main_pod_circuit(
 
     let measure = measure_gates_begin!(builder, "MainPodVerify");
 
+    let mut input_pods_table = Vec::with_capacity(params.max_input_pods);
     // 1a. Verify all input recursive pods
     for (verified_proof, vd_mt_proof) in izip!(
         verified_proofs,
@@ -1850,6 +1881,13 @@ fn verify_main_pod_circuit(
         )
         .expect("4 elements");
         builder.connect_hashes(main_pod.vds_root, verified_proof_vds_root);
+
+        let sts_root = HashOutTarget::try_from(
+            &verified_proof.public_inputs
+                [PI_OFFSET_STATEMENTS_ROOT..PI_OFFSET_STATEMENTS_ROOT + HASH_SIZE],
+        )
+        .expect("4 elements");
+        input_pods_table.push(InputPodEntryTarget { is_main, sts_root });
 
         measure_gates_end!(builder, measure_in_pod);
     }

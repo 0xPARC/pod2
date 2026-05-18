@@ -271,8 +271,8 @@ impl Pod for MockMainPod {
                     &self.merkle_transition_proofs,
                     &self.open_input_statements,
                 )?;
-                if let middleware::Operation::OpenInputStatement(op) = op {
-                    self.precheck_open_input_statement(&op)?;
+                if let middleware::Operation::OpenInputStatement(op) = &op {
+                    self.precheck_open_input_statement(op)?;
                 }
                 op.check_and_log(&self.params, &s.clone().try_into()?)
                     .map_err(|e| e.into())

@@ -767,6 +767,13 @@ impl CustomPredicateInBatchTarget {
     }
 }
 
+/// Input pod table entry
+#[derive(Clone, Serialize, Deserialize)]
+pub struct InputPodEntryTarget {
+    pub is_main: BoolTarget,
+    pub sts_root: HashOutTarget,
+}
+
 /// Custom predicate table entry
 #[derive(Clone, Serialize, Deserialize)]
 pub struct CustomPredicateEntryTarget {
@@ -916,6 +923,22 @@ impl CustomPredicateVerifyEntryTarget {
             op_arg_target.set_targets(pw, op_arg)?
         }
         Ok(())
+    }
+}
+
+/// Query for the Open input statement table
+#[derive(Clone, Serialize, Deserialize)]
+pub struct OpenInputStatementQueryTarget {}
+
+impl Flattenable for OpenInputStatementQueryTarget {
+    fn flatten(&self) -> Vec<Target> {
+        todo!()
+    }
+    fn from_flattened(params: &Params, vs: &[Target]) -> Self {
+        todo!()
+    }
+    fn size(params: &Params) -> usize {
+        todo!()
     }
 }
 
