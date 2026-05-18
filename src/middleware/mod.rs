@@ -1174,6 +1174,7 @@ pub trait Pod: fmt::Debug + DynClone + Sync + Send + Any + EqualsAny {
     fn pod_type(&self) -> (usize, &'static str);
     // TODO: Add default implementation from pub_self_statements
     // TODO: Maybe rename to "mt" instead of "array"?  Be consistent with the names!
+    // TODO: Rename `self` by `raw` everywhere
     // Container array of self public statements
     fn pub_self_statements_mt(&self) -> Array;
     /// Statements as internally generated, where intro statements don't encode the verifier data

@@ -992,6 +992,7 @@ pub mod tests {
             max_input_pods: 0,
             max_custom_predicates: 0,
             max_custom_predicate_verifications: 0,
+            max_open_input_statements: 0,
             ..Default::default()
         };
         println!("{:#?}", params);
@@ -1224,7 +1225,7 @@ pub mod tests {
             max_signed_by: 0,
             max_input_pods: 0,
             max_statements: 9,
-            max_open_input_statements: 4,
+            max_open_input_statements: 0,
             max_custom_predicate_wildcards: 4,
             max_custom_predicate_verifications: 2,
             containers: middleware::ParamsContainers {
@@ -1303,7 +1304,7 @@ pub mod tests {
             max_signed_by: 0,
             max_input_pods: 0,
             max_statements: 6,
-            max_open_input_statements: 2,
+            max_open_input_statements: 0,
             max_custom_predicate_wildcards: 4,
             max_custom_predicate_verifications: 2,
             containers: middleware::ParamsContainers {
