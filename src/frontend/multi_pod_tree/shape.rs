@@ -17,8 +17,8 @@ use super::cost::StatementCost;
 use crate::middleware::Params;
 
 /// A positional dependency. Internal points at another statement in the
-/// same problem; External points at a (pod, premise) pair indexed into the
-/// side-table held by the build layer.
+/// same problem; External points at a `(pod, input-statement)` pair indexed
+/// into the side-table held by the build layer.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum AbstractDep {
     /// Reference to another statement at the given index in this problem.
@@ -27,8 +27,8 @@ pub enum AbstractDep {
     External {
         /// Index into the side table's external-pod list.
         pod: usize,
-        /// Index into the side table's external-premise list.
-        premise: usize,
+        /// Index into the side table's external-statement list.
+        statement: usize,
     },
 }
 
@@ -45,8 +45,9 @@ pub struct InputShape {
     pub output_public_indices: Vec<usize>,
     /// Number of distinct external input PODs referenced by `dep_edges`.
     pub num_external_pods: usize,
-    /// For each external premise, the external-pod index it lives in.
-    pub premise_pod: Vec<usize>,
+    /// For each external (input) statement, the external-pod index it
+    /// lives in.
+    pub statement_pod: Vec<usize>,
     /// Per-POD resource limits.
     pub params: Params,
 }
@@ -57,10 +58,10 @@ impl InputShape {
         self.costs.len()
     }
 
-    /// Number of distinct external premises (statements) referenced by
+    /// Number of distinct external input statements referenced by
     /// `dep_edges`.
-    pub fn num_external_premises(&self) -> usize {
-        self.premise_pod.len()
+    pub fn num_external_statements(&self) -> usize {
+        self.statement_pod.len()
     }
 
     /// Per-statement internal-consumer index. `consumers()[d]` lists the
@@ -117,7 +118,8 @@ pub struct OutputShape {
     /// `InputShape`'s statement list. Within each POD the list is in
     /// ascending index order.
     pub pod_statements: Vec<Vec<usize>>,
-    /// For each POD, external premises that this POD imports from an
+    /// For each POD, external (input) statements that this POD imports
+    /// from an
     /// external input and appends to the chain tree so that downstream
     /// PODs can reach them via slot 0 instead of re-referencing the
     /// source external POD.

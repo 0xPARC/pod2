@@ -147,7 +147,8 @@ pub(super) fn kahn_bin_packing(
                 }
                 let cost = &input.costs[s];
                 let deps = &input.dep_edges[s];
-                if state.can_extend(cost, deps, &pos_built, params).is_some() && prio < best_fit_prio
+                if state.can_extend(cost, deps, &pos_built, params).is_some()
+                    && prio < best_fit_prio
                 {
                     best_fit_prio = prio;
                     best_fit = Some(i);
@@ -284,11 +285,11 @@ impl GreedyState {
                         self.scratch_new_producers.push(*d);
                     }
                 }
-                AbstractDep::External { pod, premise } => {
-                    if !self.external_imports.contains(premise)
-                        && !self.scratch_new_ext_imports.contains(premise)
+                AbstractDep::External { pod, statement } => {
+                    if !self.external_imports.contains(statement)
+                        && !self.scratch_new_ext_imports.contains(statement)
                     {
-                        self.scratch_new_ext_imports.push(*premise);
+                        self.scratch_new_ext_imports.push(*statement);
                     }
                     if !self.external_pods.contains(pod) && !self.scratch_new_ext_pods.contains(pod)
                     {
@@ -329,9 +330,9 @@ impl GreedyState {
                         self.prev_pod_producers.push(*d);
                     }
                 }
-                AbstractDep::External { pod, premise } => {
-                    if !self.external_imports.contains(premise) {
-                        self.external_imports.push(*premise);
+                AbstractDep::External { pod, statement } => {
+                    if !self.external_imports.contains(statement) {
+                        self.external_imports.push(*statement);
                     }
                     if !self.external_pods.contains(pod) {
                         self.external_pods.push(*pod);
@@ -353,7 +354,7 @@ struct DpWorkspace {
     /// Producers in earlier PODs that the current segment imports via
     /// the input tree's chain slot (statement indices).
     prev_pod_producers: HashSet<usize>,
-    /// External premises imported by the current segment.
+    /// External (input) statements imported by the current segment.
     external_imports: HashSet<usize>,
     /// External pods referenced by the current segment.
     external_pods: HashSet<usize>,
@@ -423,6 +424,39 @@ pub(super) fn segment_feasible(ordering: &[usize], input: &InputShape, a: usize,
     segment_feasible_with(ordering, &pos_in_ordering, input, a, p, false, &mut ws)
 }
 
+/// Simulate the greedy partition over a fixed ordering: extend each
+/// segment as long as feasibility holds, close at the first cap-bust.
+/// Mirrors what bin-packing's `can_extend` does on its own emitted
+/// ordering. Used by diagnostic probes to compare `K_bp_greedy`
+/// against the DP's `K_bp_dp` on the same ordering.
+///
+/// Returns `None` if any single statement is infeasible as a 1-stmt
+/// segment (e.g. its costs already exceed a per-POD cap); otherwise
+/// the number of segments greedy produces. Does not apply terminal
+/// (output-public) feasibility — the comparison value is greedy-K,
+/// not DP-K-terminal.
+pub(super) fn simulate_greedy_k(input: &InputShape, ordering: &[usize]) -> Option<usize> {
+    let n = ordering.len();
+    let pos_in_ordering = build_pos_in_ordering(ordering);
+    let mut ws = DpWorkspace::default();
+    let mut k = 0_usize;
+    let mut a = 0_usize;
+    while a < n {
+        if !segment_feasible_with(ordering, &pos_in_ordering, input, a, a + 1, false, &mut ws) {
+            return None;
+        }
+        let mut p = a + 1;
+        while p < n
+            && segment_feasible_with(ordering, &pos_in_ordering, input, a, p + 1, false, &mut ws)
+        {
+            p += 1;
+        }
+        k += 1;
+        a = p;
+    }
+    Some(k)
+}
+
 /// Workspace-backed feasibility check. Returns true iff segment `[a..p]`
 /// fits in one POD; `is_terminal` additionally enforces output-POD
 /// availability for output-public statements upstream of `a`.
@@ -452,7 +486,7 @@ fn segment_feasible_with(
     // them through the same input-tree slots:
     // - prev-pod producers: statements produced in `[0..a)` (slot 0,
     //   the chain slot connecting this POD to its predecessor).
-    // - external imports: external premises (slots 1..N).
+    // - external imports: external (input) statements (slots 1..N).
     // External-pod references are tracked separately for `max_input_pods`,
     // which is a per-slot cap, not a per-statement one.
     let mut totals = ResourceTotals::default();
@@ -479,8 +513,8 @@ fn segment_feasible_with(
                         workspace.prev_pod_producers.insert(*d);
                     }
                 }
-                AbstractDep::External { pod, premise } => {
-                    workspace.external_imports.insert(*premise);
+                AbstractDep::External { pod, statement } => {
+                    workspace.external_imports.insert(*statement);
                     workspace.external_pods.insert(*pod);
                 }
             }
@@ -656,7 +690,7 @@ mod tests {
             dep_edges: vec![],
             output_public_indices: vec![],
             num_external_pods: 0,
-            premise_pod: vec![],
+            statement_pod: vec![],
             params: Params::default(),
         }
     }
@@ -670,7 +704,7 @@ mod tests {
             dep_edges: (0..n).map(|_| Vec::new()).collect(),
             output_public_indices: output_public,
             num_external_pods: 0,
-            premise_pod: vec![],
+            statement_pod: vec![],
             params,
         }
     }
@@ -716,21 +750,26 @@ mod tests {
 
     #[test]
     fn external_imports_count_against_max_open_input_statements() {
-        // n statements, each with one External dep to a distinct premise
-        // from a single external POD. With one external pod, `max_input_pods`
-        // can't force a split, so the only constraint that drives K > 1 is
-        // the combined import cap.
+        // n statements, each with one External dep to a distinct input
+        // statement from a single external POD. With one external pod,
+        // `max_input_pods` can't force a split, so the only constraint
+        // that drives K > 1 is the combined import cap.
         use super::super::cost::StatementCost;
         let params = Params::default();
         let n = params.max_open_input_statements + 1;
         let input = InputShape {
             costs: (0..n).map(|_| StatementCost::default()).collect(),
             dep_edges: (0..n)
-                .map(|i| vec![AbstractDep::External { pod: 0, premise: i }])
+                .map(|i| {
+                    vec![AbstractDep::External {
+                        pod: 0,
+                        statement: i,
+                    }]
+                })
                 .collect(),
             output_public_indices: vec![0],
             num_external_pods: 1,
-            premise_pod: vec![0; n],
+            statement_pod: vec![0; n],
             params,
         };
         let out = partition(&input).expect("should partition");
@@ -763,7 +802,7 @@ mod tests {
             ],
             output_public_indices: vec![3],
             num_external_pods: 0,
-            premise_pod: vec![],
+            statement_pod: vec![],
             params,
         };
         let out = partition(&input).expect("should partition");
@@ -823,7 +862,7 @@ mod tests {
             dep_edges,
             output_public_indices: vec![consumer],
             num_external_pods: 0,
-            premise_pod: vec![],
+            statement_pod: vec![],
             params,
         };
 

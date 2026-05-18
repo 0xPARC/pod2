@@ -10,7 +10,7 @@
 //! and produces a positional [`OutputShape`]. The build layer in this
 //! module translates between user-facing builder state and the symbolic
 //! representation, holding an internal side table that maps positional
-//! indices back to concrete pod hashes and external premises.
+//! indices back to concrete pod hashes and external (input) statements.
 //!
 //! `solve()` partitions the workload symbolically; `prove()` then walks
 //! the partition and builds + proves each POD in chain order.
@@ -28,7 +28,10 @@ use std::{
 
 use crate::{
     frontend::{MainPod, MainPodBuilder, Operation},
-    middleware::{Hash, MainPodProver, Params, Statement, VDSet, Value, BASE_PARAMS},
+    middleware::{
+        Hash, InputPodOpenStatement, MainPodProver, NativeOperation, OperationAux, OperationType,
+        Params, Statement, VDSet, Value, BASE_PARAMS,
+    },
 };
 
 mod cost;
@@ -74,13 +77,14 @@ impl fmt::Display for Error {
 pub type Result<T> = std::result::Result<T, Error>;
 
 /// Side table pairing an [`OutputShape`]'s positional external indices
-/// with the concrete pod hashes and premises they refer to. The solver
+/// with the concrete pod hashes and input statements they refer to. The
+/// solver
 /// never sees concrete data; the build layer uses this index to reattach
 /// hashes when materialising a [`MultiPodResult`] from a partition.
 #[derive(Clone, Debug)]
 struct ExternalIndex {
     pods: Vec<Hash>,
-    premises: Vec<ExternalDependency>,
+    statements: Vec<ExternalDependency>,
 }
 
 pub struct MultiPodBuilder {
@@ -275,14 +279,15 @@ impl MultiPodBuilder {
 
         // Synthetic republish statements appear at positions >= operations.len()
         // in the augmented shape, each with one External dep recording its
-        // premise. Whichever POD a synthetic lands in republishes that premise.
+        // input statement. Whichever POD a synthetic lands in republishes
+        // that input statement.
         let n_orig = operations.len();
         let mut new_republished: Vec<BTreeSet<usize>> = vec![BTreeSet::new(); output.pod_count];
         for (pod_idx, stmts) in output.pod_statements.iter().enumerate() {
             for &s in stmts {
                 if s >= n_orig {
-                    if let AbstractDep::External { premise, .. } = shape.dep_edges[s][0] {
-                        new_republished[pod_idx].insert(premise);
+                    if let AbstractDep::External { statement, .. } = shape.dep_edges[s][0] {
+                        new_republished[pod_idx].insert(statement);
                     }
                 }
             }
@@ -395,29 +400,54 @@ impl SolvedMultiPod {
 
         let n_orig = self.operations.len();
         for &s in &self.output.pod_statements[p] {
-            if s < n_orig {
-                let op = self.operations[s].clone();
-                let wildcards = self
-                    .operations_wildcard_values
-                    .get(&s)
-                    .cloned()
-                    .unwrap_or_default();
-                let public = !is_output && public_set.contains(&s);
-                builder.op(public, wildcards, op)?;
-            } else {
-                // Synthetic republish: open the external premise this
-                // synthetic represents and reveal it on the chain.
+            if s >= n_orig {
+                // Solver-inserted synthetic republish: open the input
+                // statement this synthetic represents and reveal it on
+                // the chain so downstream PODs can consume it via slot 0.
                 let dep = &self.shape.dep_edges[s][0];
-                if let AbstractDep::External { pod, premise } = dep {
+                if let AbstractDep::External { pod, statement } = dep {
                     let slot = *ext_slot
                         .get(pod)
                         .expect("synthetic's external pod is in this POD's inputs");
-                    let stmt = self.external_index.premises[*premise].statement.clone();
+                    let stmt = self.external_index.statements[*statement].statement.clone();
                     builder.open_input_st(true, slot, &stmt)?;
                 } else {
                     unreachable!("synthetic statement must have a single External dep");
                 }
+                continue;
             }
+            let op = self.operations[s].clone();
+            let public = !is_output && public_set.contains(&s);
+            // Staging-time `OpenInputStatement` ops carry a stale
+            // `pod_index` (referring to the staging builder's input
+            // slots, not the per-POD builder we're constructing here).
+            // Re-issue via `open_input_st` so the aux is rebuilt against
+            // the correct slot.
+            if let OperationType::Native(NativeOperation::OpenInputStatement) = op.0 {
+                if let OperationAux::OpenInputStatement(InputPodOpenStatement {
+                    sts_root, ..
+                }) = &op.2
+                {
+                    let abs_pod = self
+                        .external_index
+                        .pods
+                        .iter()
+                        .position(|h| h == sts_root)
+                        .expect("staging OpenInputStatement's source pod is in external_index");
+                    let slot = *ext_slot
+                        .get(&abs_pod)
+                        .expect("staging OpenInputStatement's source pod is in this POD's inputs");
+                    builder.open_input_st(public, slot, &self.statements[s])?;
+                    continue;
+                }
+                unreachable!("OpenInputStatement op without InputPodOpenStatement aux");
+            }
+            let wildcards = self
+                .operations_wildcard_values
+                .get(&s)
+                .cloned()
+                .unwrap_or_default();
+            builder.op(public, wildcards, op)?;
         }
 
         if is_output {
@@ -579,20 +609,20 @@ fn build_external_statement_map(input_pods: &[MainPod]) -> HashMap<Statement, Ha
 /// Convert a concrete `DependencyGraph` into the positional `InputShape`
 /// the solver consumes.
 ///
-/// Also runs the external-republish pre-pass: external premises with two
+/// Also runs the external-republish pre-pass: input statements with two
 /// or more downstream consumers are rewritten as synthetic "republish"
 /// statements (zero cost, one `External` dep) appended after the original
-/// statement list. Consumers' deps that pointed at those premises become
-/// `Internal` references to the synthetic position. Whichever POD the DP
-/// places a synthetic into pays one external-input slot for that premise;
-/// every downstream consumer reaches it via slot 0 (chain) for one import
-/// slot. With multiple consumers, this saves at least one external-input
-/// slot net.
+/// statement list. Consumers' deps that pointed at those input statements
+/// become `Internal` references to the synthetic position. Whichever POD
+/// the DP places a synthetic into pays one external-input slot for that
+/// input statement; every downstream consumer reaches it via slot 0
+/// (chain) for one import slot. With multiple consumers, this saves at
+/// least one external-input slot net.
 ///
 /// Returns the [`InputShape`] and the side-table [`ExternalIndex`]. Each
 /// synthetic statement's single [`AbstractDep::External`] dep records the
-/// premise it republishes, so callers can recover the synthetic-to-premise
-/// mapping from `shape.dep_edges` directly.
+/// input statement it republishes, so callers can recover the
+/// synthetic-to-statement mapping from `shape.dep_edges` directly.
 fn build_shape_and_index(
     operations: &[Operation],
     deps: &DependencyGraph,
@@ -603,9 +633,9 @@ fn build_shape_and_index(
 
     let mut external_pods: Vec<Hash> = Vec::new();
     let mut pod_idx: HashMap<Hash, usize> = HashMap::new();
-    let mut external_premises: Vec<ExternalDependency> = Vec::new();
-    let mut premise_idx: HashMap<ExternalDependency, usize> = HashMap::new();
-    let mut premise_pod: Vec<usize> = Vec::new();
+    let mut external_statements: Vec<ExternalDependency> = Vec::new();
+    let mut external_statement_idx: HashMap<ExternalDependency, usize> = HashMap::new();
+    let mut statement_pod: Vec<usize> = Vec::new();
 
     for edges in &deps.statement_deps {
         for src in edges {
@@ -614,26 +644,26 @@ fn build_shape_and_index(
                     e.insert(external_pods.len());
                     external_pods.push(ext.pod_hash);
                 }
-                if let Entry::Vacant(e) = premise_idx.entry(ext.clone()) {
-                    e.insert(external_premises.len());
-                    external_premises.push(ext.clone());
-                    premise_pod.push(pod_idx[&ext.pod_hash]);
+                if let Entry::Vacant(e) = external_statement_idx.entry(ext.clone()) {
+                    e.insert(external_statements.len());
+                    external_statements.push(ext.clone());
+                    statement_pod.push(pod_idx[&ext.pod_hash]);
                 }
             }
         }
     }
 
-    // Count downstream consumers per premise. Dedupe within a single
-    // statement's dep list (multiple deps on the same premise from one
-    // statement still count as one consumer).
-    let mut premise_consumer_count = vec![0_usize; external_premises.len()];
+    // Count downstream consumers per input statement. Dedupe within a
+    // single consumer's dep list (multiple deps on the same input
+    // statement from one consumer still count as one consumer).
+    let mut statement_consumer_count = vec![0_usize; external_statements.len()];
     for edges in &deps.statement_deps {
         let mut seen: HashSet<usize> = HashSet::new();
         for src in edges {
             if let StatementSource::External(ext) = src {
-                let u = premise_idx[ext];
+                let u = external_statement_idx[ext];
                 if seen.insert(u) {
-                    premise_consumer_count[u] += 1;
+                    statement_consumer_count[u] += 1;
                 }
             }
         }
@@ -643,28 +673,30 @@ fn build_shape_and_index(
     // for chain (if any dep flows through it) plus one slot per distinct
     // external pod the statement directly references. When the sum
     // exceeds `max_input_pods`, the POD cannot fit -- we must republish
-    // enough of the statement's externals so they reach the consumer
-    // through the chain instead. Mark those premises here; the synthetic
-    // allocation loop below unions this with the 2+ consumers rule.
+    // enough of the statement's input statements so they reach the
+    // consumer through the chain instead. Mark those input statements
+    // here; the synthetic allocation loop below unions this with the
+    // 2+ consumers rule.
     //
-    // Republishing any premise forces chain use at the consumer site,
-    // so the post-republish budget is `(K - R) + 1 <= max_input_pods`,
-    // i.e. `R >= K - max_input_pods + 1` whenever the original
+    // Republishing any input statement forces chain use at the consumer
+    // site, so the post-republish budget is
+    // `(K - R) + 1 <= max_input_pods`, i.e.
+    // `R >= K - max_input_pods + 1` whenever the original
     // `K + chain_used` would have busted the cap.
     let max_input_pods = params.max_input_pods;
-    let mut must_republish: Vec<bool> = vec![false; external_premises.len()];
+    let mut must_republish: Vec<bool> = vec![false; external_statements.len()];
     for edges in &deps.statement_deps {
         let mut distinct_pods: BTreeSet<usize> = BTreeSet::new();
         let mut has_internal = false;
-        let mut premises_by_pod: HashMap<usize, Vec<usize>> = HashMap::new();
+        let mut statements_by_pod: HashMap<usize, Vec<usize>> = HashMap::new();
         for src in edges {
             match src {
                 StatementSource::Internal(_) => has_internal = true,
                 StatementSource::External(ext) => {
                     let pod = pod_idx[&ext.pod_hash];
-                    let premise = premise_idx[ext];
+                    let statement = external_statement_idx[ext];
                     distinct_pods.insert(pod);
-                    premises_by_pod.entry(pod).or_default().push(premise);
+                    statements_by_pod.entry(pod).or_default().push(statement);
                 }
             }
         }
@@ -679,43 +711,45 @@ fn build_shape_and_index(
         // Pick the highest-numbered pods first (deterministic). The
         // chosen pods drop out of the consumer's direct refs.
         for pod in distinct_pods.iter().rev().take(r) {
-            for &premise in &premises_by_pod[pod] {
-                must_republish[premise] = true;
+            for &statement in &statements_by_pod[pod] {
+                must_republish[statement] = true;
             }
         }
     }
 
-    // Opportunistic external-pod bundling: if any premise of external pod
-    // E is already being republished (multi-consumer or feasibility),
-    // republish all of E's used premises. The synth-hosting POD already
-    // pays one input-pod slot for E, so bundling its other premises is
-    // marginal cost there and frees downstream consumers from re-
-    // referencing E. See `docs/multipod_merkle_statement_tree.md`.
+    // Opportunistic external-pod bundling: if any input statement from
+    // external pod E is already being republished (multi-consumer or
+    // feasibility), republish all of E's used input statements. The
+    // synth-hosting POD already pays one input-pod slot for E, so
+    // bundling its other input statements is marginal cost there and
+    // frees downstream consumers from re-referencing E. See
+    // `docs/multipod_merkle_statement_tree.md`.
     let mut bundled_pods: HashSet<usize> = HashSet::new();
-    for u in 0..external_premises.len() {
-        if premise_consumer_count[u] >= 2 || must_republish[u] {
-            bundled_pods.insert(premise_pod[u]);
+    for u in 0..external_statements.len() {
+        if statement_consumer_count[u] >= 2 || must_republish[u] {
+            bundled_pods.insert(statement_pod[u]);
         }
     }
-    for u in 0..external_premises.len() {
-        if bundled_pods.contains(&premise_pod[u]) {
+    for u in 0..external_statements.len() {
+        if bundled_pods.contains(&statement_pod[u]) {
             must_republish[u] = true;
         }
     }
 
-    // Allocate a synthetic statement for each premise with 2+ consumers
-    // OR flagged by the feasibility pre-pass above.
-    // synthetic_to_premise[i] = premise index of the (n_orig + i)-th statement.
-    let mut synthetic_to_premise: Vec<usize> = Vec::new();
-    let mut premise_to_synthetic: Vec<Option<usize>> = vec![None; external_premises.len()];
-    for u in 0..external_premises.len() {
-        if premise_consumer_count[u] >= 2 || must_republish[u] {
-            let synth_idx = n_orig + synthetic_to_premise.len();
-            premise_to_synthetic[u] = Some(synth_idx);
-            synthetic_to_premise.push(u);
+    // Allocate a synthetic statement for each input statement with 2+
+    // consumers OR flagged by the feasibility pre-pass above.
+    // `synthetic_to_statement[i]` is the input-statement index of the
+    // (n_orig + i)-th statement.
+    let mut synthetic_to_statement: Vec<usize> = Vec::new();
+    let mut statement_to_synthetic: Vec<Option<usize>> = vec![None; external_statements.len()];
+    for u in 0..external_statements.len() {
+        if statement_consumer_count[u] >= 2 || must_republish[u] {
+            let synth_idx = n_orig + synthetic_to_statement.len();
+            statement_to_synthetic[u] = Some(synth_idx);
+            synthetic_to_statement.push(u);
         }
     }
-    let n_synth = synthetic_to_premise.len();
+    let n_synth = synthetic_to_statement.len();
 
     // Augmented costs: originals + zero costs for synthetics.
     let mut costs: Vec<StatementCost> = operations
@@ -724,9 +758,10 @@ fn build_shape_and_index(
         .collect();
     costs.extend((0..n_synth).map(|_| StatementCost::default()));
 
-    // Augmented dep_edges. Original statements: External(pod, premise)
-    // becomes Internal(synth_idx) when the premise is being republished.
-    // Synthetic statements: each has one External dep to its premise.
+    // Augmented dep_edges. Original statements: External(pod, statement)
+    // becomes Internal(synth_idx) when the input statement is being
+    // republished. Synthetic statements: each has one External dep to
+    // its input statement.
     let mut dep_edges: Vec<Vec<AbstractDep>> = deps
         .statement_deps
         .iter()
@@ -736,13 +771,13 @@ fn build_shape_and_index(
                 .map(|src| match src {
                     StatementSource::Internal(d) => AbstractDep::Internal(*d),
                     StatementSource::External(ext) => {
-                        let u = premise_idx[ext];
-                        if let Some(synth_idx) = premise_to_synthetic[u] {
+                        let u = external_statement_idx[ext];
+                        if let Some(synth_idx) = statement_to_synthetic[u] {
                             AbstractDep::Internal(synth_idx)
                         } else {
                             AbstractDep::External {
                                 pod: pod_idx[&ext.pod_hash],
-                                premise: u,
+                                statement: u,
                             }
                         }
                     }
@@ -750,11 +785,11 @@ fn build_shape_and_index(
                 .collect()
         })
         .collect();
-    for &u in &synthetic_to_premise {
-        let ext = &external_premises[u];
+    for &u in &synthetic_to_statement {
+        let ext = &external_statements[u];
         dep_edges.push(vec![AbstractDep::External {
             pod: pod_idx[&ext.pod_hash],
-            premise: u,
+            statement: u,
         }]);
     }
 
@@ -763,12 +798,12 @@ fn build_shape_and_index(
         dep_edges,
         output_public_indices: output_public_indices.to_vec(),
         num_external_pods: external_pods.len(),
-        premise_pod,
+        statement_pod,
         params: params.clone(),
     };
     let index = ExternalIndex {
         pods: external_pods,
-        premises: external_premises,
+        statements: external_statements,
     };
     (shape, index)
 }
@@ -913,6 +948,46 @@ mod tests {
         }
     }
 
+    #[test]
+    fn prove_with_external_pod_arg() {
+        // User-adds an external pod and passes one of its public
+        // statements directly as an op arg. Exercises the staging
+        // auto-import path: `MainPodBuilder::ensure_statement` emits an
+        // `OpenInputStatement` op at staging time, the dep graph models
+        // it as an External-dep node, and replay re-issues the open
+        // against the per-POD builder's slot.
+        let params = Params::default();
+        let vd_set = &*MOCK_VD_SET;
+
+        let prover = MockProver {};
+        let mut ext_builder = MainPodBuilder::new(&params, vd_set);
+        ext_builder
+            .pub_op(FrontendOp::eq(42, 42))
+            .expect("ext pub op");
+        let ext_pod = ext_builder.prove(&prover).expect("ext prove");
+        let ext_stmt = ext_pod
+            .pod
+            .pub_statements()
+            .into_iter()
+            .find(|s| !s.is_none())
+            .expect("ext pod has a public statement");
+
+        let mut builder = MultiPodBuilder::new(&params, vd_set);
+        builder.add_pod(ext_pod).expect("add ext pod");
+        builder
+            .pub_op(FrontendOp::copy(ext_stmt))
+            .expect("copy ext stmt");
+
+        let solved = builder.solve().expect("should solve");
+        let result = solved.prove(&prover).expect("prove should succeed");
+        assert!(!result.pods.is_empty());
+        for (i, pod) in result.pods.iter().enumerate() {
+            pod.pod
+                .verify()
+                .unwrap_or_else(|e| panic!("POD {} verification failed: {:?}", i, e));
+        }
+    }
+
     /// Captured `multi_pod_tree::InputShape` for zk-craft's
     /// `CraftRefineryCracked` action (episode-1 plugin). Used to
     /// stress-test the partitioner against a realistic, large input.
@@ -923,9 +998,9 @@ mod tests {
     /// Pins partition quality on the cracked-refinery fixture. The
     /// resource-induced lower bound (`max_r ceil(total_r / cap_r)` over
     /// per-statement-summable resources) is K=12, driven by 96
-    /// custom-predicate verifications at cap 8/POD (statement count is
-    /// the secondary bound at `ceil(345/40) = 9`). The heuristic
-    /// reaches K=13, leaving a 1-POD gap to MILP's K=12 optimum. See
+    /// custom-predicate verifications at cap 8/POD. Under statement-
+    /// table accounting the heuristic reaches K=14, leaving a 2-POD gap
+    /// to MILP's K=12 optimum. See
     /// `docs/multipod_merkle_statement_tree.md` ("Custom predicate
     /// body+head locality" and "Future generators under consideration")
     /// for the structural reason and candidates that might close it.
@@ -956,6 +1031,29 @@ mod tests {
                      taught to charge import slots against max_statements; \
                      MILP optimum is 12"
                 );
+
+                // Probe whether the DP layer beats greedy on bin-packing's
+                // ordering for this fixture. Pre-statement-table-accounting
+                // the parity sweep recorded `K_bp_dp < K_bp_greedy` = 0;
+                // under the new cap that still holds on cracked-refinery.
+                // Pinned to catch any future divergence.
+                let identity: Vec<usize> = (0..shape.num_statements()).collect();
+                let bp_ordering =
+                    partition::kahn_bin_packing(&shape, &identity).expect("DAG must be acyclic");
+                let k_greedy = partition::simulate_greedy_k(&shape, &bp_ordering)
+                    .expect("greedy partition must be feasible on bin-packing's ordering");
+                let k_dp = partition::partition_with_ordering(&shape, &bp_ordering)
+                    .expect("DP must find a feasible partition on bin-packing's ordering")
+                    .pod_count;
+                eprintln!(
+                    "K_bp_greedy={} K_bp_dp={} on bin-packing's ordering",
+                    k_greedy, k_dp
+                );
+                assert_eq!(
+                    k_greedy, k_dp,
+                    "DP and greedy diverge on bin-packing's cracked-refinery \
+                     ordering; the DP layer earned its place — update doc."
+                );
             }
             None => {
                 let diag = diagnostics::diagnose_failure(&shape);
@@ -969,12 +1067,13 @@ mod tests {
         }
     }
 
-    /// Probe: is K=13 feasible on cracked-refinery under the current
-    /// caps? K=13 is the resource floor and is now reached by the
-    /// default heuristic as well. `#[ignore]`d because SCIP takes ~23s.
-    /// Kept as a regression check: if the fixture or caps change and
-    /// the resource floor moves, this probe (manually run) re-establishes
-    /// the optimum and any new gap is then visible against it.
+    /// Probe: what is MILP's K on cracked-refinery under the current
+    /// caps? Last measured under statement-table accounting: K=11
+    /// infeasible, K=12 feasible — so MILP optimum is K=12, unchanged
+    /// from before the accounting fix. `#[ignore]`d because SCIP takes
+    /// ~23s. Kept as a regression check: if the fixture or caps change,
+    /// re-running this probe re-establishes the optimum so any new
+    /// heuristic gap can be measured against it.
     #[test]
     #[ignore]
     fn cracked_refinery_fixture_milp() {
@@ -1580,24 +1679,27 @@ mod tests {
         }
     }
 
-    /// Probe: does pre-emptively synth-ifying every external premise on
-    /// cracked-refinery drop K from 13 to 12? The fixture has 2 external
-    /// pods x 1 premise x 1 consumer each (so the existing 2+-consumer
-    /// and feasibility republish rules don't fire). User's hypothesis is
-    /// that proactively republishing into the chain lets the partition
-    /// place the externals in PODs with spare capacity instead of forcing
-    /// the consumer POD to open the external pod.
+    /// Probe: does pre-emptively synth-ifying every external (input)
+    /// statement on cracked-refinery drop K from 13 to 12? The fixture
+    /// has 2 external pods x 1 input statement x 1 consumer each (so the
+    /// existing 2+-consumer and feasibility republish rules don't fire).
+    /// User's hypothesis is that proactively republishing into the chain
+    /// lets the partition place the externals in PODs with spare capacity
+    /// instead of forcing the consumer POD to open the external pod.
     #[test]
     fn cracked_refinery_preemptive_synth_probe() {
         use cost::StatementCost;
         let shape: InputShape =
             serde_json::from_str(CRACKED_REFINERY_FIXTURE).expect("fixture deserializes");
         let n_orig = shape.num_statements();
-        let num_premises = shape.premise_pod.len();
-        assert_eq!(num_premises, 2, "cracked-refinery has 2 external premises");
+        let num_statements = shape.statement_pod.len();
+        assert_eq!(
+            num_statements, 2,
+            "cracked-refinery has 2 external input statements"
+        );
 
         // Build augmented dep_edges: replace each External with
-        // Internal(n_orig + premise).
+        // Internal(n_orig + statement).
         let mut new_dep_edges: Vec<Vec<AbstractDep>> = shape
             .dep_edges
             .iter()
@@ -1606,22 +1708,22 @@ mod tests {
                     .iter()
                     .map(|dep| match dep {
                         AbstractDep::Internal(d) => AbstractDep::Internal(*d),
-                        AbstractDep::External { premise, .. } => {
-                            AbstractDep::Internal(n_orig + *premise)
+                        AbstractDep::External { statement, .. } => {
+                            AbstractDep::Internal(n_orig + *statement)
                         }
                     })
                     .collect()
             })
             .collect();
         // Append synth statements with the External dep moved to them.
-        for premise in 0..num_premises {
+        for statement in 0..num_statements {
             new_dep_edges.push(vec![AbstractDep::External {
-                pod: shape.premise_pod[premise],
-                premise,
+                pod: shape.statement_pod[statement],
+                statement,
             }]);
         }
         let mut new_costs: Vec<StatementCost> = shape.costs.clone();
-        for _ in 0..num_premises {
+        for _ in 0..num_statements {
             new_costs.push(StatementCost::default());
         }
         let augmented = InputShape {
@@ -1629,7 +1731,7 @@ mod tests {
             dep_edges: new_dep_edges,
             output_public_indices: shape.output_public_indices.clone(),
             num_external_pods: shape.num_external_pods,
-            premise_pod: shape.premise_pod.clone(),
+            statement_pod: shape.statement_pod.clone(),
             params: shape.params.clone(),
         };
 
@@ -1663,7 +1765,7 @@ mod tests {
             prio[p] = rank;
         }
         for (rank, slot) in prio.iter_mut().take(n_orig).enumerate() {
-            *slot = num_premises + rank;
+            *slot = num_statements + rank;
         }
         let ord = partition::kahn_bin_packing(&augmented, &prio)
             .expect("synth-first bin-packing must produce an ordering");
@@ -1726,10 +1828,10 @@ mod tests {
             )
         }
 
-        fn ext_premise(pod_seed: i64, val: i64) -> ExternalDependency {
+        fn ext_statement(pod_seed: i64, val: i64) -> ExternalDependency {
             // A unique pod hash per seed and a literal-Equal statement per
             // value. The statement contents are arbitrary as long as
-            // different premises hash differently.
+            // different input statements hash differently.
             ExternalDependency {
                 pod_hash: Hash::from(RawValue::from(pod_seed)),
                 statement: Statement::Equal(
@@ -1741,7 +1843,7 @@ mod tests {
 
         #[test]
         fn single_consumer_does_not_republish() {
-            let ext = ext_premise(1, 1);
+            let ext = ext_statement(1, 1);
             let deps = DependencyGraph {
                 statement_deps: vec![vec![StatementSource::External(ext)]],
             };
@@ -1757,7 +1859,7 @@ mod tests {
 
         #[test]
         fn two_consumers_trigger_republish() {
-            let ext = ext_premise(1, 1);
+            let ext = ext_statement(1, 1);
             let deps = DependencyGraph {
                 statement_deps: vec![
                     vec![StatementSource::External(ext.clone())],
@@ -1780,14 +1882,14 @@ mod tests {
 
         #[test]
         fn opportunistic_bundling_republishes_single_consumer_siblings() {
-            // External pod 1 has premise A (2 consumers) and premise B (1
-            // consumer). A triggers the basic 2+-consumer rule. Opportunistic
-            // bundling should pull B in too: the synth-hosting POD pays for
-            // pod 1 once regardless, so bundling B costs only one extra
-            // statement slot and frees B's consumer from referencing pod 1
-            // directly.
-            let ext_a = ext_premise(1, 1);
-            let ext_b = ext_premise(1, 2);
+            // External pod 1 has input statement A (2 consumers) and input
+            // statement B (1 consumer). A triggers the basic 2+-consumer
+            // rule. Opportunistic bundling should pull B in too: the
+            // synth-hosting POD pays for pod 1 once regardless, so
+            // bundling B costs only one extra statement slot and frees
+            // B's consumer from referencing pod 1 directly.
+            let ext_a = ext_statement(1, 1);
+            let ext_b = ext_statement(1, 2);
             let deps = DependencyGraph {
                 statement_deps: vec![
                     vec![StatementSource::External(ext_a.clone())],
@@ -1799,7 +1901,7 @@ mod tests {
             let (shape, _index) =
                 build_shape_and_index(&operations, &deps, &[], &Params::default());
 
-            // 3 originals + 2 synths (one per premise of pod 1) = 5.
+            // 3 originals + 2 synths (one per input statement of pod 1) = 5.
             assert_eq!(shape.num_statements(), 5);
             // Every original's external dep should be rewritten to Internal.
             for orig in 0..3 {
@@ -1813,12 +1915,12 @@ mod tests {
 
         #[test]
         fn bundling_does_not_cross_pods() {
-            // Two separate external pods. Pod 1 has a premise with 2
-            // consumers (triggers republish). Pod 2 has a premise with 1
-            // consumer. Pod 2's premise should NOT be republished;
-            // bundling is per-pod.
-            let p1 = ext_premise(1, 1);
-            let p2 = ext_premise(2, 1);
+            // Two separate external pods. Pod 1 has an input statement
+            // with 2 consumers (triggers republish). Pod 2 has an input
+            // statement with 1 consumer. Pod 2's input statement should
+            // NOT be republished; bundling is per-pod.
+            let p1 = ext_statement(1, 1);
+            let p2 = ext_statement(2, 1);
             let deps = DependencyGraph {
                 statement_deps: vec![
                     vec![StatementSource::External(p1.clone())],
@@ -1830,7 +1932,7 @@ mod tests {
             let (shape, _index) =
                 build_shape_and_index(&operations, &deps, &[], &Params::default());
 
-            // 3 originals + 1 synth (only pod 1's premise) = 4.
+            // 3 originals + 1 synth (only pod 1's input statement) = 4.
             assert_eq!(shape.num_statements(), 4);
             // The pod-2 consumer keeps its External dep.
             assert!(matches!(
@@ -1840,9 +1942,9 @@ mod tests {
         }
 
         #[test]
-        fn distinct_premises_get_distinct_synthetics() {
-            let ext_a = ext_premise(1, 1);
-            let ext_b = ext_premise(1, 2);
+        fn distinct_statements_get_distinct_synthetics() {
+            let ext_a = ext_statement(1, 1);
+            let ext_b = ext_statement(1, 2);
             let deps = DependencyGraph {
                 statement_deps: vec![
                     vec![StatementSource::External(ext_a.clone())],
@@ -1855,7 +1957,7 @@ mod tests {
             let (shape, index) = build_shape_and_index(&operations, &deps, &[], &Params::default());
 
             assert_eq!(shape.num_statements(), 6);
-            assert_eq!(index.premises.len(), 2);
+            assert_eq!(index.statements.len(), 2);
             assert_eq!(shape.num_external_pods, 1);
         }
     }
