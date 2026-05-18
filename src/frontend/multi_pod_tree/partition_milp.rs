@@ -253,10 +253,19 @@ pub fn solve_for_k(input: &InputShape, k: usize) -> Option<OutputShape> {
         }
     }
 
-    // (3) Statement count per POD.
+    // (3) Statement-table cap per POD. Each `OpenInputStatement` op
+    // produces a statement, so the table holds `local statements +
+    // chain imports + external-premise imports`, capped by
+    // `max_statements`.
     for p in 0..k {
-        let sum: Expression = (0..n).map(|s| v.assign[s][p]).sum();
-        model.add_constraint(constraint!(sum <= input.params.max_statements as f64));
+        let assign_sum: Expression = (0..n).map(|s| v.assign[s][p]).sum();
+        let chain_sum: Expression = (0..n).map(|d| v.import_from[d][p]).sum();
+        let ext_sum: Expression = (0..num_ext_premises)
+            .map(|e_prem| v.ext_import_from[e_prem][p])
+            .sum();
+        model.add_constraint(constraint!(
+            assign_sum + chain_sum + ext_sum <= input.params.max_statements as f64
+        ));
     }
 
     // (4) Multi-dim resource caps per POD. Merkle dimensions are
