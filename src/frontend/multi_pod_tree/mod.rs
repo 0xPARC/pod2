@@ -951,9 +951,10 @@ mod tests {
                 let total_placed: usize = out.pod_statements.iter().map(|v| v.len()).sum();
                 assert_eq!(total_placed, shape.num_statements());
                 assert_eq!(
-                    out.pod_count, 15,
-                    "expected 15 PODs under statement-table accounting that \
-                     charges OpenInputStatement ops to max_statements"
+                    out.pod_count, 14,
+                    "expected 14 PODs after bin-packing's can_extend was \
+                     taught to charge import slots against max_statements; \
+                     MILP optimum is 12"
                 );
             }
             None => {
