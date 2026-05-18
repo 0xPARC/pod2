@@ -12,8 +12,8 @@
 //! representation, holding an internal side table that maps positional
 //! indices back to concrete pod hashes and external premises.
 //!
-//! `prove()` is gated on the new POD circuit landing; until then it
-//! returns [`Error::ProveNotImplemented`]. `solve()` works fully.
+//! `solve()` partitions the workload symbolically; `prove()` then walks
+//! the partition and builds + proves each POD in chain order.
 //!
 //! The module is not yet re-exported from `frontend::mod`; until it is,
 //! the public surface is reachable only from tests, so we silence
@@ -28,7 +28,7 @@ use std::{
 
 use crate::{
     frontend::{MainPod, MainPodBuilder, Operation},
-    middleware::{Hash, MainPodProver, Params, Statement, VDSet, Value},
+    middleware::{Hash, MainPodProver, Params, Statement, VDSet, Value, BASE_PARAMS},
 };
 
 mod cost;
@@ -49,7 +49,7 @@ pub enum Error {
     Custom(String),
     Frontend(#[from] crate::frontend::Error),
     NoFeasiblePartition(String),
-    ProveNotImplemented,
+    ChainTreeCapacityExceeded { needed: usize, capacity: usize },
 }
 
 impl fmt::Display for Error {
@@ -60,11 +60,12 @@ impl fmt::Display for Error {
             Error::NoFeasiblePartition(msg) => {
                 write!(f, "No feasible partition: {}", msg)
             }
-            Error::ProveNotImplemented => write!(
+            Error::ChainTreeCapacityExceeded { needed, capacity } => write!(
                 f,
-                "prove() not implemented: the Merkle statement tree POD \
-                 circuit is not yet available. Use solve() to inspect the \
-                 partition."
+                "Chain tree capacity exceeded: partition would publish {} \
+                 statements across the chain but the public-statements MT \
+                 has capacity {}",
+                needed, capacity
             ),
         }
     }
@@ -288,6 +289,20 @@ impl MultiPodBuilder {
         }
         output.pod_republished_externals = new_republished;
 
+        let public_sets = intermediate_public_sets(&shape, &output);
+        let chain_total: usize = public_sets
+            .iter()
+            .take(output.pod_count.saturating_sub(1))
+            .map(|s| s.len())
+            .sum();
+        let chain_capacity = 2 << BASE_PARAMS.max_depth_public_statements_mt;
+        if chain_total > chain_capacity {
+            return Err(Error::ChainTreeCapacityExceeded {
+                needed: chain_total,
+                capacity: chain_capacity,
+            });
+        }
+
         Ok(SolvedMultiPod {
             params: self.params,
             vd_set: self.vd_set,
@@ -338,10 +353,136 @@ impl SolvedMultiPod {
         self.operations.len()
     }
 
-    /// Build and prove all PODs in the partition. Gated on the new POD
-    /// circuit landing; returns [`Error::ProveNotImplemented`] until then.
-    pub fn prove(self, _prover: &dyn MainPodProver) -> Result<MultiPodResult> {
-        Err(Error::ProveNotImplemented)
+    /// Build and prove all PODs in the partition in chain order. Each
+    /// intermediate POD extends its chain predecessor's public statement
+    /// tree (slot 0) and appends only the statements downstream consumers
+    /// will open. The output POD does not extend; it materialises a fresh
+    /// public statement tree containing exactly `output_public_indices`,
+    /// importing any upstream-produced output-publics through slot 0.
+    pub fn prove(self, prover: &dyn MainPodProver) -> Result<MultiPodResult> {
+        let public_sets = intermediate_public_sets(&self.shape, &self.output);
+        let pod_count = self.output.pod_count;
+        let mut pods: Vec<MainPod> = Vec::with_capacity(pod_count);
+        for p in 0..pod_count {
+            let is_output = p + 1 == pod_count;
+            let pod = self.build_single_pod(p, is_output, &public_sets[p], &pods, prover)?;
+            pods.push(pod);
+        }
+        Ok(MultiPodResult { pods })
+    }
+
+    fn build_single_pod(
+        &self,
+        p: usize,
+        is_output: bool,
+        public_set: &BTreeSet<usize>,
+        earlier_pods: &[MainPod],
+        prover: &dyn MainPodProver,
+    ) -> Result<MainPod> {
+        let mut builder = MainPodBuilder::new(&self.params, &self.vd_set);
+
+        let (inputs, ext_slot) = self.pod_inputs(p, earlier_pods);
+        for input in inputs {
+            builder.add_pod(input)?;
+        }
+
+        // Intermediate PODs inherit the chain tree via input pod 0; the
+        // output POD builds a fresh public statement tree, so it does not
+        // extend.
+        if p > 0 && !is_output {
+            builder.extend_input_pod0_public_statements();
+        }
+
+        let n_orig = self.operations.len();
+        for &s in &self.output.pod_statements[p] {
+            if s < n_orig {
+                let op = self.operations[s].clone();
+                let wildcards = self
+                    .operations_wildcard_values
+                    .get(&s)
+                    .cloned()
+                    .unwrap_or_default();
+                let public = !is_output && public_set.contains(&s);
+                builder.op(public, wildcards, op)?;
+            } else {
+                // Synthetic republish: open the external premise this
+                // synthetic represents and reveal it on the chain.
+                let dep = &self.shape.dep_edges[s][0];
+                if let AbstractDep::External { pod, premise } = dep {
+                    let slot = *ext_slot
+                        .get(pod)
+                        .expect("synthetic's external pod is in this POD's inputs");
+                    let stmt = self.external_index.premises[*premise].statement.clone();
+                    builder.open_input_st(true, slot, &stmt)?;
+                } else {
+                    unreachable!("synthetic statement must have a single External dep");
+                }
+            }
+        }
+
+        if is_output {
+            for &idx in &self.output_public_indices {
+                let stmt = &self.statements[idx];
+                if builder.statements.iter().any(|(_, s)| s == stmt) {
+                    builder.reveal(stmt)?;
+                } else {
+                    // Output-public produced upstream: import from the
+                    // chain tree (slot 0) directly into the fresh public
+                    // tree.
+                    builder.open_input_st(true, 0, stmt)?;
+                }
+            }
+        }
+
+        let pod = builder.prove(prover)?;
+        Ok(pod)
+    }
+
+    /// Distinct abstract external-pod indices referenced by POD `p`'s
+    /// statements. The order is deterministic (ascending by abstract pod
+    /// index) so the builder slot mapping is reproducible.
+    ///
+    /// Slot 0 of the builder is reserved for the chain predecessor (if
+    /// any). Externals returned here occupy slots 1, 2, ... in the
+    /// returned order.
+    fn pod_external_refs(&self, p: usize) -> Vec<usize> {
+        let mut refs: BTreeSet<usize> = BTreeSet::new();
+        for &s in &self.output.pod_statements[p] {
+            for dep in &self.shape.dep_edges[s] {
+                if let AbstractDep::External { pod, .. } = dep {
+                    refs.insert(*pod);
+                }
+            }
+        }
+        refs.into_iter().collect()
+    }
+
+    /// For POD `p`: the concrete `MainPod`s to install as inputs (chain
+    /// predecessor at index 0 when present, externals after) plus a map
+    /// from abstract external-pod index to its builder slot, used by
+    /// `open_input_st` when materialising synthetics.
+    fn pod_inputs(
+        &self,
+        p: usize,
+        earlier_pods: &[MainPod],
+    ) -> (Vec<MainPod>, HashMap<usize, usize>) {
+        let mut inputs: Vec<MainPod> = Vec::new();
+        if p > 0 {
+            inputs.push(earlier_pods[p - 1].clone());
+        }
+        let mut ext_slot: HashMap<usize, usize> = HashMap::new();
+        for abs_pod in self.pod_external_refs(p) {
+            let pod_hash = self.external_index.pods[abs_pod];
+            let pod = self
+                .input_pods
+                .iter()
+                .find(|p| p.statements_hash() == pod_hash)
+                .expect("external pod hash from solution side table")
+                .clone();
+            ext_slot.insert(abs_pod, inputs.len());
+            inputs.push(pod);
+        }
+        (inputs, ext_slot)
     }
 }
 
@@ -357,6 +498,67 @@ impl MultiPodResult {
     pub fn intermediate_pods(&self) -> &[MainPod] {
         &self.pods[..self.pods.len() - 1]
     }
+}
+
+/// Per-POD public-set decisions: which statements each intermediate POD
+/// must reveal so downstream PODs (and the output POD) can reach them
+/// through the chain tree.
+///
+/// Three rules combine:
+/// 1. **Downstream consumption**: any statement consumed by a later POD via
+///    `AbstractDep::Internal` must be public at its producer. This also
+///    covers synthetics whose consumers live downstream (their republish
+///    is exactly this case).
+/// 2. **Output-public flow-up**: any statement in `output_public_indices`
+///    produced upstream of the output POD must be revealed by its
+///    producer so the output POD can `open_input_st` it through slot 0.
+/// 3. **Output POD**: the last POD's set is left empty here. The build
+///    layer handles its fresh public tree separately (no `extend`).
+///
+/// Indexed by POD position. Entry `pod_count - 1` is always empty.
+fn intermediate_public_sets(shape: &InputShape, output: &OutputShape) -> Vec<BTreeSet<usize>> {
+    let pod_count = output.pod_count;
+    let mut sets: Vec<BTreeSet<usize>> = vec![BTreeSet::new(); pod_count];
+    if pod_count == 0 {
+        return sets;
+    }
+
+    let n = shape.num_statements();
+    let mut pod_of: Vec<Option<usize>> = vec![None; n];
+    for (p, stmts) in output.pod_statements.iter().enumerate() {
+        for &s in stmts {
+            pod_of[s] = Some(p);
+        }
+    }
+    let output_pod = pod_count - 1;
+
+    // Rule 1: downstream-consumed statements get revealed by their producer.
+    for (consumer, deps) in shape.dep_edges.iter().enumerate() {
+        let consumer_pod = match pod_of[consumer] {
+            Some(p) => p,
+            None => continue,
+        };
+        for dep in deps {
+            if let AbstractDep::Internal(producer) = dep {
+                if let Some(producer_pod) = pod_of[*producer] {
+                    if producer_pod < consumer_pod {
+                        sets[producer_pod].insert(*producer);
+                    }
+                }
+            }
+        }
+    }
+
+    // Rule 2: output-public statements produced upstream of the output POD.
+    for &s in &shape.output_public_indices {
+        if let Some(producer_pod) = pod_of[s] {
+            if producer_pod < output_pod {
+                sets[producer_pod].insert(s);
+            }
+        }
+    }
+
+    sets
 }
 
 /// Index every public statement of every input POD by content. The dep
@@ -574,7 +776,10 @@ fn build_shape_and_index(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{examples::MOCK_VD_SET, frontend::Operation as FrontendOp};
+    use crate::{
+        backends::plonky2::mock::mainpod::MockProver, examples::MOCK_VD_SET,
+        frontend::Operation as FrontendOp,
+    };
 
     #[test]
     fn end_to_end_solve_single_pod() {
@@ -607,6 +812,105 @@ mod tests {
 
         let solved = builder.solve().expect("should solve");
         assert!(solved.solution().pod_count >= 2);
+    }
+
+    #[test]
+    fn prove_single_pod() {
+        let params = Params::default();
+        let vd_set = &*MOCK_VD_SET;
+
+        let mut builder = MultiPodBuilder::new(&params, vd_set);
+        builder.pub_op(FrontendOp::eq(1, 1)).expect("op should add");
+
+        let solved = builder.solve().expect("should solve");
+        assert_eq!(solved.solution().pod_count, 1);
+        let result = solved.prove(&MockProver {}).expect("prove should succeed");
+        assert_eq!(result.pods.len(), 1);
+        result.pods[0].pod.verify().expect("pod verifies");
+    }
+
+    #[test]
+    fn prove_cross_pod_custom_predicate_chain() {
+        // pred_b(X) wraps pred_a(X) wraps Contains(X, "k", 1). With
+        // max_statements = 2, the three resulting statements must split
+        // across PODs, so the output POD's b_out has to reach back
+        // through the chain tree to consume the intermediate pred_a /
+        // Contains it depends on.
+        use crate::{dict, lang::load_module};
+
+        let params = Params {
+            max_statements: 2,
+            ..Params::default()
+        };
+        let vd_set = &*MOCK_VD_SET;
+
+        let module = load_module(
+            r#"
+            pred_a(X) = AND(Contains(X, "k", 1))
+            pred_b(X) = AND(pred_a(X))
+            "#,
+            "test",
+            &params,
+            &[],
+        )
+        .expect("load module");
+        let batch = &module.batch;
+
+        let mut builder = MultiPodBuilder::new(&params, vd_set);
+
+        let dict = dict!({"k" => 1});
+        let contains = builder
+            .priv_op(FrontendOp::dict_contains(dict, "k", 1))
+            .expect("contains");
+        let a_out = builder
+            .priv_op(FrontendOp::custom(
+                batch.predicate_ref_by_name("pred_a").unwrap(),
+                [contains],
+            ))
+            .expect("pred_a");
+        let _b_out = builder
+            .pub_op(FrontendOp::custom(
+                batch.predicate_ref_by_name("pred_b").unwrap(),
+                [a_out],
+            ))
+            .expect("pred_b");
+
+        let solved = builder.solve().expect("should solve");
+        assert!(solved.solution().pod_count >= 2);
+        let result = solved.prove(&MockProver {}).expect("prove should succeed");
+        for (i, pod) in result.pods.iter().enumerate() {
+            pod.pod
+                .verify()
+                .unwrap_or_else(|e| panic!("POD {} verification failed: {:?}", i, e));
+        }
+    }
+
+    #[test]
+    fn prove_chain_two_pods() {
+        // Tight max_statements forces splitting; verifies that chain
+        // monotonicity (extend_input_pod0_public_statements) carries the
+        // intermediate POD's statement forward so the output POD can
+        // reach it.
+        let params = Params {
+            max_statements: 2,
+            ..Params::default()
+        };
+        let vd_set = &*MOCK_VD_SET;
+
+        let mut builder = MultiPodBuilder::new(&params, vd_set);
+        for i in 0..3_i64 {
+            builder.priv_op(FrontendOp::eq(i, i)).expect("priv op");
+        }
+        builder.pub_op(FrontendOp::eq(100, 100)).expect("pub op");
+
+        let solved = builder.solve().expect("should solve");
+        assert!(solved.solution().pod_count >= 2);
+        let result = solved.prove(&MockProver {}).expect("prove should succeed");
+        for (i, pod) in result.pods.iter().enumerate() {
+            pod.pod
+                .verify()
+                .unwrap_or_else(|e| panic!("POD {} verification failed: {:?}", i, e));
+        }
     }
 
     /// Captured `multi_pod_tree::InputShape` for zk-craft's
@@ -647,8 +951,9 @@ mod tests {
                 let total_placed: usize = out.pod_statements.iter().map(|v| v.len()).sum();
                 assert_eq!(total_placed, shape.num_statements());
                 assert_eq!(
-                    out.pod_count, 13,
-                    "expected 13 PODs (heuristic; MILP optimum is 12)"
+                    out.pod_count, 15,
+                    "expected 15 PODs under statement-table accounting that \
+                     charges OpenInputStatement ops to max_statements"
                 );
             }
             None => {
@@ -674,14 +979,16 @@ mod tests {
     fn cracked_refinery_fixture_milp() {
         let shape: InputShape =
             serde_json::from_str(CRACKED_REFINERY_FIXTURE).expect("fixture deserializes");
-        let out = partition_milp::solve_for_k(&shape, 12);
-        match out {
-            Some(o) => eprintln!(
-                "MILP found feasible partition: pod_count={}, sizes={:?}",
-                o.pod_count,
-                o.pod_statements.iter().map(|v| v.len()).collect::<Vec<_>>()
-            ),
-            None => eprintln!("MILP returned no solution (infeasible or timed out)"),
+        for k in [11, 12] {
+            let out = partition_milp::solve_for_k(&shape, k);
+            match out {
+                Some(o) => eprintln!(
+                    "MILP K={}: feasible, sizes={:?}",
+                    k,
+                    o.pod_statements.iter().map(|v| v.len()).collect::<Vec<_>>()
+                ),
+                None => eprintln!("MILP K={}: no solution (infeasible or timed out)", k),
+            }
         }
     }
 
@@ -1390,21 +1697,6 @@ mod tests {
                 eprintln!("augmented + synth-first prio kahn K = {}", out.pod_count);
             }
         }
-    }
-
-    #[test]
-    fn prove_is_stubbed() {
-        let params = Params::default();
-        let vd_set = &*MOCK_VD_SET;
-
-        let mut builder = MultiPodBuilder::new(&params, vd_set);
-        builder.pub_op(FrontendOp::eq(1, 1)).expect("op should add");
-        let solved = builder.solve().expect("should solve");
-
-        use crate::backends::plonky2::mock::mainpod::MockProver;
-        let prover = MockProver {};
-        let result = solved.prove(&prover);
-        assert!(matches!(result, Err(Error::ProveNotImplemented)));
     }
 
     /// Hand-construct a `DependencyGraph` so we can exercise the pre-pass
