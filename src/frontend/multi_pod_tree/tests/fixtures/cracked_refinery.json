@@ -5537,9 +5537,8 @@
   ],
   "params": {
     "maxInputPods": 2,
-    "maxInputPodsPublicStatements": 8,
     "maxStatements": 48,
-    "maxPublicStatements": 8,
+    "maxOpenInputStatements": 20,
     "maxCustomPredicates": 8,
     "maxCustomPredicateVerifications": 8,
     "maxCustomPredicateWildcards": 8,
