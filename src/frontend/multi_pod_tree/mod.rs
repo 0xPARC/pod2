@@ -78,13 +78,26 @@ pub type Result<T> = std::result::Result<T, Error>;
 
 /// Side table pairing an [`OutputShape`]'s positional external indices
 /// with the concrete pod hashes and input statements they refer to. The
-/// solver
-/// never sees concrete data; the build layer uses this index to reattach
-/// hashes when materialising a [`MultiPodResult`] from a partition.
+/// solver never sees concrete data; the build layer uses this index to
+/// reattach hashes when materialising a [`MultiPodResult`] from a
+/// partition.
 #[derive(Clone, Debug)]
 struct ExternalIndex {
     pods: Vec<Hash>,
     statements: Vec<ExternalDependency>,
+    /// Inverse of `pods` for O(1) hash → abstract-pod-index lookup.
+    pod_index_by_hash: HashMap<Hash, usize>,
+}
+
+impl ExternalIndex {
+    fn new(pods: Vec<Hash>, statements: Vec<ExternalDependency>) -> Self {
+        let pod_index_by_hash = pods.iter().copied().zip(0..).collect();
+        Self {
+            pods,
+            statements,
+            pod_index_by_hash,
+        }
+    }
 }
 
 pub struct MultiPodBuilder {
@@ -308,6 +321,17 @@ impl MultiPodBuilder {
             });
         }
 
+        let input_pod_idx_by_abs: Vec<usize> = external_index
+            .pods
+            .iter()
+            .map(|h| {
+                self.input_pods
+                    .iter()
+                    .position(|p| p.statements_hash() == *h)
+                    .expect("external pod referenced by user op is in input_pods")
+            })
+            .collect();
+
         Ok(SolvedMultiPod {
             params: self.params,
             vd_set: self.vd_set,
@@ -319,6 +343,8 @@ impl MultiPodBuilder {
             shape,
             output,
             external_index,
+            input_pod_idx_by_abs,
+            public_sets,
         })
     }
 }
@@ -336,6 +362,13 @@ pub struct SolvedMultiPod {
     shape: InputShape,
     output: OutputShape,
     external_index: ExternalIndex,
+    /// `external_index.pods[abs_pod]` is a hash; this maps that
+    /// abstract index to the matching POD's position in `input_pods`,
+    /// so `pod_inputs` can attach the right `MainPod` without scanning.
+    input_pod_idx_by_abs: Vec<usize>,
+    /// Per-POD public sets. Computed once at `solve()` for the chain-tree
+    /// capacity check and reused by `prove()`.
+    public_sets: Vec<BTreeSet<usize>>,
 }
 
 impl SolvedMultiPod {
@@ -365,12 +398,10 @@ impl SolvedMultiPod {
     /// public statement tree containing exactly `output_public_indices`,
     /// importing any upstream-produced output-publics through slot 0.
     pub fn prove(self, prover: &dyn MainPodProver) -> Result<MultiPodResult> {
-        let public_sets = intermediate_public_sets(&self.shape, &self.output);
         let pod_count = self.output.pod_count;
         let mut pods: Vec<MainPod> = Vec::with_capacity(pod_count);
         for p in 0..pod_count {
-            let is_output = p + 1 == pod_count;
-            let pod = self.build_single_pod(p, is_output, &public_sets[p], &pods, prover)?;
+            let pod = self.build_single_pod(p, &pods, prover)?;
             pods.push(pod);
         }
         Ok(MultiPodResult { pods })
@@ -379,11 +410,10 @@ impl SolvedMultiPod {
     fn build_single_pod(
         &self,
         p: usize,
-        is_output: bool,
-        public_set: &BTreeSet<usize>,
         earlier_pods: &[MainPod],
         prover: &dyn MainPodProver,
     ) -> Result<MainPod> {
+        let is_output = p + 1 == self.output.pod_count;
         let mut builder = MainPodBuilder::new(&self.params, &self.vd_set);
 
         let (inputs, ext_slot) = self.pod_inputs(p, earlier_pods);
@@ -391,63 +421,51 @@ impl SolvedMultiPod {
             builder.add_pod(input)?;
         }
 
-        // Intermediate PODs inherit the chain tree via input pod 0; the
-        // output POD builds a fresh public statement tree, so it does not
-        // extend.
         if p > 0 && !is_output {
             builder.extend_input_pod0_public_statements();
         }
 
         let n_orig = self.operations.len();
+        let public_set = &self.public_sets[p];
         for &s in &self.output.pod_statements[p] {
             if s >= n_orig {
-                // Solver-inserted synthetic republish: open the input
-                // statement this synthetic represents and reveal it on
-                // the chain so downstream PODs can consume it via slot 0.
-                let dep = &self.shape.dep_edges[s][0];
-                if let AbstractDep::External { pod, statement } = dep {
-                    let slot = *ext_slot
-                        .get(pod)
-                        .expect("synthetic's external pod is in this POD's inputs");
-                    let stmt = self.external_index.statements[*statement].statement.clone();
-                    builder.open_input_st(true, slot, &stmt)?;
-                } else {
+                // Synthetic republish: open the input statement so
+                // downstream PODs can read it from the chain at slot 0.
+                let AbstractDep::External { pod, statement } = &self.shape.dep_edges[s][0] else {
                     unreachable!("synthetic statement must have a single External dep");
-                }
+                };
+                let slot = ext_slot[pod];
+                let stmt = self.external_index.statements[*statement].statement.clone();
+                builder.open_input_st(true, slot, &stmt)?;
                 continue;
             }
-            let op = self.operations[s].clone();
             let public = !is_output && public_set.contains(&s);
-            // Staging-time `OpenInputStatement` ops carry a stale
-            // `pod_index` (referring to the staging builder's input
-            // slots, not the per-POD builder we're constructing here).
-            // Re-issue via `open_input_st` so the aux is rebuilt against
-            // the correct slot.
-            if let OperationType::Native(NativeOperation::OpenInputStatement) = op.0 {
-                if let OperationAux::OpenInputStatement(InputPodOpenStatement {
-                    sts_root, ..
-                }) = &op.2
-                {
-                    let abs_pod = self
-                        .external_index
-                        .pods
-                        .iter()
-                        .position(|h| h == sts_root)
-                        .expect("staging OpenInputStatement's source pod is in external_index");
-                    let slot = *ext_slot
-                        .get(&abs_pod)
-                        .expect("staging OpenInputStatement's source pod is in this POD's inputs");
-                    builder.open_input_st(public, slot, &self.statements[s])?;
-                    continue;
-                }
-                unreachable!("OpenInputStatement op without InputPodOpenStatement aux");
+            if let OperationType::Native(NativeOperation::OpenInputStatement) =
+                &self.operations[s].0
+            {
+                // Staging-time aux carries a `pod_index` from the staging
+                // builder's input slots; re-issue against this POD's
+                // ext_slot mapping.
+                let OperationAux::OpenInputStatement(InputPodOpenStatement { sts_root, .. }) =
+                    &self.operations[s].2
+                else {
+                    unreachable!("OpenInputStatement op without InputPodOpenStatement aux");
+                };
+                let abs_pod = *self
+                    .external_index
+                    .pod_index_by_hash
+                    .get(sts_root)
+                    .expect("staging OpenInputStatement's source pod is in external_index");
+                let slot = ext_slot[&abs_pod];
+                builder.open_input_st(public, slot, &self.statements[s])?;
+                continue;
             }
             let wildcards = self
                 .operations_wildcard_values
                 .get(&s)
                 .cloned()
                 .unwrap_or_default();
-            builder.op(public, wildcards, op)?;
+            builder.op(public, wildcards, self.operations[s].clone())?;
         }
 
         if is_output {
@@ -456,41 +474,19 @@ impl SolvedMultiPod {
                 if builder.statements.iter().any(|(_, s)| s == stmt) {
                     builder.reveal(stmt)?;
                 } else {
-                    // Output-public produced upstream: import from the
-                    // chain tree (slot 0) directly into the fresh public
-                    // tree.
+                    // Output-public produced upstream — open from chain.
                     builder.open_input_st(true, 0, stmt)?;
                 }
             }
         }
 
-        let pod = builder.prove(prover)?;
-        Ok(pod)
-    }
-
-    /// Distinct abstract external-pod indices referenced by POD `p`'s
-    /// statements. The order is deterministic (ascending by abstract pod
-    /// index) so the builder slot mapping is reproducible.
-    ///
-    /// Slot 0 of the builder is reserved for the chain predecessor (if
-    /// any). Externals returned here occupy slots 1, 2, ... in the
-    /// returned order.
-    fn pod_external_refs(&self, p: usize) -> Vec<usize> {
-        let mut refs: BTreeSet<usize> = BTreeSet::new();
-        for &s in &self.output.pod_statements[p] {
-            for dep in &self.shape.dep_edges[s] {
-                if let AbstractDep::External { pod, .. } = dep {
-                    refs.insert(*pod);
-                }
-            }
-        }
-        refs.into_iter().collect()
+        builder.prove(prover).map_err(Error::from)
     }
 
     /// For POD `p`: the concrete `MainPod`s to install as inputs (chain
-    /// predecessor at index 0 when present, externals after) plus a map
-    /// from abstract external-pod index to its builder slot, used by
-    /// `open_input_st` when materialising synthetics.
+    /// predecessor at slot 0 if any, externals at slots 1+) plus a map
+    /// from abstract external-pod index to builder slot. The slot map
+    /// drives `open_input_st` calls for synthetics and staging-Opens.
     fn pod_inputs(
         &self,
         p: usize,
@@ -500,17 +496,19 @@ impl SolvedMultiPod {
         if p > 0 {
             inputs.push(earlier_pods[p - 1].clone());
         }
+        let mut refs: BTreeSet<usize> = BTreeSet::new();
+        for &s in &self.output.pod_statements[p] {
+            for dep in &self.shape.dep_edges[s] {
+                if let AbstractDep::External { pod, .. } = dep {
+                    refs.insert(*pod);
+                }
+            }
+        }
         let mut ext_slot: HashMap<usize, usize> = HashMap::new();
-        for abs_pod in self.pod_external_refs(p) {
-            let pod_hash = self.external_index.pods[abs_pod];
-            let pod = self
-                .input_pods
-                .iter()
-                .find(|p| p.statements_hash() == pod_hash)
-                .expect("external pod hash from solution side table")
-                .clone();
+        for abs_pod in refs {
+            let pod_idx = self.input_pod_idx_by_abs[abs_pod];
             ext_slot.insert(abs_pod, inputs.len());
-            inputs.push(pod);
+            inputs.push(self.input_pods[pod_idx].clone());
         }
         (inputs, ext_slot)
     }
@@ -801,10 +799,7 @@ fn build_shape_and_index(
         statement_pod,
         params: params.clone(),
     };
-    let index = ExternalIndex {
-        pods: external_pods,
-        statements: external_statements,
-    };
+    let index = ExternalIndex::new(external_pods, external_statements);
     (shape, index)
 }
 
