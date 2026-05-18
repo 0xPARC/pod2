@@ -15,7 +15,7 @@ use std::{
 };
 
 use super::{
-    cost::{ResourceTotals, StatementCost, MAX_TREE_IMPORTS},
+    cost::{ResourceTotals, StatementCost},
     shape::{AbstractDep, InputShape, OutputShape},
 };
 use crate::middleware::Params;
@@ -77,9 +77,9 @@ fn aggregate_rows<'a>(
     let transition = &params.containers.transition;
     let rows = vec![
         UtilizationRow {
-            name: "private statements",
+            name: "total statements",
             used: totals.num_statements,
-            limit: params.max_priv_statements(),
+            limit: params.max_statements,
         },
         UtilizationRow {
             name: "merkle proofs (small)",
@@ -266,7 +266,7 @@ impl SolutionBreakdown {
                 let imports_row = UtilizationRow {
                     name: "tree imports",
                     used: chain_imports.len() + external_imports.len(),
-                    limit: MAX_TREE_IMPORTS,
+                    limit: input.params.max_open_input_statements,
                 };
                 let external_row = UtilizationRow {
                     name: "external pods",
@@ -470,11 +470,12 @@ fn check_unsplittable(input: &InputShape, s: usize) -> Option<CapViolation> {
         }
     }
     let total = chain.len() + external.len();
-    if total > MAX_TREE_IMPORTS {
+    let max_imports = input.params.max_open_input_statements;
+    if total > max_imports {
         Some(CapViolation::Unsplittable {
             stmt: s,
             distinct_imports: total,
-            max_allowed: MAX_TREE_IMPORTS,
+            max_allowed: max_imports,
         })
     } else {
         None
@@ -497,7 +498,7 @@ fn identify_overflow(
     let state = &params.containers.state;
     let transition = &params.containers.transition;
     let categories: &[(&'static str, usize, usize)] = &[
-        ("private statements", 1, params.max_priv_statements()),
+        ("total statements", 1, params.max_statements),
         (
             "merkle proofs (small)",
             c.merkle_proofs_small,
@@ -566,25 +567,23 @@ mod tests {
     #[test]
     fn resource_summary_flags_statement_bottleneck() {
         let params = Params {
-            max_statements: 4,
-            max_public_statements: 2,
+            max_statements: 2,
             ..Params::default()
         };
-        // max_priv_statements = 2; 6 statements -> bottleneck is statements.
+        // max_statements = 2; 6 statements -> bottleneck is statements.
         let input = independent(6, vec![5], params);
         let summary = ResourceSummary::from_input(&input);
         let bottleneck = summary
             .bottleneck()
             .expect("non-empty problem has a bottleneck");
-        assert_eq!(bottleneck.name, "private statements");
+        assert_eq!(bottleneck.name, "total statements");
         assert_eq!(bottleneck.min_pods(), Some(3)); // ceil(6/2)
     }
 
     #[test]
     fn solution_breakdown_reports_per_pod_utilisation() {
         let params = Params {
-            max_statements: 4,
-            max_public_statements: 2,
+            max_statements: 2,
             ..Params::default()
         };
         let input = independent(3, vec![2], params);

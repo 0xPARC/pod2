@@ -33,7 +33,7 @@ use rand::{seq::SliceRandom, SeedableRng};
 use rand_chacha::ChaCha20Rng;
 
 use super::{
-    cost::{CustomPredicateId, ResourceTotals, StatementCost, MAX_TREE_IMPORTS},
+    cost::{CustomPredicateId, ResourceTotals, StatementCost},
     shape::{AbstractDep, InputShape, OutputShape},
 };
 use crate::middleware::Params;
@@ -204,17 +204,17 @@ pub(super) fn kahn_with_priority(input: &InputShape, prio_of: &[usize]) -> Optio
 }
 
 /// Per-segment cap check for input-tree imports (chain slot + external
-/// slots) and input-pods. Tree imports are capped by `MAX_TREE_IMPORTS`;
-/// the chain slot counts as one input-pod iff there are any prev-pod
-/// producers.
+/// slots) and input-pods. Tree imports are capped by
+/// `params.max_open_input_statements`; the chain slot counts as one
+/// input-pod iff there are any prev-pod producers.
 fn tree_imports_ok(
     n_producers: usize,
     n_ext_imports: usize,
     n_ext_pods: usize,
-    max_input_pods: usize,
+    params: &Params,
 ) -> bool {
-    n_producers + n_ext_imports <= MAX_TREE_IMPORTS
-        && usize::from(n_producers > 0) + n_ext_pods <= max_input_pods
+    n_producers + n_ext_imports <= params.max_open_input_statements
+        && usize::from(n_producers > 0) + n_ext_pods <= params.max_input_pods
 }
 
 /// Running state of the current segment used by greedy packing in
@@ -297,12 +297,7 @@ impl GreedyState {
         let n_producers = self.prev_pod_producers.len() + self.scratch_new_producers.len();
         let n_ext_imports = self.external_imports.len() + self.scratch_new_ext_imports.len();
         let n_ext_pods = self.external_pods.len() + self.scratch_new_ext_pods.len();
-        tree_imports_ok(
-            n_producers,
-            n_ext_imports,
-            n_ext_pods,
-            params.max_input_pods,
-        )
+        tree_imports_ok(n_producers, n_ext_imports, n_ext_pods, params)
     }
 
     /// Apply the extension to the segment. Caller must have verified
@@ -434,7 +429,7 @@ fn segment_feasible_with(
 ) -> bool {
     let params = &input.params;
     let segment = &ordering[a..p];
-    if segment.is_empty() || segment.len() > params.max_priv_statements() {
+    if segment.is_empty() || segment.len() > params.max_statements {
         return false;
     }
 
@@ -483,7 +478,8 @@ fn segment_feasible_with(
         // busted there's no recovery. Cheap check (StampSet len is O(1))
         // and saves the remaining statements' worth of inserts on
         // infeasible segments.
-        if workspace.prev_pod_producers.len() + workspace.external_imports.len() > MAX_TREE_IMPORTS
+        if workspace.prev_pod_producers.len() + workspace.external_imports.len()
+            > params.max_open_input_statements
         {
             return false;
         }
@@ -495,7 +491,7 @@ fn segment_feasible_with(
         workspace.prev_pod_producers.len(),
         n_ext_imports,
         n_ext_pods,
-        params.max_input_pods,
+        params,
     );
     if !non_terminal || !is_terminal {
         return non_terminal;
@@ -513,7 +509,7 @@ fn segment_feasible_with(
         workspace.prev_pod_producers.len(),
         n_ext_imports,
         n_ext_pods,
-        params.max_input_pods,
+        params,
     )
 }
 
@@ -536,7 +532,7 @@ fn run_dp(ordering: &[usize], input: &InputShape) -> Option<Vec<(usize, usize)>>
     // infeasible, so we only need to consider cuts within the last W
     // positions. That caps the inner loop at W choices per `p`, giving
     // the O(n * W^2) total the module doc claims.
-    let max_segment_len = input.params.max_priv_statements();
+    let max_segment_len = input.params.max_statements;
 
     // dp[p] = Some((min_k, prev_a)) iff `[0..p]` partitions into `min_k`
     // non-terminal segments, with the last segment being `[prev_a..p]`.
@@ -683,13 +679,12 @@ mod tests {
 
     #[test]
     fn splits_when_statement_count_exceeds_cap() {
-        // Force a 2-POD split via tight max_priv_statements.
+        // Force a 2-POD split via tight max_statements.
         let params = Params {
-            max_statements: 4,
-            max_public_statements: 2,
+            max_statements: 2,
             ..Params::default()
         };
-        // max_priv_statements = 2; 3 statements need 2 PODs.
+        // max_statements = 2; 3 statements need 2 PODs.
         let input = independent_statements(3, vec![2], params);
         let out = partition(&input).expect("should partition");
         assert_eq!(out.pod_count, 2);
@@ -705,13 +700,14 @@ mod tests {
     }
 
     #[test]
-    fn external_imports_count_against_max_tree_imports() {
+    fn external_imports_count_against_max_open_input_statements() {
         // n statements, each with one External dep to a distinct premise
         // from a single external POD. With one external pod, `max_input_pods`
         // can't force a split, so the only constraint that drives K > 1 is
         // the combined import cap.
         use super::super::cost::StatementCost;
-        let n = MAX_TREE_IMPORTS + 1;
+        let params = Params::default();
+        let n = params.max_open_input_statements + 1;
         let input = InputShape {
             costs: (0..n).map(|_| StatementCost::default()).collect(),
             dep_edges: (0..n)
@@ -720,12 +716,12 @@ mod tests {
             output_public_indices: vec![0],
             num_external_pods: 1,
             premise_pod: vec![0; n],
-            params: Params::default(),
+            params,
         };
         let out = partition(&input).expect("should partition");
         assert!(
             out.pod_count >= 2,
-            "external imports must count against MAX_TREE_IMPORTS, but {} \
+            "external imports must count against max_open_input_statements, but {} \
              external imports packed into a single POD",
             n
         );
@@ -734,12 +730,11 @@ mod tests {
     #[test]
     fn dependency_chain_respects_topo_order() {
         // 4 statements where each depends on the previous. With
-        // max_priv_statements = 2, this should split into 2 PODs with
+        // max_statements = 2, this should split into 2 PODs with
         // statements [0,1] and [2,3].
         use super::super::cost::StatementCost;
         let params = Params {
-            max_statements: 4,
-            max_public_statements: 2,
+            max_statements: 2,
             ..Params::default()
         };
         let input = InputShape {
@@ -764,18 +759,18 @@ mod tests {
     }
 
     /// Fan-in DAG: 21 zero-cost producers and a single consumer T with
-    /// `Internal` deps on every producer. `MAX_TREE_IMPORTS = 20`, so any
-    /// segment containing T can pull at most 20 prev-pod producers
-    /// through its chain slot, so T's segment must hold at least one
-    /// producer locally.
+    /// `Internal` deps on every producer. With `max_open_input_statements
+    /// = 20`, any segment containing T can pull at most 20 prev-pod
+    /// producers through its chain slot, so T's segment must hold at
+    /// least one producer locally.
     ///
     /// Same-ordering greedy packing fails on this DAG: it fills segment
-    /// 1 to cap (21 statements at `max_priv = 21`), leaving T alone in
-    /// a fresh segment needing 21 prev-pod producers via the chain
-    /// slot, which busts `MAX_TREE_IMPORTS`. Cutting earlier rescues
-    /// it: segment 1 holds just [stmt 0], segment 2 holds [1..21] = 20
-    /// producers and T at cap, and T's chain slot only has to pull one
-    /// prev-pod producer.
+    /// 1 to cap (21 statements at `max_statements = 21`), leaving T
+    /// alone in a fresh segment needing 21 prev-pod producers via the
+    /// chain slot, which busts `max_open_input_statements`. Cutting
+    /// earlier rescues it: segment 1 holds just [stmt 0], segment 2
+    /// holds [1..21] = 20 producers and T at cap, and T's chain slot
+    /// only has to pull one prev-pod producer.
     ///
     /// This is why the cutting pass isn't just an optimisation; it's
     /// soundness insurance for fan-in-bound workloads. A naive
@@ -788,14 +783,12 @@ mod tests {
         let n = n_producers + 1;
         let consumer = n_producers;
         let params = Params {
-            max_statements: 23,
-            max_public_statements: 2,
+            max_statements: 21,
             ..Params::default()
         };
         assert_eq!(
-            params.max_priv_statements(),
-            21,
-            "test relies on max_priv = 21 = n_producers so segment 1 fills exactly at cap"
+            params.max_statements, n_producers,
+            "test relies on max_statements = n_producers so segment 1 fills exactly at cap"
         );
 
         let mut dep_edges: Vec<Vec<AbstractDep>> = (0..n).map(|_| Vec::new()).collect();
