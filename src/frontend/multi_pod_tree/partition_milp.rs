@@ -30,9 +30,10 @@ use good_lp::{
 };
 
 use super::{
-    cost::{CustomPredicateId, ResourceTotals},
+    cost::{CustomPredicateId, ResourceTotals, StatementCost},
     shape::{AbstractDep, InputShape, OutputShape},
 };
+use crate::middleware::Params;
 
 const SOLVER_BINARY_THRESHOLD: f64 = 0.5;
 const SCIP_RANDOM_SEED: i32 = 0;
@@ -490,13 +491,95 @@ pub(super) fn solve(input: &InputShape) -> Option<OutputShape> {
     None
 }
 
+/// Random `InputShape` generator. Covers internal dep graphs (up to 2
+/// deps per statement), occasional external deps (drawn from 0-2
+/// external pods with up to 3 input statements each), and
+/// per-statement resource costs (signed_by / merkle_proofs).
+///
+/// Shared between the DP-vs-MILP parity sweep and the DP-vs-greedy
+/// sweep in `partition.rs`; both consume the same RNG seed so the
+/// two sweeps see the same input distribution.
+pub(super) fn random_input(
+    rng: &mut rand_chacha::ChaCha20Rng,
+    n: usize,
+    params: Params,
+) -> InputShape {
+    use std::collections::HashSet;
+
+    use rand::{seq::SliceRandom, Rng};
+
+    let num_external_pods = rng.gen_range(0..=2);
+    let num_statements = if num_external_pods > 0 {
+        rng.gen_range(0..=(num_external_pods * 3))
+    } else {
+        0
+    };
+    let statement_pod: Vec<usize> = (0..num_statements)
+        .map(|_| rng.gen_range(0..num_external_pods))
+        .collect();
+
+    let dep_edges: Vec<Vec<AbstractDep>> = (0..n)
+        .map(|i| {
+            let mut deps: Vec<AbstractDep> = Vec::new();
+            let max_internal = i.min(3);
+            if max_internal > 0 {
+                let num = rng.gen_range(0..=max_internal);
+                let mut taken: HashSet<usize> = HashSet::new();
+                let mut attempts = 0;
+                while deps.len() < num && attempts < 10 {
+                    attempts += 1;
+                    let j = rng.gen_range(0..i);
+                    if taken.insert(j) {
+                        deps.push(AbstractDep::Internal(j));
+                    }
+                }
+            }
+            if num_statements > 0 && rng.gen_bool(0.5) {
+                let statement = rng.gen_range(0..num_statements);
+                deps.push(AbstractDep::External {
+                    pod: statement_pod[statement],
+                    statement,
+                });
+            }
+            deps
+        })
+        .collect();
+
+    let costs: Vec<StatementCost> = (0..n)
+        .map(|_| {
+            let mut c = StatementCost::default();
+            if rng.gen_bool(0.15) {
+                c.signed_by = 1;
+            }
+            if rng.gen_bool(0.15) {
+                // Random test fixture: charge to the medium slot so the
+                // generated cost is feasible regardless of caps tuning.
+                c.merkle_proofs_medium = 1;
+            }
+            c
+        })
+        .collect();
+
+    let n_pub = rng.gen_range(1..=2.min(n));
+    let mut indices: Vec<usize> = (0..n).collect();
+    indices.shuffle(rng);
+    indices.truncate(n_pub);
+    indices.sort();
+
+    InputShape {
+        costs,
+        dep_edges,
+        output_public_indices: indices,
+        num_external_pods,
+        statement_pod,
+        params,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        frontend::multi_pod_tree::{cost::StatementCost, partition},
-        middleware::Params,
-    };
+    use crate::frontend::multi_pod_tree::partition;
 
     fn independent(n: usize, output_public: Vec<usize>, params: Params) -> InputShape {
         InputShape {
@@ -563,81 +646,6 @@ mod tests {
         let mut all: Vec<usize> = out.pod_statements.iter().flatten().copied().collect();
         all.sort();
         assert_eq!(all, vec![0, 1, 2]);
-    }
-
-    /// Random `InputShape` generator. Covers internal dep graphs (up to 2
-    /// deps per statement), occasional external deps (drawn from 0-2
-    /// external pods with up to 3 input statements each), and
-    /// per-statement resource costs (signed_by / merkle_proofs).
-    fn random_input(rng: &mut rand_chacha::ChaCha20Rng, n: usize, params: Params) -> InputShape {
-        use rand::{seq::SliceRandom, Rng};
-
-        let num_external_pods = rng.gen_range(0..=2);
-        let num_statements = if num_external_pods > 0 {
-            rng.gen_range(0..=(num_external_pods * 3))
-        } else {
-            0
-        };
-        let statement_pod: Vec<usize> = (0..num_statements)
-            .map(|_| rng.gen_range(0..num_external_pods))
-            .collect();
-
-        let dep_edges: Vec<Vec<AbstractDep>> = (0..n)
-            .map(|i| {
-                let mut deps: Vec<AbstractDep> = Vec::new();
-                let max_internal = i.min(3);
-                if max_internal > 0 {
-                    let num = rng.gen_range(0..=max_internal);
-                    let mut taken: HashSet<usize> = HashSet::new();
-                    let mut attempts = 0;
-                    while deps.len() < num && attempts < 10 {
-                        attempts += 1;
-                        let j = rng.gen_range(0..i);
-                        if taken.insert(j) {
-                            deps.push(AbstractDep::Internal(j));
-                        }
-                    }
-                }
-                if num_statements > 0 && rng.gen_bool(0.5) {
-                    let statement = rng.gen_range(0..num_statements);
-                    deps.push(AbstractDep::External {
-                        pod: statement_pod[statement],
-                        statement,
-                    });
-                }
-                deps
-            })
-            .collect();
-
-        let costs: Vec<StatementCost> = (0..n)
-            .map(|_| {
-                let mut c = StatementCost::default();
-                if rng.gen_bool(0.15) {
-                    c.signed_by = 1;
-                }
-                if rng.gen_bool(0.15) {
-                    // Random test fixture: charge to the medium slot so the
-                    // generated cost is feasible regardless of caps tuning.
-                    c.merkle_proofs_medium = 1;
-                }
-                c
-            })
-            .collect();
-
-        let n_pub = rng.gen_range(1..=2.min(n));
-        let mut indices: Vec<usize> = (0..n).collect();
-        indices.shuffle(rng);
-        indices.truncate(n_pub);
-        indices.sort();
-
-        InputShape {
-            costs,
-            dep_edges,
-            output_public_indices: indices,
-            num_external_pods,
-            statement_pod,
-            params,
-        }
     }
 
     /// Randomised DP-vs-MILP parity sweep.
