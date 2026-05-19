@@ -260,7 +260,6 @@ impl StatementCost {
                     cost.public_key_of = 1;
                 }
                 NativeOperation::None
-                | NativeOperation::CopyStatement
                 | NativeOperation::EqualFromEntries
                 | NativeOperation::NotEqualFromEntries
                 | NativeOperation::LtEqFromEntries
@@ -309,5 +308,148 @@ fn transition_proof_depth(aux: &OperationAux) -> usize {
              MerkleTreeStateTransitionProof aux (set by \
              MainPodBuilder::fill_in_aux)"
         ),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        backends::plonky2::primitives::merkletree::{
+            MerkleProof, MerkleTreeOp, MerkleTreeStateTransitionProof,
+        },
+        middleware::{RawValue, EMPTY_HASH},
+    };
+
+    fn native_op(op: NativeOperation, aux: OperationAux) -> Operation {
+        Operation(OperationType::Native(op), vec![], aux)
+    }
+
+    fn merkle_proof_aux(depth: usize) -> OperationAux {
+        OperationAux::MerkleProof(MerkleProof {
+            existence: true,
+            siblings: vec![EMPTY_HASH; depth],
+            other_leaf: None,
+        })
+    }
+
+    fn state_transition_aux(depth: usize, op: MerkleTreeOp) -> OperationAux {
+        OperationAux::MerkleTreeStateTransitionProof(MerkleTreeStateTransitionProof {
+            op,
+            old_root: EMPTY_HASH,
+            op_proof: MerkleProof {
+                existence: true,
+                siblings: vec![],
+                other_leaf: None,
+            },
+            new_root: EMPTY_HASH,
+            op_key: RawValue::from(0),
+            op_value: RawValue::from(0),
+            value: None,
+            siblings: vec![EMPTY_HASH; depth],
+        })
+    }
+
+    /// Scalar-cost ops (SignedBy / PublicKeyOf) don't inspect the aux and
+    /// land in their own cost dimension.
+    #[test]
+    fn scalar_native_ops_map_to_their_cost_dimension() {
+        let params = Params::default();
+        let sb = StatementCost::from_operation(
+            &native_op(NativeOperation::SignedBy, OperationAux::None),
+            &params,
+        );
+        assert_eq!(sb.signed_by, 1);
+        assert_eq!(sb.public_key_of, 0);
+
+        let pk = StatementCost::from_operation(
+            &native_op(NativeOperation::PublicKeyOf, OperationAux::None),
+            &params,
+        );
+        assert_eq!(pk.public_key_of, 1);
+        assert_eq!(pk.signed_by, 0);
+    }
+
+    /// Contains on a tree at depth `<= max_depth_small` is small-eligible;
+    /// at depth `> max_depth_small` it must use a medium slot.
+    #[test]
+    fn contains_routes_by_tree_depth() {
+        let params = Params::default();
+        let max_depth_small = params.containers.max_depth_small;
+
+        let shallow = StatementCost::from_operation(
+            &native_op(
+                NativeOperation::ContainsFromEntries,
+                merkle_proof_aux(max_depth_small),
+            ),
+            &params,
+        );
+        assert_eq!(shallow.merkle_proofs_small, 1);
+        assert_eq!(shallow.merkle_proofs_medium, 0);
+
+        let deep = StatementCost::from_operation(
+            &native_op(
+                NativeOperation::ContainsFromEntries,
+                merkle_proof_aux(max_depth_small + 1),
+            ),
+            &params,
+        );
+        assert_eq!(deep.merkle_proofs_small, 0);
+        assert_eq!(deep.merkle_proofs_medium, 1);
+    }
+
+    /// NotContains has no small-slot path; even shallow proofs land in
+    /// medium because the small state pool supports existence only.
+    #[test]
+    fn not_contains_always_uses_medium_slot() {
+        let params = Params::default();
+        let max_depth_small = params.containers.max_depth_small;
+        let cost = StatementCost::from_operation(
+            &native_op(
+                NativeOperation::NotContainsFromEntries,
+                merkle_proof_aux(max_depth_small),
+            ),
+            &params,
+        );
+        assert_eq!(cost.merkle_proofs_small, 0);
+        assert_eq!(cost.merkle_proofs_medium, 1);
+    }
+
+    /// Update on a shallow tree is small-eligible; Insert / Delete /
+    /// deep-Update all route to medium transition slots.
+    #[test]
+    fn state_transitions_route_by_op_and_depth() {
+        let params = Params::default();
+        let max_depth_small = params.containers.max_depth_small;
+
+        let update_shallow = StatementCost::from_operation(
+            &native_op(
+                NativeOperation::ContainerUpdateFromEntries,
+                state_transition_aux(max_depth_small, MerkleTreeOp::Update),
+            ),
+            &params,
+        );
+        assert_eq!(update_shallow.merkle_state_transitions_small, 1);
+        assert_eq!(update_shallow.merkle_state_transitions_medium, 0);
+
+        let update_deep = StatementCost::from_operation(
+            &native_op(
+                NativeOperation::ContainerUpdateFromEntries,
+                state_transition_aux(max_depth_small + 1, MerkleTreeOp::Update),
+            ),
+            &params,
+        );
+        assert_eq!(update_deep.merkle_state_transitions_small, 0);
+        assert_eq!(update_deep.merkle_state_transitions_medium, 1);
+
+        let insert = StatementCost::from_operation(
+            &native_op(
+                NativeOperation::ContainerInsertFromEntries,
+                state_transition_aux(max_depth_small, MerkleTreeOp::Insert),
+            ),
+            &params,
+        );
+        assert_eq!(insert.merkle_state_transitions_small, 0);
+        assert_eq!(insert.merkle_state_transitions_medium, 1);
     }
 }
