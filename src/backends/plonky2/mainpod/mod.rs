@@ -39,8 +39,8 @@ use crate::{
     middleware::{
         self, containers::Array, value_from_op, wildcard_values_from_op_st, CustomPredicateRef,
         Error as MiddlewareError, Hash, InputPodOpenStatement, MainPodInputs, MainPodProver,
-        NativeOperation, OperationType, Params, Pod, PodType, RawValue, StatementArg, VDSet, Value,
-        ValueRef, BASE_PARAMS,
+        NativeOperation, Params, Pod, PodType, RawValue, StatementArg, VDSet, Value, ValueRef,
+        BASE_PARAMS,
     },
     timed,
 };
@@ -489,40 +489,6 @@ pub(crate) fn process_statements_operations(
     Ok(operations)
 }
 
-// NOTE: In this implementation public statements are always copies from
-// previous statements, so we fill in the operations accordingly.
-/// This method assumes that the given `statements` array has been padded to
-/// `params.max_statements`.
-pub(crate) fn process_public_statements_operations(
-    statements: &[Statement],
-    mut operations: Vec<Operation>,
-) -> Result<Vec<Operation>> {
-    let offset_public_statements = statements.len();
-    for st in statements.iter().skip(offset_public_statements) {
-        let mut op = if st.is_none() {
-            Operation(
-                OperationType::Native(NativeOperation::None),
-                vec![],
-                OperationAux::None,
-            )
-        } else {
-            let mid_arg = st.clone();
-            Operation(
-                OperationType::Native(NativeOperation::CopyStatement),
-                vec![find_op_arg(statements, &mid_arg.try_into()?)?],
-                OperationAux::None,
-            )
-        };
-        fill_pad(
-            &mut op.1,
-            OperationArg::None,
-            BASE_PARAMS.max_operation_args,
-        );
-        operations.push(op);
-    }
-    Ok(operations)
-}
-
 pub struct Prover {}
 
 impl MainPodProver for Prover {
@@ -583,7 +549,6 @@ impl MainPodProver for Prover {
         let (statements_is_pub, statements) = layout_statements(params, &inputs)?;
         let operations =
             process_statements_operations(params, &statements, &aux_list, inputs.operations)?;
-        let operations = process_public_statements_operations(&statements, operations)?;
 
         let (pub_sts_mt, sts_mt_proofs, pub_sts) =
             process_public_statements(&inputs, &statements_is_pub, &statements)?;

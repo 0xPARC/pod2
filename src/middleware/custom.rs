@@ -853,9 +853,6 @@ mod tests {
             vec![value_ref("Alice"), value_ref("Bob"), value_ref(7)],
         );
 
-        // Copies should work.
-        assert!(Operation::CopyStatement(ethdos_example.clone()).check(&params, &ethdos_example)?);
-
         // This could arise as the inductive step.
         let ethdos_ind_example = Statement::Custom(
             CustomPredicateRef::new(eth_dos_distance_batch.clone(), 1),

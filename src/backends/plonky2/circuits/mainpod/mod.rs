@@ -366,6 +366,7 @@ fn append_open_input_statements_aux_table_circuit(
         open_input_statements.len()
     );
     for data in open_input_statements {
+        let measure = measure_gates_begin!(builder, "OpenInputSt");
         let pod = builder.vec_ref_small(params, input_pod_table, data.input_pod_table_index);
         let key = ValueTarget::from_int_lo(builder, data.st_index);
         let raw_st_hash =
@@ -394,6 +395,7 @@ fn append_open_input_statements_aux_table_circuit(
             OperationAuxTableTag::OpenInputStatement as u32,
             &st,
         );
+        measure_gates_end!(builder, measure);
     }
 }
 
@@ -579,7 +581,6 @@ fn verify_operation_circuit(
     // Skip these if there are no resolved op args
     if !cache.op_args.is_empty() {
         op_checks.extend_from_slice(&[
-            verify_copy_circuit(builder, st, &op.op_type, &cache.op_args),
             verify_eq_neq_from_entries_circuit(builder, st, &op.op_type, &cache),
             verify_lt_lteq_from_entries_circuit(builder, st, &op.op_type, &cache),
             verify_transitive_eq_circuit(params, builder, st, &op.op_type, &cache.op_args),
@@ -1507,23 +1508,6 @@ fn verify_lt_to_neq_circuit(
 // Custom Predicate constraints
 //
 
-fn verify_copy_circuit(
-    builder: &mut CircuitBuilder,
-    st: &StatementTarget,
-    op_type: &OperationTypeTarget,
-    resolved_op_args: &[StatementTarget],
-) -> BoolTarget {
-    let measure = measure_gates_begin!(builder, "OpCopy");
-    let op_code_ok = op_type.has_native(builder, NativeOperation::CopyStatement);
-
-    let expected_statement = &resolved_op_args[0];
-    let st_ok = builder.is_equal_flattenable(st, expected_statement);
-
-    let ok = builder.all([op_code_ok, st_ok]);
-    measure_gates_end!(builder, measure);
-    ok
-}
-
 // NOTE: This is a bit messy.  The target types are defined in `common.rs` because they are used in
 // `add_virtual_foo` methods in the trait for the `CircuitBuilder`.  But the constraint logic is
 // here.  Maybe we want to move everything related to custom predicates to its own module, but then
@@ -1939,6 +1923,7 @@ fn verify_main_pod_circuit(
             prev_statement_hashes,
             &aux_table,
         )?;
+        let measure = measure_gates_begin!(builder, "PubSt");
         // proof is insertion (0: insertion, 1: update, 2: deletion)
         builder.assert_zero(st_insert_proof.op);
         // we don't verify the key, a prover could leave gaps in the array but that would break the
@@ -1950,6 +1935,7 @@ fn verify_main_pod_circuit(
         let new_sts_root =
             builder.select_flattenable(params, *is_pub, &st_insert_proof.new_root, &sts_root);
         sts_root = new_sts_root;
+        measure_gates_end!(builder, measure);
     }
 
     measure_gates_end!(builder, measure);

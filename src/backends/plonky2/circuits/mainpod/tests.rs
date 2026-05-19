@@ -350,18 +350,6 @@ fn test_operation_verify_none() -> Result<()> {
 }
 
 #[test]
-fn test_operation_verify_copy() -> Result<()> {
-    let st: mainpod::Statement = Statement::None.into();
-    let op = mainpod::Operation(
-        OperationType::Native(NativeOperation::CopyStatement),
-        vec![OperationArg::Index(0)],
-        OperationAux::None,
-    );
-    let prev_statements = vec![Statement::None.into()];
-    operation_verify(st, op, prev_statements, Aux::default())
-}
-
-#[test]
 fn test_operation_verify_eq() -> Result<()> {
     let dict1 = dict!({"hello" => 55});
     let dict2 = dict!({"world" => 55});

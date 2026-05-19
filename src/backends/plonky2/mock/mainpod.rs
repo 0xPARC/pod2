@@ -13,8 +13,8 @@ use crate::{
         mainpod::{
             extract_merkle_proofs, extract_merkle_transition_proofs, extract_open_input_statements,
             extract_signatures, layout_statements, process_public_statements,
-            process_public_statements_operations, process_statements_operations, MerkleProofs,
-            MerkleTransitionProofs, Operation, OperationAux, SignedBy, Statement,
+            process_statements_operations, MerkleProofs, MerkleTransitionProofs, Operation,
+            OperationAux, SignedBy, Statement,
         },
         mock::emptypod::MockEmptyPod,
         recursion::hash_verifier_data,
@@ -131,7 +131,6 @@ impl MockMainPod {
 
         let operations =
             process_statements_operations(params, &statements, &aux_list, inputs.operations)?;
-        let operations = process_public_statements_operations(&statements, operations)?;
 
         let (pub_sts_mt, _, pub_sts) =
             process_public_statements(&inputs, &statements_is_pub, &statements)?;

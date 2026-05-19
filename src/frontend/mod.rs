@@ -457,7 +457,6 @@ impl MainPodBuilder {
                             return Err(native_arg_error());
                         }
                     }
-                    (CopyStatement, &[OperationArg::Statement(s)], _) => s.clone(),
                     (
                         TransitiveEqualFromStatements,
                         &[OperationArg::Statement(Statement::Equal(r1, r2)), OperationArg::Statement(Statement::Equal(r3, r4))],

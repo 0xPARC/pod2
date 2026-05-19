@@ -99,7 +99,6 @@ impl StatementCost {
 
                     // Operations with no special resource costs
                     NativeOperation::None
-                    | NativeOperation::CopyStatement
                     | NativeOperation::EqualFromEntries
                     | NativeOperation::NotEqualFromEntries
                     | NativeOperation::LtEqFromEntries
