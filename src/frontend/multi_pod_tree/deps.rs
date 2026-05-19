@@ -53,11 +53,10 @@ impl DependencyGraph {
     ) -> Self {
         let mut statement_deps = Vec::with_capacity(statements.len());
 
-        // Map statement content to its first-occurrence index. The "first"
-        // matters for CopyStatement: if `statements[0] = A` and
-        // `statements[2] = copy(A) = A`, the lookup must return 0 (the
-        // original) so the copy's dependency points at the original
-        // rather than itself.
+        // Map statement content to its first-occurrence index. First-wins
+        // so that if the same content appears more than once, later ops
+        // referencing it point at the earliest producer rather than at
+        // themselves.
         let mut statement_to_index: HashMap<&Statement, usize> = HashMap::new();
         for (i, s) in statements.iter().enumerate() {
             if !s.is_none() {
@@ -89,8 +88,7 @@ impl DependencyGraph {
                         // dep_idx == idx: the first occurrence of this
                         // statement content is at the current position,
                         // meaning this operation both takes and produces
-                        // it (e.g. CopyStatement on an external). Fall
-                        // through to the external lookup below.
+                        // it. Fall through to the external lookup below.
                     }
 
                     if let Some(&pod_hash) = external_pod_statements.get(dep_stmt) {
@@ -128,64 +126,5 @@ impl DependencyGraph {
         }
 
         Self { statement_deps }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::{
-        frontend::Operation as FrontendOp,
-        middleware::{NativeOperation, OperationAux, OperationType, Value, ValueRef},
-    };
-
-    fn equal_stmt(n: i64) -> Statement {
-        Statement::Equal(
-            ValueRef::Literal(Value::from(n)),
-            ValueRef::Literal(Value::from(n)),
-        )
-    }
-
-    fn none_op() -> FrontendOp {
-        FrontendOp(
-            OperationType::Native(NativeOperation::None),
-            vec![],
-            OperationAux::None,
-        )
-    }
-
-    fn copy_op(stmt: Statement) -> FrontendOp {
-        FrontendOp(
-            OperationType::Native(NativeOperation::CopyStatement),
-            vec![OperationArg::Statement(stmt)],
-            OperationAux::None,
-        )
-    }
-
-    #[test]
-    fn copy_creates_dependency_on_original() {
-        // CopyStatement(s) produces s. The copy's dependency points at
-        // where s first appears, not at the copy itself.
-        let s = equal_stmt(1);
-        let statements = vec![s.clone(), s.clone()];
-        let operations = vec![none_op(), copy_op(s)];
-
-        let graph = DependencyGraph::build(&statements, &operations, &HashMap::new());
-
-        assert!(graph.statement_deps[0].is_empty());
-        assert_eq!(graph.statement_deps[1], vec![StatementSource::Internal(0)]);
-    }
-
-    #[test]
-    fn multiple_copies_depend_on_original() {
-        let s = equal_stmt(1);
-        let statements = vec![s.clone(), s.clone(), s.clone()];
-        let operations = vec![none_op(), copy_op(s.clone()), copy_op(s)];
-
-        let graph = DependencyGraph::build(&statements, &operations, &HashMap::new());
-
-        assert!(graph.statement_deps[0].is_empty());
-        assert_eq!(graph.statement_deps[1], vec![StatementSource::Internal(0)]);
-        assert_eq!(graph.statement_deps[2], vec![StatementSource::Internal(0)]);
     }
 }
