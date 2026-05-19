@@ -63,7 +63,7 @@ pub fn process_public_statements(
                 .iter()
                 .map(|st| st.clone().into())
                 .collect(),
-            inputs.pods[0].pub_self_statements_mt(),
+            inputs.pods[0].pub_raw_statements_mt(),
         )
     } else {
         (Vec::new(), Array::new(Vec::new()))
@@ -753,7 +753,7 @@ pub fn cache_get_rec_main_pod_common_hash(params: &Params) -> CacheEntry<String>
 #[derive(Serialize, Deserialize)]
 struct Data {
     public_statements: Vec<Statement>,
-    public_statements_mt: Array,
+    // public_statements_mt: Array,
     proof: String,
     verifier_only: String,
     common_hash: String,
@@ -800,7 +800,8 @@ impl Pod for MainPod {
             )));
         }
         // 2. get the merkle root out of the public statements
-        let pub_sts_mt = statements_mt(&self.public_statements);
+        // Note that `public_statements_mt` is built from `public_statements` during deserialize
+        let pub_sts_mt = &self.public_statements_mt;
         if pub_sts_mt.commitment() != self.pub_sts_root {
             return Err(Error::statements_root_not_equal(
                 self.pub_sts_root,
@@ -838,7 +839,7 @@ impl Pod for MainPod {
         (PodType::Main as usize, "Main")
     }
 
-    fn pub_self_statements_mt(&self) -> Array {
+    fn pub_raw_statements_mt(&self) -> Array {
         self.public_statements_mt.clone()
     }
 
@@ -867,7 +868,7 @@ impl Pod for MainPod {
         serde_json::to_value(Data {
             proof: serialize_proof(&self.proof),
             public_statements: self.public_statements.clone(),
-            public_statements_mt: self.public_statements_mt.clone(),
+            // public_statements_mt: self.public_statements_mt.clone(),
             verifier_only: serialize_verifier_only(&self.verifier_only),
             common_hash: self.common_hash.clone(),
         })
@@ -880,6 +881,7 @@ impl Pod for MainPod {
         sts_root: Hash,
     ) -> Result<Self> {
         let data: Data = serde_json::from_value(data)?;
+        let public_statements_mt = statements_mt(&data.public_statements);
         let common = cache_get_rec_main_pod_common_circuit_data(&params);
         let proof = deserialize_proof(&common, &data.proof)?;
         let verifier_only = deserialize_verifier_only(&data.verifier_only)?;
@@ -891,7 +893,7 @@ impl Pod for MainPod {
             vd_set,
             proof,
             public_statements: data.public_statements,
-            public_statements_mt: data.public_statements_mt,
+            public_statements_mt,
         })
     }
 }

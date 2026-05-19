@@ -1172,7 +1172,7 @@ pub trait Pod: fmt::Debug + DynClone + Sync + Send + Any + EqualsAny {
     // TODO: Maybe rename to "mt" instead of "array"?  Be consistent with the names!
     // TODO: Rename `self` by `raw` everywhere
     // Container array of self public statements
-    fn pub_self_statements_mt(&self) -> Array;
+    fn pub_raw_statements_mt(&self) -> Array;
     /// Statements as internally generated, where intro statements don't encode the verifier data
     /// hash.  The serialization of these statements is used to calculate the statements root.
     fn pub_self_statements(&self) -> Vec<Statement>;

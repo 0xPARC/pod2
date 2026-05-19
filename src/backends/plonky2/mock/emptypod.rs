@@ -30,10 +30,13 @@ fn empty_statement() -> Statement {
     )
 }
 
+fn sts_mt() -> Array {
+    Array::new(vec![Value::from(empty_statement().hash())])
+}
+
 impl MockEmptyPod {
     pub fn new_boxed(params: &Params, vd_set: VDSet) -> Box<dyn Pod> {
-        let _statements = [mainpod::Statement::from(empty_statement())];
-        let sts_root = EMPTY_HASH; // TODO
+        let sts_root = sts_mt().commitment();
         Box::new(Self {
             params: params.clone(),
             sts_root,
@@ -52,7 +55,7 @@ impl Pod for MockEmptyPod {
             .into_iter()
             .map(mainpod::Statement::from)
             .collect_vec();
-        let sts_root = EMPTY_HASH; // TODO
+        let sts_root = sts_mt().commitment();
         if sts_root != self.sts_root {
             return Err(Error::statements_root_not_equal(self.sts_root, sts_root));
         }
@@ -65,7 +68,7 @@ impl Pod for MockEmptyPod {
         (PodType::MockEmpty as usize, "MockEmpty")
     }
 
-    fn pub_self_statements_mt(&self) -> Array {
+    fn pub_raw_statements_mt(&self) -> Array {
         Array::new(vec![Value::from(empty_statement().hash())])
     }
 

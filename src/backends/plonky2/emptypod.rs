@@ -196,7 +196,7 @@ impl Pod for EmptyPod {
         (PodType::Empty as usize, "Empty")
     }
 
-    fn pub_self_statements_mt(&self) -> Array {
+    fn pub_raw_statements_mt(&self) -> Array {
         sts_mt()
     }
 
