@@ -1827,7 +1827,7 @@ impl CircuitBuilderPod<F, D> for CircuitBuilder {
     }
 
     fn vec_ref<T: Flattenable>(&mut self, params: &Params, ts: &[T], i: &IndexTarget) -> T {
-        assert!(ts.len() > 0);
+        assert!(!ts.is_empty());
         let matrix_row_ref = |builder: &mut CircuitBuilder, m: &[Vec<Target>], i| {
             let num_rows = m.len();
             let num_columns = m

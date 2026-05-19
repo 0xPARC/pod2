@@ -172,7 +172,7 @@ impl Pod for EmptyPod {
         let statements = self
             .pub_self_statements()
             .into_iter()
-            .map(|st| Value::from(Statement::from(st).hash()))
+            .map(|st| Value::from(st.hash()))
             .collect_vec();
         let sts_root = Array::new(statements).commitment();
         if sts_root != self.sts_root {

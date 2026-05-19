@@ -74,7 +74,7 @@ pub fn process_public_statements(
         let st_hash = Value::from(st.hash());
         let proof = if *is_pub {
             let proof = pub_sts_mt.insert(pub_sts.len(), st_hash)?;
-            pub_sts.push(st.clone().into());
+            pub_sts.push(st.clone());
             proof
         } else {
             // Insert in a copy so that merkle proof verification passes, but the result is ignored

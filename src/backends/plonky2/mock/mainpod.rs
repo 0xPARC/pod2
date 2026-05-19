@@ -119,7 +119,7 @@ impl MockMainPod {
 
         let input_statements: Vec<_> = inputs
             .statements
-            .into_iter()
+            .iter()
             .map(|(_, st)| st.clone())
             .collect();
         let mut aux_list = vec![OperationAux::None; params.max_statements];

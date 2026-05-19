@@ -723,7 +723,7 @@ impl MainPodBuilder {
             // An implicit None always exists at index 0
             return Ok(());
         }
-        if self.statements.iter().find(|(_, st0)| st0 == st).is_some() {
+        if self.statements.iter().any(|(_, st0)| st0 == st) {
             return Ok(());
         }
         for (pod_index, pod) in self.input_pods.iter().enumerate() {
@@ -816,7 +816,7 @@ impl MainPodBuilder {
         public_statements.extend(
             statements
                 .into_iter()
-                .filter_map(|(public, st)| public.then(|| Statement::from(st))),
+                .filter_map(|(public, st)| public.then_some(st)),
         );
 
         Ok(MainPod {
@@ -926,6 +926,7 @@ impl MainPodCompiler {
         }
     }
 
+    #[allow(clippy::type_complexity)]
     pub fn compile(
         mut self,
         inputs: MainPodCompilerInputs<'_>,

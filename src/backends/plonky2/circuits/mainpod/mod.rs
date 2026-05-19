@@ -435,7 +435,7 @@ fn build_operation_aux_table_circuit(
         params,
         builder,
         &mut table,
-        &input_pod_table,
+        input_pod_table,
         &input.open_input_statements,
     );
 
@@ -454,7 +454,7 @@ fn build_operation_aux_table_circuit(
         // Check that the batch id is correct by querying the custom predicate batches table
         let table_query_hash = builder.vec_ref(
             params,
-            &custom_predicate_table,
+            custom_predicate_table,
             &entry.custom_predicate_table_index,
         );
         let out_query_hash = entry.custom_predicate.hash(builder);
@@ -1032,7 +1032,7 @@ fn verify_open_input_statement_circuit(
     let (aux_tag_ok, resolved_statement) =
         aux.as_type::<StatementTarget>(builder, OperationAuxTableTag::OpenInputStatement as u32);
     let op_code_ok = op_type.has_native(builder, NativeOperation::OpenInputStatement);
-    let query_ok = builder.is_equal_flattenable(&resolved_statement, &st);
+    let query_ok = builder.is_equal_flattenable(&resolved_statement, st);
 
     let ok = builder.all([op_code_ok, aux_tag_ok, query_ok]);
     measure_gates_end!(builder, measure);
@@ -1943,7 +1943,7 @@ fn verify_main_pod_circuit(
         builder.assert_zero(st_insert_proof.op);
         // we don't verify the key, a prover could leave gaps in the array but that would break the
         // verification
-        let st_hash = statement_hashes[i].clone();
+        let st_hash = statement_hashes[i];
         builder.connect_flattenable(&st_insert_proof.op_value, &ValueTarget::from(st_hash));
         builder.connect_flattenable(&st_insert_proof.old_root, &sts_root);
         verify_merkle_state_transition_circuit(builder, st_insert_proof);
@@ -2136,7 +2136,7 @@ impl AuxTableInputTargets {
             input.custom_predicate_verifications.len() <= params.max_custom_predicate_verifications
         );
         for (i, cpv) in input.custom_predicate_verifications.iter().enumerate() {
-            self.custom_predicate_verifications[i].set_targets(pw, &params, cpv)?;
+            self.custom_predicate_verifications[i].set_targets(pw, params, cpv)?;
         }
         // Padding.  Use the first input if it exists.  If it doesnt, all batches in this MainPod
         // are padding so refer to the first padding entry.
@@ -2155,7 +2155,7 @@ impl AuxTableInputTargets {
         for i in
             input.custom_predicate_verifications.len()..params.max_custom_predicate_verifications
         {
-            self.custom_predicate_verifications[i].set_targets(pw, &params, pad_cpv)?;
+            self.custom_predicate_verifications[i].set_targets(pw, params, pad_cpv)?;
         }
 
         Ok(())
@@ -2316,7 +2316,7 @@ impl InnerCircuit for MainPodVerifyTarget {
             pw.set_bool_target(self.statements_is_pub[i], *is_pub)?;
             self.statements[i].set_targets(pw, st)?;
             self.operations[i].set_targets(pw, &self.params, op)?;
-            self.sts_mt_proofs[i].set_targets(pw, &sts_mt_proof)?;
+            self.sts_mt_proofs[i].set_targets(pw, sts_mt_proof)?;
         }
 
         assert!(input.custom_predicates_with_mpt_proofs.len() <= self.params.max_custom_predicates);
