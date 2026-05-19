@@ -503,7 +503,7 @@ mod tests {
         proof.pod.verify()?;
 
         // Verify the public statement contains pred_b_hash as its argument
-        let pub_sts = proof.pod.pub_self_statements();
+        let pub_sts = proof.pod.pub_raw_statements();
         let custom_st = pub_sts
             .iter()
             .find(|s| matches!(s, middleware::Statement::Custom(_, _)))

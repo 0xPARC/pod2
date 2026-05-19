@@ -24,11 +24,21 @@ pub enum OperationType {
     Custom(CustomPredicateRef),
 }
 
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct InputPodOpenStatement {
+    pub pod_index: usize,
+    pub sts_root: Hash,
+    pub st_index: usize,
+    pub proof: MerkleProof,
+    pub raw_statement: Statement,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum OperationAux {
     None,
     MerkleProof(MerkleProof),
     MerkleTreeStateTransitionProof(MerkleTreeStateTransitionProof),
+    OpenInputStatement(InputPodOpenStatement),
     Signature(Signature),
 }
 
@@ -41,6 +51,17 @@ impl fmt::Display for OperationAux {
             Self::MerkleTreeStateTransitionProof(pf) => {
                 write!(f, "merkle_tree_state_transition_proof({:?})", pf)?
             }
+            Self::OpenInputStatement(InputPodOpenStatement {
+                pod_index,
+                sts_root,
+                st_index,
+                proof,
+                raw_statement,
+            }) => write!(
+                f,
+                "pod_input_merkle_proof({}, {}, {}, {:?}, {})",
+                pod_index, sts_root, st_index, proof, raw_statement
+            )?,
             Self::Signature(sig) => write!(f, "signature({:?})", sig)?,
         }
         Ok(())
@@ -71,7 +92,6 @@ impl ToFields for OperationType {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, std::hash::Hash, Serialize, Deserialize)]
 pub enum NativeOperation {
     None = 0,
-    CopyStatement = 1,
     EqualFromEntries = 2,
     NotEqualFromEntries = 3,
     LtEqFromEntries = 4,
@@ -90,6 +110,7 @@ pub enum NativeOperation {
     ContainerUpdateFromEntries = 17,
     ContainerDeleteFromEntries = 18,
     ReplaceValueWithEntry = 19,
+    OpenInputStatement = 20,
 
     // Syntactic sugar operations.  These operations are not supported by the backend.  The
     // frontend compiler is responsible of translating these operations into the operations above.
@@ -123,13 +144,12 @@ impl ToFields for NativeOperation {
 
 impl OperationType {
     /// Gives the type of predicate that the operation will output, if known.
-    /// CopyStatement may output any predicate (it will match the statement copied),
-    /// so output_predicate returns None on CopyStatement.
+    /// Some operations may output any predicate, so output_predicate returns None on those cases.
     pub fn output_predicate(&self) -> Option<Predicate> {
         match self {
             OperationType::Native(native_op) => match native_op {
                 NativeOperation::None => Some(Predicate::Native(NativePredicate::None)),
-                NativeOperation::CopyStatement => None,
+                NativeOperation::OpenInputStatement => None,
                 NativeOperation::EqualFromEntries => {
                     Some(Predicate::Native(NativePredicate::Equal))
                 }
@@ -177,7 +197,6 @@ impl OperationType {
 #[derive(Clone, Debug, PartialEq)]
 pub enum Operation {
     None,
-    CopyStatement(Statement),
     EqualFromEntries(Statement, Statement),
     NotEqualFromEntries(Statement, Statement),
     LtEqFromEntries(Statement, Statement),
@@ -225,6 +244,7 @@ pub enum Operation {
         /* Contains/None len=max_statement_args */ Vec<Statement>,
         /* to copy */ Statement,
     ),
+    OpenInputStatement(InputPodOpenStatement),
     Custom(CustomPredicateRef, Vec<Statement>),
 }
 
@@ -254,7 +274,6 @@ impl Operation {
         use NativeOperation::*;
         match self {
             Self::None => OT::Native(None),
-            Self::CopyStatement(_) => OT::Native(CopyStatement),
             Self::EqualFromEntries(_, _) => OT::Native(EqualFromEntries),
             Self::NotEqualFromEntries(_, _) => OT::Native(NotEqualFromEntries),
             Self::LtEqFromEntries(_, _) => OT::Native(LtEqFromEntries),
@@ -277,6 +296,7 @@ impl Operation {
             }
             Self::ContainerDeleteFromEntries(_, _, _, _) => OT::Native(ContainerDeleteFromEntries),
             Self::ReplaceValueWithEntry(_, _) => OT::Native(ReplaceValueWithEntry),
+            Self::OpenInputStatement { .. } => OT::Native(OpenInputStatement),
             Self::Custom(cpr, _) => OT::Custom(cpr.clone()),
         }
     }
@@ -284,7 +304,6 @@ impl Operation {
     pub fn args(&self) -> Vec<Statement> {
         match self.clone() {
             Self::None => vec![],
-            Self::CopyStatement(s) => vec![s],
             Self::EqualFromEntries(s1, s2) => vec![s1, s2],
             Self::NotEqualFromEntries(s1, s2) => vec![s1, s2],
             Self::LtEqFromEntries(s1, s2) => vec![s1, s2],
@@ -307,6 +326,7 @@ impl Operation {
                 sts.push(s);
                 sts
             }
+            Self::OpenInputStatement { .. } => vec![],
             Self::Custom(_, args) => args,
         }
     }
@@ -327,7 +347,6 @@ impl Operation {
         Ok(match op_code {
             OperationType::Native(o) => match (o, &args, aux.clone()) {
                 (NO::None, &[], OA::None) => Self::None,
-                (NO::CopyStatement, &[s], OA::None) => Self::CopyStatement(s.clone()),
                 (NO::EqualFromEntries, &[s1, s2], OA::None) => {
                     Self::EqualFromEntries(s1.clone(), s2.clone())
                 }
@@ -400,6 +419,9 @@ impl Operation {
                     }
                     let st = args.pop().expect("valid vec len");
                     Self::ReplaceValueWithEntry(args, st)
+                }
+                (NO::OpenInputStatement, &[], OA::OpenInputStatement(input_pod_open_statement)) => {
+                    Self::OpenInputStatement(input_pod_open_statement)
                 }
                 _ => Err(Error::custom(format!(
                     "Ill-formed operation {:?} with {} arguments {:?} and aux {:?}.",
@@ -495,7 +517,6 @@ impl Operation {
         };
         let b = match (self, output_statement) {
             (Self::None, None) => true,
-            (Self::CopyStatement(s1), s2) => s1 == s2,
             (Self::EqualFromEntries(s1, s2), Equal(v3, v4)) => val(v3, s1)? == val(v4, s2)?,
             (Self::NotEqualFromEntries(s1, s2), NotEqual(v3, v4)) => val(v3, s1)? != val(v4, s2)?,
             (Self::LtEqFromEntries(s1, s2), LtEq(v3, v4)) => int_val(v3, s1)? <= int_val(v4, s2)?,
@@ -613,6 +634,16 @@ impl Operation {
             }
             (Self::ReplaceValueWithEntry(entries, st_in), st_out) => {
                 Self::check_replace_value_with_entry(entries, st_in, st_out)?
+            }
+            (Self::OpenInputStatement(data), st) => {
+                let st_hash = st.hash();
+                MerkleTree::verify(
+                    data.sts_root,
+                    &data.proof,
+                    &Value::from(data.st_index as i64).raw(),
+                    &st_hash.raw(),
+                )
+                .is_ok()
             }
             _ => return Err(deduction_err()),
         };

@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use super::Error;
 use crate::{
     frontend::MainPod,
-    middleware::{deserialize_pod, Hash, Params, Statement, VDSet},
+    middleware::{deserialize_pod, Params, Statement, VDSet},
 };
 
 #[derive(Serialize, Deserialize, JsonSchema, Debug, Clone, PartialEq)]
@@ -13,16 +13,9 @@ use crate::{
 pub struct SerializedMainPod {
     params: Params,
     pod_type: (usize, String),
-    sts_hash: Hash,
     vd_set: VDSet,
     public_statements: Vec<Statement>,
     data: serde_json::Value,
-}
-
-impl SerializedMainPod {
-    pub fn statements_hash(&self) -> Hash {
-        self.sts_hash
-    }
 }
 
 impl From<MainPod> for SerializedMainPod {
@@ -31,7 +24,6 @@ impl From<MainPod> for SerializedMainPod {
         let data = pod.pod.serialize_data();
         SerializedMainPod {
             pod_type: (pod_type, pod_type_name_str.to_string()),
-            sts_hash: pod.statements_hash(),
             vd_set: pod.pod.vd_set().clone(),
             params: pod.params.clone(),
             public_statements: pod.pod.pub_statements(),
@@ -47,7 +39,6 @@ impl TryFrom<SerializedMainPod> for MainPod {
         let pod = deserialize_pod(
             serialized.pod_type.0,
             serialized.params.clone(),
-            serialized.sts_hash,
             serialized.vd_set,
             serialized.data,
         )?;
@@ -234,8 +225,8 @@ mod tests {
 
         assert_eq!(kyc_pod.public_statements, deserialized.public_statements);
         assert_eq!(
-            kyc_pod.pod.statements_hash(),
-            deserialized.pod.statements_hash()
+            kyc_pod.pod.statements_root(),
+            deserialized.pod.statements_root()
         );
         assert_eq!(kyc_pod.pod.verify()?, deserialized.pod.verify()?);
 
@@ -250,8 +241,8 @@ mod tests {
 
         assert_eq!(kyc_pod.public_statements, deserialized.public_statements);
         assert_eq!(
-            kyc_pod.pod.statements_hash(),
-            deserialized.pod.statements_hash()
+            kyc_pod.pod.statements_root(),
+            deserialized.pod.statements_root()
         );
         assert_eq!(kyc_pod.pod.verify()?, deserialized.pod.verify()?);
 
@@ -260,9 +251,8 @@ mod tests {
 
     fn build_ethdos_pod() -> Result<MainPod> {
         let params = Params {
-            max_input_pods_public_statements: 8,
             max_statements: 24,
-            max_public_statements: 8,
+            max_open_input_statements: 8,
             ..Default::default()
         };
         let vd_set = &*MOCK_VD_SET;

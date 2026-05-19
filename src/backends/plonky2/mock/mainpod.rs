@@ -11,17 +11,17 @@ use crate::{
         basetypes::{Proof, VerifierOnlyCircuitData},
         error::{Error, Result},
         mainpod::{
-            calculate_statements_hash, extract_merkle_proofs, extract_merkle_transition_proofs,
-            extract_signatures, layout_statements, process_private_statements_operations,
-            process_public_statements_operations, MerkleProofs, MerkleTransitionProofs, Operation,
+            extract_merkle_proofs, extract_merkle_transition_proofs, extract_open_input_statements,
+            extract_signatures, layout_statements, process_public_statements,
+            process_statements_operations, MerkleProofs, MerkleTransitionProofs, Operation,
             OperationAux, SignedBy, Statement,
         },
         mock::emptypod::MockEmptyPod,
         recursion::hash_verifier_data,
     },
     middleware::{
-        self, deserialize_pod, Hash, MainPodInputs, MainPodProver, Params, Pod, PodType, VDSet,
-        EMPTY_HASH,
+        self, containers::Array, deserialize_pod, Hash, InputPodOpenStatement, MainPodInputs,
+        MainPodProver, Params, Pod, PodType, VDSet, EMPTY_HASH,
     },
 };
 
@@ -36,18 +36,18 @@ impl MainPodProver for MockProver {
 #[derive(Clone, Debug, PartialEq)]
 pub struct MockMainPod {
     params: Params,
-    sts_hash: Hash,
     vd_set: VDSet,
     input_pods: Vec<Box<dyn Pod>>,
-    // All statements (inherited + newly introduced by this pod)
+    statements_is_pub: Vec<bool>,
     statements: Vec<Statement>,
     operations: Vec<Operation>,
-    // public subset of the `statements` vector
     public_statements: Vec<Statement>,
+    public_statements_mt: Array,
     // All Merkle proofs for containers
     merkle_proofs: MerkleProofs,
     // All Merkle tree state transition proofs for containers
     merkle_transition_proofs: MerkleTransitionProofs,
+    open_input_statements: Vec<InputPodOpenStatement>,
     // All verified signatures
     signatures: Vec<SignedBy>,
 }
@@ -56,37 +56,12 @@ impl Eq for MockMainPod {}
 
 impl fmt::Display for MockMainPod {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        writeln!(f, "MockMainPod ({}):", self.sts_hash)?;
-        let offset_input_pods = self.offset_input_pods();
-        let offset_input_statements = self.offset_input_statements();
-        let offset_public_statements = self.offset_public_statements();
+        writeln!(f, "MockMainPod ({}):", self.statements_root())?;
+        writeln!(f, "  statements:")?;
         for (i, st) in self.statements.iter().enumerate() {
-            if self.params.max_input_pods > 0
-                && (i >= offset_input_pods)
-                && (i < offset_input_statements)
-                && (i - offset_input_pods)
-                    .is_multiple_of(self.params.max_input_pods_public_statements)
-            {
-                let index = (i - offset_input_pods) / self.params.max_input_pods_public_statements;
-                let pod = &self.input_pods[index];
-                let id = pod.statements_hash();
-                let pod_type = pod.pod_type();
-                writeln!(
-                    f,
-                    "  from input recursive Pod {} (id={}, type={:?}):",
-                    index, id, pod_type
-                )?;
-            }
-            if i == offset_input_statements {
-                writeln!(f, "  private statements:")?;
-            }
-            if i == offset_public_statements {
-                writeln!(f, "  public statements:")?;
-            }
-
-            let op = (i >= offset_input_statements)
-                .then(|| &self.operations[i - offset_input_statements]);
-            fmt_statement_index(f, st, op, i)?;
+            let is_pub = self.statements_is_pub[i];
+            let op = &self.operations[i];
+            fmt_statement_index(f, is_pub, st, op, i)?;
         }
         Ok(())
     }
@@ -94,24 +69,28 @@ impl fmt::Display for MockMainPod {
 
 fn fmt_statement_index(
     f: &mut fmt::Formatter,
+    is_pub: bool,
     st: &Statement,
-    op: Option<&Operation>,
+    op: &Operation,
     index: usize,
 ) -> fmt::Result {
     if f.alternate() || !st.is_none() {
         write!(f, "    {:03}. ", index)?;
+        if is_pub {
+            write!(f, "pub ")?;
+        } else {
+            write!(f, "prv ")?;
+        }
         if f.alternate() {
             write!(f, "{:#}", &st)?;
         } else {
             write!(f, "{}", &st)?;
         }
-        if let Some(op) = op {
-            write!(f, " <- ")?;
-            if f.alternate() {
-                write!(f, "{:#}", op)?;
-            } else {
-                write!(f, "{}", op)?;
-            }
+        write!(f, " <- ")?;
+        if f.alternate() {
+            write!(f, "{:#}", op)?;
+        } else {
+            write!(f, "{}", op)?;
         }
         writeln!(f)?;
     }
@@ -120,53 +99,41 @@ fn fmt_statement_index(
 
 #[derive(Serialize, Deserialize)]
 struct Data {
+    // TODO: Change to inherited pub statements to reduce data
     public_statements: Vec<Statement>,
+    public_statements_mt: Array,
     operations: Vec<Operation>,
+    statements_is_pub: Vec<bool>,
     statements: Vec<Statement>,
     merkle_proofs: MerkleProofs,
     merkle_transition_proofs: MerkleTransitionProofs,
+    open_input_statements: Vec<InputPodOpenStatement>,
     signatures: Vec<SignedBy>,
-    input_pods: Vec<(usize, Params, Hash, VDSet, serde_json::Value)>,
+    input_pods: Vec<(usize, Params, VDSet, serde_json::Value)>,
 }
 
-/// Inputs are sorted as:
-/// - Pods
-/// - private Statements
-/// - public Statements
 impl MockMainPod {
-    fn offset_input_pods(&self) -> usize {
-        1
-    }
-    fn offset_input_statements(&self) -> usize {
-        self.offset_input_pods()
-            + self.params.max_input_pods * self.params.max_input_pods_public_statements
-    }
-    fn offset_public_statements(&self) -> usize {
-        self.offset_input_statements() + self.params.max_priv_statements()
-    }
-
     pub fn new(params: &Params, inputs: MainPodInputs) -> Result<Self> {
-        let (statements, public_statements) = layout_statements(params, true, &inputs)?;
-        let mut aux_list = vec![OperationAux::None; params.max_priv_statements()];
+        let (statements_is_pub, statements) = layout_statements(params, &inputs)?;
+
+        let input_statements: Vec<_> = inputs.statements.iter().map(|(_, st)| st.clone()).collect();
+        let mut aux_list = vec![OperationAux::None; params.max_statements];
         // Extract Merkle proofs and pad.
         let merkle_proofs =
-            extract_merkle_proofs(params, &mut aux_list, inputs.operations, inputs.statements)?;
+            extract_merkle_proofs(params, &mut aux_list, inputs.operations, &input_statements)?;
         // Similarly for Merkle state transition proofs.
         let merkle_transition_proofs =
             extract_merkle_transition_proofs(params, &mut aux_list, inputs.operations)?;
+        let open_input_statements =
+            extract_open_input_statements(params, &mut aux_list, inputs.operations)?;
         let signatures =
-            extract_signatures(params, &mut aux_list, inputs.operations, inputs.statements)?;
+            extract_signatures(params, &mut aux_list, inputs.operations, &input_statements)?;
 
-        let operations = process_private_statements_operations(
-            params,
-            &statements,
-            &aux_list,
-            inputs.operations,
-        )?;
-        let operations = process_public_statements_operations(params, &statements, operations)?;
+        let operations =
+            process_statements_operations(params, &statements, &aux_list, inputs.operations)?;
 
-        // get the id out of the public statements
-        let sts_hash = calculate_statements_hash(&public_statements);
+        let (pub_sts_mt, _, pub_sts) =
+            process_public_statements(&inputs, &statements_is_pub, &statements)?;
 
         let pad_pod = MockEmptyPod::new_boxed(params, inputs.vd_set.clone());
         let input_pods: Vec<Box<dyn Pod>> = inputs
@@ -178,20 +145,54 @@ impl MockMainPod {
             .collect();
         Ok(Self {
             params: params.clone(),
-            sts_hash,
             vd_set: inputs.vd_set,
             input_pods,
-            public_statements,
+            public_statements: pub_sts,
+            public_statements_mt: pub_sts_mt,
+            statements_is_pub,
             statements,
             operations,
             merkle_proofs,
             merkle_transition_proofs,
+            open_input_statements,
             signatures,
         })
     }
 
     pub fn params(&self) -> &Params {
         &self.params
+    }
+
+    fn precheck_open_input_statement(&self, op: &InputPodOpenStatement) -> Result<()> {
+        let InputPodOpenStatement {
+            pod_index,
+            sts_root,
+            st_index,
+            raw_statement,
+            ..
+        } = op;
+        let pod = &self.input_pods[*pod_index];
+        let sts_root0 = pod.statements_root();
+        if sts_root0 != *sts_root {
+            return Err(Error::custom(format!("OpenInputStatement uses a statements root different than the input pod one: {} != {}", sts_root, sts_root0)));
+        }
+        let raw_statement0 = &pod.pub_raw_statements()[*st_index];
+        if raw_statement0 != raw_statement {
+            return Err(Error::custom(format!("OpenInputStatement uses a raw_statement different than the input pod one: {} != {}", raw_statement0, raw_statement)));
+        }
+        // Introduction pods can only have Introduction or None statements
+        if !pod.is_main() {
+            match raw_statement0 {
+                middleware::Statement::None | middleware::Statement::Intro(_, _) => {}
+                _ => {
+                    return Err(Error::custom(format!(
+                        "Introduction Pod has a non-introduction statement: {}",
+                        raw_statement0,
+                    )))
+                }
+            }
+        }
+        Ok(())
     }
 }
 
@@ -231,7 +232,7 @@ impl Pod for MockMainPod {
             }
             // Introduction pods can only have Introduction or None statements
             if !pod.is_main() {
-                for self_st in pod.pub_self_statements() {
+                for self_st in pod.pub_raw_statements() {
                     match self_st {
                         middleware::Statement::None | middleware::Statement::Intro(_, _) => {}
                         _ => {
@@ -245,24 +246,24 @@ impl Pod for MockMainPod {
             }
         }
 
-        let input_statement_offset = self.offset_input_statements();
-        // get the input_statements from the self.statements
-        let input_statements = &self.statements[input_statement_offset..];
-
         // 5. verify that all `input_statements` are correctly generated
         // by `self.operations` (where each operation can only access previous statements)
-        let statement_check = input_statements
+        let statement_check = self
+            .statements
             .iter()
             .enumerate()
             .map(|(i, s)| {
-                self.operations[i]
-                    .deref(
-                        &self.statements[..input_statement_offset + i],
-                        &self.signatures,
-                        &self.merkle_proofs,
-                        &self.merkle_transition_proofs,
-                    )?
-                    .check_and_log(&self.params, &s.clone().try_into()?)
+                let op = self.operations[i].deref(
+                    &self.statements,
+                    &self.signatures,
+                    &self.merkle_proofs,
+                    &self.merkle_transition_proofs,
+                    &self.open_input_statements,
+                )?;
+                if let middleware::Operation::OpenInputStatement(op) = &op {
+                    self.precheck_open_input_statement(op)?;
+                }
+                op.check_and_log(&self.params, &s.clone().try_into()?)
                     .map_err(|e| e.into())
             })
             .collect::<Result<Vec<_>>>()?;
@@ -272,13 +273,14 @@ impl Pod for MockMainPod {
         Ok(())
     }
 
-    fn statements_hash(&self) -> Hash {
-        self.sts_hash
-    }
     fn pod_type(&self) -> (usize, &'static str) {
         (PodType::MockMain as usize, "MockMain")
     }
-    fn pub_self_statements(&self) -> Vec<middleware::Statement> {
+    fn pub_raw_statements_mt(&self) -> Array {
+        self.public_statements_mt.clone()
+    }
+
+    fn pub_raw_statements(&self) -> Vec<middleware::Statement> {
         self.public_statements
             .iter()
             .cloned()
@@ -310,7 +312,6 @@ impl Pod for MockMainPod {
                 (
                     p.pod_type().0,
                     p.params().clone(),
-                    p.statements_hash(),
                     p.vd_set().clone(),
                     p.serialize_data(),
                 )
@@ -318,10 +319,13 @@ impl Pod for MockMainPod {
             .collect();
         serde_json::to_value(Data {
             public_statements: self.public_statements.clone(),
+            public_statements_mt: self.public_statements_mt.clone(),
             operations: self.operations.clone(),
+            statements_is_pub: self.statements_is_pub.clone(),
             statements: self.statements.clone(),
             merkle_proofs: self.merkle_proofs.clone(),
             merkle_transition_proofs: self.merkle_transition_proofs.clone(),
+            open_input_statements: self.open_input_statements.clone(),
             signatures: self.signatures.clone(),
             input_pods,
         })
@@ -330,37 +334,35 @@ impl Pod for MockMainPod {
     // MockMainPods include some internal private state which is necessary
     // for verification. In non-mock Pods, this state will not be necessary,
     // as the public statements can be verified using a ZK proof.
-    fn deserialize_data(
-        params: Params,
-        data: serde_json::Value,
-        vd_set: VDSet,
-        sts_hash: Hash,
-    ) -> Result<Self> {
+    fn deserialize_data(params: Params, data: serde_json::Value, vd_set: VDSet) -> Result<Self> {
         let Data {
             public_statements,
+            public_statements_mt, // TODO: Derive this from public_statements
             operations,
             statements,
+            statements_is_pub,
             merkle_proofs,
             merkle_transition_proofs,
+            open_input_statements,
             signatures,
             input_pods,
         } = serde_json::from_value(data)?;
         let input_pods = input_pods
             .into_iter()
-            .map(|(pod_type, params, sts_hash, vd_set, data)| {
-                deserialize_pod(pod_type, params, sts_hash, vd_set, data)
-            })
+            .map(|(pod_type, params, vd_set, data)| deserialize_pod(pod_type, params, vd_set, data))
             .collect::<Result<Vec<_>>>()?;
         Ok(Self {
             params,
-            sts_hash,
             vd_set,
             input_pods,
             public_statements,
+            public_statements_mt,
             operations,
+            statements_is_pub,
             statements,
             merkle_proofs,
             merkle_transition_proofs,
+            open_input_statements,
             signatures,
         })
     }

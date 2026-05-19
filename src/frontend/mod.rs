@@ -16,9 +16,9 @@ use crate::middleware::{
     self, check_custom_pred,
     containers::{Container, Dictionary},
     fill_wildcard_values, hash_op, max_op, prod_op, root_key_to_ak, sum_op, AnchoredKey, Hash,
-    MainPodInputs, MainPodProver, NativeOperation, OperationAux, OperationType, Params, PublicKey,
-    RawValue, Signature, Signer, Statement, StatementArg, StrKey, VDSet, Value, ValueRef,
-    BASE_PARAMS, EMPTY_VALUE,
+    InputPodOpenStatement, MainPodInputs, MainPodProver, NativeOperation, OperationAux,
+    OperationType, Params, PublicKey, RawValue, Signature, Signer, Statement, StatementArg, StrKey,
+    VDSet, Value, ValueRef, BASE_PARAMS, EMPTY_VALUE,
 };
 
 mod custom;
@@ -29,10 +29,6 @@ mod pod_request;
 mod serialization;
 pub use custom::*;
 pub use error::*;
-pub use multi_pod::{
-    Error as MultiPodError, MultiPodBuilder, MultiPodResult, MultiPodSolution,
-    Options as MultiPodOptions,
-};
 pub use operation::*;
 pub use pod_request::*;
 
@@ -134,9 +130,10 @@ pub struct MainPodBuilder {
     pub params: Params,
     pub vd_set: VDSet,
     pub input_pods: Vec<MainPod>,
-    pub statements: Vec<Statement>,
+    pub extend_input_pod0_public_statements: bool,
+    /// Vec of (is_public, statement)
+    pub statements: Vec<(bool, Statement)>,
     pub operations: Vec<Operation>,
-    pub public_statements: Vec<Statement>,
     // Internal state
     contains: Vec<(RawValue, RawValue)>, // (root, key)
 }
@@ -150,7 +147,7 @@ impl fmt::Display for MainPodBuilder {
         }
         writeln!(f, "  statements:")?;
         for (st, op) in self.statements.iter().zip_eq(self.operations.iter()) {
-            write!(f, "    - {} <- ", st)?;
+            write!(f, "    - {} {} <- ", if st.0 { "pub" } else { "prv" }, st.1)?;
             write!(f, "{}", op)?;
             writeln!(f)?;
         }
@@ -169,9 +166,9 @@ impl MainPodBuilder {
             params: params.clone(),
             vd_set: vd_set.clone(),
             input_pods: Vec::new(),
+            extend_input_pod0_public_statements: false,
             statements: Vec::new(),
             operations: Vec::new(),
-            public_statements: Vec::new(),
             contains: Vec::new(),
         }
     }
@@ -191,6 +188,9 @@ impl MainPodBuilder {
             _ => Ok(()),
         }
     }
+    pub fn extend_input_pod0_public_statements(&mut self) {
+        self.extend_input_pod0_public_statements = true;
+    }
 
     // If we're adding a Contains statement with literal arguments (an Entry), track it in
     // `dict_contains` to avoid adding it again via `Self::add_entries_contains`.
@@ -206,12 +206,12 @@ impl MainPodBuilder {
         }
     }
 
-    pub fn insert(&mut self, st_op: (Statement, Operation)) -> Result<()> {
+    pub fn insert(&mut self, public: bool, st_op: (Statement, Operation)) -> Result<()> {
         // TODO: Do error handling instead of panic
         let (st, op) = st_op;
         self.track_contains(&st);
 
-        self.statements.push(st);
+        self.statements.push((public, st));
         self.operations.push(op);
         if self.statements.len() > self.params.max_statements {
             return Err(Error::too_many_statements(
@@ -458,7 +458,6 @@ impl MainPodBuilder {
                             return Err(native_arg_error());
                         }
                     }
-                    (CopyStatement, &[OperationArg::Statement(s)], _) => s.clone(),
                     (
                         TransitiveEqualFromStatements,
                         &[OperationArg::Statement(Statement::Equal(r1, r2)), OperationArg::Statement(Statement::Equal(r3, r4))],
@@ -598,6 +597,16 @@ impl MainPodBuilder {
                             .collect::<Result<Vec<_>>>()?;
                         Statement::from_args(st.predicate(), new_st_args)?
                     }
+                    (
+                        OpenInputStatement,
+                        &[],
+                        OperationAux::OpenInputStatement(InputPodOpenStatement {
+                            pod_index,
+                            st_index: index,
+                            ..
+                        }),
+                        // TODO: validate proof
+                    ) => self.input_pods[*pod_index].public_statements[*index].clone(),
                     (t, _, _) => {
                         if t.is_syntactic_sugar() {
                             return Err(Error::custom(format!(
@@ -673,6 +682,63 @@ impl MainPodBuilder {
         Ok(())
     }
 
+    fn op_input_st(&self, pod_index: usize, st_index: usize) -> Result<Operation> {
+        let pod = &self.input_pods[pod_index];
+        let raw_statement = pod.pod.pub_raw_statements()[st_index].clone();
+        let sts_mt = pod.pod.pub_raw_statements_mt();
+        let (_, mt_proof) = sts_mt.prove(st_index)?;
+        Ok(Operation(
+            OperationType::Native(NativeOperation::OpenInputStatement),
+            vec![],
+            OperationAux::OpenInputStatement(InputPodOpenStatement {
+                pod_index,
+                sts_root: sts_mt.commitment(),
+                st_index,
+                proof: mt_proof,
+                raw_statement,
+            }),
+        ))
+    }
+
+    pub fn open_input_st(
+        &mut self,
+        public: bool,
+        pod_index: usize,
+        st: &Statement,
+    ) -> Result<Statement> {
+        let pod = &self.input_pods[pod_index];
+        if let Some(st_index) = pod.public_statements.iter().position(|st0| st0 == st) {
+            let op = self.op_input_st(pod_index, st_index)?;
+            self.op(public, Vec::new(), op)
+        } else {
+            Err(Error::custom(format!(
+                "statement {} not found in pod {}",
+                st, pod_index
+            )))
+        }
+    }
+
+    /// Ensure that the statement exists in the pod.  First search among loaded statements.  If not
+    /// found, search among public statements from input pods and if found, load the statement via
+    /// the OpenInputStatement operation.
+    fn ensure_statement(&mut self, st: &Statement) -> Result<()> {
+        if matches!(st, Statement::None) {
+            // An implicit None always exists at index 0
+            return Ok(());
+        }
+        if self.statements.iter().any(|(_, st0)| st0 == st) {
+            return Ok(());
+        }
+        for (pod_index, pod) in self.input_pods.iter().enumerate() {
+            if let Some(st_index) = pod.public_statements.iter().position(|st0| st0 == st) {
+                let op = self.op_input_st(pod_index, st_index)?;
+                self.op(false, Vec::new(), op)?;
+                return Ok(());
+            }
+        }
+        Err(Error::custom(format!("statement {} not found", st)))
+    }
+
     /// `wildcard_values`: wildcard values to use instead of EMPTY_VALUE for unresolved wildcards
     pub fn op(
         &mut self,
@@ -682,26 +748,46 @@ impl MainPodBuilder {
     ) -> Result<Statement> {
         self.add_entries_contains(&op)?;
         let op = Self::fill_in_aux(Self::lower_op(op)?)?;
+        for arg in &op.1 {
+            if let OperationArg::Statement(st) = arg {
+                self.ensure_statement(st)?;
+            }
+        }
         let st = self.op_statement(wildcard_values, op.clone())?;
         // Skip adding the statement and operation if it already exists
-        if !self.statements.contains(&st) {
-            self.insert((st.clone(), op))?;
-        }
-        if public {
-            self.reveal(&st)?;
+        if let Some((public0, _st0)) = self
+            .statements
+            .iter_mut()
+            .find(|(_public0, st0)| st0 == &st)
+        {
+            // If the statement already exists, only update it to make it public, never to make it
+            // private, so that making a statement public can't be undone.
+            if public && !*public0 {
+                *public0 = true;
+            }
+        } else {
+            self.insert(public, (st.clone(), op))?;
         }
 
         Ok(st)
     }
 
     pub fn reveal(&mut self, st: &Statement) -> Result<()> {
-        if !self.public_statements.contains(st) {
-            self.public_statements.push(st.clone());
+        if let Some((public, _st0)) = self.statements.iter_mut().find(|(_public, st0)| st0 == st) {
+            *public = true;
+        } else {
+            return Err(Error::custom(format!("statement {} not found", st)));
         }
-        if self.public_statements.len() > self.params.max_public_statements {
+
+        let public_count = if self.extend_input_pod0_public_statements {
+            self.input_pods[0].public_statements.len()
+        } else {
+            0
+        } + self.statements.iter().filter(|(public, _)| *public).count();
+        if public_count > 2 << BASE_PARAMS.max_depth_public_statements_mt {
             return Err(Error::too_many_public_statements(
-                self.public_statements.len(),
-                self.params.max_public_statements,
+                public_count,
+                2 << BASE_PARAMS.max_depth_public_statements_mt,
             ));
         }
         Ok(())
@@ -712,24 +798,34 @@ impl MainPodBuilder {
         let inputs = MainPodCompilerInputs {
             statements: &self.statements,
             operations: &self.operations,
-            public_statements: &self.public_statements,
         };
 
-        let (statements, operations, public_statements) = compiler.compile(inputs, &self.params)?;
+        let (statements, operations) = compiler.compile(inputs, &self.params)?;
 
         let inputs = MainPodInputs {
             pods: &self.input_pods.iter().map(|p| p.pod.as_ref()).collect_vec(),
+            extend_pod0_pub_statements: self.extend_input_pod0_public_statements,
             statements: &statements,
             operations: &operations,
-            public_statements: &public_statements,
             vd_set: self.vd_set.clone(),
         };
         let pod = prover.prove(&self.params, inputs)?;
 
+        let mut public_statements = if self.extend_input_pod0_public_statements {
+            self.input_pods[0].public_statements.clone()
+        } else {
+            Vec::new()
+        };
+        public_statements.extend(
+            statements
+                .into_iter()
+                .filter_map(|(public, st)| public.then_some(st)),
+        );
+
         Ok(MainPod {
             pod,
             params: self.params.clone(),
-            public_statements: self.public_statements.clone(),
+            public_statements,
         })
     }
 }
@@ -744,7 +840,7 @@ pub struct MainPod {
 
 impl fmt::Display for MainPod {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        writeln!(f, "MainPod: {}", self.pod.statements_hash())?;
+        writeln!(f, "MainPod: {}", self.pod.statements_root())?;
         writeln!(f, "  valid?  {}", self.pod.verify().is_ok())?;
         writeln!(f, "  statements:")?;
         for st in &self.pod.pub_statements() {
@@ -756,21 +852,20 @@ impl fmt::Display for MainPod {
 
 impl MainPod {
     pub fn statements_hash(&self) -> Hash {
-        self.pod.statements_hash()
+        self.pod.statements_root()
     }
 }
 
 struct MainPodCompilerInputs<'a> {
-    pub statements: &'a [Statement],
+    pub statements: &'a [(bool, Statement)],
     pub operations: &'a [Operation],
-    pub public_statements: &'a [Statement],
 }
 
 /// The compiler converts frontend::Operation into middleware::Operation
 struct MainPodCompiler {
     params: Params,
     // Output
-    statements: Vec<Statement>,
+    statements: Vec<(bool, Statement)>, // Vec of (is_public, statement)
     operations: Vec<middleware::Operation>,
 }
 
@@ -783,8 +878,8 @@ impl MainPodCompiler {
         }
     }
 
-    fn push_st_op(&mut self, st: Statement, op: middleware::Operation) {
-        self.statements.push(st);
+    fn push_st_op(&mut self, public: bool, st: Statement, op: middleware::Operation) {
+        self.statements.push((public, st));
         self.operations.push(op);
         if self.statements.len() > self.params.max_statements {
             panic!("too many statements");
@@ -813,7 +908,13 @@ impl MainPodCompiler {
         Ok(middleware::Operation::op(op.0.clone(), &mop_args, &op.2)?)
     }
 
-    fn compile_st_op(&mut self, st: &Statement, op: &Operation, params: &Params) -> Result<()> {
+    fn compile_st_op(
+        &mut self,
+        public: bool,
+        st: &Statement,
+        op: &Operation,
+        params: &Params,
+    ) -> Result<()> {
         let middle_op = self.compile_op(op)?;
         let is_correct = middle_op.check(params, st)?;
         if !is_correct {
@@ -823,29 +924,28 @@ impl MainPodCompiler {
                 middle_op, st
             )))
         } else {
-            self.push_st_op(st.clone(), middle_op);
+            self.push_st_op(public, st.clone(), middle_op);
             Ok(())
         }
     }
 
+    #[allow(clippy::type_complexity)]
     pub fn compile(
         mut self,
         inputs: MainPodCompilerInputs<'_>,
         params: &Params,
     ) -> Result<(
-        Vec<Statement>, // input statements
+        Vec<(bool, Statement)>, // Vec of (is_public, statement)
         Vec<middleware::Operation>,
-        Vec<Statement>, // public statements
     )> {
         let MainPodCompilerInputs {
             statements,
             operations,
-            public_statements,
         } = inputs;
-        for (st, op) in statements.iter().zip_eq(operations.iter()) {
-            self.compile_st_op(st, op, params)?;
+        for ((public, st), op) in statements.iter().zip_eq(operations.iter()) {
+            self.compile_st_op(*public, st, op, params)?;
         }
-        Ok((self.statements, self.operations, public_statements.to_vec()))
+        Ok((self.statements, self.operations))
     }
 }
 
@@ -929,9 +1029,8 @@ pub mod tests {
     #[test]
     fn test_ethdos_recursive() -> Result<()> {
         let params = Params {
-            max_input_pods_public_statements: 8,
             max_statements: 24,
-            max_public_statements: 8,
+            max_open_input_statements: 8,
             ..Default::default()
         };
         let vd_set = &*MOCK_VD_SET;
@@ -1399,9 +1498,11 @@ pub mod tests {
             OperationAux::None,
         );
         builder
-            .insert((value_of_a.clone(), op_contains.clone()))
+            .insert(false, (value_of_a.clone(), op_contains.clone()))
             .unwrap();
-        builder.insert((value_of_b.clone(), op_contains)).unwrap();
+        builder
+            .insert(false, (value_of_b.clone(), op_contains))
+            .unwrap();
         let st = Statement::equal(
             AnchoredKey::from((&local, "a")),
             AnchoredKey::from((&local, "b")),
@@ -1414,7 +1515,7 @@ pub mod tests {
             ],
             OperationAux::None,
         );
-        builder.insert((st, op)).unwrap();
+        builder.insert(false, (st, op)).unwrap();
 
         let prover = MockProver {};
         let pod = builder.prove(&prover).unwrap();

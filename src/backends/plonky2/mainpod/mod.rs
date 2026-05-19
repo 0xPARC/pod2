@@ -1,12 +1,10 @@
 pub mod operation;
-use crate::middleware::{wildcard_values_from_op_st, PodType, BASE_PARAMS};
 pub mod statement;
 use std::iter;
 
 use itertools::{zip_eq, Itertools};
 use num_bigint::BigUint;
 pub use operation::*;
-use plonky2::{hash::poseidon::PoseidonHash, plonk::config::Hasher};
 use serde::{Deserialize, Serialize};
 pub use statement::*;
 
@@ -15,7 +13,9 @@ use crate::{
         basetypes::{CircuitData, Proof, ProofWithPublicInputs, VerifierOnlyCircuitData, F},
         cache::{self, CacheEntry},
         cache_get_standard_rec_main_pod_common_circuit_data,
-        circuits::mainpod::{CustomPredicateVerification, MainPodVerifyInput, MainPodVerifyTarget},
+        circuits::mainpod::{
+            AuxTableInput, CustomPredicateVerification, MainPodVerifyInput, MainPodVerifyTarget,
+        },
         deserialize_proof, deserialize_verifier_only,
         emptypod::EmptyPod,
         error::{Error, Result},
@@ -37,35 +37,52 @@ use crate::{
         serialize_proof, serialize_verifier_only,
     },
     middleware::{
-        self, value_from_op, CustomPredicateRef, Error as MiddlewareError, Hash, MainPodInputs,
-        MainPodProver, NativeOperation, OperationType, Params, Pod, RawValue, StatementArg,
-        ToFields, VDSet, Value, ValueRef,
+        self, containers::Array, value_from_op, wildcard_values_from_op_st, CustomPredicateRef,
+        Error as MiddlewareError, Hash, InputPodOpenStatement, MainPodInputs, MainPodProver,
+        NativeOperation, Params, Pod, PodType, RawValue, StatementArg, VDSet, Value, ValueRef,
+        BASE_PARAMS,
     },
     timed,
 };
 
-/// Hash a list of public statements to derive the Statements hash.  To make circuits with
-/// different number of `max_public_statements compatible we pad the statements up to
-/// `num_public_statements_id`. As an optimization we front pad with none-statements so that
-/// circuits with a small `max_public_statements` only pay for `max_public_statements` by starting
-/// the poseidon state with a precomputed constant corresponding to the front-padding part: `id =
-/// hash(serialize(reverse(statements || none-statements)))`
-pub fn calculate_statements_hash(statements: &[Statement]) -> middleware::Hash {
-    assert!(statements.len() <= Params::num_public_statements_hash());
-
-    let mut none_st: Statement = middleware::Statement::None.into();
-    pad_statement(&mut none_st);
-    let statements_back_padded = statements
-        .iter()
-        .chain(iter::repeat(&none_st))
-        .take(Params::num_public_statements_hash())
-        .collect_vec();
-    let field_elems = statements_back_padded
-        .iter()
-        .rev()
-        .flat_map(|statement| statement.to_fields())
-        .collect::<Vec<_>>();
-    Hash(PoseidonHash::hash_no_pad(&field_elems).elements)
+pub fn process_public_statements(
+    inputs: &MainPodInputs,
+    statements_is_pub: &[bool],
+    statements: &[Statement],
+) -> Result<(Array, Vec<MerkleTreeStateTransitionProof>, Vec<Statement>)> {
+    // Build the public statements tree
+    let (init_sts, init_sts_mt): (Vec<Statement>, Array) = if inputs.extend_pod0_pub_statements {
+        if !inputs.pods[0].is_main() {
+            return Err(Error::custom(
+                "inherit public statements not allowed with intro pod",
+            ));
+        }
+        (
+            inputs.pods[0]
+                .pub_statements()
+                .iter()
+                .map(|st| st.clone().into())
+                .collect(),
+            inputs.pods[0].pub_raw_statements_mt(),
+        )
+    } else {
+        (Vec::new(), Array::new(Vec::new()))
+    };
+    let (mut pub_sts, mut pub_sts_mt) = (init_sts, init_sts_mt);
+    let mut sts_mt_proofs = Vec::new();
+    for (is_pub, st) in zip_eq(statements_is_pub, statements) {
+        let st_hash = Value::from(st.hash());
+        let proof = if *is_pub {
+            let proof = pub_sts_mt.insert(pub_sts.len(), st_hash)?;
+            pub_sts.push(st.clone());
+            proof
+        } else {
+            // Insert in a copy so that merkle proof verification passes, but the result is ignored
+            pub_sts_mt.clone().insert(pub_sts.len(), st_hash)?
+        };
+        sts_mt_proofs.push(proof);
+    }
+    Ok((pub_sts_mt, sts_mt_proofs, pub_sts))
 }
 
 /// Extracts unique `CustomPredicate`s from Custom ops.
@@ -276,7 +293,7 @@ pub(crate) fn extract_public_key_of(
         return Err(Error::custom(format!(
             "The number of required PublicKeyOf verifications ({}) exceeds the maximum number ({}).",
             table.len(),
-            params.max_public_statements
+            params.max_public_key_of
         )));
     }
     Ok(table)
@@ -338,6 +355,28 @@ pub(crate) fn extract_signatures(
     Ok(table)
 }
 
+pub(crate) fn extract_open_input_statements(
+    params: &Params,
+    aux_list: &mut [OperationAux],
+    operations: &[middleware::Operation],
+) -> Result<Vec<InputPodOpenStatement>> {
+    let mut table = Vec::new();
+    for (i, op) in operations.iter().enumerate() {
+        if let middleware::Operation::OpenInputStatement(input_pod_open_statement) = op {
+            aux_list[i] = OperationAux::OpenInputStatement(table.len());
+            table.push(input_pod_open_statement.clone());
+        }
+    }
+    if table.len() > params.max_open_input_statements {
+        return Err(Error::custom(format!(
+            "The number of required input openings ({}) exceeds the maximum number ({}).",
+            table.len(),
+            params.max_open_input_statements
+        )));
+    }
+    Ok(table)
+}
+
 /// Find the operation argument statement in the list of previous statements and return the index.
 fn find_op_arg(statements: &[Statement], op_arg: &middleware::Statement) -> Result<OperationArg> {
     // NOTE: The `None` `Statement` always exists as a constant at index 0
@@ -372,89 +411,67 @@ fn pad_operation_args(args: &mut Vec<OperationArg>) {
 }
 
 /// Returns the statements from the given MainPodInputs, padding to the respective max lengths
-/// defined at the given Params.  Also returns a copy of the dynamic-length public statements from
-/// the list of statements.
+/// defined at the given Params.
 pub(crate) fn layout_statements(
     params: &Params,
-    mock: bool,
     inputs: &MainPodInputs,
-) -> Result<(Vec<Statement>, Vec<Statement>)> {
+) -> Result<(Vec<bool>, Vec<Statement>)> {
+    let mut statements_is_pub = Vec::new();
     let mut statements = Vec::new();
 
     // Statement at index 0 is always None to be used for padding operation arguments in custom
     // predicate statements
     statements.push(middleware::Statement::None.into());
-
-    // Input pods region
-    let empty_pod_box: Box<dyn Pod> = if mock || inputs.pods.len() == params.max_input_pods {
-        // We mocking or we don't need padding so we skip creating an EmptyPod
-        MockEmptyPod::new_boxed(params, inputs.vd_set.clone())
-    } else {
-        EmptyPod::new_boxed(inputs.vd_set.clone())
-    };
-    let empty_pod = empty_pod_box.as_ref();
-    assert!(inputs.pods.len() <= params.max_input_pods);
-    for i in 0..params.max_input_pods {
-        let pod = inputs.pods.get(i).copied().unwrap_or(empty_pod);
-        let sts = pod.pub_statements();
-        assert!(sts.len() <= params.max_public_statements);
-        for j in 0..params.max_input_pods_public_statements {
-            let mut st = sts
-                .get(j)
-                .unwrap_or(&middleware::Statement::None)
-                .clone()
-                .into();
-            pad_statement(&mut st);
-            statements.push(st);
-        }
-    }
+    statements_is_pub.push(false);
 
     // Input statements
     assert!(
-        inputs.statements.len() <= params.max_priv_statements(),
-        "inputs.statements.len={} > params.max_priv_statements={}",
+        inputs.statements.len() <= params.max_statements,
+        "inputs.statements.len={} > params.max_statements={}",
         inputs.statements.len(),
-        params.max_priv_statements()
+        params.max_statements
     );
-    for i in 0..params.max_priv_statements() {
-        let mut st = inputs
+    for i in 0..params.max_statements {
+        let (is_pub, st) = inputs
             .statements
             .get(i)
-            .unwrap_or(&middleware::Statement::None)
-            .clone()
-            .into();
+            .unwrap_or(&(false, middleware::Statement::None))
+            .clone();
+        let mut st = Statement::from(st);
         pad_statement(&mut st);
         statements.push(st);
+        statements_is_pub.push(is_pub);
     }
 
-    // Public statements
-    assert!(inputs.public_statements.len() <= params.max_public_statements);
-    for i in 0..params.max_public_statements {
-        let mut st = inputs
-            .public_statements
-            .get(i)
-            .unwrap_or(&middleware::Statement::None)
-            .clone()
-            .into();
-        pad_statement(&mut st);
-        statements.push(st);
-    }
+    // Validate public statements length
+    let public_statements_len = if inputs.extend_pod0_pub_statements {
+        inputs.pods[0].pub_raw_statements().len()
+    } else {
+        0
+    } + statements_is_pub.iter().filter(|is_pub| **is_pub).count();
+    assert!(public_statements_len <= 2 << BASE_PARAMS.max_depth_public_statements_mt);
 
-    let offset_public_statements = statements.len() - params.max_public_statements;
-    let public_statements = statements
-        [offset_public_statements..offset_public_statements + inputs.public_statements.len()]
-        .to_vec();
-    Ok((statements, public_statements))
+    Ok((statements_is_pub, statements))
 }
 
-pub(crate) fn process_private_statements_operations(
+pub(crate) fn process_statements_operations(
     params: &Params,
     statements: &[Statement],
     aux_list: &[OperationAux],
     input_operations: &[middleware::Operation],
 ) -> Result<Vec<Operation>> {
-    assert_eq!(params.max_priv_statements(), aux_list.len());
+    assert_eq!(params.max_statements, aux_list.len());
     let mut operations = Vec::new();
+
+    // Operation at index 0 is always None to match the None statement at index 0 (used for padding
+    // operation arguments in custom predicate statements)
+    let mut args = Vec::new();
+    pad_operation_args(&mut args);
+    operations.push(Operation(
+        middleware::OperationType::Native(NativeOperation::None),
+        args,
+        OperationAux::None,
+    ));
     for (i, aux) in aux_list.iter().enumerate() {
         let op = input_operations
             .get(i)
@@ -468,41 +485,6 @@ pub(crate) fn process_private_statements_operations(
 
         pad_operation_args(&mut args);
         operations.push(Operation(op.op_type(), args, *aux));
-    }
-    Ok(operations)
-}
-
-// NOTE: In this implementation public statements are always copies from
-// previous statements, so we fill in the operations accordingly.
-/// This method assumes that the given `statements` array has been padded to
-/// `params.max_statements`.
-pub(crate) fn process_public_statements_operations(
-    params: &Params,
-    statements: &[Statement],
-    mut operations: Vec<Operation>,
-) -> Result<Vec<Operation>> {
-    let offset_public_statements = statements.len() - params.max_public_statements;
-    for st in statements.iter().skip(offset_public_statements) {
-        let mut op = if st.is_none() {
-            Operation(
-                OperationType::Native(NativeOperation::None),
-                vec![],
-                OperationAux::None,
-            )
-        } else {
-            let mid_arg = st.clone();
-            Operation(
-                OperationType::Native(NativeOperation::CopyStatement),
-                vec![find_op_arg(statements, &mid_arg.try_into()?)?],
-                OperationAux::None,
-            )
-        };
-        fill_pad(
-            &mut op.1,
-            OperationArg::None,
-            BASE_PARAMS.max_operation_args,
-        );
-        operations.push(op);
     }
     Ok(operations)
 }
@@ -530,16 +512,12 @@ impl MainPodProver for Prover {
             ..inputs
         };
 
-        let input_pods_pub_self_statements = inputs
-            .pods
-            .iter()
-            .map(|pod| pod.pub_self_statements())
-            .collect_vec();
+        let input_statements: Vec<_> = inputs.statements.iter().map(|(_, st)| st.clone()).collect();
 
         // Aux values for backend::Operation
-        let mut aux_list = vec![OperationAux::None; params.max_priv_statements()];
+        let mut aux_list = vec![OperationAux::None; params.max_statements];
         let merkle_proofs =
-            extract_merkle_proofs(params, &mut aux_list, inputs.operations, inputs.statements)?;
+            extract_merkle_proofs(params, &mut aux_list, inputs.operations, &input_statements)?;
         let merkle_transition_proofs =
             extract_merkle_transition_proofs(params, &mut aux_list, inputs.operations)?;
         let custom_predicates = extract_custom_predicates(params, inputs.operations)?;
@@ -547,7 +525,7 @@ impl MainPodProver for Prover {
             params,
             &mut aux_list,
             inputs.operations,
-            inputs.statements,
+            &input_statements,
             &custom_predicates,
         )?;
         let custom_predicates_with_mpt_proofs = custom_predicates
@@ -561,22 +539,19 @@ impl MainPodProver for Prover {
                 (cpr, mtp)
             })
             .collect_vec();
+        let open_input_statements =
+            extract_open_input_statements(params, &mut aux_list, inputs.operations)?;
         let public_key_of_sks =
-            extract_public_key_of(params, &mut aux_list, inputs.operations, inputs.statements)?;
+            extract_public_key_of(params, &mut aux_list, inputs.operations, &input_statements)?;
         let signed_bys =
-            extract_signatures(params, &mut aux_list, inputs.operations, inputs.statements)?;
+            extract_signatures(params, &mut aux_list, inputs.operations, &input_statements)?;
 
-        let (statements, public_statements) = layout_statements(params, false, &inputs)?;
-        let operations = process_private_statements_operations(
-            params,
-            &statements,
-            &aux_list,
-            inputs.operations,
-        )?;
-        let operations = process_public_statements_operations(params, &statements, operations)?;
+        let (statements_is_pub, statements) = layout_statements(params, &inputs)?;
+        let operations =
+            process_statements_operations(params, &statements, &aux_list, inputs.operations)?;
 
-        // get the id out of the public statements
-        let sts_hash = calculate_statements_hash(&public_statements);
+        let (pub_sts_mt, sts_mt_proofs, pub_sts) =
+            process_public_statements(&inputs, &statements_is_pub, &statements)?;
 
         let common_hash: String = cache_get_rec_main_pod_common_hash(params).clone();
         let proofs = inputs
@@ -587,7 +562,11 @@ impl MainPodProver for Prover {
                 assert_eq!(inputs.vd_set.root(), pod.vd_set().root());
                 ProofWithPublicInputs {
                     proof: pod.proof(),
-                    public_inputs: [pod.statements_hash().0, inputs.vd_set.root().0].concat(),
+                    public_inputs: public_inputs(
+                        pod.statements_root(),
+                        inputs.vd_set.root(),
+                        pod.is_main(),
+                    ),
                 }
             })
             .collect_vec();
@@ -610,18 +589,24 @@ impl MainPodProver for Prover {
             });
         }
 
-        let input = MainPodVerifyInput {
-            vds_set: inputs.vd_set.clone(),
-            vd_mt_proofs,
-            input_pods_pub_self_statements,
-            statements: statements[statements.len() - params.max_statements..].to_vec(),
-            operations,
+        let aux_table_input = AuxTableInput {
+            custom_predicate_verifications,
             merkle_proofs,
+            open_input_statements,
             public_key_of_sks,
             signed_bys,
             merkle_transition_proofs,
+        };
+        let input = MainPodVerifyInput {
+            vds_set: inputs.vd_set.clone(),
+            vd_mt_proofs,
+            extend_pod0_pub_statements: inputs.extend_pod0_pub_statements,
+            statements_is_pub,
+            sts_mt_proofs,
+            statements,
+            operations,
             custom_predicates_with_mpt_proofs,
-            custom_predicate_verifications,
+            aux_table_input,
         };
 
         let (main_pod_target, circuit_data) = &*cache_get_rec_main_pod_circuit_data(params);
@@ -640,9 +625,9 @@ impl MainPodProver for Prover {
             params: params.clone(),
             verifier_only: circuit_data.verifier_only.clone(),
             common_hash,
-            sts_hash,
             vd_set: inputs.vd_set,
-            public_statements,
+            public_statements: pub_sts,
+            public_statements_mt: pub_sts_mt,
             proof: proof_with_pis.proof,
         }))
     }
@@ -651,7 +636,6 @@ impl MainPodProver for Prover {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MainPod {
     params: Params,
-    sts_hash: Hash,
     verifier_only: VerifierOnlyCircuitData,
     common_hash: String,
     /// vds_root is the merkle-root of the `VDSet`, which contains the
@@ -661,6 +645,7 @@ pub struct MainPod {
     /// use one of the verifier_data's contained in the VDSet.
     vd_set: VDSet,
     public_statements: Vec<Statement>,
+    public_statements_mt: Array,
     proof: Proof,
 }
 
@@ -730,6 +715,7 @@ pub fn cache_get_rec_main_pod_common_hash(params: &Params) -> CacheEntry<String>
 #[derive(Serialize, Deserialize)]
 struct Data {
     public_statements: Vec<Statement>,
+    // public_statements_mt: Array,
     proof: String,
     verifier_only: String,
     common_hash: String,
@@ -743,6 +729,20 @@ impl MainPod {
     pub fn params(&self) -> &Params {
         &self.params
     }
+}
+
+pub fn public_inputs(pub_sts_root: Hash, vd_set_root: Hash, is_main: bool) -> Vec<F> {
+    pub_sts_root
+        .0
+        .iter()
+        .chain(vd_set_root.0.iter())
+        .cloned()
+        .chain(iter::once(F(if is_main { 1 } else { 0 })))
+        .collect_vec()
+}
+
+pub fn statements_mt(statements: &[Statement]) -> Array {
+    Array::new(statements.iter().map(|st| Value::from(st.hash())).collect())
 }
 
 impl Pod for MainPod {
@@ -761,11 +761,9 @@ impl Pod for MainPod {
                 self.common_hash, expect_common_hash,
             )));
         }
-        // 2. get the id out of the public statements
-        let sts_hash = calculate_statements_hash(&self.public_statements);
-        if sts_hash != self.sts_hash {
-            return Err(Error::statements_hash_not_equal(self.sts_hash, sts_hash));
-        }
+        // 2. get the merkle root out of the public statements
+        // Note that `public_statements_mt` is built from `public_statements` during deserialize
+        let statements_root = self.public_statements_mt.commitment();
 
         // 7. verifier_data_hash is in the VDSet
         let verifier_data = self.verifier_data();
@@ -781,12 +779,7 @@ impl Pod for MainPod {
         // 1, 3, 4, 5 verification via the zkSNARK proof
         let rec_main_pod_verifier_circuit_data =
             &*cache_get_rec_main_pod_verifier_circuit_data(&self.params);
-        let public_inputs = sts_hash
-            .to_fields()
-            .iter()
-            .chain(self.vd_set.root().0.iter())
-            .cloned()
-            .collect_vec();
+        let public_inputs = public_inputs(statements_root, self.vd_set.root(), true);
         rec_main_pod_verifier_circuit_data
             .verify(ProofWithPublicInputs {
                 proof: self.proof.clone(),
@@ -795,14 +788,15 @@ impl Pod for MainPod {
             .map_err(|e| Error::plonky2_proof_fail("MainPod", e))
     }
 
-    fn statements_hash(&self) -> Hash {
-        self.sts_hash
-    }
     fn pod_type(&self) -> (usize, &'static str) {
         (PodType::Main as usize, "Main")
     }
 
-    fn pub_self_statements(&self) -> Vec<middleware::Statement> {
+    fn pub_raw_statements_mt(&self) -> Array {
+        self.public_statements_mt.clone()
+    }
+
+    fn pub_raw_statements(&self) -> Vec<middleware::Statement> {
         self.public_statements
             .iter()
             .cloned()
@@ -827,29 +821,26 @@ impl Pod for MainPod {
         serde_json::to_value(Data {
             proof: serialize_proof(&self.proof),
             public_statements: self.public_statements.clone(),
+            // public_statements_mt: self.public_statements_mt.clone(),
             verifier_only: serialize_verifier_only(&self.verifier_only),
             common_hash: self.common_hash.clone(),
         })
         .expect("serialization to json")
     }
-    fn deserialize_data(
-        params: Params,
-        data: serde_json::Value,
-        vd_set: VDSet,
-        sts_hash: Hash,
-    ) -> Result<Self> {
+    fn deserialize_data(params: Params, data: serde_json::Value, vd_set: VDSet) -> Result<Self> {
         let data: Data = serde_json::from_value(data)?;
+        let public_statements_mt = statements_mt(&data.public_statements);
         let common = cache_get_rec_main_pod_common_circuit_data(&params);
         let proof = deserialize_proof(&common, &data.proof)?;
         let verifier_only = deserialize_verifier_only(&data.verifier_only)?;
         Ok(Self {
             params,
-            sts_hash,
             verifier_only,
             common_hash: data.common_hash,
             vd_set,
             proof,
             public_statements: data.public_statements,
+            public_statements_mt,
         })
     }
 }
@@ -890,6 +881,7 @@ pub mod tests {
             max_input_pods: 0,
             max_custom_predicates: 0,
             max_custom_predicate_verifications: 0,
+            max_open_input_statements: 0,
             ..Default::default()
         };
         println!("{:#?}", params);
@@ -950,8 +942,7 @@ pub mod tests {
             max_signed_by: 1,
             max_input_pods: 1,
             max_statements: 8,
-            max_public_statements: 4,
-            max_input_pods_public_statements: 10,
+            max_open_input_statements: 4,
             ..Default::default()
         };
         let mut vds = DEFAULT_VD_LIST.clone();
@@ -986,8 +977,8 @@ pub mod tests {
         let pod = (kyc_pod.pod as Box<dyn Any>)
             .downcast::<MockMainPod>()
             .unwrap();
-        pod.verify().unwrap();
         println!("{:#}", pod);
+        pod.verify().unwrap();
 
         // Real
         let prover = Prover {};
@@ -1004,8 +995,7 @@ pub mod tests {
             max_signed_by: 0,
             max_input_pods: 0,
             max_statements: 2,
-            max_public_statements: 1,
-            max_input_pods_public_statements: 0,
+            max_open_input_statements: 1,
             containers: middleware::ParamsContainers {
                 state: middleware::ParamsMerkleProofs {
                     max_small: 0,
@@ -1049,10 +1039,9 @@ pub mod tests {
     fn test_mainpod_small_empty() {
         let params = middleware::Params {
             max_signed_by: 0,
-            max_input_pods: 0,
-            max_input_pods_public_statements: 2,
+            max_input_pods: 1,
             max_statements: 5,
-            max_public_statements: 2,
+            max_open_input_statements: 2,
             max_custom_predicates: 2,
             max_custom_predicate_verifications: 2,
             max_custom_predicate_wildcards: 3,
@@ -1125,7 +1114,7 @@ pub mod tests {
             max_signed_by: 0,
             max_input_pods: 0,
             max_statements: 9,
-            max_public_statements: 4,
+            max_open_input_statements: 0,
             max_custom_predicate_wildcards: 4,
             max_custom_predicate_verifications: 2,
             containers: middleware::ParamsContainers {
@@ -1204,7 +1193,7 @@ pub mod tests {
             max_signed_by: 0,
             max_input_pods: 0,
             max_statements: 6,
-            max_public_statements: 2,
+            max_open_input_statements: 0,
             max_custom_predicate_wildcards: 4,
             max_custom_predicate_verifications: 2,
             containers: middleware::ParamsContainers {
@@ -1330,8 +1319,7 @@ pub mod tests {
                 .map(middleware::ValueRef::from)
                 .collect(),
         );
-        builder.insert((st.clone(), op)).unwrap();
-        builder.reveal(&st).unwrap();
+        builder.insert(true, (st.clone(), op)).unwrap();
         let prover = Prover {};
         builder.prove(&prover).unwrap();
     }
@@ -1480,5 +1468,81 @@ pub mod tests {
         let prover = Prover {};
         let pod = builder.prove(&prover).unwrap();
         pod.pod.verify().unwrap()
+    }
+
+    fn helper_test_open_input_statement(mock: bool) {
+        let mock_prover = MockProver {};
+        let real_prover = Prover {};
+        let prover: &dyn MainPodProver = if mock { &mock_prover } else { &real_prover };
+
+        let params = middleware::Params::default();
+        let vd_set = &*DEFAULT_VD_SET;
+
+        let mut builder = MainPodBuilder::new(&params, vd_set);
+
+        let st_lt = builder.pub_op(frontend::Operation::lt(42, 100)).unwrap();
+
+        let pod_0 = builder.prove(prover).unwrap();
+        pod_0.pod.verify().unwrap();
+
+        let mut builder = MainPodBuilder::new(&params, vd_set);
+        builder.add_pod(pod_0).unwrap();
+        builder.pub_op(frontend::Operation::eq(50, 50)).unwrap();
+        builder.open_input_st(true, 0, &st_lt).unwrap();
+
+        let pod_1 = builder.prove(prover).unwrap();
+        pod_1.pod.verify().unwrap();
+
+        assert_eq!(pod_1.public_statements[1], st_lt);
+    }
+
+    #[test]
+    fn test_open_input_statement() {
+        helper_test_open_input_statement(true);
+        helper_test_open_input_statement(false);
+    }
+
+    fn helper_test_public_statements(mock: bool) {
+        let mock_prover = MockProver {};
+        let real_prover = Prover {};
+        let prover: &dyn MainPodProver = if mock { &mock_prover } else { &real_prover };
+
+        let params = middleware::Params::default();
+        let vd_set = &*DEFAULT_VD_SET;
+
+        let mut builder = MainPodBuilder::new(&params, vd_set);
+
+        let st_0 = builder.pub_op(frontend::Operation::eq(0, 0)).unwrap();
+        let st_1 = builder.pub_op(frontend::Operation::eq(1, 1)).unwrap();
+        let st_2 = builder.pub_op(frontend::Operation::eq(2, 2)).unwrap();
+
+        let pod_0 = builder.prove(prover).unwrap();
+        pod_0.pod.verify().unwrap();
+        println!("DBG pod_0 OK");
+
+        assert_eq!(pod_0.public_statements.len(), 3);
+        assert_eq!(
+            pod_0.public_statements,
+            vec![st_0.clone(), st_1.clone(), st_2.clone()]
+        );
+
+        let mut builder = MainPodBuilder::new(&params, vd_set);
+        builder.add_pod(pod_0).unwrap();
+        builder.extend_input_pod0_public_statements();
+        let st_3 = builder.pub_op(frontend::Operation::eq(3, 3)).unwrap();
+        let st_4 = builder.pub_op(frontend::Operation::eq(4, 4)).unwrap();
+
+        let pod_1 = builder.prove(prover).unwrap();
+        pod_1.pod.verify().unwrap();
+        println!("DBG pod_1 OK");
+
+        assert_eq!(pod_1.public_statements.len(), 5);
+        assert_eq!(pod_1.public_statements, vec![st_0, st_1, st_2, st_3, st_4]);
+    }
+
+    #[test]
+    fn test_public_statements() {
+        helper_test_public_statements(true);
+        helper_test_public_statements(false);
     }
 }

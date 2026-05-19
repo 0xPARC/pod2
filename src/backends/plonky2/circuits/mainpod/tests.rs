@@ -3,7 +3,6 @@ use std::{iter, ops::Not};
 use num::FromPrimitive;
 use plonky2::{
     field::{goldilocks_field::GoldilocksField, types::Field},
-    hash::hash_types::HashOut,
     iop::witness::WitnessWrite,
     plonk::{circuit_builder::CircuitBuilder, circuit_data::CircuitConfig},
 };
@@ -13,7 +12,7 @@ use crate::{
     backends::plonky2::{
         basetypes::C,
         circuits::common::tests::I64_TEST_PAIRS,
-        mainpod::{calculate_statements_hash, OperationArg, OperationAux, Size},
+        mainpod::{OperationArg, OperationAux, Size},
         primitives::{
             ec::schnorr::SecretKey,
             merkletree::{MerkleClaimAndProof, MerkleTree, MerkleTreeStateTransitionProof},
@@ -24,8 +23,8 @@ use crate::{
     frontend::{self, literal, CustomPredicateBatchBuilder, StatementTmplBuilder},
     middleware::{
         self, hash_values, AnchoredKey, Hash, Key, OperationType, Predicate, PredicateOrWildcard,
-        RawValue, StatementArg, StatementTmpl, StatementTmplArg, ValueRef, Wildcard, BASE_PARAMS,
-        EMPTY_VALUE,
+        RawValue, Statement, StatementArg, StatementTmpl, StatementTmplArg, ValueRef, Wildcard,
+        BASE_PARAMS, EMPTY_VALUE,
     },
 };
 
@@ -71,6 +70,7 @@ fn operation_verify(
     aux: Aux,
 ) -> Result<()> {
     let params = Params {
+        max_input_pods: 0,
         max_public_key_of: aux.secret_keys.len(),
         max_signed_by: aux.signed_bys.len(),
         containers: middleware::ParamsContainers {
@@ -87,6 +87,7 @@ fn operation_verify(
         },
         max_custom_predicate_verifications: 0,
         max_custom_predicates: 0,
+        max_open_input_statements: 0,
         ..Default::default()
     };
 
@@ -147,16 +148,16 @@ fn operation_verify(
         small: Vec::new(),
     };
 
-    let aux_table = build_operation_aux_table_circuit(
-        &params,
-        &mut builder,
-        &merkle_proofs_target,
-        &merkle_transition_proofs_target,
-        &secret_keys_target,
-        &signed_by_targets,
-        &[],
-        &[],
-    )?;
+    let aux_table_inputs = AuxTableInputTargets {
+        merkle_proofs: merkle_proofs_target,
+        merkle_transition_proofs: merkle_transition_proofs_target,
+        open_input_statements: Vec::new(),
+        public_key_of_sks: secret_keys_target,
+        signed_bys: signed_by_targets,
+        custom_predicate_verifications: Vec::new(),
+    };
+    let aux_table =
+        build_operation_aux_table_circuit(&params, &mut builder, &[], &[], &aux_table_inputs)?;
 
     verify_operation_circuit(
         &params,
@@ -174,10 +175,15 @@ fn operation_verify(
     for (prev_st_target, prev_st) in prev_statements_target.iter().zip(prev_statements.iter()) {
         prev_st_target.set_targets(&mut pw, prev_st)?;
     }
-    for (signed_by_target, signed_by) in signed_by_targets.iter().zip(aux.signed_bys.iter()) {
+    for (signed_by_target, signed_by) in aux_table_inputs
+        .signed_bys
+        .iter()
+        .zip(aux.signed_bys.iter())
+    {
         signed_by_target.set_targets(&mut pw, signed_by)?
     }
-    for (merkle_proof_target, merkle_proof) in merkle_proofs_target
+    for (merkle_proof_target, merkle_proof) in aux_table_inputs
+        .merkle_proofs
         .medium
         .iter()
         .zip(aux.merkle_proofs.iter())
@@ -185,7 +191,8 @@ fn operation_verify(
         merkle_proof_target.set_targets(&mut pw, merkle_proof)?
     }
     for (merkle_tree_state_transition_proof_target, merkle_tree_state_transition_proof) in
-        merkle_transition_proofs_target
+        aux_table_inputs
+            .merkle_transition_proofs
             .medium
             .iter()
             .zip(aux.merkle_transition_proofs.iter())
@@ -336,18 +343,6 @@ fn test_operation_verify_none() -> Result<()> {
     let op = mainpod::Operation(
         OperationType::Native(NativeOperation::None),
         vec![],
-        OperationAux::None,
-    );
-    let prev_statements = vec![Statement::None.into()];
-    operation_verify(st, op, prev_statements, Aux::default())
-}
-
-#[test]
-fn test_operation_verify_copy() -> Result<()> {
-    let st: mainpod::Statement = Statement::None.into();
-    let op = mainpod::Operation(
-        OperationType::Native(NativeOperation::CopyStatement),
-        vec![OperationArg::Index(0)],
         OperationAux::None,
     );
     let prev_statements = vec![Statement::None.into()];
@@ -1549,96 +1544,6 @@ fn test_custom_operation_verify_gadget_negative() -> frontend::Result<()> {
         helper_custom_operation_verify_gadget(&params, custom_predicate, op_args, args, None)
             .is_err()
     );
-
-    Ok(())
-}
-
-fn helper_calculate_statements_hash(params: &Params, statements: &[Statement]) -> Result<()> {
-    let config = CircuitConfig::standard_recursion_config();
-    let mut builder = CircuitBuilder::new(config);
-
-    let statements_target = (0..params.max_public_statements)
-        .map(|_| builder.add_virtual_statement(false))
-        .collect_vec();
-    let sts_hash_target = calculate_statements_hash_circuit(&mut builder, &statements_target);
-
-    let mut pw = PartialWitness::<F>::new();
-
-    // Input
-    let statements = statements
-        .iter()
-        .map(|st| {
-            let mut st = mainpod::Statement::from(st.clone());
-            pad_statement(&mut st);
-            st
-        })
-        .collect_vec();
-    for (st_target, st) in statements_target.iter().zip(statements.iter()) {
-        st_target.set_targets(&mut pw, st)?;
-    }
-    // Expected Output
-    let expected_sts_hash = calculate_statements_hash(&statements);
-    pw.set_hash_target(
-        sts_hash_target,
-        HashOut {
-            elements: expected_sts_hash.0,
-        },
-    )?;
-
-    // generate & verify proof
-    let data = builder.build::<C>();
-    let proof = data.prove(pw)?;
-    Ok(data.verify(proof.clone())?)
-}
-
-#[test]
-fn test_calculate_sts_hash() -> frontend::Result<()> {
-    assert_eq!(Params::num_public_statements_hash(), 16);
-    // Case with no public public statements
-    let params = Params {
-        max_public_statements: 0,
-        ..Default::default()
-    };
-
-    helper_calculate_statements_hash(&params, &[]).unwrap();
-
-    // Case with number of statements for the sts_hash equal to number of public statements
-    let params = Params {
-        max_public_statements: Params::num_public_statements_hash(),
-        ..Default::default()
-    };
-
-    let dict = Hash([F(1), F(2), F(3), F(4)]);
-    let statements = (0..Params::num_public_statements_hash())
-        .map(|i| Statement::equal(AnchoredKey::from((dict, "foo")), Value::from(i as i64)))
-        .collect_vec();
-
-    helper_calculate_statements_hash(&params, &statements).unwrap();
-
-    // Case with more statements for the sts_hash than the number of public statements
-    let params = Params {
-        max_public_statements: 4,
-        ..Default::default()
-    };
-
-    let dict2 = Hash([F(5), F(6), F(7), F(8)]);
-    let statements = [
-        Statement::equal(AnchoredKey::from((dict, "foo")), Value::from(42)),
-        Statement::equal(
-            AnchoredKey::from((dict, "bar")),
-            AnchoredKey::from((dict, "baz")),
-        ),
-        Statement::lt(
-            AnchoredKey::from((dict2, "one")),
-            AnchoredKey::from((dict2, "two")),
-        ),
-    ]
-    .into_iter()
-    .chain(iter::repeat(Statement::None))
-    .take(params.max_public_statements)
-    .collect_vec();
-
-    helper_calculate_statements_hash(&params, &statements).unwrap();
 
     Ok(())
 }

@@ -46,7 +46,7 @@ rand_chacha = "0.3.1"
 good_lp = { version = "1.8", default-features = false, features = [
   "scip",
   "scip_bundled",
-] }
+], optional = true }
 annotate-snippets = "0.11"
 rocksdb = { version = "0.24.0", optional = true } # keyvalue database for merkletree
 
@@ -59,6 +59,12 @@ pretty_assertions = "1.4.1"
 # Used only for testing JSON Schema generation and validation.
 jsonschema = "0.30.0"
 tempfile = "3"
+# Always available in tests so the MILP parity sweep and DP-vs-MILP probes
+# compile without callers needing `--features milp`.
+good_lp = { version = "1.8", default-features = false, features = [
+  "scip",
+  "scip_bundled",
+] }
 
 [build-dependencies]
 vergen-gitcl = { version = "1.0.0", features = ["build"] }
@@ -73,6 +79,10 @@ examples = []
 disk_cache = ["directories", "minicbor-serde"]
 mem_cache = []
 db_rocksdb = ["rocksdb"]
+# Compile the MILP partitioner into the lib. Off by default to keep the SCIP
+# dependency out of slim builds; on for the test target unconditionally via
+# `[dev-dependencies] good_lp` so the parity sweep always builds.
+milp = ["dep:good_lp"]
 
 # Uncomment in order to enable debug information in the release builds.  This allows getting panic backtraces with a performance similar to regular release.
 # [profile.release]

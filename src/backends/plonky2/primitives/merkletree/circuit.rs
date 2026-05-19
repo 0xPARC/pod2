@@ -190,7 +190,7 @@ impl MerkleClaimAndProofTarget {
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct MerkleProofExistenceTarget {
-    max_depth: usize,
+    pub(crate) max_depth: usize,
     pub(crate) root: HashOutTarget,
     pub(crate) key: ValueTarget,
     pub(crate) value: ValueTarget,

@@ -79,7 +79,7 @@ impl Error {
     pub fn not_type_statement() -> Self {
         new!(NotTypeStatement)
     }
-    pub fn statements_hash_not_equal(expected: Hash, found: Hash) -> Self {
+    pub fn statements_root_not_equal(expected: Hash, found: Hash) -> Self {
         new!(StsHashNotEqual(expected, found))
     }
 }

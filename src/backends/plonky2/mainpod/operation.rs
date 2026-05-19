@@ -7,7 +7,7 @@ use crate::{
         error::{Error, Result},
         mainpod::{MerkleProofs, MerkleTransitionProofs, SignedBy, Statement},
     },
-    middleware::{self, OperationType, Params},
+    middleware::{self, InputPodOpenStatement, OperationType, Params},
 };
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -58,9 +58,10 @@ pub enum OperationAux {
     None,
     MerkleProofIndex(Size, usize),
     MerkleTransitionProofIndex(Size, usize),
+    OpenInputStatement(usize),
+    CustomPredVerifyIndex(usize),
     PublicKeyOfIndex(usize),
     SignedByIndex(usize),
-    CustomPredVerifyIndex(usize),
 }
 
 impl OperationAux {
@@ -86,9 +87,12 @@ impl OperationAux {
             }
         }
     }
-    fn table_offset_custom_pred_verify(params: &Params) -> usize {
+    fn table_offset_open_input_statement(params: &Params) -> usize {
         Self::table_offset_merkle_transition_proof(params, Size::min())
             + params.containers.transition.max_total()
+    }
+    fn table_offset_custom_pred_verify(params: &Params) -> usize {
+        Self::table_offset_open_input_statement(params) + params.max_open_input_statements
     }
     fn table_offset_public_key_of(params: &Params) -> usize {
         Self::table_offset_custom_pred_verify(params) + params.max_custom_predicate_verifications
@@ -99,6 +103,7 @@ impl OperationAux {
     pub(crate) fn table_size(params: &Params) -> usize {
         1 + params.containers.state.max_total()
             + params.containers.transition.max_total()
+            + params.max_open_input_statements
             + params.max_custom_predicate_verifications
             + params.max_public_key_of
             + params.max_signed_by
@@ -110,9 +115,10 @@ impl OperationAux {
             Self::MerkleTransitionProofIndex(size, i) => {
                 Self::table_offset_merkle_transition_proof(params, *size) + *i
             }
+            Self::OpenInputStatement(i) => Self::table_offset_open_input_statement(params) + *i,
+            Self::CustomPredVerifyIndex(i) => Self::table_offset_custom_pred_verify(params) + *i,
             Self::PublicKeyOfIndex(i) => Self::table_offset_public_key_of(params) + *i,
             Self::SignedByIndex(i) => Self::table_offset_signed_by(params) + *i,
-            Self::CustomPredVerifyIndex(i) => Self::table_offset_custom_pred_verify(params) + *i,
         }
     }
 }
@@ -136,6 +142,7 @@ impl Operation {
         signatures: &[SignedBy],
         merkle_proofs: &MerkleProofs,
         merkle_transition_proofs: &MerkleTransitionProofs,
+        open_input_statements: &[InputPodOpenStatement],
     ) -> Result<crate::middleware::Operation> {
         let deref_args = self
             .1
@@ -180,6 +187,17 @@ impl Operation {
                 )
             }
             OperationAux::CustomPredVerifyIndex(_) => crate::middleware::OperationAux::None,
+            OperationAux::OpenInputStatement(i) => {
+                crate::middleware::OperationAux::OpenInputStatement(
+                    open_input_statements
+                        .get(i)
+                        .ok_or(Error::custom(format!(
+                            "Missing OpenInputStatement data index {}",
+                            i
+                        )))?
+                        .clone(),
+                )
+            }
             OperationAux::SignedByIndex(i) => crate::middleware::OperationAux::Signature(
                 signatures
                     .get(i)
@@ -217,6 +235,7 @@ impl fmt::Display for Operation {
                 write!(f, " {}_merkle_proof_{:02}", size, i)?
             }
             OperationAux::CustomPredVerifyIndex(i) => write!(f, " custom_pred_verify_{:02}", i)?,
+            OperationAux::OpenInputStatement(i) => write!(f, " open_input_statement_{:02}", i)?,
             OperationAux::PublicKeyOfIndex(i) => write!(f, " public_key_of_{:02}", i)?,
             OperationAux::SignedByIndex(i) => write!(f, " signed_by_{:02}", i)?,
             OperationAux::MerkleTransitionProofIndex(size, i) => {

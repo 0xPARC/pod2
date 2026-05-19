@@ -5,7 +5,8 @@ use serde::{Deserialize, Serialize};
 use crate::{
     backends::plonky2::error::{Error, Result},
     middleware::{
-        self, NativePredicate, Predicate, StatementArg, ToFields, Value, ValueRef, BASE_PARAMS,
+        self, hash_fields, Hash, NativePredicate, Predicate, StatementArg, ToFields, Value,
+        ValueRef, BASE_PARAMS,
     },
 };
 
@@ -15,6 +16,9 @@ pub struct Statement(pub Predicate, pub Vec<StatementArg>);
 impl Eq for Statement {}
 
 impl Statement {
+    pub fn none() -> Self {
+        Self(Predicate::Native(NativePredicate::None), Vec::new())
+    }
     pub fn is_none(&self) -> bool {
         self.0 == Predicate::Native(NativePredicate::None)
     }
@@ -28,6 +32,9 @@ impl Statement {
             None => vec![],
             Some(i) => self.1[0..i + 1].to_vec(),
         }
+    }
+    pub fn hash(&self) -> Hash {
+        hash_fields(&self.to_fields())
     }
 }
 
