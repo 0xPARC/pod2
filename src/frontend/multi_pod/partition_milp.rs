@@ -579,7 +579,7 @@ pub(super) fn random_input(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::frontend::multi_pod_tree::partition;
+    use crate::frontend::multi_pod::partition;
 
     fn independent(n: usize, output_public: Vec<usize>, params: Params) -> InputShape {
         InputShape {
