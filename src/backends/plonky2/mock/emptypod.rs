@@ -61,9 +61,6 @@ impl Pod for MockEmptyPod {
         }
         Ok(())
     }
-    fn statements_root(&self) -> Hash {
-        self.sts_root
-    }
     fn pod_type(&self) -> (usize, &'static str) {
         (PodType::MockEmpty as usize, "MockEmpty")
     }

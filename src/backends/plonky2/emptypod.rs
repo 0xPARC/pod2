@@ -189,9 +189,6 @@ impl Pod for EmptyPod {
             .map_err(|e| Error::plonky2_proof_fail("EmptyPod", e))
     }
 
-    fn statements_root(&self) -> Hash {
-        self.sts_root
-    }
     fn pod_type(&self) -> (usize, &'static str) {
         (PodType::Empty as usize, "Empty")
     }

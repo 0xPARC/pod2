@@ -832,9 +832,6 @@ impl Pod for MainPod {
             .map_err(|e| Error::plonky2_proof_fail("MainPod", e))
     }
 
-    fn statements_root(&self) -> Hash {
-        self.pub_sts_root
-    }
     fn pod_type(&self) -> (usize, &'static str) {
         (PodType::Main as usize, "Main")
     }

@@ -1164,7 +1164,9 @@ pub trait Pod: fmt::Debug + DynClone + Sync + Send + Any + EqualsAny {
     /// Root of the public statements.  Different pods can have the same `statements_root` if they
     /// expose the same public statements even if they arrive to them through different private
     /// inputs.
-    fn statements_root(&self) -> Hash;
+    fn statements_root(&self) -> Hash {
+        self.pub_raw_statements_mt().commitment()
+    }
     // TODO: String instead of &str
     /// Return a uuid of the pod type and its name.  The name is only used as metadata.
     fn pod_type(&self) -> (usize, &'static str);

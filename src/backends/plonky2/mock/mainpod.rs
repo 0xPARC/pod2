@@ -276,9 +276,6 @@ impl Pod for MockMainPod {
         Ok(())
     }
 
-    fn statements_root(&self) -> Hash {
-        self.pub_sts_root
-    }
     fn pod_type(&self) -> (usize, &'static str) {
         (PodType::MockMain as usize, "MockMain")
     }
