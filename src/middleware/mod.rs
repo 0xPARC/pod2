@@ -1192,7 +1192,6 @@ pub trait Pod: fmt::Debug + DynClone + Sync + Send + Any + EqualsAny {
         params: Params,
         data: serde_json::Value,
         vd_set: VDSet,
-        sts_root: Hash,
     ) -> Result<Self, BackendError>
     where
         Self: Sized;

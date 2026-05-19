@@ -12,9 +12,8 @@ use serde::{Deserialize, Serialize};
 use crate::{
     backends::plonky2::{
         basetypes::{CircuitBuilder, Proof, C, D},
-        cache_get_standard_rec_main_pod_common_circuit_data,
-        circuits::mainpod::PI_OFFSET_STATEMENTS_ROOT,
-        deserialize_proof, deserialize_verifier_only,
+        cache_get_standard_rec_main_pod_common_circuit_data, deserialize_proof,
+        deserialize_verifier_only,
         error::{Error, Result},
         hash_common_data,
         mainpod::public_inputs,
@@ -27,7 +26,7 @@ use crate::{
     cache::{self, CacheEntry},
     middleware::{
         self, containers::Array, Hash, IntroPredicateRef, Params, Pod, PodType, Statement, VDSet,
-        Value, VerifierOnlyCircuitData, EMPTY_HASH, F, HASH_SIZE,
+        Value, VerifierOnlyCircuitData, EMPTY_HASH, F,
     },
     timed,
 };
@@ -80,7 +79,6 @@ fn verify_empty_pod_circuit(
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct EmptyPod {
     params: Params,
-    sts_root: Hash,
     verifier_only: VerifierOnlyCircuitDataSerializer,
     common_hash: String,
     vd_set: VDSet,
@@ -133,17 +131,11 @@ impl EmptyPod {
         let mut pw = PartialWitness::<F>::new();
         empty_pod_verify_target.set_targets(&mut pw, vd_set.root())?;
         let proof = timed!("EmptyPod prove", data.prove(pw)?);
-        let sts_root = {
-            let v = &proof.public_inputs
-                [PI_OFFSET_STATEMENTS_ROOT..PI_OFFSET_STATEMENTS_ROOT + HASH_SIZE];
-            Hash([v[0], v[1], v[2], v[3]])
-        };
         let common_hash = hash_common_data(&data.common).expect("hash ok");
         Ok(EmptyPod {
             params: Params::default(),
             verifier_only: VerifierOnlyCircuitDataSerializer(data.verifier_only.clone()),
             common_hash,
-            sts_root,
             vd_set,
             proof: proof.proof,
         })
@@ -175,8 +167,11 @@ impl Pod for EmptyPod {
             .map(|st| Value::from(st.hash()))
             .collect_vec();
         let sts_root = Array::new(statements).commitment();
-        if sts_root != self.sts_root {
-            return Err(Error::statements_root_not_equal(self.sts_root, sts_root));
+        if sts_root != self.statements_root() {
+            return Err(Error::statements_root_not_equal(
+                self.statements_root(),
+                sts_root,
+            ));
         }
 
         let public_inputs = public_inputs(sts_root, self.vd_set.root(), false);
@@ -222,19 +217,13 @@ impl Pod for EmptyPod {
         })
         .expect("serialization to json")
     }
-    fn deserialize_data(
-        params: Params,
-        data: serde_json::Value,
-        vd_set: VDSet,
-        sts_root: Hash,
-    ) -> Result<Self> {
+    fn deserialize_data(params: Params, data: serde_json::Value, vd_set: VDSet) -> Result<Self> {
         let data: Data = serde_json::from_value(data)?;
         let common_circuit_data = cache_get_standard_rec_main_pod_common_circuit_data();
         let proof = deserialize_proof(&common_circuit_data, &data.proof)?;
         let verifier_only = deserialize_verifier_only(&data.verifier_only)?;
         Ok(Self {
             params,
-            sts_root,
             verifier_only: VerifierOnlyCircuitDataSerializer(verifier_only),
             common_hash: data.common_hash,
             vd_set,

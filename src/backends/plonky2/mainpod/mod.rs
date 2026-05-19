@@ -660,7 +660,6 @@ impl MainPodProver for Prover {
             params: params.clone(),
             verifier_only: circuit_data.verifier_only.clone(),
             common_hash,
-            pub_sts_root: pub_sts_mt.commitment(),
             vd_set: inputs.vd_set,
             public_statements: pub_sts,
             public_statements_mt: pub_sts_mt,
@@ -672,7 +671,6 @@ impl MainPodProver for Prover {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MainPod {
     params: Params,
-    pub_sts_root: Hash, // TODO: This is redundant with `public_statements`, no need to serialize
     verifier_only: VerifierOnlyCircuitData,
     common_hash: String,
     /// vds_root is the merkle-root of the `VDSet`, which contains the
@@ -682,8 +680,7 @@ pub struct MainPod {
     /// use one of the verifier_data's contained in the VDSet.
     vd_set: VDSet,
     public_statements: Vec<Statement>,
-    public_statements_mt: Array, // TODO: This is redundant with `public_statements`, no need to
-    // serialize
+    public_statements_mt: Array,
     proof: Proof,
 }
 
@@ -801,13 +798,7 @@ impl Pod for MainPod {
         }
         // 2. get the merkle root out of the public statements
         // Note that `public_statements_mt` is built from `public_statements` during deserialize
-        let pub_sts_mt = &self.public_statements_mt;
-        if pub_sts_mt.commitment() != self.pub_sts_root {
-            return Err(Error::statements_root_not_equal(
-                self.pub_sts_root,
-                pub_sts_mt.commitment(),
-            ));
-        }
+        let statements_root = self.public_statements_mt.commitment();
 
         // 7. verifier_data_hash is in the VDSet
         let verifier_data = self.verifier_data();
@@ -823,7 +814,7 @@ impl Pod for MainPod {
         // 1, 3, 4, 5 verification via the zkSNARK proof
         let rec_main_pod_verifier_circuit_data =
             &*cache_get_rec_main_pod_verifier_circuit_data(&self.params);
-        let public_inputs = public_inputs(pub_sts_mt.commitment(), self.vd_set.root(), true);
+        let public_inputs = public_inputs(statements_root, self.vd_set.root(), true);
         rec_main_pod_verifier_circuit_data
             .verify(ProofWithPublicInputs {
                 proof: self.proof.clone(),
@@ -871,12 +862,7 @@ impl Pod for MainPod {
         })
         .expect("serialization to json")
     }
-    fn deserialize_data(
-        params: Params,
-        data: serde_json::Value,
-        vd_set: VDSet,
-        sts_root: Hash,
-    ) -> Result<Self> {
+    fn deserialize_data(params: Params, data: serde_json::Value, vd_set: VDSet) -> Result<Self> {
         let data: Data = serde_json::from_value(data)?;
         let public_statements_mt = statements_mt(&data.public_statements);
         let common = cache_get_rec_main_pod_common_circuit_data(&params);
@@ -884,7 +870,6 @@ impl Pod for MainPod {
         let verifier_only = deserialize_verifier_only(&data.verifier_only)?;
         Ok(Self {
             params,
-            pub_sts_root: sts_root,
             verifier_only,
             common_hash: data.common_hash,
             vd_set,

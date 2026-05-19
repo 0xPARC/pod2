@@ -1,10 +1,7 @@
-use itertools::Itertools;
-
 use crate::{
     backends::plonky2::{
         basetypes::{Proof, VerifierOnlyCircuitData},
-        error::{Error, Result},
-        mainpod::{self},
+        error::Result,
     },
     middleware::{
         containers::Array, Hash, IntroPredicateRef, Params, Pod, PodType, Statement, VDSet, Value,
@@ -15,7 +12,6 @@ use crate::{
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MockEmptyPod {
     params: Params,
-    sts_root: Hash,
     vd_set: VDSet,
 }
 
@@ -30,16 +26,10 @@ fn empty_statement() -> Statement {
     )
 }
 
-fn sts_mt() -> Array {
-    Array::new(vec![Value::from(empty_statement().hash())])
-}
-
 impl MockEmptyPod {
     pub fn new_boxed(params: &Params, vd_set: VDSet) -> Box<dyn Pod> {
-        let sts_root = sts_mt().commitment();
         Box::new(Self {
             params: params.clone(),
-            sts_root,
             vd_set,
         })
     }
@@ -50,15 +40,6 @@ impl Pod for MockEmptyPod {
         &self.params
     }
     fn verify(&self) -> Result<()> {
-        let _statements = self
-            .pub_raw_statements()
-            .into_iter()
-            .map(mainpod::Statement::from)
-            .collect_vec();
-        let sts_root = sts_mt().commitment();
-        if sts_root != self.sts_root {
-            return Err(Error::statements_root_not_equal(self.sts_root, sts_root));
-        }
         Ok(())
     }
     fn pod_type(&self) -> (usize, &'static str) {
@@ -91,17 +72,8 @@ impl Pod for MockEmptyPod {
     fn serialize_data(&self) -> serde_json::Value {
         serde_json::Value::Null
     }
-    fn deserialize_data(
-        params: Params,
-        _data: serde_json::Value,
-        vd_set: VDSet,
-        sts_root: Hash,
-    ) -> Result<Self> {
-        Ok(Self {
-            params,
-            sts_root,
-            vd_set,
-        })
+    fn deserialize_data(params: Params, _data: serde_json::Value, vd_set: VDSet) -> Result<Self> {
+        Ok(Self { params, vd_set })
     }
 }
 

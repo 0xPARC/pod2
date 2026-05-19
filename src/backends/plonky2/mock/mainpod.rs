@@ -36,7 +36,6 @@ impl MainPodProver for MockProver {
 #[derive(Clone, Debug, PartialEq)]
 pub struct MockMainPod {
     params: Params,
-    pub_sts_root: Hash,
     vd_set: VDSet,
     input_pods: Vec<Box<dyn Pod>>,
     statements_is_pub: Vec<bool>,
@@ -57,7 +56,7 @@ impl Eq for MockMainPod {}
 
 impl fmt::Display for MockMainPod {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        writeln!(f, "MockMainPod ({}):", self.pub_sts_root)?;
+        writeln!(f, "MockMainPod ({}):", self.statements_root())?;
         writeln!(f, "  statements:")?;
         for (i, st) in self.statements.iter().enumerate() {
             let is_pub = self.statements_is_pub[i];
@@ -110,7 +109,7 @@ struct Data {
     merkle_transition_proofs: MerkleTransitionProofs,
     open_input_statements: Vec<InputPodOpenStatement>,
     signatures: Vec<SignedBy>,
-    input_pods: Vec<(usize, Params, Hash, VDSet, serde_json::Value)>,
+    input_pods: Vec<(usize, Params, VDSet, serde_json::Value)>,
 }
 
 impl MockMainPod {
@@ -147,7 +146,6 @@ impl MockMainPod {
             .collect();
         Ok(Self {
             params: params.clone(),
-            pub_sts_root: pub_sts_mt.commitment(),
             vd_set: inputs.vd_set,
             input_pods,
             public_statements: pub_sts,
@@ -315,7 +313,6 @@ impl Pod for MockMainPod {
                 (
                     p.pod_type().0,
                     p.params().clone(),
-                    p.statements_root(),
                     p.vd_set().clone(),
                     p.serialize_data(),
                 )
@@ -338,12 +335,7 @@ impl Pod for MockMainPod {
     // MockMainPods include some internal private state which is necessary
     // for verification. In non-mock Pods, this state will not be necessary,
     // as the public statements can be verified using a ZK proof.
-    fn deserialize_data(
-        params: Params,
-        data: serde_json::Value,
-        vd_set: VDSet,
-        sts_root: Hash,
-    ) -> Result<Self> {
+    fn deserialize_data(params: Params, data: serde_json::Value, vd_set: VDSet) -> Result<Self> {
         let Data {
             public_statements,
             public_statements_mt, // TODO: Derive this from public_statements
@@ -358,13 +350,10 @@ impl Pod for MockMainPod {
         } = serde_json::from_value(data)?;
         let input_pods = input_pods
             .into_iter()
-            .map(|(pod_type, params, sts_root, vd_set, data)| {
-                deserialize_pod(pod_type, params, sts_root, vd_set, data)
-            })
+            .map(|(pod_type, params, vd_set, data)| deserialize_pod(pod_type, params, vd_set, data))
             .collect::<Result<Vec<_>>>()?;
         Ok(Self {
             params,
-            pub_sts_root: sts_root,
             vd_set,
             input_pods,
             public_statements,
