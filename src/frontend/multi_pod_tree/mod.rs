@@ -946,18 +946,32 @@ mod tests {
     #[test]
     fn prove_with_external_pod_arg() {
         // User-adds an external pod and passes one of its public
-        // statements directly as an op arg. Exercises the staging
-        // auto-import path: `MainPodBuilder::ensure_statement` emits an
+        // statements directly as an op arg (via a custom predicate that
+        // wraps it). Exercises the staging auto-import path:
+        // `MainPodBuilder::ensure_statement` emits an
         // `OpenInputStatement` op at staging time, the dep graph models
         // it as an External-dep node, and replay re-issues the open
         // against the per-POD builder's slot.
+        use crate::lang::load_module;
+
         let params = Params::default();
         let vd_set = &*MOCK_VD_SET;
-
         let prover = MockProver {};
+
+        let module = load_module(
+            r#"
+            pred_a(X) = AND(Lt(X, 2))
+            "#,
+            "test",
+            &params,
+            &[],
+        )
+        .expect("load module");
+        let batch = &module.batch;
+
         let mut ext_builder = MainPodBuilder::new(&params, vd_set);
         ext_builder
-            .pub_op(FrontendOp::eq(42, 42))
+            .pub_op(FrontendOp::lt(1, 2))
             .expect("ext pub op");
         let ext_pod = ext_builder.prove(&prover).expect("ext prove");
         let ext_stmt = ext_pod
@@ -970,8 +984,11 @@ mod tests {
         let mut builder = MultiPodBuilder::new(&params, vd_set);
         builder.add_pod(ext_pod).expect("add ext pod");
         builder
-            .pub_op(FrontendOp::copy(ext_stmt))
-            .expect("copy ext stmt");
+            .pub_op(FrontendOp::custom(
+                batch.predicate_ref_by_name("pred_a").unwrap(),
+                [ext_stmt],
+            ))
+            .expect("pred_a on ext stmt");
 
         let solved = builder.solve().expect("should solve");
         let result = solved.prove(&prover).expect("prove should succeed");
@@ -1794,6 +1811,56 @@ mod tests {
             if let Some(out) = partition::partition_with_ordering(&augmented, &ord_prio) {
                 eprintln!("augmented + synth-first prio kahn K = {}", out.pod_count);
             }
+        }
+    }
+
+    /// A non-statement-table cap (`max_signed_by`) forces a multi-POD
+    /// split even though every POD has plenty of statement-table slack.
+    /// Confirms the partitioner respects per-resource caps beyond
+    /// `max_statements`.
+    #[test]
+    fn signed_by_limit_forces_multi_pod_split() {
+        use crate::{
+            backends::plonky2::{primitives::ec::schnorr::SecretKey, signer::Signer},
+            frontend::SignedDictBuilder,
+        };
+
+        let params = Params {
+            max_signed_by: 2,
+            ..Params::default()
+        };
+        let vd_set = &*MOCK_VD_SET;
+        let prover = MockProver {};
+
+        let mut builder = MultiPodBuilder::new(&params, vd_set);
+        for i in 0..4_i64 {
+            let mut signed_builder = SignedDictBuilder::new(&params);
+            signed_builder.insert("id", i);
+            let signer = Signer(SecretKey((i as u32 + 1).into()));
+            let signed_dict = signed_builder.sign(&signer).expect("sign dict");
+            if i == 3 {
+                builder
+                    .pub_op(FrontendOp::dict_signed_by(&signed_dict))
+                    .expect("pub signed_by");
+            } else {
+                builder
+                    .priv_op(FrontendOp::dict_signed_by(&signed_dict))
+                    .expect("priv signed_by");
+            }
+        }
+
+        let solved = builder.solve().expect("should solve");
+        assert_eq!(
+            solved.solution().pod_count,
+            2,
+            "4 SignedBy ops with max_signed_by=2 require exactly 2 PODs"
+        );
+        let result = solved.prove(&prover).expect("prove should succeed");
+        assert_eq!(result.pods.len(), 2);
+        for (i, pod) in result.pods.iter().enumerate() {
+            pod.pod
+                .verify()
+                .unwrap_or_else(|e| panic!("POD {} verification failed: {:?}", i, e));
         }
     }
 
