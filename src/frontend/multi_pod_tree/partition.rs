@@ -457,6 +457,91 @@ pub(super) fn simulate_greedy_k(input: &InputShape, ordering: &[usize]) -> Optio
     Some(k)
 }
 
+/// Greedy partition of `ordering` into segments, enforcing terminal
+/// (output-public) feasibility on the final segment. Mirrors what
+/// `simulate_greedy_k` does for non-terminal segments, then verifies
+/// the last one as terminal. Returns the segment boundary list or
+/// `None` if no valid partition exists for this ordering (a single
+/// statement cap-busts, or the trailing segment fails terminal
+/// availability and greedy can't backtrack to fix it).
+///
+/// This is the no-DP counterpart to `run_dp`, for the DP-vs-greedy
+/// sweep that probes whether the DP layer is load-bearing.
+fn greedy_segments_with_terminal(
+    ordering: &[usize],
+    input: &InputShape,
+) -> Option<Vec<(usize, usize)>> {
+    let n = ordering.len();
+    if n == 0 {
+        return Some(Vec::new());
+    }
+    let pos_in_ordering = build_pos_in_ordering(ordering);
+    let mut ws = DpWorkspace::default();
+    let mut segments: Vec<(usize, usize)> = Vec::new();
+    let mut a = 0_usize;
+    while a < n {
+        if !segment_feasible_with(ordering, &pos_in_ordering, input, a, a + 1, false, &mut ws) {
+            return None;
+        }
+        let mut p = a + 1;
+        while p < n
+            && segment_feasible_with(ordering, &pos_in_ordering, input, a, p + 1, false, &mut ws)
+        {
+            p += 1;
+        }
+        segments.push((a, p));
+        a = p;
+    }
+    let (last_a, last_p) = *segments
+        .last()
+        .expect("non-empty ordering produced no segments");
+    if !segment_feasible_with(
+        ordering,
+        &pos_in_ordering,
+        input,
+        last_a,
+        last_p,
+        true,
+        &mut ws,
+    ) {
+        return None;
+    }
+    Some(segments)
+}
+
+/// No-DP variant of [`partition`]: tries every candidate ordering and
+/// keeps the lowest-K result, but uses greedy left-to-right cuts
+/// ([`greedy_segments_with_terminal`]) instead of the DP. Used by the
+/// DP-vs-greedy sweep to measure whether the DP layer contributes any
+/// K-improvement beyond what greedy achieves on the same orderings.
+pub(super) fn partition_greedy_only(input: &InputShape) -> Option<OutputShape> {
+    let n = input.num_statements();
+    if n == 0 {
+        return Some(OutputShape {
+            pod_count: 0,
+            pod_statements: vec![],
+            pod_republished_externals: vec![],
+        });
+    }
+
+    let lower_bound = resource_lower_bound_k(input);
+    let mut best: Option<OutputShape> = None;
+
+    for ordering in candidate_orderings(input) {
+        let Some(segments) = greedy_segments_with_terminal(&ordering, input) else {
+            continue;
+        };
+        let k = segments.len();
+        if best.as_ref().is_none_or(|b| k < b.pod_count) {
+            best = Some(reconstruct(&ordering, &segments));
+            if k <= lower_bound {
+                break;
+            }
+        }
+    }
+    best
+}
+
 /// Workspace-backed feasibility check. Returns true iff segment `[a..p]`
 /// fits in one POD; `is_terminal` additionally enforces output-POD
 /// availability for output-public statements upstream of `a`.
@@ -895,5 +980,135 @@ mod tests {
             full_out.pod_count, 2,
             "full pipeline relies on the DP layer to recover K=2 on this fan-in input"
         );
+    }
+
+    /// DP vs greedy random sweep. For each generated input, compares
+    /// `partition` (full pipeline, DP cuts per ordering) against
+    /// `partition_greedy_only` (same orderings, greedy cuts). Reports the
+    /// K-diff distribution and the count of "DP rescue" cases where
+    /// greedy is infeasible but DP isn't (the empirical justification
+    /// for the DP layer). Asserts on the inverse direction (greedy
+    /// feasible, DP infeasible) which should never happen.
+    ///
+    /// Shares its RNG seed and parameter variants with the DP-vs-MILP
+    /// parity sweep so the two sweeps probe the same distribution.
+    #[test]
+    fn dp_vs_greedy_random_sweep() {
+        use std::collections::BTreeMap;
+
+        use rand::SeedableRng;
+        use rand_chacha::ChaCha20Rng;
+
+        use super::super::partition_milp::random_input;
+
+        let param_variants: Vec<(&str, Params)> = vec![
+            (
+                "tight",
+                Params {
+                    max_statements: 3,
+                    max_input_pods: 2,
+                    ..Params::default()
+                },
+            ),
+            (
+                "medium",
+                Params {
+                    max_statements: 5,
+                    max_input_pods: 3,
+                    ..Params::default()
+                },
+            ),
+            (
+                "resource-pressure",
+                Params {
+                    max_statements: 8,
+                    max_input_pods: 3,
+                    max_signed_by: 2,
+                    ..Params::default()
+                },
+            ),
+        ];
+        let n_values: Vec<usize> = vec![8, 12, 16, 24, 32];
+        let trials_per_combo: usize = 25;
+
+        let mut rng = ChaCha20Rng::seed_from_u64(0xDEADBEEF);
+        let mut checked = 0_usize;
+        let mut both_feasible = 0_usize;
+        let mut dp_rescue = 0_usize;
+        let mut k_diff: BTreeMap<i64, usize> = BTreeMap::new();
+        let mut k_diff_by_variant: BTreeMap<&str, BTreeMap<i64, usize>> = BTreeMap::new();
+
+        for (label, params) in &param_variants {
+            for &n in &n_values {
+                for trial in 0..trials_per_combo {
+                    let input = random_input(&mut rng, n, params.clone());
+                    let dp_out = partition(&input);
+                    let greedy_out = partition_greedy_only(&input);
+
+                    checked += 1;
+                    match (&dp_out, &greedy_out) {
+                        (Some(d), Some(g)) => {
+                            both_feasible += 1;
+                            let diff = g.pod_count as i64 - d.pod_count as i64;
+                            *k_diff.entry(diff).or_insert(0) += 1;
+                            *k_diff_by_variant
+                                .entry(label)
+                                .or_default()
+                                .entry(diff)
+                                .or_insert(0) += 1;
+                            if diff < 0 {
+                                panic!(
+                                    "greedy returned smaller K than DP on [{} n={} trial={}]: \
+                                     DP={}, greedy={}",
+                                    label, n, trial, d.pod_count, g.pod_count
+                                );
+                            }
+                        }
+                        (Some(d), None) => {
+                            dp_rescue += 1;
+                            eprintln!(
+                                "DP RESCUE [{} n={} trial={}]: DP={} PODs, greedy=none",
+                                label, n, trial, d.pod_count
+                            );
+                        }
+                        (None, Some(_)) => {
+                            panic!(
+                                "greedy feasible but DP infeasible on [{} n={} trial={}] \
+                                 (DP considers greedy's cuts as a subset of its choices, \
+                                 so this should never happen)",
+                                label, n, trial
+                            );
+                        }
+                        (None, None) => {}
+                    }
+                }
+            }
+        }
+
+        eprintln!();
+        eprintln!("=== DP-vs-greedy random sweep ===");
+        eprintln!(
+            "  checked={} both_feasible={} dp_rescue={}",
+            checked, both_feasible, dp_rescue
+        );
+        eprintln!("  K diff (K_greedy - K_dp) overall:");
+        for (diff, count) in &k_diff {
+            eprintln!("    diff={:+}: {}", diff, count);
+        }
+        eprintln!("  K diff by variant:");
+        for (variant, dist) in &k_diff_by_variant {
+            eprint!("    {}: ", variant);
+            for (diff, count) in dist {
+                eprint!("({:+}: {}) ", diff, count);
+            }
+            eprintln!();
+        }
+
+        // The right-direction divergence ("greedy feasible, DP infeasible")
+        // would be a bug and is panicked above. The other direction ("DP
+        // feasible, greedy infeasible") is reported as `dp_rescue` and is
+        // the empirical justification for the DP layer; no assertion on it
+        // because the goal here is to *measure* DP's contribution, not
+        // enforce it.
     }
 }
