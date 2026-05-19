@@ -73,7 +73,7 @@ pub fn process_public_statements(
     inputs: &MainPodInputs,
     statements_is_pub: &[bool],
     statements: &[Statement],
-) -> Result<(Array, Vec<Hash>, Vec<Statement>)> {
+) -> Result<(Array, Vec<MerkleTreeStateTransitionProof>, Vec<Statement>)> {
     // Build the public statements tree
     let (init_sts, init_sts_mt): (Vec<Statement>, Array) = if inputs.extend_pod0_pub_statements {
         if !inputs.pods[0].is_main() {
@@ -93,15 +93,20 @@ pub fn process_public_statements(
         (Vec::new(), Array::new(Vec::new()))
     };
     let (mut pub_sts, mut pub_sts_mt) = (init_sts, init_sts_mt);
-    let mut pub_sts_roots = Vec::new();
+    let mut sts_mt_proofs = Vec::new();
     for (is_pub, st) in zip_eq(statements_is_pub, statements) {
-        if *is_pub {
-            pub_sts_mt.insert(pub_sts.len(), Value::from(st.hash()))?;
+        let st_hash = Value::from(st.hash());
+        let proof = if *is_pub {
+            let proof = pub_sts_mt.insert(pub_sts.len(), st_hash)?;
             pub_sts.push(st.clone().into());
-        }
-        pub_sts_roots.push(pub_sts_mt.commitment());
+            proof
+        } else {
+            // Insert in a copy so that merkle proof verification passes, but the result is ignored
+            pub_sts_mt.clone().insert(pub_sts.len(), st_hash)?
+        };
+        sts_mt_proofs.push(proof);
     }
-    Ok((pub_sts_mt, pub_sts_roots, pub_sts))
+    Ok((pub_sts_mt, sts_mt_proofs, pub_sts))
 }
 
 /// Extracts unique `CustomPredicate`s from Custom ops.
@@ -636,7 +641,7 @@ impl MainPodProver for Prover {
             process_statements_operations(params, &statements, &aux_list, inputs.operations)?;
         let operations = process_public_statements_operations(params, &statements, operations)?;
 
-        let (pub_sts_mt, pub_sts_roots, pub_sts) =
+        let (pub_sts_mt, sts_mt_proofs, pub_sts) =
             process_public_statements(&inputs, &statements_is_pub, &statements)?;
 
         let common_hash: String = cache_get_rec_main_pod_common_hash(params).clone();
@@ -687,10 +692,12 @@ impl MainPodProver for Prover {
             vds_set: inputs.vd_set.clone(),
             vd_mt_proofs,
             // input_pods_pub_self_statements,
+            extend_pod0_pub_statements: inputs.extend_pod0_pub_statements,
             statements_is_pub,
+            sts_mt_proofs,
             statements,
             operations,
-            sts_roots: pub_sts_roots,
+            // sts_roots: pub_sts_roots,
             custom_predicates_with_mpt_proofs,
             aux_table_input,
         };
@@ -838,6 +845,10 @@ pub fn public_inputs(pub_sts_root: Hash, vd_set_root: Hash, is_main: bool) -> Ve
         .collect_vec()
 }
 
+pub fn statements_mt(statements: &[Statement]) -> Array {
+    Array::new(statements.iter().map(|st| Value::from(st.hash())).collect())
+}
+
 impl Pod for MainPod {
     fn params(&self) -> &Params {
         &self.params
@@ -855,12 +866,7 @@ impl Pod for MainPod {
             )));
         }
         // 2. get the merkle root out of the public statements
-        let pub_sts_mt = Array::new(
-            self.public_statements
-                .iter()
-                .map(|st| Value::from(st.hash()))
-                .collect(),
-        );
+        let pub_sts_mt = statements_mt(&self.public_statements);
         if pub_sts_mt.commitment() != self.pub_sts_root {
             return Err(Error::statements_root_not_equal(
                 self.pub_sts_root,
@@ -1527,5 +1533,81 @@ pub mod tests {
         let prover = Prover {};
         let pod = builder.prove(&prover).unwrap();
         pod.pod.verify().unwrap()
+    }
+
+    fn helper_test_open_input_statement(mock: bool) {
+        let mock_prover = MockProver {};
+        let real_prover = Prover {};
+        let prover: &dyn MainPodProver = if mock { &mock_prover } else { &real_prover };
+
+        let params = middleware::Params::default();
+        let vd_set = &*DEFAULT_VD_SET;
+
+        let mut builder = MainPodBuilder::new(&params, vd_set);
+
+        let st_lt = builder.pub_op(frontend::Operation::lt(42, 100)).unwrap();
+
+        let pod_0 = builder.prove(prover).unwrap();
+        pod_0.pod.verify().unwrap();
+
+        let mut builder = MainPodBuilder::new(&params, vd_set);
+        builder.add_pod(pod_0).unwrap();
+        builder.pub_op(frontend::Operation::eq(50, 50)).unwrap();
+        builder.open_input_st(true, 0, &st_lt).unwrap();
+
+        let pod_1 = builder.prove(prover).unwrap();
+        pod_1.pod.verify().unwrap();
+
+        assert_eq!(pod_1.public_statements[1], st_lt);
+    }
+
+    #[test]
+    fn test_open_input_statement() {
+        helper_test_open_input_statement(true);
+        helper_test_open_input_statement(false);
+    }
+
+    fn helper_test_public_statements(mock: bool) {
+        let mock_prover = MockProver {};
+        let real_prover = Prover {};
+        let prover: &dyn MainPodProver = if mock { &mock_prover } else { &real_prover };
+
+        let params = middleware::Params::default();
+        let vd_set = &*DEFAULT_VD_SET;
+
+        let mut builder = MainPodBuilder::new(&params, vd_set);
+
+        let st_0 = builder.pub_op(frontend::Operation::eq(0, 0)).unwrap();
+        let st_1 = builder.pub_op(frontend::Operation::eq(1, 1)).unwrap();
+        let st_2 = builder.pub_op(frontend::Operation::eq(2, 2)).unwrap();
+
+        let pod_0 = builder.prove(prover).unwrap();
+        pod_0.pod.verify().unwrap();
+        println!("DBG pod_0 OK");
+
+        assert_eq!(pod_0.public_statements.len(), 3);
+        assert_eq!(
+            pod_0.public_statements,
+            vec![st_0.clone(), st_1.clone(), st_2.clone()]
+        );
+
+        let mut builder = MainPodBuilder::new(&params, vd_set);
+        builder.add_pod(pod_0).unwrap();
+        builder.extend_input_pod0_public_statements();
+        let st_3 = builder.pub_op(frontend::Operation::eq(3, 3)).unwrap();
+        let st_4 = builder.pub_op(frontend::Operation::eq(4, 4)).unwrap();
+
+        let pod_1 = builder.prove(prover).unwrap();
+        pod_1.pod.verify().unwrap();
+        println!("DBG pod_1 OK");
+
+        assert_eq!(pod_1.public_statements.len(), 5);
+        assert_eq!(pod_1.public_statements, vec![st_0, st_1, st_2, st_3, st_4]);
+    }
+
+    #[test]
+    fn test_public_statements() {
+        helper_test_public_statements(true);
+        helper_test_public_statements(false);
     }
 }
