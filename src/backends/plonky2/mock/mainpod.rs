@@ -117,11 +117,7 @@ impl MockMainPod {
     pub fn new(params: &Params, inputs: MainPodInputs) -> Result<Self> {
         let (statements_is_pub, statements) = layout_statements(params, &inputs)?;
 
-        let input_statements: Vec<_> = inputs
-            .statements
-            .iter()
-            .map(|(_, st)| st.clone())
-            .collect();
+        let input_statements: Vec<_> = inputs.statements.iter().map(|(_, st)| st.clone()).collect();
         let mut aux_list = vec![OperationAux::None; params.max_statements];
         // Extract Merkle proofs and pad.
         let merkle_proofs =
@@ -183,7 +179,7 @@ impl MockMainPod {
         if sts_root0 != *sts_root {
             return Err(Error::custom(format!("OpenInputStatement uses a statements root different than the input pod one: {} != {}", sts_root, sts_root0)));
         }
-        let raw_statement0 = &pod.pub_self_statements()[*st_index];
+        let raw_statement0 = &pod.pub_raw_statements()[*st_index];
         if raw_statement0 != raw_statement {
             return Err(Error::custom(format!("OpenInputStatement uses a raw_statement different than the input pod one: {} != {}", raw_statement0, raw_statement)));
         }
@@ -239,7 +235,7 @@ impl Pod for MockMainPod {
             }
             // Introduction pods can only have Introduction or None statements
             if !pod.is_main() {
-                for self_st in pod.pub_self_statements() {
+                for self_st in pod.pub_raw_statements() {
                     match self_st {
                         middleware::Statement::None | middleware::Statement::Intro(_, _) => {}
                         _ => {
@@ -286,11 +282,11 @@ impl Pod for MockMainPod {
     fn pod_type(&self) -> (usize, &'static str) {
         (PodType::MockMain as usize, "MockMain")
     }
-    fn pub_self_statements_mt(&self) -> Array {
+    fn pub_raw_statements_mt(&self) -> Array {
         self.public_statements_mt.clone()
     }
 
-    fn pub_self_statements(&self) -> Vec<middleware::Statement> {
+    fn pub_raw_statements(&self) -> Vec<middleware::Statement> {
         self.public_statements
             .iter()
             .cloned()

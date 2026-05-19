@@ -170,7 +170,7 @@ impl Pod for EmptyPod {
     }
     fn verify(&self) -> Result<()> {
         let statements = self
-            .pub_self_statements()
+            .pub_raw_statements()
             .into_iter()
             .map(|st| Value::from(st.hash()))
             .collect_vec();
@@ -200,7 +200,7 @@ impl Pod for EmptyPod {
         sts_mt()
     }
 
-    fn pub_self_statements(&self) -> Vec<middleware::Statement> {
+    fn pub_raw_statements(&self) -> Vec<middleware::Statement> {
         vec![empty_statement()]
     }
 

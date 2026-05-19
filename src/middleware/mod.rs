@@ -1168,18 +1168,15 @@ pub trait Pod: fmt::Debug + DynClone + Sync + Send + Any + EqualsAny {
     // TODO: String instead of &str
     /// Return a uuid of the pod type and its name.  The name is only used as metadata.
     fn pod_type(&self) -> (usize, &'static str);
-    // TODO: Add default implementation from pub_self_statements
-    // TODO: Maybe rename to "mt" instead of "array"?  Be consistent with the names!
-    // TODO: Rename `self` by `raw` everywhere
-    // Container array of self public statements
+    // Merkle tree of raw public statements
     fn pub_raw_statements_mt(&self) -> Array;
     /// Statements as internally generated, where intro statements don't encode the verifier data
     /// hash.  The serialization of these statements is used to calculate the statements root.
-    fn pub_self_statements(&self) -> Vec<Statement>;
+    fn pub_raw_statements(&self) -> Vec<Statement>;
     /// Normalized statements, where intro statements get the corresponding verifier data hash.
     fn pub_statements(&self) -> Vec<Statement> {
         let verifier_data_hash = self.verifier_data_hash();
-        self.pub_self_statements()
+        self.pub_raw_statements()
             .into_iter()
             .map(|statement| normalize_statement(&statement, verifier_data_hash))
             .collect()

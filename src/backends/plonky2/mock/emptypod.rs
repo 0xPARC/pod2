@@ -51,7 +51,7 @@ impl Pod for MockEmptyPod {
     }
     fn verify(&self) -> Result<()> {
         let _statements = self
-            .pub_self_statements()
+            .pub_raw_statements()
             .into_iter()
             .map(mainpod::Statement::from)
             .collect_vec();
@@ -72,7 +72,7 @@ impl Pod for MockEmptyPod {
         Array::new(vec![Value::from(empty_statement().hash())])
     }
 
-    fn pub_self_statements(&self) -> Vec<Statement> {
+    fn pub_raw_statements(&self) -> Vec<Statement> {
         vec![empty_statement()]
     }
 

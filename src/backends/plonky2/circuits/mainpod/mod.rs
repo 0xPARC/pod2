@@ -2096,8 +2096,8 @@ impl AuxTableInputTargets {
         // Padding
         let pad_data = if input.open_input_statements.is_empty() {
             let empty_pod = EmptyPod::new_boxed(vds_set.clone());
-            let (_, proof) = empty_pod.pub_self_statements_mt().prove(0)?;
-            let pad_raw_st = empty_pod.pub_self_statements()[0].clone();
+            let (_, proof) = empty_pod.pub_raw_statements_mt().prove(0)?;
+            let pad_raw_st = empty_pod.pub_raw_statements()[0].clone();
             InputPodOpenStatement {
                 pod_index: params.max_input_pods - 1,
                 sts_root: empty_pod.statements_root(),

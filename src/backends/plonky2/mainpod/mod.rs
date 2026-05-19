@@ -445,7 +445,7 @@ pub(crate) fn layout_statements(
 
     // Validate public statements length
     let public_statements_len = if inputs.extend_pod0_pub_statements {
-        inputs.pods[0].pub_self_statements().len()
+        inputs.pods[0].pub_raw_statements().len()
     } else {
         0
     } + statements_is_pub.iter().filter(|is_pub| **is_pub).count();
@@ -843,7 +843,7 @@ impl Pod for MainPod {
         self.public_statements_mt.clone()
     }
 
-    fn pub_self_statements(&self) -> Vec<middleware::Statement> {
+    fn pub_raw_statements(&self) -> Vec<middleware::Statement> {
         self.public_statements
             .iter()
             .cloned()

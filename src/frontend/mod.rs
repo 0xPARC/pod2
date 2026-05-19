@@ -684,7 +684,7 @@ impl MainPodBuilder {
 
     fn op_input_st(&self, pod_index: usize, st_index: usize) -> Result<Operation> {
         let pod = &self.input_pods[pod_index];
-        let raw_statement = pod.pod.pub_self_statements()[st_index].clone();
+        let raw_statement = pod.pod.pub_raw_statements()[st_index].clone();
         let sts_mt = pod.pod.pub_raw_statements_mt();
         let (_, mt_proof) = sts_mt.prove(st_index)?;
         Ok(Operation(
