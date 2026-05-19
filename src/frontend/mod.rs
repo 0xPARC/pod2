@@ -23,16 +23,11 @@ use crate::middleware::{
 
 mod custom;
 mod error;
-// mod multi_pod;
 mod operation;
 mod pod_request;
 mod serialization;
 pub use custom::*;
 pub use error::*;
-// pub use multi_pod::{
-//     Error as MultiPodError, MultiPodBuilder, MultiPodResult, MultiPodSolution,
-//     Options as MultiPodOptions,
-// };
 pub use operation::*;
 pub use pod_request::*;
 

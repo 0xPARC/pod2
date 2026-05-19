@@ -522,9 +522,6 @@ impl Operation {
                 _ => Err(deduction_err()),
             }
         };
-        // if self.op_type() != OperationType::Native(NativeOperation::None) {
-        //     println!("DBG check {:?}", self.op_type());
-        // }
         let b = match (self, output_statement) {
             (Self::None, None) => true,
             (Self::CopyStatement(s1), s2) => s1 == s2,

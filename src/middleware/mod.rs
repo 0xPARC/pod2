@@ -1058,10 +1058,6 @@ impl Params {
         2usize.pow(BASE_PARAMS.max_depth_custom_batch_mt as u32)
     }
 
-    // pub fn max_priv_statements(&self) -> usize {
-    //     self.max_statements - self.max_public_statements
-    // }
-
     /// Maximum number of entries permitted in a `record` declaration: the
     /// number of leaves in the small container merkle tree variant.
     pub fn max_record_entries(&self) -> usize {
@@ -1197,7 +1193,7 @@ pub trait Pod: fmt::Debug + DynClone + Sync + Send + Any + EqualsAny {
         params: Params,
         data: serde_json::Value,
         vd_set: VDSet,
-        sts_hash: Hash,
+        sts_root: Hash,
     ) -> Result<Self, BackendError>
     where
         Self: Sized;

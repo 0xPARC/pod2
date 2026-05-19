@@ -45,30 +45,6 @@ use crate::{
     timed,
 };
 
-// /// Hash a list of public statements to derive the Statements hash.  To make circuits with
-// /// different number of `max_public_statements compatible we pad the statements up to
-// /// `num_public_statements_id`. As an optimization we front pad with none-statements so that
-// /// circuits with a small `max_public_statements` only pay for `max_public_statements` by starting
-// /// the poseidon state with a precomputed constant corresponding to the front-padding part: `id =
-// /// hash(serialize(reverse(statements || none-statements)))`
-// pub fn calculate_statements_hash(statements: &[Statement]) -> middleware::Hash {
-//     assert!(statements.len() <= Params::num_public_statements_hash());
-//
-//     let mut none_st: Statement = middleware::Statement::None.into();
-//     pad_statement(&mut none_st);
-//     let statements_back_padded = statements
-//         .iter()
-//         .chain(iter::repeat(&none_st))
-//         .take(Params::num_public_statements_hash())
-//         .collect_vec();
-//     let field_elems = statements_back_padded
-//         .iter()
-//         .rev()
-//         .flat_map(|statement| statement.to_fields())
-//         .collect::<Vec<_>>();
-//     Hash(PoseidonHash::hash_no_pad(&field_elems).elements)
-// }
-
 pub fn process_public_statements(
     inputs: &MainPodInputs,
     statements_is_pub: &[bool],
@@ -438,7 +414,6 @@ fn pad_operation_args(args: &mut Vec<OperationArg>) {
 /// defined at the given Params.
 pub(crate) fn layout_statements(
     params: &Params,
-    _mock: bool, // TODO: Remove
     inputs: &MainPodInputs,
 ) -> Result<(Vec<bool>, Vec<Statement>)> {
     let mut statements_is_pub = Vec::new();
@@ -448,30 +423,6 @@ pub(crate) fn layout_statements(
     // predicate statements
     statements.push(middleware::Statement::None.into());
     statements_is_pub.push(false);
-
-    // // Input pods region
-    // let empty_pod_box: Box<dyn Pod> = if mock || inputs.pods.len() == params.max_input_pods {
-    //     // We mocking or we don't need padding so we skip creating an EmptyPod
-    //     MockEmptyPod::new_boxed(params, inputs.vd_set.clone())
-    // } else {
-    //     EmptyPod::new_boxed(inputs.vd_set.clone())
-    // };
-    // let empty_pod = empty_pod_box.as_ref();
-    // assert!(inputs.pods.len() <= params.max_input_pods);
-    // for i in 0..params.max_input_pods {
-    //     let pod = inputs.pods.get(i).copied().unwrap_or(empty_pod);
-    //     let sts = pod.pub_statements();
-    //     assert!(sts.len() <= params.max_public_statements);
-    //     for j in 0..params.max_input_pods_public_statements {
-    //         let mut st = sts
-    //             .get(j)
-    //             .unwrap_or(&middleware::Statement::None)
-    //             .clone()
-    //             .into();
-    //         pad_statement(&mut st);
-    //         statements.push(st);
-    //     }
-    // }
 
     // Input statements
     assert!(
@@ -543,7 +494,6 @@ pub(crate) fn process_statements_operations(
 /// This method assumes that the given `statements` array has been padded to
 /// `params.max_statements`.
 pub(crate) fn process_public_statements_operations(
-    _params: &Params,
     statements: &[Statement],
     mut operations: Vec<Operation>,
 ) -> Result<Vec<Operation>> {
@@ -596,12 +546,6 @@ impl MainPodProver for Prover {
             ..inputs
         };
 
-        // let input_pods_pub_self_statements = inputs
-        //     .pods
-        //     .iter()
-        //     .map(|pod| pod.pub_self_statements())
-        //     .collect_vec();
-
         let input_statements: Vec<_> = inputs.statements.iter().map(|(_, st)| st.clone()).collect();
 
         // Aux values for backend::Operation
@@ -636,10 +580,10 @@ impl MainPodProver for Prover {
         let signed_bys =
             extract_signatures(params, &mut aux_list, inputs.operations, &input_statements)?;
 
-        let (statements_is_pub, statements) = layout_statements(params, false, &inputs)?;
+        let (statements_is_pub, statements) = layout_statements(params, &inputs)?;
         let operations =
             process_statements_operations(params, &statements, &aux_list, inputs.operations)?;
-        let operations = process_public_statements_operations(params, &statements, operations)?;
+        let operations = process_public_statements_operations(&statements, operations)?;
 
         let (pub_sts_mt, sts_mt_proofs, pub_sts) =
             process_public_statements(&inputs, &statements_is_pub, &statements)?;
@@ -691,24 +635,14 @@ impl MainPodProver for Prover {
         let input = MainPodVerifyInput {
             vds_set: inputs.vd_set.clone(),
             vd_mt_proofs,
-            // input_pods_pub_self_statements,
             extend_pod0_pub_statements: inputs.extend_pod0_pub_statements,
             statements_is_pub,
             sts_mt_proofs,
             statements,
             operations,
-            // sts_roots: pub_sts_roots,
             custom_predicates_with_mpt_proofs,
             aux_table_input,
         };
-
-        // println!("DBG");
-        // for i in 0..input.statements.len() {
-        //     let st = &input.statements[i];
-        //     let op = &input.operations[i];
-        //     println!("{:02} {}", i, st);
-        //     println!("   {:?}", op);
-        // }
 
         let (main_pod_target, circuit_data) = &*cache_get_rec_main_pod_circuit_data(params);
         let proof_with_pis = timed!(

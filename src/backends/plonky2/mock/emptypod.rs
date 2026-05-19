@@ -15,7 +15,7 @@ use crate::{
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MockEmptyPod {
     params: Params,
-    sts_hash: Hash,
+    sts_root: Hash,
     vd_set: VDSet,
 }
 
@@ -33,10 +33,10 @@ fn empty_statement() -> Statement {
 impl MockEmptyPod {
     pub fn new_boxed(params: &Params, vd_set: VDSet) -> Box<dyn Pod> {
         let _statements = [mainpod::Statement::from(empty_statement())];
-        let sts_hash = EMPTY_HASH; // TODO
+        let sts_root = EMPTY_HASH; // TODO
         Box::new(Self {
             params: params.clone(),
-            sts_hash,
+            sts_root,
             vd_set,
         })
     }
@@ -52,14 +52,14 @@ impl Pod for MockEmptyPod {
             .into_iter()
             .map(mainpod::Statement::from)
             .collect_vec();
-        let sts_hash = EMPTY_HASH; // TODO
-        if sts_hash != self.sts_hash {
-            return Err(Error::statements_root_not_equal(self.sts_hash, sts_hash));
+        let sts_root = EMPTY_HASH; // TODO
+        if sts_root != self.sts_root {
+            return Err(Error::statements_root_not_equal(self.sts_root, sts_root));
         }
         Ok(())
     }
     fn statements_root(&self) -> Hash {
-        self.sts_hash
+        self.sts_root
     }
     fn pod_type(&self) -> (usize, &'static str) {
         (PodType::MockEmpty as usize, "MockEmpty")
@@ -95,11 +95,11 @@ impl Pod for MockEmptyPod {
         params: Params,
         _data: serde_json::Value,
         vd_set: VDSet,
-        sts_hash: Hash,
+        sts_root: Hash,
     ) -> Result<Self> {
         Ok(Self {
             params,
-            sts_hash,
+            sts_root,
             vd_set,
         })
     }

@@ -114,12 +114,8 @@ struct Data {
 }
 
 impl MockMainPod {
-    // fn offset_input_statements(&self) -> usize {
-    //     1
-    // }
-
     pub fn new(params: &Params, inputs: MainPodInputs) -> Result<Self> {
-        let (statements_is_pub, statements) = layout_statements(params, true, &inputs)?;
+        let (statements_is_pub, statements) = layout_statements(params, &inputs)?;
 
         let input_statements: Vec<_> = inputs
             .statements
@@ -140,7 +136,7 @@ impl MockMainPod {
 
         let operations =
             process_statements_operations(params, &statements, &aux_list, inputs.operations)?;
-        let operations = process_public_statements_operations(params, &statements, operations)?;
+        let operations = process_public_statements_operations(&statements, operations)?;
 
         let (pub_sts_mt, _, pub_sts) =
             process_public_statements(&inputs, &statements_is_pub, &statements)?;
@@ -257,10 +253,6 @@ impl Pod for MockMainPod {
             }
         }
 
-        // let input_statement_offset = self.offset_input_statements();
-        // get the input_statements from the self.statements
-        // let input_statements = &self.statements[input_statement_offset..];
-
         // 5. verify that all `input_statements` are correctly generated
         // by `self.operations` (where each operation can only access previous statements)
         let statement_check = self
@@ -357,7 +349,7 @@ impl Pod for MockMainPod {
         params: Params,
         data: serde_json::Value,
         vd_set: VDSet,
-        sts_hash: Hash,
+        sts_root: Hash,
     ) -> Result<Self> {
         let Data {
             public_statements,
@@ -373,13 +365,13 @@ impl Pod for MockMainPod {
         } = serde_json::from_value(data)?;
         let input_pods = input_pods
             .into_iter()
-            .map(|(pod_type, params, sts_hash, vd_set, data)| {
-                deserialize_pod(pod_type, params, sts_hash, vd_set, data)
+            .map(|(pod_type, params, sts_root, vd_set, data)| {
+                deserialize_pod(pod_type, params, sts_root, vd_set, data)
             })
             .collect::<Result<Vec<_>>>()?;
         Ok(Self {
             params,
-            pub_sts_root: sts_hash,
+            pub_sts_root: sts_root,
             vd_set,
             input_pods,
             public_statements,

@@ -229,7 +229,7 @@ impl Pod for EmptyPod {
         params: Params,
         data: serde_json::Value,
         vd_set: VDSet,
-        sts_hash: Hash,
+        sts_root: Hash,
     ) -> Result<Self> {
         let data: Data = serde_json::from_value(data)?;
         let common_circuit_data = cache_get_standard_rec_main_pod_common_circuit_data();
@@ -237,7 +237,7 @@ impl Pod for EmptyPod {
         let verifier_only = deserialize_verifier_only(&data.verifier_only)?;
         Ok(Self {
             params,
-            sts_root: sts_hash,
+            sts_root,
             verifier_only: VerifierOnlyCircuitDataSerializer(verifier_only),
             common_hash: data.common_hash,
             vd_set,
