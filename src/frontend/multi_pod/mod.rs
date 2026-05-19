@@ -38,7 +38,7 @@ mod cost;
 mod deps;
 mod diagnostics;
 mod partition;
-#[cfg(test)]
+#[cfg(any(test, feature = "milp"))]
 mod partition_milp;
 mod shape;
 
@@ -53,6 +53,7 @@ pub enum Error {
     Frontend(#[from] crate::frontend::Error),
     NoFeasiblePartition(String),
     ChainTreeCapacityExceeded { needed: usize, capacity: usize },
+    MilpUnavailable,
 }
 
 impl fmt::Display for Error {
@@ -70,11 +71,39 @@ impl fmt::Display for Error {
                  has capacity {}",
                 needed, capacity
             ),
+            Error::MilpUnavailable => write!(
+                f,
+                "MILP solver requested but the `milp` feature is not enabled"
+            ),
         }
     }
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
+
+/// Which solver `MultiPodBuilder::solve_with` should run against the
+/// problem. `Milp` requires the `milp` Cargo feature (or a test build);
+/// requesting it from a feature-off release build returns
+/// [`Error::MilpUnavailable`].
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum SolverKind {
+    /// Production DP partitioner with bin-packing + random-priority Kahn
+    /// orderings. Polynomial time, no external solver dependency.
+    Heuristic,
+    /// MILP oracle (via `good_lp` / SCIP). Optimal K but non-linear time
+    /// growth on hard instances. Intended for offline use against a
+    /// captured `InputShape`; not recommended for interactive solve paths.
+    Milp,
+}
+
+impl fmt::Display for SolverKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            SolverKind::Heuristic => write!(f, "Heuristic solver"),
+            SolverKind::Milp => write!(f, "MILP solver"),
+        }
+    }
+}
 
 /// Side table pairing an [`OutputShape`]'s positional external indices
 /// with the concrete pod hashes and input statements they refer to. The
@@ -259,12 +288,21 @@ impl MultiPodBuilder {
         ResourceSummary::from_costs(costs.iter(), &self.params)
     }
 
+    /// Solve the partitioning problem with the production heuristic.
+    /// Shorthand for [`Self::solve_with`] with [`SolverKind::Heuristic`].
+    pub fn solve(self) -> Result<SolvedMultiPod> {
+        self.solve_with(SolverKind::Heuristic)
+    }
+
     /// Solve the partitioning problem. Builds the [`InputShape`] from the
     /// current builder state (including the external-republish pre-pass),
-    /// runs the DP partitioner, and returns a [`SolvedMultiPod`] that
-    /// holds the partition and the side data needed to materialise PODs
-    /// (once the circuit is available).
-    pub fn solve(self) -> Result<SolvedMultiPod> {
+    /// runs the requested partitioner, and returns a [`SolvedMultiPod`]
+    /// that holds the partition and the side data needed to materialise
+    /// PODs.
+    ///
+    /// Returns [`Error::MilpUnavailable`] if `kind == SolverKind::Milp`
+    /// in a release build without the `milp` feature.
+    pub fn solve_with(self, kind: SolverKind) -> Result<SolvedMultiPod> {
         let MainPodBuilder {
             statements: stmt_pairs,
             operations,
@@ -282,13 +320,7 @@ impl MultiPodBuilder {
             &self.params,
         );
 
-        let mut output = partition::partition(&shape).ok_or_else(|| {
-            Error::NoFeasiblePartition(
-                "the DP partitioner could not find a feasible partition under \
-                 the current params; run diagnose_failure() for details"
-                    .to_string(),
-            )
-        })?;
+        let mut output = run_partition(&shape, kind)?;
 
         // Synthetic republish statements appear at positions >= operations.len()
         // in the augmented shape, each with one External dep recording its
@@ -526,6 +558,34 @@ impl MultiPodResult {
     pub fn intermediate_pods(&self) -> &[MainPod] {
         &self.pods[..self.pods.len() - 1]
     }
+}
+
+/// Dispatch to the requested solver. The MILP arm is only present when
+/// the `milp` feature is enabled (always the case in test builds via
+/// `[dev-dependencies] good_lp`); otherwise it returns
+/// [`Error::MilpUnavailable`].
+fn run_partition(shape: &InputShape, kind: SolverKind) -> Result<OutputShape> {
+    let outcome = match kind {
+        SolverKind::Heuristic => partition::partition(shape),
+        SolverKind::Milp => {
+            #[cfg(any(test, feature = "milp"))]
+            {
+                partition_milp::solve(shape)
+            }
+            #[cfg(not(any(test, feature = "milp")))]
+            {
+                let _ = shape;
+                return Err(Error::MilpUnavailable);
+            }
+        }
+    };
+    outcome.ok_or_else(|| {
+        Error::NoFeasiblePartition(format!(
+            "the {} could not find a feasible partition under the current \
+             params; run diagnose_failure() for details",
+            kind
+        ))
+    })
 }
 
 /// Per-POD public-set decisions: which statements each intermediate POD
@@ -820,6 +880,22 @@ mod tests {
         builder.pub_op(FrontendOp::eq(1, 1)).expect("op should add");
 
         let solved = builder.solve().expect("should solve");
+        assert_eq!(solved.solution().pod_count, 1);
+        assert_eq!(solved.solution().pod_statements[0].len(), 1);
+    }
+
+    /// Smoke test that `SolverKind::Milp` reaches the MILP backend.
+    #[test]
+    fn solve_with_milp_kind_uses_oracle() {
+        let params = Params::default();
+        let vd_set = &*MOCK_VD_SET;
+
+        let mut builder = MultiPodBuilder::new(&params, vd_set);
+        builder.pub_op(FrontendOp::eq(1, 1)).expect("op should add");
+
+        let solved = builder
+            .solve_with(SolverKind::Milp)
+            .expect("MILP should solve a trivial input");
         assert_eq!(solved.solution().pod_count, 1);
         assert_eq!(solved.solution().pod_statements[0].len(), 1);
     }
