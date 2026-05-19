@@ -20,9 +20,9 @@
 //!   Dynamic programming over prefixes solves it optimally in
 //!   O(n * W^2) where W = `max_priv_statements` (see [`run_dp`]). It
 //!   also ensures feasibility in cases where a left-to-right greedy
-//!   walk produces an infeasible partition, which can happen if a POD
-//!   requires more than the available input statements. See
-//!   [`dp_recovers_on_fan_in`] for an example.
+//!   walk produces an infeasible partition; the DP-vs-greedy random
+//!   sweep ([`dp_vs_greedy_random_sweep`]) measures how often this
+//!   actually rescues a partition.
 
 use std::{
     cmp::Reverse,
@@ -896,90 +896,6 @@ mod tests {
         let mut all: Vec<usize> = out.pod_statements.iter().flatten().copied().collect();
         all.sort();
         assert_eq!(all, vec![0, 1, 2, 3]);
-    }
-
-    /// Fan-in DAG: 21 zero-cost producers and a single consumer T with
-    /// `Internal` deps on every producer. With `max_open_input_statements
-    /// = 20`, any segment containing T can pull at most 20 prev-pod
-    /// producers through its chain slot, so T's segment must hold at
-    /// least one producer locally.
-    ///
-    /// Same-ordering greedy packing fails on this DAG: it fills segment
-    /// 1 to cap (21 statements at `max_statements = 21`), leaving T
-    /// alone in a fresh segment needing 21 prev-pod producers via the
-    /// chain slot, which busts `max_open_input_statements`. Cutting
-    /// earlier rescues it: segment 1 holds just [stmt 0], segment 2
-    /// holds [1..21] = 20 producers and T at cap, and T's chain slot
-    /// only has to pull one prev-pod producer.
-    ///
-    /// This is why the cutting pass isn't just an optimisation; it's
-    /// soundness insurance for fan-in-bound workloads. A naive
-    /// left-to-right greedy walk on the same ordering would give up.
-    ///
-    /// Disabled under the new statement-table accounting: `OpenInputStatement`
-    /// ops now count against `max_statements`, so a single-sink fan-in
-    /// DAG of width N inherently requires `max_statements >= N + 1`
-    /// (N producers + 1 consumer, all routed through the consumer's
-    /// statement table either locally or as imports). The old test
-    /// scenario can't be reproduced; the DP-over-greedy soundness it
-    /// guarded needs a new representative DAG.
-    #[test]
-    #[ignore = "old-semantics test; needs a new DAG that exposes DP > greedy under statement-table accounting"]
-    fn dp_recovers_on_fan_in() {
-        use super::super::cost::StatementCost;
-
-        let n_producers = 21usize;
-        let n = n_producers + 1;
-        let consumer = n_producers;
-        let params = Params {
-            max_statements: 21,
-            ..Params::default()
-        };
-        assert_eq!(
-            params.max_statements, n_producers,
-            "test relies on max_statements = n_producers so segment 1 fills exactly at cap"
-        );
-
-        let mut dep_edges: Vec<Vec<AbstractDep>> = (0..n).map(|_| Vec::new()).collect();
-        dep_edges[consumer] = (0..n_producers).map(AbstractDep::Internal).collect();
-        let input = InputShape {
-            costs: (0..n).map(|_| StatementCost::default()).collect(),
-            dep_edges,
-            output_public_indices: vec![consumer],
-            num_external_pods: 0,
-            statement_pod: vec![],
-            params,
-        };
-
-        let identity: Vec<usize> = (0..n).collect();
-        let ordering = kahn_with_priority(&input, &identity).expect("DAG must be acyclic");
-        assert_eq!(
-            ordering, identity,
-            "source-order Kahn on a single-sink fan-in DAG yields 0..n"
-        );
-
-        let dp_out = partition_with_ordering(&input, &ordering)
-            .expect("DP must find a feasible partition on the source-order ordering");
-        assert_eq!(
-            dp_out.pod_count, 2,
-            "DP cuts at (0..1, 1..22) so T's segment imports only one producer via chain"
-        );
-        assert_eq!(
-            dp_out.pod_statements[0],
-            vec![0],
-            "segment 1 holds just producer 0"
-        );
-        assert_eq!(
-            dp_out.pod_statements[1],
-            (1..=consumer).collect::<Vec<_>>(),
-            "segment 2 holds the remaining 20 producers and the consumer T"
-        );
-
-        let full_out = partition(&input).expect("full pipeline must recover K=2");
-        assert_eq!(
-            full_out.pod_count, 2,
-            "full pipeline relies on the DP layer to recover K=2 on this fan-in input"
-        );
     }
 
     /// DP vs greedy random sweep. For each generated input, compares
