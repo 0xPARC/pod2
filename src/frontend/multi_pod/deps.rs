@@ -1,13 +1,18 @@
 //! Dependency analysis for statements and operations.
 //!
-//! This module analyzes dependencies between statements to determine
-//! which statements must be proved before others.
+//! Builds the statement dependency graph in concrete form. The conversion
+//! to the positional [`AbstractDep`](super::shape::AbstractDep) form, and
+//! the external-republish pre-pass that introduces synthetic statements
+//! for externals with multiple consumers, both live in
+//! `mod.rs::build_shape_and_index`.
 
 use std::collections::HashMap;
 
 use crate::{
     frontend::{Operation, OperationArg},
-    middleware::{Hash, Statement},
+    middleware::{
+        Hash, InputPodOpenStatement, NativeOperation, OperationAux, OperationType, Statement,
+    },
 };
 
 /// Reference to a statement sourced from an external input POD.
@@ -19,7 +24,8 @@ pub struct ExternalDependency {
     pub statement: Statement,
 }
 
-/// Represents a source of a statement dependency.
+/// Concrete source of a statement dependency. The canonicalisation step
+/// converts this to a positional `AbstractDep`.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum StatementSource {
     /// Statement created within this builder at the given index.
@@ -28,23 +34,18 @@ pub enum StatementSource {
     External(ExternalDependency),
 }
 
-/// Dependency graph for all statements in a builder.
-///
-/// Each element `statement_deps[i]` is the list of dependencies for statement `i`.
+/// Dependency graph for all statements in a builder. `statement_deps[i]` is
+/// the list of dependencies of statement `i`, in argument order.
 #[derive(Clone, Debug)]
 pub struct DependencyGraph {
-    /// Dependencies for each statement (indexed by statement index).
     pub statement_deps: Vec<Vec<StatementSource>>,
 }
 
 impl DependencyGraph {
-    /// Build a dependency graph from statements and operations.
-    ///
-    /// `statements` and `operations` should be parallel arrays where
-    /// `operations[i]` produces `statements[i]`.
-    ///
-    /// `external_pod_statements` maps (pod_hash, statement) pairs to enable
-    /// recognizing references to external POD statements.
+    /// Build the dependency graph from parallel `statements` and
+    /// `operations` arrays (where `operations[i]` produces `statements[i]`)
+    /// plus a `statement -> pod hash` map for recognising external
+    /// references.
     pub fn build(
         statements: &[Statement],
         operations: &[Operation],
@@ -52,10 +53,10 @@ impl DependencyGraph {
     ) -> Self {
         let mut statement_deps = Vec::with_capacity(statements.len());
 
-        // Build a map from statement to its index for internal lookup.
-        // Use entry().or_insert() to preserve the FIRST occurrence of each statement.
-        // This is important for CopyStatement: if statements[0] = A and statements[2] = copy(A) = A,
-        // we want statement_to_index[A] = 0 (the original), not 2 (the copy).
+        // Map statement content to its first-occurrence index. First-wins
+        // so that if the same content appears more than once, later ops
+        // referencing it point at the earliest producer rather than at
+        // themselves.
         let mut statement_to_index: HashMap<&Statement, usize> = HashMap::new();
         for (i, s) in statements.iter().enumerate() {
             if !s.is_none() {
@@ -66,16 +67,13 @@ impl DependencyGraph {
         for (idx, op) in operations.iter().enumerate() {
             let mut deps = Vec::new();
 
-            // Examine each argument to the operation
             for arg in &op.1 {
                 if let OperationArg::Statement(ref dep_stmt) = arg {
                     if dep_stmt.is_none() {
                         continue;
                     }
 
-                    // Check if this is an internal statement (created earlier in this builder)
                     if let Some(&dep_idx) = statement_to_index.get(dep_stmt) {
-                        // Internal dependencies must always be from earlier statements
                         assert!(
                             dep_idx <= idx,
                             "Statement at index {} depends on future statement at index {}",
@@ -84,25 +82,21 @@ impl DependencyGraph {
                         );
 
                         if dep_idx < idx {
-                            // The statement was created by an earlier operation
                             deps.push(StatementSource::Internal(dep_idx));
                             continue;
                         }
-                        // dep_idx == idx: The first occurrence of this statement is at the current index,
-                        // meaning this operation both takes and produces this statement (e.g., CopyStatement
-                        // copying from an external POD). Fall through to check external PODs for the source.
+                        // dep_idx == idx: the first occurrence of this
+                        // statement content is at the current position,
+                        // meaning this operation both takes and produces
+                        // it. Fall through to the external lookup below.
                     }
 
-                    // Check if this is from an external POD
                     if let Some(&pod_hash) = external_pod_statements.get(dep_stmt) {
                         deps.push(StatementSource::External(ExternalDependency {
                             pod_hash,
                             statement: dep_stmt.clone(),
                         }));
                     } else {
-                        // Statement arguments should either be internal (created earlier)
-                        // or from external PODs (except anchored-key implicit Contains).
-                        // If neither, something is wrong.
                         unreachable!(
                             "Statement argument not found in internal statements or external PODs: {:?}",
                             dep_stmt
@@ -111,34 +105,26 @@ impl DependencyGraph {
                 }
             }
 
+            // Staging-time `OpenInputStatement` ops carry no arg statements
+            // (op.1 is empty) but functionally pull an input statement out of an
+            // external POD's public statement tree. Model them like a
+            // synthetic-republish node so the partitioner accounts for the
+            // external pod requirement and the per-POD import budgets.
+            if let OperationType::Native(NativeOperation::OpenInputStatement) = op.0 {
+                if let OperationAux::OpenInputStatement(InputPodOpenStatement {
+                    sts_root, ..
+                }) = &op.2
+                {
+                    deps.push(StatementSource::External(ExternalDependency {
+                        pod_hash: *sts_root,
+                        statement: statements[idx].clone(),
+                    }));
+                }
+            }
+
             statement_deps.push(deps);
         }
 
         Self { statement_deps }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::{
-        frontend::Operation as FrontendOp,
-        middleware::{NativeOperation, OperationAux, OperationType, Value, ValueRef},
-    };
-
-    fn equal_stmt(n: i64) -> Statement {
-        Statement::Equal(
-            ValueRef::Literal(Value::from(n)),
-            ValueRef::Literal(Value::from(n)),
-        )
-    }
-
-    /// None operation produces Statement::None
-    fn none_op() -> FrontendOp {
-        FrontendOp(
-            OperationType::Native(NativeOperation::None),
-            vec![],
-            OperationAux::None,
-        )
     }
 }
