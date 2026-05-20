@@ -453,7 +453,7 @@ pub(crate) fn layout_statements(
     } else {
         0
     } + statements_is_pub.iter().filter(|is_pub| **is_pub).count();
-    assert!(public_statements_len <= 2 << BASE_PARAMS.max_depth_public_statements_mt);
+    assert!(public_statements_len <= 2usize.pow(BASE_PARAMS.max_depth_public_statements_mt as u32));
 
     Ok((statements_is_pub, statements))
 }
@@ -545,6 +545,20 @@ impl MainPodProver for Prover {
             .collect_vec();
         let open_input_statements =
             extract_open_input_statements(params, &mut aux_list, inputs.operations)?;
+        let pad_open_input_statement = if params.max_input_pods != 0 {
+            let pod = &inputs.pods[0];
+            let (_, proof) = pod.pub_raw_statements_mt().prove(0)?;
+            let pad_raw_st = pod.pub_raw_statements()[0].clone();
+            Some(InputPodOpenStatement {
+                pod_index: 0,
+                sts_root: pod.statements_root(),
+                st_index: 0,
+                proof,
+                raw_statement: pad_raw_st,
+            })
+        } else {
+            None
+        };
         let public_key_of_sks =
             extract_public_key_of(params, &mut aux_list, inputs.operations, &input_statements)?;
         let signed_bys =
@@ -597,6 +611,7 @@ impl MainPodProver for Prover {
             custom_predicate_verifications,
             merkle_proofs,
             open_input_statements,
+            pad_open_input_statement,
             public_key_of_sks,
             signed_bys,
             merkle_transition_proofs,
@@ -719,7 +734,6 @@ pub fn cache_get_rec_main_pod_common_hash(params: &Params) -> CacheEntry<String>
 #[derive(Serialize, Deserialize)]
 struct Data {
     public_statements: Vec<Statement>,
-    // public_statements_mt: Array,
     proof: String,
     verifier_only: String,
     common_hash: String,
@@ -1480,7 +1494,7 @@ pub mod tests {
 
         let mut builder = MainPodBuilder::new(&params, vd_set);
         builder.add_pod(pod_0).unwrap();
-        builder.extend_input_pod0_public_statements();
+        builder.extend_input_pod0_public_statements().unwrap();
         let st_3 = builder.pub_op(frontend::Operation::eq(3, 3)).unwrap();
         let st_4 = builder.pub_op(frontend::Operation::eq(4, 4)).unwrap();
 

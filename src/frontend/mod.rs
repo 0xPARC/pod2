@@ -187,8 +187,14 @@ impl MainPodBuilder {
             _ => Ok(()),
         }
     }
-    pub fn extend_input_pod0_public_statements(&mut self) {
+    pub fn extend_input_pod0_public_statements(&mut self) -> Result<()> {
+        if self.input_pods.is_empty() {
+            return Err(Error::custom(
+                "Requested extend_input_pod0_public_statements with no input pods",
+            ));
+        }
         self.extend_input_pod0_public_statements = true;
+        Ok(())
     }
 
     // If we're adding a Contains statement with literal arguments (an Entry), track it in
@@ -783,10 +789,10 @@ impl MainPodBuilder {
         } else {
             0
         } + self.statements.iter().filter(|(public, _)| *public).count();
-        if public_count > 2 << BASE_PARAMS.max_depth_public_statements_mt {
+        if public_count > 2usize.pow(BASE_PARAMS.max_depth_public_statements_mt as u32) {
             return Err(Error::too_many_public_statements(
                 public_count,
-                2 << BASE_PARAMS.max_depth_public_statements_mt,
+                2usize.pow(BASE_PARAMS.max_depth_public_statements_mt as u32),
             ));
         }
         Ok(())

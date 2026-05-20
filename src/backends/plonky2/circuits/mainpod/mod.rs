@@ -31,7 +31,6 @@ use crate::{
             },
             mux_table::{MuxTableTarget, TableEntryTarget},
         },
-        emptypod::EmptyPod,
         error::Result,
         mainpod::{self, MerkleProofs, MerkleTransitionProofs, SignedBy},
         primitives::{
@@ -2116,7 +2115,6 @@ impl AuxTableInputTargets {
         &self,
         params: &Params,
         pw: &mut PartialWitness<F>,
-        vds_set: &VDSet,
         input: &AuxTableInput,
     ) -> Result<()> {
         self.set_container_mtp_targets(
@@ -2131,22 +2129,10 @@ impl AuxTableInputTargets {
             self.open_input_statements[i].set_targets(pw, data)?;
         }
         // Padding
-        let pad_data = if input.open_input_statements.is_empty() {
-            let empty_pod = EmptyPod::new_boxed(vds_set.clone());
-            let (_, proof) = empty_pod.pub_raw_statements_mt().prove(0)?;
-            let pad_raw_st = empty_pod.pub_raw_statements()[0].clone();
-            InputPodOpenStatement {
-                pod_index: params.max_input_pods - 1,
-                sts_root: empty_pod.statements_root(),
-                st_index: 0,
-                proof,
-                raw_statement: pad_raw_st,
+        if let Some(pad_data) = &input.pad_open_input_statement {
+            for i in input.open_input_statements.len()..params.max_open_input_statements {
+                self.open_input_statements[i].set_targets(pw, pad_data)?;
             }
-        } else {
-            input.open_input_statements[0].clone()
-        };
-        for i in input.open_input_statements.len()..params.max_open_input_statements {
-            self.open_input_statements[i].set_targets(pw, &pad_data)?;
         }
 
         assert!(input.public_key_of_sks.len() <= params.max_public_key_of);
@@ -2283,6 +2269,7 @@ pub struct AuxTableInput {
     pub merkle_proofs: MerkleProofs,
     pub merkle_transition_proofs: MerkleTransitionProofs,
     pub open_input_statements: Vec<InputPodOpenStatement>,
+    pub pad_open_input_statement: Option<InputPodOpenStatement>,
     pub public_key_of_sks: Vec<SecretKey>,
     pub signed_bys: Vec<SignedBy>,
     pub custom_predicate_verifications: Vec<CustomPredicateVerification>,
@@ -2388,12 +2375,8 @@ impl InnerCircuit for MainPodVerifyTarget {
             self.custom_predicates[i].set_targets(pw, &pad_cp, &pad_mtp)?;
         }
 
-        self.aux_table_input.set_targets(
-            &self.params,
-            pw,
-            &input.vds_set,
-            &input.aux_table_input,
-        )?;
+        self.aux_table_input
+            .set_targets(&self.params, pw, &input.aux_table_input)?;
 
         Ok(())
     }
