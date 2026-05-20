@@ -202,6 +202,11 @@ pub struct PodUtilization {
     pub resources: Vec<UtilizationRow>,
     pub imports: UtilizationRow,
     pub external_pods: UtilizationRow,
+    /// Statements this POD contributes to a Merkle tree. For intermediate
+    /// PODs: locally-proved statements consumed downstream. For the output
+    /// POD: the fresh tree size (`|output_public_indices|`). The limit is
+    /// the per-POD `max_public_statements` cap.
+    pub publishes: UtilizationRow,
 }
 
 /// Post-solve per-POD breakdown.
@@ -229,6 +234,39 @@ impl SolutionBreakdown {
         }
 
         let output_pub_set: BTreeSet<usize> = input.output_public_indices.iter().copied().collect();
+
+        let output_pod = pod_count.saturating_sub(1);
+        let mut exported: Vec<bool> = vec![false; n];
+        for s in 0..n {
+            let p = pod_of[s];
+            if p == usize::MAX {
+                continue;
+            }
+            for dep in &input.dep_edges[s] {
+                if let AbstractDep::Internal(d) = dep {
+                    if pod_of[*d] != p {
+                        exported[*d] = true;
+                    }
+                }
+            }
+        }
+        for &op in &output_pub_set {
+            if pod_of[op] != usize::MAX && pod_of[op] != output_pod {
+                exported[op] = true;
+            }
+        }
+
+        let publishes_limit = input.params.max_public_statements;
+        let mut publishes_count: Vec<usize> = vec![0; pod_count];
+        for s in 0..n {
+            let p = pod_of[s];
+            if p != usize::MAX && p != output_pod && exported[s] {
+                publishes_count[p] += 1;
+            }
+        }
+        if pod_count > 0 {
+            publishes_count[output_pod] = input.output_public_indices.len();
+        }
 
         let pods = (0..pod_count)
             .map(|pod_idx| {
@@ -273,6 +311,11 @@ impl SolutionBreakdown {
                     used: external_pods.len(),
                     limit: input.params.max_input_pods,
                 };
+                let publishes_row = UtilizationRow {
+                    name: "tree publishes",
+                    used: publishes_count[pod_idx],
+                    limit: publishes_limit,
+                };
 
                 PodUtilization {
                     pod_idx,
@@ -281,6 +324,7 @@ impl SolutionBreakdown {
                     resources,
                     imports: imports_row,
                     external_pods: external_row,
+                    publishes: publishes_row,
                 }
             })
             .collect();
@@ -312,7 +356,7 @@ impl fmt::Display for SolutionBreakdown {
             for row in pod
                 .resources
                 .iter()
-                .chain([&pod.imports, &pod.external_pods])
+                .chain([&pod.imports, &pod.external_pods, &pod.publishes])
             {
                 if row.used > 0 {
                     let pct = if row.limit > 0 {

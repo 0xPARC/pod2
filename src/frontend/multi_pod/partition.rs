@@ -63,6 +63,9 @@ pub fn partition(input: &InputShape) -> Option<OutputShape> {
             pod_republished_externals: vec![],
         });
     }
+    if input.output_public_indices.len() > input.params.max_public_statements {
+        return None;
+    }
 
     let lower_bound = resource_lower_bound_k(input);
     let mut best: Option<OutputShape> = None;
@@ -112,6 +115,10 @@ pub(super) fn kahn_bin_packing(
     }
     let params = &input.params;
     let (mut indegree, consumers) = input.indegree_and_consumers();
+    let output_pub_set: HashSet<usize> = input.output_public_indices.iter().copied().collect();
+    let is_exporter: Vec<bool> = (0..n)
+        .map(|s| !consumers[s].is_empty() || output_pub_set.contains(&s))
+        .collect();
 
     let mut ordering: Vec<usize> = Vec::with_capacity(n);
     let mut pos_built = vec![usize::MAX; n];
@@ -147,7 +154,9 @@ pub(super) fn kahn_bin_packing(
                 }
                 let cost = &input.costs[s];
                 let deps = &input.dep_edges[s];
-                if state.can_extend(cost, deps, &pos_built, params).is_some()
+                if state
+                    .can_extend(cost, deps, &pos_built, is_exporter[s], params)
+                    .is_some()
                     && prio < best_fit_prio
                 {
                     best_fit_prio = prio;
@@ -167,7 +176,7 @@ pub(super) fn kahn_bin_packing(
             state.reset();
             state.a = ordering.len();
         }
-        state.commit_extend(cost, deps, &pos_built);
+        state.commit_extend(cost, deps, &pos_built, is_exporter[s]);
         pos_built[s] = ordering.len();
         ordering.push(s);
         for &c in &consumers[s] {
@@ -230,6 +239,13 @@ struct GreedyState {
     prev_pod_producers: Vec<usize>,
     external_imports: Vec<usize>,
     external_pods: Vec<usize>,
+    /// Pessimistic count of statements admitted to the segment that
+    /// have at least one consumer (or are output-publics) — i.e. that
+    /// might land on the chain tree once this segment closes. Overcounts
+    /// versus the true post-close exports, since some consumers may end
+    /// up in this same segment; that means bin-packing closes segments
+    /// slightly earlier than strictly necessary under the publish cap.
+    exported_count: usize,
     /// Scratch buffers used inside [`can_extend`] for deduplication.
     /// Cleared on each call to avoid churning allocations.
     scratch_new_producers: Vec<usize>,
@@ -245,6 +261,7 @@ impl GreedyState {
         self.prev_pod_producers.clear();
         self.external_imports.clear();
         self.external_pods.clear();
+        self.exported_count = 0;
     }
 
     /// Would the current segment still satisfy all per-POD caps after
@@ -258,8 +275,12 @@ impl GreedyState {
         cost: &StatementCost,
         deps: &[AbstractDep],
         pos_of: &[usize],
+        is_exporter: bool,
         params: &Params,
     ) -> Option<usize> {
+        if self.exported_count + usize::from(is_exporter) > params.max_public_statements {
+            return None;
+        }
         let new_cp_count = cost
             .custom_predicates_ids
             .iter()
@@ -315,7 +336,13 @@ impl GreedyState {
 
     /// Apply the extension to the segment. Caller must have verified
     /// feasibility via [`can_extend`]; the mutation here is unchecked.
-    fn commit_extend(&mut self, cost: &StatementCost, deps: &[AbstractDep], pos_of: &[usize]) {
+    fn commit_extend(
+        &mut self,
+        cost: &StatementCost,
+        deps: &[AbstractDep],
+        pos_of: &[usize],
+        is_exporter: bool,
+    ) {
         self.totals.add(cost);
         for id in &cost.custom_predicates_ids {
             if !self.distinct_cps.contains(id) {
@@ -339,6 +366,9 @@ impl GreedyState {
                     }
                 }
             }
+        }
+        if is_exporter {
+            self.exported_count += 1;
         }
     }
 }
@@ -415,13 +445,46 @@ fn build_pos_in_ordering(ordering: &[usize]) -> Vec<usize> {
     pos
 }
 
+/// Per-statement max-consumer-position lookup against an ordering.
+/// `max_consumer_pos[s]` is the largest position in `ordering` of any
+/// statement that has `s` as an `Internal` dep, or 0 if `s` has no
+/// internal consumers. Drives the per-segment publish-cap check: `s` is
+/// exported from segment `[a..p]` iff `max_consumer_pos[s] >= p` (some
+/// consumer lives after the segment) or `s` is in
+/// `output_public_indices` (the output POD pulls it via chain).
+fn build_max_consumer_pos(consumers: &[Vec<usize>], pos_in_ordering: &[usize]) -> Vec<usize> {
+    let n = consumers.len();
+    let mut mcp = vec![0_usize; n];
+    for (d, cs) in consumers.iter().enumerate() {
+        for &c in cs {
+            if pos_in_ordering[c] > mcp[d] {
+                mcp[d] = pos_in_ordering[c];
+            }
+        }
+    }
+    mcp
+}
+
 /// Non-terminal-only per-segment feasibility check, self-contained
 /// (builds its own `pos_in_ordering` and `DpWorkspace`). Callers in a
 /// hot loop should use `segment_feasible_with` to reuse allocations.
 pub(super) fn segment_feasible(ordering: &[usize], input: &InputShape, a: usize, p: usize) -> bool {
     let pos_in_ordering = build_pos_in_ordering(ordering);
+    let consumers = input.consumers();
+    let max_consumer_pos = build_max_consumer_pos(&consumers, &pos_in_ordering);
+    let output_pub_set: HashSet<usize> = input.output_public_indices.iter().copied().collect();
     let mut ws = DpWorkspace::default();
-    segment_feasible_with(ordering, &pos_in_ordering, input, a, p, false, &mut ws)
+    segment_feasible_with(
+        ordering,
+        &pos_in_ordering,
+        &max_consumer_pos,
+        &output_pub_set,
+        input,
+        a,
+        p,
+        false,
+        &mut ws,
+    )
 }
 
 /// Simulate the greedy partition over a fixed ordering: extend each
@@ -438,16 +501,39 @@ pub(super) fn segment_feasible(ordering: &[usize], input: &InputShape, a: usize,
 pub(super) fn simulate_greedy_k(input: &InputShape, ordering: &[usize]) -> Option<usize> {
     let n = ordering.len();
     let pos_in_ordering = build_pos_in_ordering(ordering);
+    let consumers = input.consumers();
+    let max_consumer_pos = build_max_consumer_pos(&consumers, &pos_in_ordering);
+    let output_pub_set: HashSet<usize> = input.output_public_indices.iter().copied().collect();
     let mut ws = DpWorkspace::default();
     let mut k = 0_usize;
     let mut a = 0_usize;
     while a < n {
-        if !segment_feasible_with(ordering, &pos_in_ordering, input, a, a + 1, false, &mut ws) {
+        if !segment_feasible_with(
+            ordering,
+            &pos_in_ordering,
+            &max_consumer_pos,
+            &output_pub_set,
+            input,
+            a,
+            a + 1,
+            false,
+            &mut ws,
+        ) {
             return None;
         }
         let mut p = a + 1;
         while p < n
-            && segment_feasible_with(ordering, &pos_in_ordering, input, a, p + 1, false, &mut ws)
+            && segment_feasible_with(
+                ordering,
+                &pos_in_ordering,
+                &max_consumer_pos,
+                &output_pub_set,
+                input,
+                a,
+                p + 1,
+                false,
+                &mut ws,
+            )
         {
             p += 1;
         }
@@ -476,16 +562,39 @@ fn greedy_segments_with_terminal(
         return Some(Vec::new());
     }
     let pos_in_ordering = build_pos_in_ordering(ordering);
+    let consumers = input.consumers();
+    let max_consumer_pos = build_max_consumer_pos(&consumers, &pos_in_ordering);
+    let output_pub_set: HashSet<usize> = input.output_public_indices.iter().copied().collect();
     let mut ws = DpWorkspace::default();
     let mut segments: Vec<(usize, usize)> = Vec::new();
     let mut a = 0_usize;
     while a < n {
-        if !segment_feasible_with(ordering, &pos_in_ordering, input, a, a + 1, false, &mut ws) {
+        if !segment_feasible_with(
+            ordering,
+            &pos_in_ordering,
+            &max_consumer_pos,
+            &output_pub_set,
+            input,
+            a,
+            a + 1,
+            false,
+            &mut ws,
+        ) {
             return None;
         }
         let mut p = a + 1;
         while p < n
-            && segment_feasible_with(ordering, &pos_in_ordering, input, a, p + 1, false, &mut ws)
+            && segment_feasible_with(
+                ordering,
+                &pos_in_ordering,
+                &max_consumer_pos,
+                &output_pub_set,
+                input,
+                a,
+                p + 1,
+                false,
+                &mut ws,
+            )
         {
             p += 1;
         }
@@ -498,6 +607,8 @@ fn greedy_segments_with_terminal(
     if !segment_feasible_with(
         ordering,
         &pos_in_ordering,
+        &max_consumer_pos,
+        &output_pub_set,
         input,
         last_a,
         last_p,
@@ -552,6 +663,8 @@ pub(super) fn partition_greedy_only(input: &InputShape) -> Option<OutputShape> {
 fn segment_feasible_with(
     ordering: &[usize],
     pos_in_ordering: &[usize],
+    max_consumer_pos: &[usize],
+    output_pub_set: &HashSet<usize>,
     input: &InputShape,
     a: usize,
     p: usize,
@@ -627,9 +740,24 @@ fn segment_feasible_with(
         return false;
     }
 
-    let non_terminal = tree_imports_ok(n_chain_imports, n_ext_imports, n_ext_pods, params);
-    if !non_terminal || !is_terminal {
-        return non_terminal;
+    if !tree_imports_ok(n_chain_imports, n_ext_imports, n_ext_pods, params) {
+        return false;
+    }
+
+    if !is_terminal {
+        // Publish cap: each statement in the segment that has a consumer
+        // at or beyond `p`, or that is an output-public (the terminal POD
+        // pulls it from the chain), occupies one slot on the chain tree
+        // this POD appends to. The terminal POD doesn't extend the chain
+        // — its fresh-tree size is `|output_public_indices|`, pre-checked
+        // by callers before invoking the partitioner.
+        let mut exports = 0_usize;
+        for &s in segment {
+            if max_consumer_pos[s] >= p || output_pub_set.contains(&s) {
+                exports += 1;
+            }
+        }
+        return exports <= params.max_public_statements;
     }
 
     // Terminal: output_public statements in the prefix become additional
@@ -662,6 +790,9 @@ fn segment_feasible_with(
 fn run_dp(ordering: &[usize], input: &InputShape) -> Option<Vec<(usize, usize)>> {
     let n = ordering.len();
     let pos_in_ordering = build_pos_in_ordering(ordering);
+    let consumers = input.consumers();
+    let max_consumer_pos = build_max_consumer_pos(&consumers, &pos_in_ordering);
+    let output_pub_set: HashSet<usize> = input.output_public_indices.iter().copied().collect();
     // Any segment with more than `max_priv_statements` slots is
     // infeasible, so we only need to consider cuts within the last W
     // positions. That caps the inner loop at W choices per `p`, giving
@@ -683,6 +814,8 @@ fn run_dp(ordering: &[usize], input: &InputShape) -> Option<Vec<(usize, usize)>>
             if segment_feasible_with(
                 ordering,
                 &pos_in_ordering,
+                &max_consumer_pos,
+                &output_pub_set,
                 input,
                 a,
                 p,
@@ -710,6 +843,8 @@ fn run_dp(ordering: &[usize], input: &InputShape) -> Option<Vec<(usize, usize)>>
         if segment_feasible_with(
             ordering,
             &pos_in_ordering,
+            &max_consumer_pos,
+            &output_pub_set,
             input,
             a,
             n,
