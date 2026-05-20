@@ -345,12 +345,6 @@ impl OperationTarget {
         }
         self.aux_index.set_targets(pw, op.aux().table_index(params))
     }
-
-    fn size(params: &Params) -> usize {
-        OperationTypeTarget::size(params)
-            + BASE_PARAMS.max_operation_args * IndexTarget::size(params)
-            + IndexTarget::size(params)
-    }
 }
 
 #[derive(Clone)]
