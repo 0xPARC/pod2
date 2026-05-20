@@ -1076,6 +1076,875 @@ mod tests {
         }
     }
 
+    /// Captured `multi_pod_tree::InputShape` for zk-craft's
+    /// `CraftRefineryCracked` action (episode-1 plugin). Used to
+    /// stress-test the partitioner against a realistic, large input.
+    /// See `sdk/src/tests.rs::capture_cracked_refinery_input_shape`
+    /// in the zk-craft repo for how the fixture is regenerated.
+    const CRACKED_REFINERY_FIXTURE: &str = include_str!("tests/fixtures/cracked_refinery.json");
+
+    /// Pins partition quality on the cracked-refinery fixture. The
+    /// resource-induced lower bound (`max_r ceil(total_r / cap_r)` over
+    /// per-statement-summable resources) is K=12, driven by 96
+    /// custom-predicate verifications at cap 8/POD. Under statement-
+    /// table accounting plus per-POD publish cap (`max_public_statements
+    /// = 20`), the heuristic reaches K=15: bin-packing pessimistically
+    /// counts every statement-with-a-consumer as an export, closing
+    /// segments slightly earlier than strictly necessary. MILP+cap
+    /// reaches K=12, so the gap is now 3 PODs. See
+    /// `docs/multipod_merkle_statement_tree.md` ("Custom predicate
+    /// body+head locality" and "Future generators under consideration")
+    /// for the structural reason and candidates that might close it.
+    #[test]
+    fn cracked_refinery_fixture_partitions() {
+        let shape: InputShape =
+            serde_json::from_str(CRACKED_REFINERY_FIXTURE).expect("fixture deserializes");
+        assert_eq!(shape.num_statements(), 345);
+
+        let outcome = partition::partition(&shape);
+        match outcome {
+            Some(out) => {
+                eprintln!(
+                    "cracked refinery partitioned into {} PODs, sizes={:?}",
+                    out.pod_count,
+                    out.pod_statements
+                        .iter()
+                        .map(|v| v.len())
+                        .collect::<Vec<_>>()
+                );
+                let breakdown = diagnostics::SolutionBreakdown::from_solution(&shape, &out);
+                eprintln!("{}", breakdown);
+                let total_placed: usize = out.pod_statements.iter().map(|v| v.len()).sum();
+                assert_eq!(total_placed, shape.num_statements());
+                assert_eq!(
+                    out.pod_count, 15,
+                    "expected 15 PODs under the per-POD publish cap; \
+                     MILP+cap optimum is 12"
+                );
+                let breakdown_for_check =
+                    diagnostics::SolutionBreakdown::from_solution(&shape, &out);
+                for pod in &breakdown_for_check.pods {
+                    assert!(
+                        pod.publishes.used <= shape.params.max_public_statements,
+                        "POD {} publishes {} > max_public_statements ({})",
+                        pod.pod_idx,
+                        pod.publishes.used,
+                        shape.params.max_public_statements
+                    );
+                }
+
+                // Probe whether the DP layer beats greedy on bin-packing's
+                // ordering for this fixture. Pre-statement-table-accounting
+                // the parity sweep recorded `K_bp_dp < K_bp_greedy` = 0;
+                // under the new cap that still holds on cracked-refinery.
+                // Pinned to catch any future divergence.
+                let identity: Vec<usize> = (0..shape.num_statements()).collect();
+                let bp_ordering =
+                    partition::kahn_bin_packing(&shape, &identity).expect("DAG must be acyclic");
+                let k_greedy = partition::simulate_greedy_k(&shape, &bp_ordering)
+                    .expect("greedy partition must be feasible on bin-packing's ordering");
+                let k_dp = partition::partition_with_ordering(&shape, &bp_ordering)
+                    .expect("DP must find a feasible partition on bin-packing's ordering")
+                    .pod_count;
+                eprintln!(
+                    "K_bp_greedy={} K_bp_dp={} on bin-packing's ordering",
+                    k_greedy, k_dp
+                );
+                assert_eq!(
+                    k_greedy, k_dp,
+                    "DP and greedy diverge on bin-packing's cracked-refinery \
+                     ordering; the DP layer earned its place — update doc."
+                );
+            }
+            None => {
+                let diag = diagnostics::diagnose_failure(&shape);
+                panic!(
+                    "partition() returned None; diagnosis: {}",
+                    diag.as_ref()
+                        .map(|v| v.to_string())
+                        .unwrap_or_else(|| "None".to_string())
+                );
+            }
+        }
+    }
+
+    /// Probe: what is MILP's K on cracked-refinery under the current
+    /// caps? Last measured under statement-table accounting: K=11
+    /// infeasible, K=12 feasible — so MILP optimum is K=12, unchanged
+    /// from before the accounting fix. `#[ignore]`d because SCIP takes
+    /// ~23s. Kept as a regression check: if the fixture or caps change,
+    /// re-running this probe re-establishes the optimum so any new
+    /// heuristic gap can be measured against it.
+    #[test]
+    #[ignore]
+    fn cracked_refinery_fixture_milp() {
+        let shape: InputShape =
+            serde_json::from_str(CRACKED_REFINERY_FIXTURE).expect("fixture deserializes");
+        for k in [11, 12] {
+            let out = partition_milp::solve_for_k(&shape, k);
+            match out {
+                Some(o) => eprintln!(
+                    "MILP K={}: feasible, sizes={:?}",
+                    k,
+                    o.pod_statements.iter().map(|v| v.len()).collect::<Vec<_>>()
+                ),
+                None => eprintln!("MILP K={}: no solution (infeasible or timed out)", k),
+            }
+        }
+    }
+
+    /// Probe: what is the MILP-optimal K under the per-POD publish cap
+    /// (`params.max_public_statements = 20`)? Settles whether the cap
+    /// forces K higher than the unbounded MILP optimum (K=12) or whether
+    /// the cap is "free" given a cap-aware partition. Iterates K from
+    /// the unbounded optimum upward; first feasible K is the cap-bound
+    /// optimum. `#[ignore]`'d because each `solve_for_k` invocation runs
+    /// SCIP; the publish-cap formulation adds `n + n*k` binaries plus
+    /// linking constraints, so wall-clock per call is higher than the
+    /// vanilla MILP.
+    #[test]
+    #[ignore]
+    fn cracked_refinery_fixture_milp_publish_cap() {
+        let shape: InputShape =
+            serde_json::from_str(CRACKED_REFINERY_FIXTURE).expect("fixture deserializes");
+        assert_eq!(shape.params.max_public_statements, 20);
+        for k in [11, 12, 13, 14, 15, 16] {
+            let out = partition_milp::solve_for_k_with_publish_cap(&shape, k);
+            match out {
+                Some(o) => {
+                    let sizes: Vec<usize> =
+                        o.pod_statements.iter().map(|v| v.len()).collect();
+                    let breakdown = diagnostics::SolutionBreakdown::from_solution(&shape, &o);
+                    let max_pubs = breakdown
+                        .pods
+                        .iter()
+                        .map(|p| p.publishes.used)
+                        .max()
+                        .unwrap_or(0);
+                    eprintln!(
+                        "MILP+cap K={}: feasible, max publishes={}, sizes={:?}",
+                        k, max_pubs, sizes
+                    );
+                    break;
+                }
+                None => eprintln!(
+                    "MILP+cap K={}: no solution (infeasible or timed out)",
+                    k
+                ),
+            }
+        }
+    }
+
+    /// Probe: can the DP find K=12 on cracked-refinery if we feed it the
+    /// "right" ordering derived from MILP's K=12 partition? Builds an
+    /// ordering by sorting statements by (pod_index in MILP's solution,
+    /// position in a baseline topological sort), so each MILP POD is a
+    /// contiguous block. If DP returns K=12, the ordering layer is the
+    /// whole gap (the DP can hit the optimum if generation produces this
+    /// layout). If DP returns K>12, something else is going on.
+    /// `#[ignore]`'d because it calls SCIP.
+    #[test]
+    #[ignore]
+    fn cracked_refinery_milp_ordering_probe() {
+        let shape: InputShape =
+            serde_json::from_str(CRACKED_REFINERY_FIXTURE).expect("fixture deserializes");
+        let milp_out = partition_milp::solve_for_k(&shape, 12)
+            .expect("MILP must find K=12 (regression in fixture or MILP formulation otherwise)");
+
+        let n = shape.num_statements();
+        let mut pod_of: Vec<usize> = vec![usize::MAX; n];
+        for (p, stmts) in milp_out.pod_statements.iter().enumerate() {
+            for &s in stmts {
+                pod_of[s] = p;
+            }
+        }
+
+        // Baseline global topo order. Within each MILP POD, we'll keep
+        // statements in this order; across PODs, the lower POD index
+        // comes first. The MILP's topo precedence constraint guarantees
+        // this concatenation is itself a valid topological ordering.
+        let identity_priority: Vec<usize> = (0..n).collect();
+        let global_topo = partition::kahn_with_priority(&shape, &identity_priority)
+            .expect("statement DAG must be acyclic");
+        let mut pos_in_global = vec![0_usize; n];
+        for (i, &s) in global_topo.iter().enumerate() {
+            pos_in_global[s] = i;
+        }
+
+        let mut ordering: Vec<usize> = (0..n).collect();
+        ordering.sort_by_key(|&s| (pod_of[s], pos_in_global[s]));
+
+        let dp_out = partition::partition_with_ordering(&shape, &ordering)
+            .expect("DP must produce a partition on a valid topo ordering");
+
+        eprintln!(
+            "MILP-derived ordering: DP returns K={}, sizes={:?}",
+            dp_out.pod_count,
+            dp_out
+                .pod_statements
+                .iter()
+                .map(|v| v.len())
+                .collect::<Vec<_>>()
+        );
+
+        let prod_out = partition::partition(&shape).expect("production partition");
+        eprintln!("production K = {}", prod_out.pod_count);
+
+        assert_eq!(
+            dp_out.pod_count, 12,
+            "DP should reach the MILP optimum K=12 when given the MILP-derived ordering; \
+             if it doesn't, the gap is not purely an ordering-generation problem"
+        );
+    }
+
+    /// Cross-reference: where do heuristic's POD 3 statements (the
+    /// stmt-saturated, CPV-light cluster suspected to drive the K=13/K=12
+    /// gap) end up in MILP's K=12 partition? If MILP spreads them across
+    /// many PODs, the "import-heavy cluster needs to be split" hypothesis
+    /// holds; if MILP also keeps them together, the gap is elsewhere.
+    /// `#[ignore]`'d (calls SCIP).
+    #[test]
+    #[ignore]
+    fn cracked_refinery_pod3_dispersion() {
+        let shape: InputShape =
+            serde_json::from_str(CRACKED_REFINERY_FIXTURE).expect("fixture deserializes");
+        let n = shape.num_statements();
+
+        let heur = partition::partition(&shape).expect("heuristic partitions");
+        assert_eq!(heur.pod_count, 13);
+        let heur_pod3: Vec<usize> = heur.pod_statements[3].clone();
+        eprintln!("Heuristic POD 3: {} statements", heur_pod3.len());
+
+        let milp_out = partition_milp::solve_for_k(&shape, 12).expect("MILP must find K=12");
+        let mut milp_of: Vec<usize> = vec![usize::MAX; n];
+        for (p, stmts) in milp_out.pod_statements.iter().enumerate() {
+            for &s in stmts {
+                milp_of[s] = p;
+            }
+        }
+
+        let mut dispersion: std::collections::BTreeMap<usize, usize> =
+            std::collections::BTreeMap::new();
+        for &s in &heur_pod3 {
+            *dispersion.entry(milp_of[s]).or_insert(0) += 1;
+        }
+        eprintln!(
+            "  Their MILP POD distribution (milp_pod -> count): {:?}",
+            dispersion
+        );
+
+        // Also compute per-MILP-POD CPV totals to see how MILP balances.
+        eprintln!("\nMILP POD CPV totals:");
+        for (p, stmts) in milp_out.pod_statements.iter().enumerate() {
+            let cpv: usize = stmts
+                .iter()
+                .map(|&s| shape.costs[s].custom_pred_verifications)
+                .sum();
+            let n_stmts = stmts.len();
+            eprintln!("  POD {}: {} stmts, {} CPV", p, n_stmts, cpv);
+        }
+
+        // For comparison, heuristic CPV per POD.
+        eprintln!("\nHeuristic POD CPV totals:");
+        for (p, stmts) in heur.pod_statements.iter().enumerate() {
+            let cpv: usize = stmts
+                .iter()
+                .map(|&s| shape.costs[s].custom_pred_verifications)
+                .sum();
+            let n_stmts = stmts.len();
+            eprintln!("  POD {}: {} stmts, {} CPV", p, n_stmts, cpv);
+        }
+    }
+
+    /// Detailed partition-diff between heuristic K=13 and MILP K=12 for
+    /// cracked-refinery. Prints (1) the transfer matrix of statements,
+    /// (2) which heuristic POD is "dissolved" in MILP's solution, (3) for
+    /// each scattered statement, its heuristic ordering position and MILP
+    /// target POD, and (4) the heuristic-vs-MILP ordering positions to
+    /// gauge how far the heuristic ordering is from MILP's effective one.
+    /// `#[ignore]`'d (calls SCIP).
+    #[test]
+    #[ignore]
+    fn cracked_refinery_partition_diff() {
+        let shape: InputShape =
+            serde_json::from_str(CRACKED_REFINERY_FIXTURE).expect("fixture deserializes");
+        let n = shape.num_statements();
+
+        // Heuristic K=13 + its ordering. Run bin-packing directly so we can
+        // pin the ordering it was generated from for position-by-position
+        // comparison.
+        let identity: Vec<usize> = (0..n).collect();
+        let bp_ordering = partition::kahn_bin_packing(&shape, &identity)
+            .expect("bin-packing must produce an ordering");
+        let heur = partition::partition_with_ordering(&shape, &bp_ordering)
+            .expect("DP must produce a partition on bin-packing ordering");
+        assert_eq!(heur.pod_count, 13);
+        let mut heur_pod_of: Vec<usize> = vec![usize::MAX; n];
+        for (p, stmts) in heur.pod_statements.iter().enumerate() {
+            for &s in stmts {
+                heur_pod_of[s] = p;
+            }
+        }
+        let mut heur_pos: Vec<usize> = vec![usize::MAX; n];
+        for (i, &s) in bp_ordering.iter().enumerate() {
+            heur_pos[s] = i;
+        }
+
+        // MILP K=12 partition.
+        let milp = partition_milp::solve_for_k(&shape, 12).expect("MILP K=12 must be feasible");
+        let mut milp_pod_of: Vec<usize> = vec![usize::MAX; n];
+        for (p, stmts) in milp.pod_statements.iter().enumerate() {
+            for &s in stmts {
+                milp_pod_of[s] = p;
+            }
+        }
+
+        // Transfer matrix: rows = MILP POD, cols = heur POD.
+        let mut transfer = vec![vec![0_usize; 13]; 12];
+        for s in 0..n {
+            transfer[milp_pod_of[s]][heur_pod_of[s]] += 1;
+        }
+        eprintln!("Transfer matrix (rows=MILP POD, cols=heur POD):");
+        eprint!("            ");
+        for q in 0..13 {
+            eprint!("h{:<3} ", q);
+        }
+        eprintln!();
+        for (p, row) in transfer.iter().enumerate() {
+            eprint!("  MILP{:2}:  ", p);
+            for &v in row.iter() {
+                if v == 0 {
+                    eprint!("   . ");
+                } else {
+                    eprint!("{:4} ", v);
+                }
+            }
+            let total: usize = row.iter().sum();
+            eprintln!(" (total {})", total);
+        }
+
+        // Greedy max-overlap matching: for each MILP POD, find best
+        // heuristic POD. The unmatched heuristic POD is the "dissolved" one.
+        let mut milp_match = [usize::MAX; 12];
+        let mut used = [false; 13];
+        let mut pairs: Vec<(usize, usize, usize)> = Vec::new();
+        for (p, row) in transfer.iter().enumerate() {
+            for (q, &v) in row.iter().enumerate() {
+                pairs.push((v, p, q));
+            }
+        }
+        pairs.sort_by(|a, b| b.0.cmp(&a.0));
+        for (_, p, q) in pairs {
+            if milp_match[p] == usize::MAX && !used[q] {
+                milp_match[p] = q;
+                used[q] = true;
+            }
+        }
+        let dissolved: Vec<usize> = (0..13).filter(|&q| !used[q]).collect();
+        eprintln!("MILP POD -> best-matching heur POD:");
+        for p in 0..12 {
+            let q = milp_match[p];
+            let kept = transfer[p][q];
+            let total: usize = transfer[p].iter().sum();
+            eprintln!(
+                "  MILP{:2} -> heur{:2}  ({} of {} kept; {} migrated in)",
+                p,
+                q,
+                kept,
+                total,
+                total - kept
+            );
+        }
+        eprintln!("Dissolved heuristic PODs: {:?}", dissolved);
+
+        // Heuristic-POD-CPV vs MILP-POD-CPV (for context).
+        eprintln!("\nHeur POD CPV/stmt counts:");
+        for p in 0..13 {
+            let stmts = &heur.pod_statements[p];
+            let cpv: usize = stmts
+                .iter()
+                .map(|&s| shape.costs[s].custom_pred_verifications)
+                .sum();
+            eprintln!("  heur{:2}: {:2} stmts, {} CPV", p, stmts.len(), cpv);
+        }
+        eprintln!("MILP POD CPV/stmt counts:");
+        for p in 0..12 {
+            let stmts = &milp.pod_statements[p];
+            let cpv: usize = stmts
+                .iter()
+                .map(|&s| shape.costs[s].custom_pred_verifications)
+                .sum();
+            eprintln!("  MILP{:2}: {:2} stmts, {} CPV", p, stmts.len(), cpv);
+        }
+
+        // Construct a MILP-derived ordering: concatenate statements by
+        // (milp_pod_of, topo_pos). Use bp_ordering's position as the
+        // intra-POD topo order; it's a valid topo sort and stable.
+        let mut milp_ordering: Vec<usize> = (0..n).collect();
+        milp_ordering.sort_by_key(|&s| (milp_pod_of[s], heur_pos[s]));
+        let mut milp_pos: Vec<usize> = vec![usize::MAX; n];
+        for (i, &s) in milp_ordering.iter().enumerate() {
+            milp_pos[s] = i;
+        }
+
+        // Sanity check: is the MILP-derived ordering itself a valid topo
+        // ordering? (MILP's pod-precedence + bp_ordering tiebreak should
+        // give a valid one, but verify.)
+        let mut topo_valid = true;
+        for s in 0..n {
+            for dep in &shape.dep_edges[s] {
+                if let AbstractDep::Internal(d) = dep {
+                    if milp_pos[*d] >= milp_pos[s] {
+                        topo_valid = false;
+                        break;
+                    }
+                }
+            }
+            if !topo_valid {
+                break;
+            }
+        }
+        eprintln!("\nMILP-derived ordering is topo-valid: {}", topo_valid);
+
+        // DP K on the MILP-derived ordering.
+        if topo_valid {
+            let milp_dp = partition::partition_with_ordering(&shape, &milp_ordering);
+            eprintln!(
+                "DP K on MILP-derived ordering: {:?}",
+                milp_dp.as_ref().map(|o| o.pod_count)
+            );
+        }
+
+        // Position diff distribution: how far does each statement move
+        // between bp_ordering and milp_ordering?
+        let mut diffs: Vec<i64> = (0..n)
+            .map(|s| milp_pos[s] as i64 - heur_pos[s] as i64)
+            .collect();
+        let absdiffs: Vec<i64> = diffs.iter().map(|d| d.abs()).collect();
+        let max_diff = absdiffs.iter().copied().max().unwrap_or(0);
+        let mean_diff = absdiffs.iter().sum::<i64>() as f64 / n as f64;
+        let unchanged = diffs.iter().filter(|&&d| d == 0).count();
+        let small_move = diffs.iter().filter(|&&d| d.abs() <= 5 && d != 0).count();
+        let medium_move = diffs
+            .iter()
+            .filter(|&&d| d.abs() > 5 && d.abs() <= 50)
+            .count();
+        let large_move = diffs.iter().filter(|&&d| d.abs() > 50).count();
+        eprintln!(
+            "Position diff bp->milp: max={} mean={:.1} | unchanged={} small(<=5)={} medium(6-50)={} large(>50)={}",
+            max_diff, mean_diff, unchanged, small_move, medium_move, large_move
+        );
+
+        // Kendall tau (number of pairwise inversions) is too expensive at
+        // n=345; report a sample-based proxy instead: how often does
+        // (bp_ordering[i] < bp_ordering[j]) match
+        // (milp_pos[bp_ordering[i]] < milp_pos[bp_ordering[j]])?
+        let sample_pairs = 5000;
+        let mut rng_state = 0xDEADBEEF_u64;
+        let mut concord = 0;
+        let mut discord = 0;
+        for _ in 0..sample_pairs {
+            rng_state = rng_state
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            let i = (rng_state >> 33) as usize % n;
+            rng_state = rng_state
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            let j = (rng_state >> 33) as usize % n;
+            if i == j {
+                continue;
+            }
+            let s_i = bp_ordering[i.min(j)];
+            let s_j = bp_ordering[i.max(j)];
+            if milp_pos[s_i] < milp_pos[s_j] {
+                concord += 1;
+            } else {
+                discord += 1;
+            }
+        }
+        let total = concord + discord;
+        eprintln!(
+            "Pairwise concord (random {} pairs): {} concordant / {} = {:.1}%",
+            total,
+            concord,
+            total,
+            100.0 * concord as f64 / total as f64
+        );
+        diffs.sort();
+        eprintln!(
+            "Diff percentiles: p10={} p25={} p50={} p75={} p90={}",
+            diffs[n * 10 / 100],
+            diffs[n * 25 / 100],
+            diffs[n * 50 / 100],
+            diffs[n * 75 / 100],
+            diffs[n * 90 / 100],
+        );
+
+        // Probe: how few statements need to be at their MILP position
+        // (with the rest preserving bp_ordering's relative order) for
+        // DP K to drop to 12? Largest movers first.
+        let mut indices: Vec<usize> = (0..n).collect();
+        indices
+            .sort_by_key(|&s| std::cmp::Reverse((milp_pos[s] as i64 - heur_pos[s] as i64).abs()));
+        eprintln!("\nGreedy 'minimum critical commits' probe:");
+        eprintln!("  Commit top-K largest movers to their MILP positions; rest fill in bp_ordering order.");
+        eprintln!("  {:<10} {:<10} {:<8}", "committed", "topo_ok", "dp_k");
+        for k_commit in [0, 5, 10, 20, 40, 60, 80, 120, 160, 200, 240, 345] {
+            let k_commit = k_commit.min(n);
+            let committed: HashSet<usize> = indices.iter().take(k_commit).copied().collect();
+            let mut slot: Vec<usize> = vec![usize::MAX; n];
+            for &s in &committed {
+                slot[milp_pos[s]] = s;
+            }
+            let remaining: Vec<usize> = bp_ordering
+                .iter()
+                .copied()
+                .filter(|s| !committed.contains(s))
+                .collect();
+            let mut ri = 0;
+            for s in slot.iter_mut() {
+                if *s == usize::MAX {
+                    *s = remaining[ri];
+                    ri += 1;
+                }
+            }
+            // Topo check.
+            let mut pos_new = vec![0_usize; n];
+            for (i, &s) in slot.iter().enumerate() {
+                pos_new[s] = i;
+            }
+            let mut topo_ok = true;
+            for s in 0..n {
+                for dep in &shape.dep_edges[s] {
+                    if let AbstractDep::Internal(d) = dep {
+                        if pos_new[*d] >= pos_new[s] {
+                            topo_ok = false;
+                            break;
+                        }
+                    }
+                }
+                if !topo_ok {
+                    break;
+                }
+            }
+            let dp_k = if topo_ok {
+                partition::partition_with_ordering(&shape, &slot).map(|o| o.pod_count)
+            } else {
+                None
+            };
+            eprintln!("  {:<10} {:<10} {:?}", k_commit, topo_ok, dp_k);
+        }
+
+        // List statements that move and where they go.
+        let mut moves: Vec<(usize, usize, usize)> = Vec::new();
+        for s in 0..n {
+            let q = heur_pod_of[s];
+            let p = milp_pod_of[s];
+            let q_target_for_p = milp_match[p];
+            if q != q_target_for_p {
+                moves.push((s, q, p));
+            }
+        }
+        eprintln!(
+            "\nStatements moving across heur->MILP (relative to greedy POD match): {}",
+            moves.len()
+        );
+        eprintln!("(stmt | heur_pod heur_pos | milp_pod milp_match | cpv | mp | mst | sb | cps)");
+        for (s, heur_p, milp_p) in &moves {
+            let c = &shape.costs[*s];
+            eprintln!(
+                "  s={:3} | heur{:2} pos {:3} | MILP{:2} (match heur{:2}) | cpv={} mp_s={} mp_m={} mst_s={} mst_m={} sb={} cps={}",
+                s,
+                heur_p,
+                heur_pos[*s],
+                milp_p,
+                milp_match[*milp_p],
+                c.custom_pred_verifications,
+                c.merkle_proofs_small,
+                c.merkle_proofs_medium,
+                c.merkle_state_transitions_small,
+                c.merkle_state_transitions_medium,
+                c.signed_by,
+                c.custom_predicates_ids.len(),
+            );
+        }
+    }
+
+    /// Probe: characterise cracked-refinery's CPV block structure. For
+    /// each CPV head, count direct Internal deps that have no other
+    /// consumers (the "exclusive body") and report the block-size
+    /// histogram. Then estimate the minimum K achievable by atomic
+    /// block packing (CPV head + body bundled inseparably) via
+    /// first-fit-decreasing. Used to decide whether a pure block-based
+    /// generator is viable for this fixture or whether atomic packing
+    /// would regress.
+    #[test]
+    fn cracked_refinery_block_size_probe() {
+        let shape: InputShape =
+            serde_json::from_str(CRACKED_REFINERY_FIXTURE).expect("fixture deserializes");
+        let n = shape.num_statements();
+
+        // Inverse of dep_edges: for each statement, who depends on it.
+        let mut consumers: Vec<Vec<usize>> = vec![Vec::new(); n];
+        for (i, edges) in shape.dep_edges.iter().enumerate() {
+            for dep in edges {
+                if let AbstractDep::Internal(d) = dep {
+                    consumers[*d].push(i);
+                }
+            }
+        }
+
+        // For each CPV head, compute exclusive vs shared direct-body counts.
+        let mut block_sizes: Vec<usize> = Vec::new();
+        let mut cpv_count: usize = 0;
+        let mut total_exclusive: usize = 0;
+        let mut total_shared: usize = 0;
+        let mut total_external_deps: usize = 0;
+        for (i, cost) in shape.costs.iter().enumerate() {
+            if cost.custom_pred_verifications == 0 {
+                continue;
+            }
+            cpv_count += 1;
+            let mut excl = 0;
+            let mut shared = 0;
+            let mut ext = 0;
+            for dep in &shape.dep_edges[i] {
+                match dep {
+                    AbstractDep::Internal(d) => {
+                        if consumers[*d].len() == 1 && consumers[*d][0] == i {
+                            excl += 1;
+                        } else {
+                            shared += 1;
+                        }
+                    }
+                    AbstractDep::External { .. } => ext += 1,
+                }
+            }
+            block_sizes.push(1 + excl);
+            total_exclusive += excl;
+            total_shared += shared;
+            total_external_deps += ext;
+        }
+
+        eprintln!("Total CPV heads: {}", cpv_count);
+        eprintln!("Total exclusive direct body stmts: {}", total_exclusive);
+        eprintln!("Total shared direct body stmts: {}", total_shared);
+        eprintln!(
+            "Total external direct deps on CPVs: {}",
+            total_external_deps
+        );
+        let mean_block: f64 = block_sizes.iter().sum::<usize>() as f64 / cpv_count.max(1) as f64;
+        eprintln!("Mean block size (head + exclusive body): {:.2}", mean_block);
+
+        let mut hist: std::collections::BTreeMap<usize, usize> = std::collections::BTreeMap::new();
+        for &sz in &block_sizes {
+            *hist.entry(sz).or_insert(0) += 1;
+        }
+        eprintln!("Block-size histogram:");
+        for (sz, count) in &hist {
+            eprintln!("  size {:>2}: {:>3} blocks", sz, count);
+        }
+
+        // Estimate K under atomic block-based packing via FFD.
+        // Caps: max_statements stmts/POD, max_custom_pred_verifications
+        // CPVs/POD. Each block contributes block_size stmts and 1 CPV.
+        let p = &shape.params;
+        let max_stmts = p.max_statements;
+        let max_cpvs = p.max_custom_predicate_verifications;
+        let mut sorted = block_sizes.clone();
+        sorted.sort_unstable();
+        sorted.reverse();
+        let mut bins: Vec<(usize, usize)> = Vec::new();
+        for &b in &sorted {
+            let mut placed = false;
+            for bin in bins.iter_mut() {
+                if bin.0 + b <= max_stmts && bin.1 < max_cpvs {
+                    bin.0 += b;
+                    bin.1 += 1;
+                    placed = true;
+                    break;
+                }
+            }
+            if !placed {
+                bins.push((b, 1));
+            }
+        }
+        eprintln!("FFD atomic block packing (CPV blocks only, ignoring all other stmts):");
+        eprintln!("  bins used: {}", bins.len());
+        let cpv_floor = cpv_count.div_ceil(max_cpvs);
+        eprintln!(
+            "  CPV-cap floor (cpvs / cap): {} (current heuristic K = 13, MILP K = 12)",
+            cpv_floor
+        );
+
+        // Verdict.
+        let max_block = sorted.first().copied().unwrap_or(0);
+        let threshold_block = max_stmts / max_cpvs; // 40/8 = 5
+        let total_block_stmts: usize = sorted.iter().sum();
+        let free_stmts = n.saturating_sub(total_block_stmts);
+        eprintln!(
+            "Block stmts: {}; free (non-block) stmts: ~{}",
+            total_block_stmts, free_stmts,
+        );
+        eprintln!(
+            "Largest block = {}; uniform-block threshold for atomic safety = {}",
+            max_block, threshold_block,
+        );
+        if bins.len() <= cpv_floor {
+            eprintln!(
+                "  -> FFD on CPV blocks alone matches CPV floor (={}). Atomic block-based packing is",
+                cpv_floor,
+            );
+            eprintln!(
+                "     viable in principle for this fixture's actual block mix; the open question is"
+            );
+            eprintln!(
+                "     whether the {} free statements + topo + other-resource caps fit within {} PODs.",
+                free_stmts, bins.len(),
+            );
+            if max_block > threshold_block {
+                eprintln!(
+                    "  -> Caveat: largest block = {} > {} means a uniform workload at this block size"
+                , max_block, threshold_block);
+                eprintln!(
+                    "     would regress. The mix (esp. {} small blocks at sizes 1-2) is what makes it work.",
+                    hist.get(&1).copied().unwrap_or(0) + hist.get(&2).copied().unwrap_or(0),
+                );
+            }
+        } else {
+            eprintln!(
+                "  -> FFD on CPV blocks alone needs {} bins > CPV floor {}: atomic block-based",
+                bins.len(),
+                cpv_floor,
+            );
+            eprintln!("     packing regresses.");
+        }
+    }
+
+    /// Probe: does pre-emptively synth-ifying every external (input)
+    /// statement on cracked-refinery drop K from 13 to 12? The fixture
+    /// has 2 external pods x 1 input statement x 1 consumer each (so the
+    /// existing 2+-consumer and feasibility republish rules don't fire).
+    /// User's hypothesis is that proactively republishing into the chain
+    /// lets the partition place the externals in PODs with spare capacity
+    /// instead of forcing the consumer POD to open the external pod.
+    #[test]
+    fn cracked_refinery_preemptive_synth_probe() {
+        use cost::StatementCost;
+        let shape: InputShape =
+            serde_json::from_str(CRACKED_REFINERY_FIXTURE).expect("fixture deserializes");
+        let n_orig = shape.num_statements();
+        let num_statements = shape.statement_pod.len();
+        assert_eq!(
+            num_statements, 2,
+            "cracked-refinery has 2 external input statements"
+        );
+
+        // Build augmented dep_edges: replace each External with
+        // Internal(n_orig + statement).
+        let mut new_dep_edges: Vec<Vec<AbstractDep>> = shape
+            .dep_edges
+            .iter()
+            .map(|edges| {
+                edges
+                    .iter()
+                    .map(|dep| match dep {
+                        AbstractDep::Internal(d) => AbstractDep::Internal(*d),
+                        AbstractDep::External { statement, .. } => {
+                            AbstractDep::Internal(n_orig + *statement)
+                        }
+                    })
+                    .collect()
+            })
+            .collect();
+        // Append synth statements with the External dep moved to them.
+        for statement in 0..num_statements {
+            new_dep_edges.push(vec![AbstractDep::External {
+                pod: shape.statement_pod[statement],
+                statement,
+            }]);
+        }
+        let mut new_costs: Vec<StatementCost> = shape.costs.clone();
+        for _ in 0..num_statements {
+            new_costs.push(StatementCost::default());
+        }
+        let augmented = InputShape {
+            costs: new_costs,
+            dep_edges: new_dep_edges,
+            output_public_indices: shape.output_public_indices.clone(),
+            num_external_pods: shape.num_external_pods,
+            statement_pod: shape.statement_pod.clone(),
+            params: shape.params.clone(),
+        };
+
+        let baseline = partition::partition(&shape).expect("baseline partitions");
+        let augmented_out = partition::partition(&augmented).expect("augmented partitions");
+        eprintln!(
+            "baseline K = {}, sizes = {:?}",
+            baseline.pod_count,
+            baseline
+                .pod_statements
+                .iter()
+                .map(|v| v.len())
+                .collect::<Vec<_>>(),
+        );
+        eprintln!(
+            "augmented (default prio) K = {}, sizes = {:?}",
+            augmented_out.pod_count,
+            augmented_out
+                .pod_statements
+                .iter()
+                .map(|v| v.len())
+                .collect::<Vec<_>>(),
+        );
+
+        // Probe synth-first priority: give synths priority 0..S, originals
+        // priority S..n. This forces bin-packing to place synths in the
+        // earliest segment with capacity.
+        let n_aug = augmented.num_statements();
+        let mut prio: Vec<usize> = vec![0; n_aug];
+        for (rank, p) in (n_orig..n_aug).enumerate() {
+            prio[p] = rank;
+        }
+        for (rank, slot) in prio.iter_mut().take(n_orig).enumerate() {
+            *slot = num_statements + rank;
+        }
+        let ord = partition::kahn_bin_packing(&augmented, &prio)
+            .expect("synth-first bin-packing must produce an ordering");
+        let synth_first_out = partition::partition_with_ordering(&augmented, &ord)
+            .expect("DP must partition synth-first ordering");
+        eprintln!(
+            "augmented + synth-first prio bp K = {}, sizes = {:?}",
+            synth_first_out.pod_count,
+            synth_first_out
+                .pod_statements
+                .iter()
+                .map(|v| v.len())
+                .collect::<Vec<_>>(),
+        );
+
+        // Per-POD CPV totals (synth-first augmented).
+        let cpvs: Vec<usize> = synth_first_out
+            .pod_statements
+            .iter()
+            .map(|stmts| {
+                stmts
+                    .iter()
+                    .map(|&s| augmented.costs[s].custom_pred_verifications)
+                    .sum()
+            })
+            .collect();
+        eprintln!("  synth-first per-POD CPV: {:?}", cpvs);
+
+        // Also try other generators with synth-first priority.
+        if let Some(ord_prio) = partition::kahn_with_priority(&augmented, &prio) {
+            if let Some(out) = partition::partition_with_ordering(&augmented, &ord_prio) {
+                eprintln!("augmented + synth-first prio kahn K = {}", out.pod_count);
+            }
+        }
+    }
+
     /// A non-statement-table cap (`max_signed_by`) forces a multi-POD
     /// split even though every POD has plenty of statement-table slack.
     /// Confirms the partitioner respects per-resource caps beyond
