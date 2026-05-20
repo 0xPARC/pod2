@@ -1002,9 +1002,8 @@ impl Default for ParamsContainers {
 #[serde(rename_all = "camelCase")]
 pub struct Params {
     pub max_input_pods: usize,
-    // pub max_input_pods_public_statements: usize,
     pub max_statements: usize,
-    // pub max_public_statements: usize,
+    pub max_public_statements: usize,
     pub max_open_input_statements: usize,
     // max number of different custom predicates that can be used in a MainPod
     pub max_custom_predicates: usize,
@@ -1027,12 +1026,11 @@ impl Default for Params {
     fn default() -> Self {
         Self {
             max_input_pods: 2,
-            // max_input_pods_public_statements: 8,
             max_statements: 48,
-            // max_public_statements: 8,
+            max_public_statements: 20,
             max_open_input_statements: 20,
-            max_custom_predicates: 8,
-            max_custom_predicate_verifications: 8,
+            max_custom_predicates: 10,
+            max_custom_predicate_verifications: 10,
             max_custom_predicate_wildcards: 8,
             containers: ParamsContainers::default(),
             max_depth_mt_vds: 6, // up to 64 (2^6) different pod circuits

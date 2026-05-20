@@ -46,6 +46,7 @@ use crate::{
 };
 
 pub fn process_public_statements(
+    params: &Params,
     inputs: &MainPodInputs,
     statements_is_pub: &[bool],
     statements: &[Statement],
@@ -72,15 +73,18 @@ pub fn process_public_statements(
     let mut sts_mt_proofs = Vec::new();
     for (is_pub, st) in zip_eq(statements_is_pub, statements) {
         let st_hash = Value::from(st.hash());
-        let proof = if *is_pub {
+        if *is_pub {
             let proof = pub_sts_mt.insert(pub_sts.len(), st_hash)?;
+            sts_mt_proofs.push(proof);
             pub_sts.push(st.clone());
-            proof
-        } else {
-            // Insert in a copy so that merkle proof verification passes, but the result is ignored
-            pub_sts_mt.clone().insert(pub_sts.len(), st_hash)?
-        };
-        sts_mt_proofs.push(proof);
+        }
+    }
+    if sts_mt_proofs.len() > params.max_public_statements {
+        return Err(Error::custom(format!(
+            "The number of required public statements ({}) exceeds the maximum number ({}).",
+            sts_mt_proofs.len(),
+            params.max_public_statements
+        )));
     }
     Ok((pub_sts_mt, sts_mt_proofs, pub_sts))
 }
@@ -551,7 +555,7 @@ impl MainPodProver for Prover {
             process_statements_operations(params, &statements, &aux_list, inputs.operations)?;
 
         let (pub_sts_mt, sts_mt_proofs, pub_sts) =
-            process_public_statements(&inputs, &statements_is_pub, &statements)?;
+            process_public_statements(params, &inputs, &statements_is_pub, &statements)?;
 
         let common_hash: String = cache_get_rec_main_pod_common_hash(params).clone();
         let proofs = inputs
@@ -1041,6 +1045,7 @@ pub mod tests {
             max_signed_by: 0,
             max_input_pods: 1,
             max_statements: 5,
+            max_public_statements: 2,
             max_open_input_statements: 2,
             max_custom_predicates: 2,
             max_custom_predicate_verifications: 2,
@@ -1466,7 +1471,6 @@ pub mod tests {
 
         let pod_0 = builder.prove(prover).unwrap();
         pod_0.pod.verify().unwrap();
-        println!("DBG pod_0 OK");
 
         assert_eq!(pod_0.public_statements.len(), 3);
         assert_eq!(
@@ -1482,7 +1486,6 @@ pub mod tests {
 
         let pod_1 = builder.prove(prover).unwrap();
         pod_1.pod.verify().unwrap();
-        println!("DBG pod_1 OK");
 
         assert_eq!(pod_1.public_statements.len(), 5);
         assert_eq!(pod_1.public_statements, vec![st_0, st_1, st_2, st_3, st_4]);

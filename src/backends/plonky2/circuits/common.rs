@@ -2,7 +2,7 @@
 
 use std::{array, iter};
 
-use itertools::Itertools;
+use itertools::{zip_eq, Itertools};
 use plonky2::{
     field::{
         extension::Extendable,
@@ -1004,7 +1004,7 @@ impl Flattenable for CustomPredicateVerifyQueryTarget {
     }
     fn size(params: &Params) -> usize {
         StatementTarget::size(params) * (1 + BASE_PARAMS.max_operation_args)
-            + OperationTarget::size(params)
+            + OperationTypeTarget::size(params)
     }
 }
 
@@ -1428,6 +1428,12 @@ pub trait CircuitBuilderPod<F: RichField + Extendable<D>, const D: usize> {
     ) -> T;
     fn connect_flattenable<T: Flattenable>(&mut self, xs: &T, ys: &T);
     fn is_equal_flattenable<T: Flattenable>(&mut self, xs: &T, ys: &T) -> BoolTarget;
+    fn conditional_assert_eq_flattenable<T: Flattenable>(
+        &mut self,
+        condition: Target,
+        xs: &T,
+        ys: &T,
+    );
 
     /// Convenience methods for Boolean into-iters.
     fn all(&mut self, xs: impl IntoIterator<Item = BoolTarget>) -> BoolTarget;
@@ -1910,6 +1916,17 @@ impl CircuitBuilderPod<F, D> for CircuitBuilder {
 
     fn is_equal_flattenable<T: Flattenable>(&mut self, xs: &T, ys: &T) -> BoolTarget {
         self.is_equal_slice(&xs.flatten(), &ys.flatten())
+    }
+
+    fn conditional_assert_eq_flattenable<T: Flattenable>(
+        &mut self,
+        condition: Target,
+        xs: &T,
+        ys: &T,
+    ) {
+        for (x, y) in zip_eq(xs.flatten(), ys.flatten()) {
+            self.conditional_assert_eq(condition, x, y);
+        }
     }
 
     fn all(&mut self, xs: impl IntoIterator<Item = BoolTarget>) -> BoolTarget {
