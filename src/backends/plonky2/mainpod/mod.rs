@@ -37,10 +37,11 @@ use crate::{
         serialize_proof, serialize_verifier_only,
     },
     middleware::{
-        self, containers::Array, value_from_op, wildcard_values_from_op_st, CustomPredicateRef,
-        Error as MiddlewareError, Hash, InputPodOpenStatement, MainPodInputs, MainPodProver,
-        NativeOperation, Params, Pod, PodType, RawValue, StatementArg, VDSet, Value, ValueRef,
-        BASE_PARAMS,
+        self,
+        containers::{Array, EMPTY_MT_ROOT},
+        value_from_op, wildcard_values_from_op_st, CustomPredicateRef, Error as MiddlewareError,
+        Hash, InputPodOpenStatement, MainPodInputs, MainPodProver, NativeOperation, Params, Pod,
+        PodType, RawValue, StatementArg, VDSet, Value, ValueRef, BASE_PARAMS,
     },
     timed,
 };
@@ -505,6 +506,9 @@ impl MainPodProver for Prover {
         } else {
             EmptyPod::new_boxed(inputs.vd_set.clone())
         };
+        for pod in inputs.pods {
+            assert!(pod.statements_root() != EMPTY_MT_ROOT);
+        }
         let inputs = MainPodInputs {
             pods: &inputs
                 .pods
