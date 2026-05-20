@@ -1116,6 +1116,8 @@ mod tests {
                 );
                 let breakdown = diagnostics::SolutionBreakdown::from_solution(&shape, &out);
                 eprintln!("{}", breakdown);
+                eprintln!("POD 0 stmt indices: {:?}", out.pod_statements[0]);
+                eprintln!("POD 1 stmt indices: {:?}", out.pod_statements[1]);
                 let total_placed: usize = out.pod_statements.iter().map(|v| v.len()).sum();
                 assert_eq!(total_placed, shape.num_statements());
                 assert_eq!(
@@ -1160,6 +1162,13 @@ mod tests {
                 );
                 assert_eq!(k_greedy, 14, "greedy on bin-packing's ordering pins at 14");
                 assert_eq!(k_dp, 13, "DP on bin-packing's ordering pins at 13");
+
+                // Probe the DFS-from-sinks ordering's K directly.
+                let dfs_ordering = partition::build_dfs_topo_order(&shape);
+                let k_dfs = partition::partition_with_ordering(&shape, &dfs_ordering)
+                    .expect("DP must find a feasible partition on the DFS ordering")
+                    .pod_count;
+                eprintln!("K_dfs_dp={} on DFS-from-sinks ordering", k_dfs);
             }
             None => {
                 let diag = diagnostics::diagnose_failure(&shape);

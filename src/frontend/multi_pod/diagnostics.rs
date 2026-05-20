@@ -82,22 +82,22 @@ fn aggregate_rows<'a>(
             limit: params.max_statements,
         },
         UtilizationRow {
-            name: "merkle proofs (small)",
+            name: "merkle proofs (s)",
             used: totals.merkle_proofs_small,
             limit: state.max_small,
         },
         UtilizationRow {
-            name: "merkle proofs (medium)",
+            name: "merkle proofs (m)",
             used: totals.merkle_proofs_medium,
             limit: state.max_medium,
         },
         UtilizationRow {
-            name: "merkle state transitions (small)",
+            name: "merkle state transitions (s)",
             used: totals.merkle_state_transitions_small,
             limit: transition.max_small,
         },
         UtilizationRow {
-            name: "merkle state transitions (medium)",
+            name: "merkle state transitions (m)",
             used: totals.merkle_state_transitions_medium,
             limit: transition.max_medium,
         },
@@ -272,7 +272,7 @@ impl SolutionBreakdown {
             .map(|pod_idx| {
                 let stmts = &output.pod_statements[pod_idx];
                 let is_output = pod_idx + 1 == pod_count;
-                let (resources, num_stmts) =
+                let (mut resources, num_stmts) =
                     aggregate_rows(stmts.iter().map(|&s| &input.costs[s]), &input.params);
 
                 let mut chain_imports: HashSet<usize> = HashSet::new();
@@ -301,9 +301,20 @@ impl SolutionBreakdown {
                     }
                 }
 
+                // Statement-table cap: each `OpenInputStatement` op
+                // produces a statement in the POD's statement table, so
+                // the "total statements" row reflects local statements
+                // PLUS chain and external imports — the same number
+                // `segment_feasible_with` checks against
+                // `max_statements`.
+                let total_imports = chain_imports.len() + external_imports.len();
+                if let Some(row) = resources.iter_mut().find(|r| r.name == "total statements") {
+                    row.used += total_imports;
+                }
+
                 let imports_row = UtilizationRow {
                     name: "tree imports",
-                    used: chain_imports.len() + external_imports.len(),
+                    used: total_imports,
                     limit: input.params.max_open_input_statements,
                 };
                 let external_row = UtilizationRow {

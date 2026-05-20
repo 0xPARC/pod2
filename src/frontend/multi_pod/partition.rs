@@ -689,6 +689,8 @@ fn random_priority(rng: &mut ChaCha20Rng, n: usize) -> Vec<usize> {
 
 /// Generate the candidate orderings the cutter will try. Bin-packing
 /// goes first (strongest single seed on production-cap workloads),
+/// then DFS-from-sinks (a subtree-contiguous topological ordering
+/// targeted at workloads with wide producer-consumer index gaps),
 /// then the random-priority orderings for variety.
 ///
 /// Duplicates would just mean cutting the same sequence twice; with one
@@ -702,6 +704,8 @@ fn candidate_orderings(input: &InputShape) -> Vec<Vec<usize>> {
     if let Some(o) = kahn_bin_packing(input, &prio_id) {
         orderings.push(o);
     }
+
+    orderings.push(build_dfs_topo_order(input));
 
     let mut rng = ChaCha20Rng::seed_from_u64(RANDOM_SEED);
     for _ in 0..NUM_RANDOM_ORDERINGS {
@@ -725,6 +729,49 @@ fn build_pos_in_ordering(ordering: &[usize]) -> Vec<usize> {
         pos[s] = i;
     }
     pos
+}
+
+/// Build a topological ordering via depth-first search from sinks
+/// (statements with no internal consumers), recursing into deps before
+/// emitting each statement. The result is a forward topological order
+/// (producers before consumers) with the property that each
+/// statement's entire dep-closure is emitted contiguously immediately
+/// before it. For workloads with definition-then-distant-use patterns
+/// (e.g. cracked-refinery's `IsX` type assertions used much later in
+/// the replay chain), this shortens producer-consumer index gaps
+/// versus the canonical user-input order, giving bin-packing a
+/// chance to admit each definition-and-use cluster as one segment.
+pub(super) fn build_dfs_topo_order(input: &InputShape) -> Vec<usize> {
+    let n = input.num_statements();
+    let consumers = input.consumers();
+    let mut visited = vec![false; n];
+    let mut order: Vec<usize> = Vec::with_capacity(n);
+    for s in 0..n {
+        if consumers[s].is_empty() && !visited[s] {
+            dfs_emit(s, input, &mut visited, &mut order);
+        }
+    }
+    // Cover anything unreachable from a sink (e.g. orphan sub-DAGs).
+    for s in 0..n {
+        if !visited[s] {
+            dfs_emit(s, input, &mut visited, &mut order);
+        }
+    }
+    order
+}
+
+fn dfs_emit(s: usize, input: &InputShape, visited: &mut [bool], order: &mut Vec<usize>) {
+    if visited[s] {
+        return;
+    }
+    visited[s] = true;
+    let deps = &input.dep_edges[s];
+    for idx in 0..deps.len() {
+        if let AbstractDep::Internal(d) = deps[idx] {
+            dfs_emit(d, input, visited, order);
+        }
+    }
+    order.push(s);
 }
 
 /// Per-statement max-consumer-position lookup against an ordering.
