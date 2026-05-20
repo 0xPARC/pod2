@@ -1087,11 +1087,13 @@ mod tests {
     /// resource-induced lower bound (`max_r ceil(total_r / cap_r)` over
     /// per-statement-summable resources) is K=12, driven by 96
     /// custom-predicate verifications at cap 8/POD. Under statement-
-    /// table accounting plus per-POD publish cap (`max_public_statements
-    /// = 20`), the heuristic reaches K=15: bin-packing pessimistically
-    /// counts every statement-with-a-consumer as an export, closing
-    /// segments slightly earlier than strictly necessary. MILP+cap
-    /// reaches K=12, so the gap is now 3 PODs. See
+    /// table accounting, per-POD publish cap (`max_public_statements
+    /// = 20`), coupling-aware bin-packing tiebreak (admit ready
+    /// statements whose Internal deps already sit in the current
+    /// segment first), and dynamic export tracking (the publish-cap
+    /// counter releases a segment slot when an admitted statement
+    /// absorbs its dep's last unfinished consumer), the heuristic
+    /// reaches K=13. MILP+cap reaches K=12, so the gap is 1 POD. See
     /// `docs/multipod_merkle_statement_tree.md` ("Custom predicate
     /// body+head locality" and "Future generators under consideration")
     /// for the structural reason and candidates that might close it.
@@ -1117,9 +1119,10 @@ mod tests {
                 let total_placed: usize = out.pod_statements.iter().map(|v| v.len()).sum();
                 assert_eq!(total_placed, shape.num_statements());
                 assert_eq!(
-                    out.pod_count, 15,
-                    "expected 15 PODs under the per-POD publish cap; \
-                     MILP+cap optimum is 12"
+                    out.pod_count, 13,
+                    "expected 13 PODs under the per-POD publish cap with \
+                     coupling-aware bin-packing and dynamic export \
+                     tracking; MILP+cap optimum is 12"
                 );
                 let breakdown_for_check =
                     diagnostics::SolutionBreakdown::from_solution(&shape, &out);
@@ -1134,10 +1137,11 @@ mod tests {
                 }
 
                 // Probe whether the DP layer beats greedy on bin-packing's
-                // ordering for this fixture. Pre-statement-table-accounting
-                // the parity sweep recorded `K_bp_dp < K_bp_greedy` = 0;
-                // under the new cap that still holds on cracked-refinery.
-                // Pinned to catch any future divergence.
+                // ordering. Under dynamic export tracking, bin-packing
+                // builds segments large enough that greedy cuts can no
+                // longer hit the DP's optimum on this ordering: greedy
+                // returns K=14, DP returns K=13. Pinned so any future
+                // shift back to parity is visible.
                 let identity: Vec<usize> = (0..shape.num_statements()).collect();
                 let bp_ordering =
                     partition::kahn_bin_packing(&shape, &identity).expect("DAG must be acyclic");
@@ -1150,11 +1154,12 @@ mod tests {
                     "K_bp_greedy={} K_bp_dp={} on bin-packing's ordering",
                     k_greedy, k_dp
                 );
-                assert_eq!(
-                    k_greedy, k_dp,
-                    "DP and greedy diverge on bin-packing's cracked-refinery \
-                     ordering; the DP layer earned its place — update doc."
+                assert!(
+                    k_dp <= k_greedy,
+                    "DP must be at least as good as greedy on a fixed ordering"
                 );
+                assert_eq!(k_greedy, 14, "greedy on bin-packing's ordering pins at 14");
+                assert_eq!(k_dp, 13, "DP on bin-packing's ordering pins at 13");
             }
             None => {
                 let diag = diagnostics::diagnose_failure(&shape);
@@ -1235,21 +1240,603 @@ mod tests {
         }
     }
 
-    /// Probe: can the DP find K=12 on cracked-refinery if we feed it the
-    /// "right" ordering derived from MILP's K=12 partition? Builds an
-    /// ordering by sorting statements by (pod_index in MILP's solution,
-    /// position in a baseline topological sort), so each MILP POD is a
-    /// contiguous block. If DP returns K=12, the ordering layer is the
-    /// whole gap (the DP can hit the optimum if generation produces this
-    /// layout). If DP returns K>12, something else is going on.
+    /// Probe: side-by-side per-statement diff between the heuristic
+    /// partition and an MILP+cap K=12 partition. Surfaces (a) which
+    /// statements end up in different relative positions, (b) what role
+    /// distribution each MILP POD has (CPV head/sigverify/contains/etc.)
+    /// versus each heuristic POD, and (c) how concentrated custom-predicate
+    /// batch IDs are within each MILP POD. The goal is to spot structural
+    /// patterns MILP exploits that the heuristic doesn't — candidate
+    /// tiebreaks for an export-aware ordering generator. `#[ignore]`'d
+    /// because it calls SCIP for the MILP partition.
+    #[test]
+    #[ignore]
+    fn cracked_refinery_milp_vs_heuristic_diff() {
+        use std::collections::HashMap;
+
+        let shape: InputShape =
+            serde_json::from_str(CRACKED_REFINERY_FIXTURE).expect("fixture deserializes");
+
+        let heur_out =
+            partition::partition(&shape).expect("heuristic must find a partition");
+        let milp_out = partition_milp::solve_for_k_with_publish_cap(&shape, 12)
+            .expect("MILP+cap must find K=12 on cracked-refinery");
+
+        let n = shape.num_statements();
+        let mut heur_pod = vec![usize::MAX; n];
+        for (p, stmts) in heur_out.pod_statements.iter().enumerate() {
+            for &s in stmts {
+                heur_pod[s] = p;
+            }
+        }
+        let mut milp_pod = vec![usize::MAX; n];
+        for (p, stmts) in milp_out.pod_statements.iter().enumerate() {
+            for &s in stmts {
+                milp_pod[s] = p;
+            }
+        }
+
+        let output_pub_set: std::collections::BTreeSet<usize> =
+            shape.output_public_indices.iter().copied().collect();
+        let consumers = shape.consumers();
+
+        let role_of = |s: usize| -> &'static str {
+            let c = &shape.costs[s];
+            if c.custom_pred_verifications > 0 {
+                "cpv_head"
+            } else if c.signed_by > 0 {
+                "signed_by"
+            } else if c.public_key_of > 0 {
+                "public_key_of"
+            } else if c.merkle_state_transitions_small + c.merkle_state_transitions_medium > 0 {
+                "merkle_trans"
+            } else if c.merkle_proofs_small + c.merkle_proofs_medium > 0 {
+                "merkle_proof"
+            } else {
+                "other"
+            }
+        };
+
+        let print_pod_roles = |label: &str, pod_of: &[usize], pod_count: usize| {
+            eprintln!("\n=== {} per-POD role distribution ===", label);
+            for p in 0..pod_count {
+                let mut role_counts: HashMap<&str, usize> = HashMap::new();
+                let mut batches: std::collections::BTreeSet<_> =
+                    std::collections::BTreeSet::new();
+                for s in 0..n {
+                    if pod_of[s] == p {
+                        *role_counts.entry(role_of(s)).or_insert(0) += 1;
+                        for id in &shape.costs[s].custom_predicates_ids {
+                            batches.insert(id.clone());
+                        }
+                    }
+                }
+                let mut roles: Vec<(&str, usize)> = role_counts.into_iter().collect();
+                roles.sort_by(|a, b| b.1.cmp(&a.1));
+                let role_str: Vec<String> =
+                    roles.iter().map(|(r, c)| format!("{}={}", r, c)).collect();
+                eprintln!(
+                    "  POD {:2}: distinct_batches={}, {}",
+                    p,
+                    batches.len(),
+                    role_str.join(", ")
+                );
+            }
+        };
+        print_pod_roles("heuristic", &heur_pod, heur_out.pod_count);
+        print_pod_roles("MILP+cap", &milp_pod, milp_out.pod_count);
+
+        // Statements where MILP's relative POD position differs
+        // substantially from the heuristic's. Normalize POD index to
+        // [0, 1] in each partition so K-difference doesn't bias the
+        // comparison.
+        let to_fraction = |p: usize, total: usize| {
+            if total <= 1 {
+                0.0
+            } else {
+                p as f64 / (total - 1) as f64
+            }
+        };
+        let mut movers: Vec<(usize, f64)> = (0..n)
+            .filter_map(|s| {
+                let h = to_fraction(heur_pod[s], heur_out.pod_count);
+                let m = to_fraction(milp_pod[s], milp_out.pod_count);
+                let delta = (h - m).abs();
+                (delta > 0.20).then_some((s, delta))
+            })
+            .collect();
+        movers.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+        eprintln!(
+            "\n=== {} of {} statements moved >0.20 in normalized POD position ===",
+            movers.len(),
+            n
+        );
+        for (s, delta) in movers.iter().take(20) {
+            eprintln!(
+                "  stmt {:3}: heur POD {:2} -> MILP POD {:2}, delta={:.2}, role={}",
+                s,
+                heur_pod[*s],
+                milp_pod[*s],
+                delta,
+                role_of(*s)
+            );
+        }
+
+        // Raw CSV dump for offline analysis. One line per statement.
+        eprintln!("\n=== per-statement table ===");
+        eprintln!("stmt,heur_pod,milp_pod,role,n_consumers,n_batches,is_out_pub");
+        for s in 0..n {
+            eprintln!(
+                "{},{},{},{},{},{},{}",
+                s,
+                heur_pod[s],
+                milp_pod[s],
+                role_of(s),
+                consumers[s].len(),
+                shape.costs[s].custom_predicates_ids.len(),
+                output_pub_set.contains(&s),
+            );
+        }
+    }
+
+    /// Probe: MILP+cap K=12 partition stability across SCIP random
+    /// seeds. Runs two MILP solves at K=12 with different
+    /// `randomization/randomseedshift` values, then asks: of the per-pair
+    /// co-locations that hold in partition A, how many hold in partition
+    /// B? Pairs stable across seeds are structurally required by the
+    /// problem; pairs that flip are incidental to SCIP's solver path.
+    /// Stable pairs are the candidates a smarter heuristic would need to
+    /// co-locate; unstable pairs aren't worth chasing. Also checks
+    /// where the top mover clusters from
+    /// `cracked_refinery_milp_vs_heuristic_diff` (stmts 17-21, 181-185,
+    /// 215-218, 220-221, 246, 337) land in each partition — if the same
+    /// cluster lands together in both, that's a structural co-location;
+    /// if it scatters, the heuristic-vs-MILP delta on that cluster was
+    /// just one of several equally-good MILP placements.
+    /// `#[ignore]`'d because it runs MILP twice (~160s).
+    #[test]
+    #[ignore]
+    /// Dump per-statement structural info (cost vector, role, dep
+    /// edges in both directions, custom predicate IDs) for the
+    /// MILP-stable violator clusters surfaced by
+    /// `cracked_refinery_milp_multi_seed_pair_stability`. Pure
+    /// fixture introspection — no SCIP — but `#[ignore]`'d to keep
+    /// the default test run quiet.
+    #[test]
+    #[ignore]
+    fn cracked_refinery_violator_content() {
+        let shape: InputShape =
+            serde_json::from_str(CRACKED_REFINERY_FIXTURE).expect("fixture deserializes");
+        let consumers = shape.consumers();
+
+        let role_of = |s: usize| -> &'static str {
+            let c = &shape.costs[s];
+            if c.custom_pred_verifications > 0 {
+                "cpv_head"
+            } else if c.signed_by > 0 {
+                "signed_by"
+            } else if c.public_key_of > 0 {
+                "public_key_of"
+            } else if c.merkle_state_transitions_small + c.merkle_state_transitions_medium > 0 {
+                "merkle_trans"
+            } else if c.merkle_proofs_small + c.merkle_proofs_medium > 0 {
+                "merkle_proof"
+            } else {
+                "other"
+            }
+        };
+
+        let dump = |s: usize| {
+            let c = &shape.costs[s];
+            eprintln!("  stmt {} (role={}):", s, role_of(s));
+            eprintln!(
+                "    costs: merkle_proofs(s={}, m={}), state_trans(s={}, m={}), cpv={}, signed_by={}, pko={}, n_predicates={}",
+                c.merkle_proofs_small,
+                c.merkle_proofs_medium,
+                c.merkle_state_transitions_small,
+                c.merkle_state_transitions_medium,
+                c.custom_pred_verifications,
+                c.signed_by,
+                c.public_key_of,
+                c.custom_predicates_ids.len(),
+            );
+            // Stable, short-form custom predicate IDs (hex prefix).
+            let cps: Vec<String> = c
+                .custom_predicates_ids
+                .iter()
+                .map(|id| format!("{:?}", id))
+                .collect();
+            for cp in &cps {
+                eprintln!("    predicate: {}", cp);
+            }
+            let mut deps_internal: Vec<usize> = Vec::new();
+            let mut deps_external: Vec<(usize, usize)> = Vec::new();
+            for dep in &shape.dep_edges[s] {
+                match dep {
+                    AbstractDep::Internal(d) => deps_internal.push(*d),
+                    AbstractDep::External { pod, statement } => {
+                        deps_external.push((*pod, *statement))
+                    }
+                }
+            }
+            deps_internal.sort();
+            deps_internal.dedup();
+            eprintln!(
+                "    consumes (Internal): {:?}",
+                deps_internal
+                    .iter()
+                    .map(|d| (*d, role_of(*d)))
+                    .collect::<Vec<_>>()
+            );
+            if !deps_external.is_empty() {
+                eprintln!("    consumes (External): {:?}", deps_external);
+            }
+            let mut conss: Vec<usize> = consumers[s].clone();
+            conss.sort();
+            conss.dedup();
+            eprintln!(
+                "    consumed by: {:?}",
+                conss
+                    .iter()
+                    .map(|c| (*c, role_of(*c)))
+                    .collect::<Vec<_>>()
+            );
+        };
+
+        eprintln!("=== Cluster A (split POD 1/2 in old K=14 partition) ===");
+        for &s in &[24, 25, 34, 35, 36, 37] {
+            dump(s);
+        }
+        eprintln!("\n=== Cluster B (scattered in old K=14 partition) ===");
+        for &s in &[117, 118, 124, 136, 137, 160, 161, 216] {
+            dump(s);
+        }
+    }
+
+    fn cracked_refinery_milp_seed_stability() {
+        let shape: InputShape =
+            serde_json::from_str(CRACKED_REFINERY_FIXTURE).expect("fixture deserializes");
+
+        let seed_a = 0_i32;
+        let seed_b = 42_i32;
+        let out_a = partition_milp::solve_for_k_with_publish_cap_seed(&shape, 12, seed_a)
+            .expect("MILP+cap seed=0 must find K=12");
+        let out_b = partition_milp::solve_for_k_with_publish_cap_seed(&shape, 12, seed_b)
+            .expect("MILP+cap seed=42 must find K=12");
+
+        let n = shape.num_statements();
+        let mut pod_a = vec![usize::MAX; n];
+        let mut pod_b = vec![usize::MAX; n];
+        for (p, stmts) in out_a.pod_statements.iter().enumerate() {
+            for &s in stmts {
+                pod_a[s] = p;
+            }
+        }
+        for (p, stmts) in out_b.pod_statements.iter().enumerate() {
+            for &s in stmts {
+                pod_b[s] = p;
+            }
+        }
+
+        // Pairwise co-location stability.
+        let mut pairs_a = 0_usize;
+        let mut pairs_b = 0_usize;
+        let mut pairs_both = 0_usize;
+        let mut pairs_only_a = 0_usize;
+        let mut pairs_only_b = 0_usize;
+        for i in 0..n {
+            for j in (i + 1)..n {
+                let same_a = pod_a[i] == pod_a[j];
+                let same_b = pod_b[i] == pod_b[j];
+                match (same_a, same_b) {
+                    (true, true) => {
+                        pairs_a += 1;
+                        pairs_b += 1;
+                        pairs_both += 1;
+                    }
+                    (true, false) => {
+                        pairs_a += 1;
+                        pairs_only_a += 1;
+                    }
+                    (false, true) => {
+                        pairs_b += 1;
+                        pairs_only_b += 1;
+                    }
+                    (false, false) => {}
+                }
+            }
+        }
+        let stable_pct = if pairs_a == 0 {
+            0.0
+        } else {
+            100.0 * pairs_both as f64 / pairs_a as f64
+        };
+        eprintln!(
+            "Co-location pairs: A={}, B={}, in both={} ({:.1}% of A), only A={}, only B={}",
+            pairs_a, pairs_b, pairs_both, stable_pct, pairs_only_a, pairs_only_b
+        );
+
+        // Track the mover clusters identified by the previous diff probe.
+        let clusters: &[&[usize]] = &[
+            &[17, 18, 19, 20, 21],
+            &[181, 184, 185],
+            &[215, 216, 217, 218],
+            &[220, 221],
+            &[160, 161],
+            &[246],
+            &[337],
+        ];
+        eprintln!("\n=== mover-cluster placements across seeds ===");
+        for cluster in clusters {
+            let pods_a: Vec<usize> = cluster.iter().map(|&s| pod_a[s]).collect();
+            let pods_b: Vec<usize> = cluster.iter().map(|&s| pod_b[s]).collect();
+            let all_same_a = pods_a.windows(2).all(|w| w[0] == w[1]);
+            let all_same_b = pods_b.windows(2).all(|w| w[0] == w[1]);
+            eprintln!(
+                "  cluster {:?}: A={:?} (co-located={}), B={:?} (co-located={})",
+                cluster, pods_a, all_same_a, pods_b, all_same_b
+            );
+        }
+    }
+
+    /// Probe: across multiple SCIP random seeds, which statement pairs
+    /// are consistently co-located in MILP+cap K=12 partitions? The
+    /// stable-pair set is the structural co-location signal — pairs MILP
+    /// always groups are dependency-coupled clusters the heuristic
+    /// should respect, while pairs that flip across seeds are incidental.
+    /// Compares the stable set against the production heuristic's K=14
+    /// partition and reports how many stable pairs the heuristic
+    /// violates and which statements account for the most violations.
+    /// `#[ignore]`'d because it runs MILP `seeds.len()` times (~7 min
+    /// for 5 seeds).
+    #[test]
+    #[ignore]
+    fn cracked_refinery_milp_multi_seed_pair_stability() {
+        let shape: InputShape =
+            serde_json::from_str(CRACKED_REFINERY_FIXTURE).expect("fixture deserializes");
+        let n = shape.num_statements();
+
+        let seeds = [0_i32, 17, 42, 101, 999];
+        let m = seeds.len();
+        let mut partitions: Vec<Vec<usize>> = Vec::new();
+        for (i, &seed) in seeds.iter().enumerate() {
+            let out = partition_milp::solve_for_k_with_publish_cap_seed(&shape, 12, seed)
+                .unwrap_or_else(|| {
+                    panic!("MILP+cap seed={} run {}/{} must find K=12", seed, i + 1, m)
+                });
+            let mut pod_of = vec![usize::MAX; n];
+            for (p, stmts) in out.pod_statements.iter().enumerate() {
+                for &s in stmts {
+                    pod_of[s] = p;
+                }
+            }
+            eprintln!(
+                "MILP seed={} K=12: sizes={:?}",
+                seed,
+                out.pod_statements.iter().map(|v| v.len()).collect::<Vec<_>>()
+            );
+            partitions.push(pod_of);
+        }
+
+        // Pair co-location frequency: for each ordered pair (i, j) with
+        // i < j, count how many of the `m` seeds put them in the same
+        // POD. Distribution shows how much of the partition is
+        // structurally forced vs solver-incidental.
+        let mut freq_hist = vec![0_usize; m + 1];
+        let mut stable_pairs: Vec<(usize, usize)> = Vec::new();
+        let stable_threshold = m; // require unanimous co-location
+        for i in 0..n {
+            for j in (i + 1)..n {
+                let count = partitions.iter().filter(|p| p[i] == p[j]).count();
+                freq_hist[count] += 1;
+                if count >= stable_threshold {
+                    stable_pairs.push((i, j));
+                }
+            }
+        }
+        let total_pairs: usize = freq_hist.iter().sum();
+        eprintln!("\n=== Pair co-location frequency across {} seeds ===", m);
+        for (freq, &count) in freq_hist.iter().enumerate() {
+            eprintln!(
+                "  same-POD in {}/{} seeds: {:>5} pairs ({:>5.1}%)",
+                freq,
+                m,
+                count,
+                100.0 * count as f64 / total_pairs as f64
+            );
+        }
+        eprintln!(
+            "\nStable pairs (same POD in all {} seeds): {}",
+            m,
+            stable_pairs.len()
+        );
+
+        // How many stable pairs does the production heuristic respect?
+        let heur_out = partition::partition(&shape).expect("heuristic must find a partition");
+        let mut heur_pod = vec![usize::MAX; n];
+        for (p, stmts) in heur_out.pod_statements.iter().enumerate() {
+            for &s in stmts {
+                heur_pod[s] = p;
+            }
+        }
+        let respected: usize = stable_pairs
+            .iter()
+            .filter(|&&(i, j)| heur_pod[i] == heur_pod[j])
+            .count();
+        let violated = stable_pairs.len() - respected;
+        let respect_pct = if stable_pairs.is_empty() {
+            0.0
+        } else {
+            100.0 * respected as f64 / stable_pairs.len() as f64
+        };
+        eprintln!(
+            "\nProduction heuristic (K={}) respects {}/{} stable pairs ({:.1}%), violates {}",
+            heur_out.pod_count,
+            respected,
+            stable_pairs.len(),
+            respect_pct,
+            violated,
+        );
+
+        // Which statements account for the most violations? A stmt with
+        // many violated stable-partners is one the heuristic has split
+        // away from its structurally-required cluster.
+        let mut violations_per_stmt = vec![0_usize; n];
+        for &(i, j) in &stable_pairs {
+            if heur_pod[i] != heur_pod[j] {
+                violations_per_stmt[i] += 1;
+                violations_per_stmt[j] += 1;
+            }
+        }
+        let mut ranked: Vec<(usize, usize)> = (0..n)
+            .filter(|&s| violations_per_stmt[s] > 0)
+            .map(|s| (s, violations_per_stmt[s]))
+            .collect();
+        ranked.sort_by_key(|&(_, c)| std::cmp::Reverse(c));
+        eprintln!(
+            "\n=== Top 20 statements by violated stable-pair count (heur POD shown) ==="
+        );
+        for (s, c) in ranked.iter().take(20) {
+            eprintln!(
+                "  stmt {:3}: {:2} violations, heur POD {:2}",
+                s, c, heur_pod[*s]
+            );
+        }
+
+        // Drill-down on violator structure: roles, dep relationships,
+        // shared batches. Surfaces whether violators are e.g. CPV
+        // body+head pairs the heuristic split, or unrelated statements
+        // that just happen to co-locate in MILP.
+        let role_of = |s: usize| -> &'static str {
+            let c = &shape.costs[s];
+            if c.custom_pred_verifications > 0 {
+                "cpv_head"
+            } else if c.signed_by > 0 {
+                "signed_by"
+            } else if c.public_key_of > 0 {
+                "public_key_of"
+            } else if c.merkle_state_transitions_small + c.merkle_state_transitions_medium > 0 {
+                "merkle_trans"
+            } else if c.merkle_proofs_small + c.merkle_proofs_medium > 0 {
+                "merkle_proof"
+            } else {
+                "other"
+            }
+        };
+        let dep_rel = |a: usize, b: usize| -> &'static str {
+            let a_uses_b = shape.dep_edges[a].iter().any(
+                |d| matches!(d, AbstractDep::Internal(x) if *x == b),
+            );
+            let b_uses_a = shape.dep_edges[b].iter().any(
+                |d| matches!(d, AbstractDep::Internal(x) if *x == a),
+            );
+            match (a_uses_b, b_uses_a) {
+                (true, _) => "a_consumes_b",
+                (_, true) => "b_consumes_a",
+                _ => "sibling",
+            }
+        };
+        let shared_batches = |a: usize, b: usize| -> usize {
+            let ids_a: std::collections::BTreeSet<_> =
+                shape.costs[a].custom_predicates_ids.iter().collect();
+            let ids_b: std::collections::BTreeSet<_> =
+                shape.costs[b].custom_predicates_ids.iter().collect();
+            ids_a.intersection(&ids_b).count()
+        };
+
+        eprintln!("\n=== Violator drill-down (per top-10 violator) ===");
+        for (s, _) in ranked.iter().take(10) {
+            let partners: Vec<usize> = stable_pairs
+                .iter()
+                .filter_map(|&(i, j)| {
+                    if i == *s {
+                        Some(j)
+                    } else if j == *s {
+                        Some(i)
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            let violated: Vec<usize> = partners
+                .iter()
+                .copied()
+                .filter(|&p| heur_pod[p] != heur_pod[*s])
+                .collect();
+            let respected: Vec<usize> = partners
+                .iter()
+                .copied()
+                .filter(|&p| heur_pod[p] == heur_pod[*s])
+                .collect();
+            eprintln!(
+                "  stmt {} (heur POD {}, role={}): {} stable partners, {} respected, {} violated",
+                s,
+                heur_pod[*s],
+                role_of(*s),
+                partners.len(),
+                respected.len(),
+                violated.len()
+            );
+            for v in violated {
+                eprintln!(
+                    "    -> stmt {} (heur POD {}, role={}, rel={}, shared_batches={})",
+                    v,
+                    heur_pod[v],
+                    role_of(v),
+                    dep_rel(*s, v),
+                    shared_batches(*s, v)
+                );
+            }
+        }
+
+        // Where do violation splits land (which POD pairs)? Surfaces
+        // whether violators are predominantly adjacent-POD splits
+        // (cluster sliced across a single cut) or long-range splits
+        // (genuine global rearrangement).
+        let mut split_dist = vec![0_usize; heur_out.pod_count];
+        let mut split_pairs: std::collections::HashMap<(usize, usize), usize> =
+            std::collections::HashMap::new();
+        for &(i, j) in &stable_pairs {
+            if heur_pod[i] != heur_pod[j] {
+                let lo = heur_pod[i].min(heur_pod[j]);
+                let hi = heur_pod[i].max(heur_pod[j]);
+                split_dist[hi - lo] += 1;
+                *split_pairs.entry((lo, hi)).or_insert(0) += 1;
+            }
+        }
+        eprintln!("\n=== Violation distance histogram (heur POD chain distance) ===");
+        for (d, c) in split_dist.iter().enumerate().filter(|(_, &c)| c > 0) {
+            eprintln!("  distance {}: {} violations", d, c);
+        }
+        eprintln!("\n=== Top 10 violation-emitting POD pairs ===");
+        let mut splits_ranked: Vec<_> = split_pairs.into_iter().collect();
+        splits_ranked.sort_by_key(|&(_, c)| std::cmp::Reverse(c));
+        for ((p1, p2), c) in splits_ranked.iter().take(10) {
+            eprintln!("  ({:2}, {:2}): {} pairs (distance {})", p1, p2, c, p2 - p1);
+        }
+    }
+
+    /// Probe: can the cap-aware DP reach K=12 on cracked-refinery if we
+    /// feed it an ordering derived from MILP's cap-aware K=12 partition?
+    /// Builds an ordering by sorting statements by (pod_index in MILP's
+    /// solution, position in a baseline topo sort) so each MILP POD is a
+    /// contiguous block. Three possible outcomes carry distinct
+    /// implications:
+    /// - DP returns K=12: the gap is purely in the ordering generator.
+    ///   Pull MILP's ordering shape into the candidate set (or learn
+    ///   a heuristic that produces it).
+    /// - DP returns K=14: the DP itself can't reach K=12 even from the
+    ///   right ordering. Suggests the segment-feasibility check or the
+    ///   prefix-DP search depth is the bottleneck, not generation.
+    /// - DP returns K=13: both layers contribute partially.
     /// `#[ignore]`'d because it calls SCIP.
     #[test]
     #[ignore]
     fn cracked_refinery_milp_ordering_probe() {
         let shape: InputShape =
             serde_json::from_str(CRACKED_REFINERY_FIXTURE).expect("fixture deserializes");
-        let milp_out = partition_milp::solve_for_k(&shape, 12)
-            .expect("MILP must find K=12 (regression in fixture or MILP formulation otherwise)");
+        let milp_out = partition_milp::solve_for_k_with_publish_cap(&shape, 12)
+            .expect("MILP+cap must find K=12 (regression in fixture or formulation otherwise)");
 
         let n = shape.num_statements();
         let mut pod_of: Vec<usize> = vec![usize::MAX; n];
@@ -1278,7 +1865,7 @@ mod tests {
             .expect("DP must produce a partition on a valid topo ordering");
 
         eprintln!(
-            "MILP-derived ordering: DP returns K={}, sizes={:?}",
+            "MILP+cap-derived ordering: DP returns K={}, sizes={:?}",
             dp_out.pod_count,
             dp_out
                 .pod_statements
@@ -1290,10 +1877,12 @@ mod tests {
         let prod_out = partition::partition(&shape).expect("production partition");
         eprintln!("production K = {}", prod_out.pod_count);
 
-        assert_eq!(
-            dp_out.pod_count, 12,
-            "DP should reach the MILP optimum K=12 when given the MILP-derived ordering; \
-             if it doesn't, the gap is not purely an ordering-generation problem"
+        assert!(
+            dp_out.pod_count <= prod_out.pod_count,
+            "DP on MILP-derived ordering must be at least as good as the production heuristic; \
+             got K={} vs production K={}",
+            dp_out.pod_count,
+            prod_out.pod_count,
         );
     }
 

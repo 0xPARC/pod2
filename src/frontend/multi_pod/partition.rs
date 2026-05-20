@@ -82,7 +82,166 @@ pub fn partition(input: &InputShape) -> Option<OutputShape> {
             }
         }
     }
-    best
+    best.map(|out| refine_via_merges(input, out))
+}
+
+/// Post-process refinement: repeatedly try to merge adjacent PODs in
+/// the chain. A merge of POD `p` and POD `p+1` is accepted iff the
+/// combined POD still satisfies every per-POD cap (statement table,
+/// merkle pools, CPV cap, signed_by / public_key_of, input-pod cap,
+/// publish cap). Each successful merge drops K by 1.
+///
+/// Motivated by the `cracked_refinery_milp_multi_seed_pair_stability`
+/// probe: 58% of the heuristic's violations of MILP-stable pairs are
+/// adjacent-POD splits. Merging adjacent PODs is the cheapest fix for
+/// that class, and it directly reduces K rather than just balancing.
+/// Long-range cluster splits (the other 42%) aren't repaired here;
+/// those need cluster-aware admission, not local repair.
+fn refine_via_merges(input: &InputShape, mut output: OutputShape) -> OutputShape {
+    loop {
+        let mut applied = false;
+        for p in 0..output.pod_count.saturating_sub(1) {
+            if let Some(merged) = try_merge_adjacent(input, &output, p) {
+                output = merged;
+                applied = true;
+                break;
+            }
+        }
+        if !applied {
+            break;
+        }
+    }
+    output
+}
+
+/// Try to merge POD `p` and POD `p+1`. Returns `Some(new_output)` if
+/// the combined POD passes [`segment_feasible_with`] against a
+/// freshly-reconstructed topo ordering, `None` otherwise.
+fn try_merge_adjacent(
+    input: &InputShape,
+    output: &OutputShape,
+    p: usize,
+) -> Option<OutputShape> {
+    let pod_count = output.pod_count;
+    if p + 1 >= pod_count {
+        return None;
+    }
+    let new_pod_count = pod_count - 1;
+
+    let mut merged_stmts: Vec<usize> = output.pod_statements[p].clone();
+    merged_stmts.extend_from_slice(&output.pod_statements[p + 1]);
+    merged_stmts.sort();
+
+    let mut new_pod_statements: Vec<Vec<usize>> = Vec::with_capacity(new_pod_count);
+    for (q, stmts) in output.pod_statements.iter().enumerate() {
+        if q == p {
+            new_pod_statements.push(merged_stmts.clone());
+        } else if q == p + 1 {
+            continue;
+        } else {
+            new_pod_statements.push(stmts.clone());
+        }
+    }
+
+    // Reconstruct a global topo ordering as the concatenation of each
+    // POD's stmts in chain order, topo-sorted within the POD. Within-
+    // POD order doesn't matter for `pod_statements` (it's stored
+    // sorted by stmt index) but `segment_feasible_with` needs an
+    // actual topo sequence so `max_consumer_pos` is meaningful.
+    let consumers = input.consumers();
+    let mut ordering: Vec<usize> = Vec::with_capacity(input.num_statements());
+    for stmts in &new_pod_statements {
+        ordering.extend(topo_sort_subset(input, stmts, &consumers));
+    }
+    if ordering.len() != input.num_statements() {
+        return None;
+    }
+
+    let pos_in_ordering = build_pos_in_ordering(&ordering);
+    let max_consumer_pos = build_max_consumer_pos(&consumers, &pos_in_ordering);
+    let output_pub_set: HashSet<usize> = input.output_public_indices.iter().copied().collect();
+    let mut workspace = DpWorkspace::default();
+
+    let mut pos = 0_usize;
+    for (idx, stmts) in new_pod_statements.iter().enumerate() {
+        let a = pos;
+        let b = pos + stmts.len();
+        let is_terminal = idx + 1 == new_pod_count;
+        if !segment_feasible_with(
+            &ordering,
+            &pos_in_ordering,
+            &max_consumer_pos,
+            &output_pub_set,
+            input,
+            a,
+            b,
+            is_terminal,
+            &mut workspace,
+        ) {
+            return None;
+        }
+        pos = b;
+    }
+
+    let mut new_republished: Vec<BTreeSet<usize>> = Vec::with_capacity(new_pod_count);
+    for (q, rep) in output.pod_republished_externals.iter().enumerate() {
+        if q == p {
+            let mut combined = rep.clone();
+            combined.extend(output.pod_republished_externals[p + 1].iter().copied());
+            new_republished.push(combined);
+        } else if q == p + 1 {
+            continue;
+        } else {
+            new_republished.push(rep.clone());
+        }
+    }
+
+    Some(OutputShape {
+        pod_count: new_pod_count,
+        pod_statements: new_pod_statements,
+        pod_republished_externals: new_republished,
+    })
+}
+
+/// Topological sort restricted to a subset of statement indices.
+/// Returns the subset in some valid order; returns a shorter list iff
+/// the subset has a cycle (which shouldn't happen for a well-formed
+/// partition since the global DAG is acyclic).
+fn topo_sort_subset(
+    input: &InputShape,
+    stmts: &[usize],
+    consumers: &[Vec<usize>],
+) -> Vec<usize> {
+    let in_subset: HashSet<usize> = stmts.iter().copied().collect();
+    let n = input.num_statements();
+    let mut indegree = vec![0_usize; n];
+    for &s in stmts {
+        for dep in &input.dep_edges[s] {
+            if let AbstractDep::Internal(d) = dep {
+                if in_subset.contains(d) {
+                    indegree[s] += 1;
+                }
+            }
+        }
+    }
+    let mut ready: Vec<usize> = stmts
+        .iter()
+        .copied()
+        .filter(|s| indegree[*s] == 0)
+        .collect();
+    let mut result = Vec::with_capacity(stmts.len());
+    while let Some(s) = ready.pop() {
+        result.push(s);
+        for &c in &consumers[s] {
+            if in_subset.contains(&c) {
+                indegree[c] -= 1;
+                if indegree[c] == 0 {
+                    ready.push(c);
+                }
+            }
+        }
+    }
+    result
 }
 
 /// Estimated lower bound on K. Returns the largest per-resource
@@ -116,14 +275,49 @@ pub(super) fn kahn_bin_packing(
     let params = &input.params;
     let (mut indegree, consumers) = input.indegree_and_consumers();
     let output_pub_set: HashSet<usize> = input.output_public_indices.iter().copied().collect();
-    let is_exporter: Vec<bool> = (0..n)
-        .map(|s| !consumers[s].is_empty() || output_pub_set.contains(&s))
+    // Per-statement distinct-consumer count. `consumers[d]` may name
+    // the same statement twice when one consumer has two `Internal(d)`
+    // entries; we want the distinct count for the publish-cap export
+    // book-keeping so `unfinished_consumers[d]` matches the number of
+    // `commit_extend` calls that will decrement it.
+    let distinct_consumer_count: Vec<usize> = consumers
+        .iter()
+        .map(|cs| {
+            let set: BTreeSet<usize> = cs.iter().copied().collect();
+            set.len()
+        })
         .collect();
-
+    let is_exporter: Vec<bool> = (0..n)
+        .map(|s| distinct_consumer_count[s] > 0 || output_pub_set.contains(&s))
+        .collect();
     let mut ordering: Vec<usize> = Vec::with_capacity(n);
     let mut pos_built = vec![usize::MAX; n];
     let mut state = GreedyState::default();
+    state.unfinished_consumers = vec![0; n];
     let mut ready: Vec<usize> = (0..n).filter(|&s| indegree[s] == 0).collect();
+
+    // Coupling-aware tiebreak helper: count Internal deps of `s` that
+    // are already in the current segment. Encourages tight clusters
+    // (CPV body+head slices, dep-chained statements) to admit
+    // contiguously rather than letting unrelated ready statements
+    // wedge between them. Motivated by the
+    // `cracked_refinery_milp_seed_stability` probe: dep-tight clusters
+    // consistently co-locate across MILP seeds, so surfacing them
+    // during admission matches MILP's local structure.
+    fn coupling_score(
+        deps: &[AbstractDep],
+        pos_built: &[usize],
+        segment_start: usize,
+    ) -> usize {
+        deps.iter()
+            .filter(|d| match d {
+                AbstractDep::Internal(d) => {
+                    pos_built[*d] != usize::MAX && pos_built[*d] >= segment_start
+                }
+                _ => false,
+            })
+            .count()
+    }
 
     while !ready.is_empty() {
         // Pick the next statement, and decide whether to extend the
@@ -134,6 +328,7 @@ pub(super) fn kahn_bin_packing(
         // the per-POD caps, falling back to the lowest-tiebreak overall
         // when nothing fits (in which case we close the segment).
         let (chosen_idx, opens_new_segment) = if state.totals.num_statements == 0 {
+            // Empty segment: no coupling signal yet, identity tiebreak only.
             let i = ready
                 .iter()
                 .enumerate()
@@ -142,12 +337,14 @@ pub(super) fn kahn_bin_packing(
                 .0;
             (i, true)
         } else {
+            let segment_start = state.a;
             let mut best_fit: Option<usize> = None;
-            let mut best_fit_prio = usize::MAX;
+            let mut best_fit_prio = (usize::MAX, usize::MAX);
             let mut best_overall = 0_usize;
-            let mut best_overall_prio = usize::MAX;
+            let mut best_overall_prio = (usize::MAX, usize::MAX);
             for (i, &s) in ready.iter().enumerate() {
-                let prio = tiebreak_priority[s];
+                let coupling = coupling_score(&input.dep_edges[s], &pos_built, segment_start);
+                let prio = (usize::MAX - coupling, tiebreak_priority[s]);
                 if prio < best_overall_prio {
                     best_overall_prio = prio;
                     best_overall = i;
@@ -155,7 +352,14 @@ pub(super) fn kahn_bin_packing(
                 let cost = &input.costs[s];
                 let deps = &input.dep_edges[s];
                 if state
-                    .can_extend(cost, deps, &pos_built, is_exporter[s], params)
+                    .can_extend(
+                        cost,
+                        deps,
+                        &pos_built,
+                        is_exporter[s],
+                        &output_pub_set,
+                        params,
+                    )
                     .is_some()
                     && prio < best_fit_prio
                 {
@@ -176,7 +380,15 @@ pub(super) fn kahn_bin_packing(
             state.reset();
             state.a = ordering.len();
         }
-        state.commit_extend(cost, deps, &pos_built, is_exporter[s]);
+        state.commit_extend(
+            s,
+            cost,
+            deps,
+            &pos_built,
+            is_exporter[s],
+            distinct_consumer_count[s],
+            &output_pub_set,
+        );
         pos_built[s] = ordering.len();
         ordering.push(s);
         for &c in &consumers[s] {
@@ -239,18 +451,35 @@ struct GreedyState {
     prev_pod_producers: Vec<usize>,
     external_imports: Vec<usize>,
     external_pods: Vec<usize>,
-    /// Pessimistic count of statements admitted to the segment that
-    /// have at least one consumer (or are output-publics) — i.e. that
-    /// might land on the chain tree once this segment closes. Overcounts
-    /// versus the true post-close exports, since some consumers may end
-    /// up in this same segment; that means bin-packing closes segments
-    /// slightly earlier than strictly necessary under the publish cap.
+    /// Tight count of statements admitted to the current segment that
+    /// would land on the chain tree if the segment closed now: a
+    /// statement is exported iff it still has at least one consumer
+    /// outside the segment OR it's in `output_public_indices`. As
+    /// admissions co-locate consumers with their producers, the count
+    /// can DECREASE. `unfinished_consumers[s]` tracks the remaining
+    /// out-of-segment consumer count per segment member; when it hits
+    /// zero (and `s` isn't an output-public), `s` drops out of the
+    /// exported set.
     exported_count: usize,
+    /// For each statement that has been admitted at any point, the
+    /// number of distinct internal consumers not yet admitted to the
+    /// CURRENT segment. Sized once at the top of `kahn_bin_packing`.
+    /// `usize::MAX` for statements not yet admitted to any segment.
+    /// On segment reset, entries for the previous segment's members
+    /// are stale but irrelevant — the export check only looks at
+    /// statements in the current segment, identified via `pos_built >=
+    /// state.a`.
+    unfinished_consumers: Vec<usize>,
     /// Scratch buffers used inside [`can_extend`] for deduplication.
     /// Cleared on each call to avoid churning allocations.
     scratch_new_producers: Vec<usize>,
     scratch_new_ext_imports: Vec<usize>,
     scratch_new_ext_pods: Vec<usize>,
+    /// Scratch buffer for [`can_extend`]'s tentative export check:
+    /// holds distinct in-segment dep targets of the candidate to avoid
+    /// double-decrementing `unfinished_consumers` when a candidate
+    /// names the same producer twice.
+    scratch_seen_segment_deps: Vec<usize>,
 }
 
 impl GreedyState {
@@ -262,6 +491,10 @@ impl GreedyState {
         self.external_imports.clear();
         self.external_pods.clear();
         self.exported_count = 0;
+        // Don't touch `unfinished_consumers`: its entries are
+        // tagged-by-position via `pos_built` and the segment range
+        // `[a..)`. Old entries fall out of scope once `self.a`
+        // advances past them.
     }
 
     /// Would the current segment still satisfy all per-POD caps after
@@ -276,9 +509,33 @@ impl GreedyState {
         deps: &[AbstractDep],
         pos_of: &[usize],
         is_exporter: bool,
+        output_pub_set: &HashSet<usize>,
         params: &Params,
     ) -> Option<usize> {
-        if self.exported_count + usize::from(is_exporter) > params.max_public_statements {
+        // Tight publish-cap probe. Each of the candidate's in-segment
+        // Internal deps `d` loses one unfinished consumer; if d's
+        // count would drop to zero and d isn't an output-public, d
+        // exits the exported set so the segment can absorb one extra
+        // would-be-export.
+        let mut tentative_exports = self.exported_count;
+        self.scratch_seen_segment_deps.clear();
+        for dep in deps {
+            if let AbstractDep::Internal(d) = dep {
+                if pos_of[*d] != usize::MAX
+                    && pos_of[*d] >= self.a
+                    && !self.scratch_seen_segment_deps.contains(d)
+                {
+                    self.scratch_seen_segment_deps.push(*d);
+                    if self.unfinished_consumers[*d] == 1 && !output_pub_set.contains(d) {
+                        tentative_exports -= 1;
+                    }
+                }
+            }
+        }
+        if is_exporter {
+            tentative_exports += 1;
+        }
+        if tentative_exports > params.max_public_statements {
             return None;
         }
         let new_cp_count = cost
@@ -338,10 +595,13 @@ impl GreedyState {
     /// feasibility via [`can_extend`]; the mutation here is unchecked.
     fn commit_extend(
         &mut self,
+        s: usize,
         cost: &StatementCost,
         deps: &[AbstractDep],
         pos_of: &[usize],
         is_exporter: bool,
+        distinct_consumer_count: usize,
+        output_pub_set: &HashSet<usize>,
     ) {
         self.totals.add(cost);
         for id in &cost.custom_predicates_ids {
@@ -350,6 +610,31 @@ impl GreedyState {
             }
         }
         self.totals.distinct_custom_predicates = self.distinct_cps.len();
+        // Decrement unfinished-consumer counts for each in-segment dep
+        // of `s`; if d's count reaches zero (and d isn't an
+        // output-public) d exits the exported set.
+        self.scratch_seen_segment_deps.clear();
+        for dep in deps {
+            if let AbstractDep::Internal(d) = dep {
+                if pos_of[*d] != usize::MAX
+                    && pos_of[*d] >= self.a
+                    && !self.scratch_seen_segment_deps.contains(d)
+                {
+                    self.scratch_seen_segment_deps.push(*d);
+                    self.unfinished_consumers[*d] -= 1;
+                    if self.unfinished_consumers[*d] == 0 && !output_pub_set.contains(d) {
+                        self.exported_count -= 1;
+                    }
+                }
+            }
+        }
+        // Seed s's unfinished-consumer count with its total distinct
+        // internal consumers; s joins the exported set if any consumer
+        // exists or s is an output-public.
+        self.unfinished_consumers[s] = distinct_consumer_count;
+        if is_exporter {
+            self.exported_count += 1;
+        }
         for dep in deps {
             match dep {
                 AbstractDep::Internal(d) => {
@@ -366,9 +651,6 @@ impl GreedyState {
                     }
                 }
             }
-        }
-        if is_exporter {
-            self.exported_count += 1;
         }
     }
 }
