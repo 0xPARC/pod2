@@ -107,12 +107,12 @@ fn declare_vars(
     }
 }
 
-fn build_model(vars: ProblemVariables) -> SCIPProblem {
+fn build_model(vars: ProblemVariables, seed: i32) -> SCIPProblem {
     // Constant objective: any feasible integer solution satisfies the gap
     // limit, so SCIP returns on the first incumbent.
     vars.minimise(0_i32)
         .using(good_lp::solvers::scip::scip)
-        .set_option("randomization/randomseedshift", SCIP_RANDOM_SEED)
+        .set_option("randomization/randomseedshift", seed)
         .set_verbose(false)
         .set_option("limits/gap", 1e20_f64)
         .set_option("limits/time", SCIP_TIME_LIMIT_SECONDS)
@@ -193,7 +193,7 @@ fn compute_pod_bounds(input: &InputShape, k: usize) -> Vec<(usize, usize)> {
 /// Solve the MILP for exactly `k` PODs. Returns `Some(OutputShape)` if a
 /// feasible partition exists at this K, `None` otherwise.
 pub fn solve_for_k(input: &InputShape, k: usize) -> Option<OutputShape> {
-    solve_for_k_inner(input, k, false)
+    solve_for_k_inner(input, k, false, SCIP_RANDOM_SEED)
 }
 
 /// As [`solve_for_k`], but additionally enforces
@@ -203,10 +203,28 @@ pub fn solve_for_k(input: &InputShape, k: usize) -> Option<OutputShape> {
 /// know the optimal K under the prospective publish cap; production
 /// `solve_for_k` is unchanged.
 pub fn solve_for_k_with_publish_cap(input: &InputShape, k: usize) -> Option<OutputShape> {
-    solve_for_k_inner(input, k, true)
+    solve_for_k_inner(input, k, true, SCIP_RANDOM_SEED)
 }
 
-fn solve_for_k_inner(input: &InputShape, k: usize, with_publish_cap: bool) -> Option<OutputShape> {
+/// As [`solve_for_k_with_publish_cap`], but with an explicit SCIP random
+/// seed. Different seeds produce different feasible partitions when more
+/// than one exists at the target `k`; probes use this to surface which
+/// per-statement co-locations are structurally required (stable across
+/// seeds) versus incidental to a particular solver run.
+pub fn solve_for_k_with_publish_cap_seed(
+    input: &InputShape,
+    k: usize,
+    seed: i32,
+) -> Option<OutputShape> {
+    solve_for_k_inner(input, k, true, seed)
+}
+
+fn solve_for_k_inner(
+    input: &InputShape,
+    k: usize,
+    with_publish_cap: bool,
+    seed: i32,
+) -> Option<OutputShape> {
     if with_publish_cap
         && input.output_public_indices.len() > input.params.max_public_statements
     {
@@ -279,7 +297,7 @@ fn solve_for_k_inner(input: &InputShape, k: usize, with_publish_cap: bool) -> Op
         num_cps,
         with_publish_cap,
     );
-    let mut model = build_model(vars);
+    let mut model = build_model(vars, seed);
 
     // (1) Each statement in exactly one POD.
     for s in 0..n {
