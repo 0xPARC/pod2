@@ -2353,7 +2353,7 @@ impl InnerCircuit for MainPodVerifyTarget {
             self.sts_mt_proofs[i].set_targets(pw, &pad_sts_mt_proof)?;
         }
 
-        // Skip statement and operation 0 wich are a hardcoded None
+        // Skip statement and operation 0 which are a hardcoded None
         let statements_is_pub = &input.statements_is_pub[1..];
         let statements = &input.statements[1..];
         let operations = &input.operations[1..];

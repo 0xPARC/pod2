@@ -930,7 +930,7 @@ pub struct BaseParams {
     /// Number of public statements to hash to calculate the public inputs.  Must be equal or
     /// greater than `max_public_statements`.
     pub num_public_statements_hash: usize,
-    // TODO: Doc
+    /// Max depth of the public statement merkle tree
     pub max_depth_public_statements_mt: usize,
     pub max_statement_args: usize,
     //
@@ -1158,7 +1158,6 @@ pub trait Pod: fmt::Debug + DynClone + Sync + Send + Any + EqualsAny {
     fn is_main(&self) -> bool {
         false
     }
-    // TODO: Remove?  Is this even used?
     /// Root of the public statements.  Different pods can have the same `statements_root` if they
     /// expose the same public statements even if they arrive to them through different private
     /// inputs.
