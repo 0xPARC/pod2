@@ -927,9 +927,6 @@ pub struct BaseParams {
     //
     // The following parameters define how a pod id is calculated.
     //
-    /// Number of public statements to hash to calculate the public inputs.  Must be equal or
-    /// greater than `max_public_statements`.
-    pub num_public_statements_hash: usize,
     /// Max depth of the public statement merkle tree
     pub max_depth_public_statements_mt: usize,
     pub max_statement_args: usize,
@@ -945,7 +942,6 @@ pub struct BaseParams {
 }
 
 pub const BASE_PARAMS: BaseParams = BaseParams {
-    num_public_statements_hash: 16,
     max_depth_public_statements_mt: 10,
     max_statement_args: 5,
     max_custom_predicate_arity: 5,
@@ -1043,12 +1039,6 @@ impl Default for Params {
 impl Params {
     // Convenient methods to get base params
 
-    pub const fn num_public_statements_hash() -> usize {
-        BASE_PARAMS.num_public_statements_hash
-    }
-    pub const fn max_statement_args() -> usize {
-        BASE_PARAMS.max_statement_args
-    }
     pub const fn max_custom_predicate_arity() -> usize {
         BASE_PARAMS.max_custom_predicate_arity
     }
