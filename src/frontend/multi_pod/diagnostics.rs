@@ -15,7 +15,7 @@ use std::{
 };
 
 use super::{
-    cost::{ResourceTotals, StatementCost},
+    cost::{OperationCost, ResourceTotals},
     shape::{AbstractDep, InputShape, OutputShape},
 };
 use crate::middleware::Params;
@@ -64,12 +64,9 @@ fn lower_bound(used: usize, limit: usize) -> Option<usize> {
 ///
 /// Merkle dimensions report small and medium counts separately, each
 /// against its own pool cap. Small-eligible ops can substitute up into
-/// medium slots when small is exhausted; that substitution is enforced by
-/// [`ResourceTotals::fits_in_pod`] / [`ResourceTotals::min_pods`] rather
-/// than visible here, since folding it into the display ("total" rows)
-/// confused readers comparing per-pool usage.
+/// medium slots when small is exhausted.
 fn aggregate_rows<'a>(
-    costs: impl IntoIterator<Item = &'a StatementCost>,
+    costs: impl IntoIterator<Item = &'a OperationCost>,
     params: &Params,
 ) -> (Vec<UtilizationRow>, usize) {
     let totals = ResourceTotals::accumulate(costs);
@@ -78,7 +75,7 @@ fn aggregate_rows<'a>(
     let rows = vec![
         UtilizationRow {
             name: "total statements",
-            used: totals.num_statements,
+            used: totals.num_operations,
             limit: params.max_statements,
         },
         UtilizationRow {
@@ -122,7 +119,7 @@ fn aggregate_rows<'a>(
             limit: params.max_custom_predicates,
         },
     ];
-    (rows, totals.num_statements)
+    (rows, totals.num_operations)
 }
 
 /// Pre-solve aggregate resource summary.
@@ -137,11 +134,11 @@ impl ResourceSummary {
         Self::from_costs(input.costs.iter(), &input.params)
     }
 
-    /// Build a summary from a stream of `StatementCost`s plus a `Params`,
+    /// Build a summary from a stream of `OperationCost`s plus a `Params`,
     /// without going through an `InputShape`. Lets callers report on
     /// builder-stage costs before deps have been materialised.
     pub fn from_costs<'a>(
-        costs: impl IntoIterator<Item = &'a StatementCost>,
+        costs: impl IntoIterator<Item = &'a OperationCost>,
         params: &Params,
     ) -> Self {
         let (rows, num_statements) = aggregate_rows(costs, params);
@@ -304,7 +301,7 @@ impl SolutionBreakdown {
                 // Statement-table cap: each `OpenInputStatement` op
                 // produces a statement in the POD's statement table, so
                 // the "total statements" row reflects local statements
-                // PLUS chain and external imports — the same number
+                // PLUS chain and external imports: the same number
                 // `segment_feasible_with` checks against
                 // `max_statements`.
                 let total_imports = chain_imports.len() + external_imports.len();
@@ -610,7 +607,7 @@ mod tests {
 
     fn independent(n: usize, output_public: Vec<usize>, params: Params) -> InputShape {
         InputShape {
-            costs: (0..n).map(|_| StatementCost::default()).collect(),
+            costs: (0..n).map(|_| OperationCost::default()).collect(),
             dep_edges: (0..n).map(|_| Vec::new()).collect(),
             output_public_indices: output_public,
             num_external_pods: 0,

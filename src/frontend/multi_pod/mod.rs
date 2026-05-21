@@ -42,7 +42,7 @@ mod partition;
 mod partition_milp;
 mod shape;
 
-use cost::StatementCost;
+use cost::OperationCost;
 use deps::{DependencyGraph, ExternalDependency, StatementSource};
 pub use diagnostics::{ResourceSummary, SolutionBreakdown};
 pub use shape::{AbstractDep, InputShape, OutputShape};
@@ -279,11 +279,11 @@ impl MultiPodBuilder {
     /// Pre-solve resource summary. Aggregates per-statement costs against
     /// per-POD limits and identifies the bottleneck resource.
     pub fn resource_summary(&self) -> ResourceSummary {
-        let costs: Vec<StatementCost> = self
+        let costs: Vec<OperationCost> = self
             .builder
             .operations
             .iter()
-            .map(|op| StatementCost::from_operation(op, &self.params))
+            .map(|op| OperationCost::from_operation(op, &self.params))
             .collect();
         ResourceSummary::from_costs(costs.iter(), &self.params)
     }
@@ -506,7 +506,7 @@ impl SolvedMultiPod {
                 if builder.statements.iter().any(|(_, s)| s == stmt) {
                     builder.reveal(stmt)?;
                 } else {
-                    // Output-public produced upstream — open from chain.
+                    // Output-public produced upstream; open from chain.
                     builder.open_input_st(true, 0, stmt)?;
                 }
             }
@@ -810,11 +810,11 @@ fn build_shape_and_index(
     let n_synth = synthetic_to_statement.len();
 
     // Augmented costs: originals + zero costs for synthetics.
-    let mut costs: Vec<StatementCost> = operations
+    let mut costs: Vec<OperationCost> = operations
         .iter()
-        .map(|op| StatementCost::from_operation(op, params))
+        .map(|op| OperationCost::from_operation(op, params))
         .collect();
-    costs.extend((0..n_synth).map(|_| StatementCost::default()));
+    costs.extend((0..n_synth).map(|_| OperationCost::default()));
 
     // Augmented dep_edges. Original statements: External(pod, statement)
     // becomes Internal(synth_idx) when the input statement is being

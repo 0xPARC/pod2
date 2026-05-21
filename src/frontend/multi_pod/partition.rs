@@ -22,7 +22,7 @@
 //!   also ensures feasibility in cases where a left-to-right greedy
 //!   walk produces an infeasible partition; the DP-vs-greedy random
 //!   sweep ([`dp_vs_greedy_random_sweep`]) measures how often this
-//!   actually rescues a partition.
+//!   actually rescues a solution.
 
 use std::{
     cmp::Reverse,
@@ -33,7 +33,7 @@ use rand::{seq::SliceRandom, SeedableRng};
 use rand_chacha::ChaCha20Rng;
 
 use super::{
-    cost::{CustomPredicateId, ResourceTotals, StatementCost},
+    cost::{CustomPredicateId, OperationCost, ResourceTotals},
     shape::{AbstractDep, InputShape, OutputShape},
 };
 use crate::middleware::Params;
@@ -82,156 +82,7 @@ pub fn partition(input: &InputShape) -> Option<OutputShape> {
             }
         }
     }
-    best.map(|out| refine_via_merges(input, out))
-}
-
-/// Post-process refinement: repeatedly try to merge adjacent PODs in
-/// the chain. A merge of POD `p` and POD `p+1` is accepted iff the
-/// combined POD still satisfies every per-POD cap (statement table,
-/// merkle pools, CPV cap, signed_by / public_key_of, input-pod cap,
-/// publish cap). Each successful merge drops K by 1.
-///
-/// Cheap local repair for the common case where two adjacent PODs
-/// should structurally be one but the per-ordering cutter didn't see
-/// it. Long-range cluster splits aren't repaired here; those need
-/// cluster-aware admission, not local repair.
-fn refine_via_merges(input: &InputShape, mut output: OutputShape) -> OutputShape {
-    loop {
-        let mut applied = false;
-        for p in 0..output.pod_count.saturating_sub(1) {
-            if let Some(merged) = try_merge_adjacent(input, &output, p) {
-                output = merged;
-                applied = true;
-                break;
-            }
-        }
-        if !applied {
-            break;
-        }
-    }
-    output
-}
-
-/// Try to merge POD `p` and POD `p+1`. Returns `Some(new_output)` if
-/// the combined POD passes [`segment_feasible_with`] against a
-/// freshly-reconstructed topo ordering, `None` otherwise.
-fn try_merge_adjacent(input: &InputShape, output: &OutputShape, p: usize) -> Option<OutputShape> {
-    let pod_count = output.pod_count;
-    if p + 1 >= pod_count {
-        return None;
-    }
-    let new_pod_count = pod_count - 1;
-
-    let mut merged_stmts: Vec<usize> = output.pod_statements[p].clone();
-    merged_stmts.extend_from_slice(&output.pod_statements[p + 1]);
-    merged_stmts.sort();
-
-    let mut new_pod_statements: Vec<Vec<usize>> = Vec::with_capacity(new_pod_count);
-    for (q, stmts) in output.pod_statements.iter().enumerate() {
-        if q == p {
-            new_pod_statements.push(merged_stmts.clone());
-        } else if q == p + 1 {
-            continue;
-        } else {
-            new_pod_statements.push(stmts.clone());
-        }
-    }
-
-    // Reconstruct a global topo ordering as the concatenation of each
-    // POD's stmts in chain order, topo-sorted within the POD. Within-
-    // POD order doesn't matter for `pod_statements` (it's stored
-    // sorted by stmt index) but `segment_feasible_with` needs an
-    // actual topo sequence so `max_consumer_pos` is meaningful.
-    let consumers = input.consumers();
-    let mut ordering: Vec<usize> = Vec::with_capacity(input.num_statements());
-    for stmts in &new_pod_statements {
-        ordering.extend(topo_sort_subset(input, stmts, &consumers));
-    }
-    if ordering.len() != input.num_statements() {
-        return None;
-    }
-
-    let pos_in_ordering = build_pos_in_ordering(&ordering);
-    let max_consumer_pos = build_max_consumer_pos(&consumers, &pos_in_ordering);
-    let output_pub_set: HashSet<usize> = input.output_public_indices.iter().copied().collect();
-    let mut workspace = DpWorkspace::default();
-
-    let mut pos = 0_usize;
-    for (idx, stmts) in new_pod_statements.iter().enumerate() {
-        let a = pos;
-        let b = pos + stmts.len();
-        let is_terminal = idx + 1 == new_pod_count;
-        if !segment_feasible_with(
-            &ordering,
-            &pos_in_ordering,
-            &max_consumer_pos,
-            &output_pub_set,
-            input,
-            a,
-            b,
-            is_terminal,
-            &mut workspace,
-        ) {
-            return None;
-        }
-        pos = b;
-    }
-
-    let mut new_republished: Vec<BTreeSet<usize>> = Vec::with_capacity(new_pod_count);
-    for (q, rep) in output.pod_republished_externals.iter().enumerate() {
-        if q == p {
-            let mut combined = rep.clone();
-            combined.extend(output.pod_republished_externals[p + 1].iter().copied());
-            new_republished.push(combined);
-        } else if q == p + 1 {
-            continue;
-        } else {
-            new_republished.push(rep.clone());
-        }
-    }
-
-    Some(OutputShape {
-        pod_count: new_pod_count,
-        pod_statements: new_pod_statements,
-        pod_republished_externals: new_republished,
-    })
-}
-
-/// Topological sort restricted to a subset of statement indices.
-/// Returns the subset in some valid order; returns a shorter list iff
-/// the subset has a cycle (which shouldn't happen for a well-formed
-/// partition since the global DAG is acyclic).
-fn topo_sort_subset(input: &InputShape, stmts: &[usize], consumers: &[Vec<usize>]) -> Vec<usize> {
-    let in_subset: HashSet<usize> = stmts.iter().copied().collect();
-    let n = input.num_statements();
-    let mut indegree = vec![0_usize; n];
-    for &s in stmts {
-        for dep in &input.dep_edges[s] {
-            if let AbstractDep::Internal(d) = dep {
-                if in_subset.contains(d) {
-                    indegree[s] += 1;
-                }
-            }
-        }
-    }
-    let mut ready: Vec<usize> = stmts
-        .iter()
-        .copied()
-        .filter(|s| indegree[*s] == 0)
-        .collect();
-    let mut result = Vec::with_capacity(stmts.len());
-    while let Some(s) = ready.pop() {
-        result.push(s);
-        for &c in &consumers[s] {
-            if in_subset.contains(&c) {
-                indegree[c] -= 1;
-                if indegree[c] == 0 {
-                    ready.push(c);
-                }
-            }
-        }
-    }
-    result
+    best
 }
 
 /// Estimated lower bound on K. Returns the largest per-resource
@@ -247,10 +98,11 @@ fn resource_lower_bound_k(input: &InputShape) -> usize {
     ResourceTotals::accumulate(input.costs.iter()).min_pods(&input.params)
 }
 
-/// Bin-packing Kahn topological sort. At each step, prefers ready
-/// statements that fit into the segment currently being built without
-/// exceeding any per-POD cap; when nothing fits, closes the segment and
-/// opens a new one at the next ready statement.
+/// Produce a topological ordering biased to keep mutually-fittable
+/// statements adjacent, so the DP cutter sees fewer infeasible
+/// segments. Built greedily: maintain a running segment, admit ready
+/// statements that fit within per-POD caps; when nothing fits, close
+/// the segment and open a new one.
 ///
 /// `tiebreak_priority` selects among multiple fitting ready statements;
 /// `0..n` (identity) produces a deterministic source-order tiebreak.
@@ -265,11 +117,20 @@ pub(super) fn kahn_bin_packing(
     let params = &input.params;
     let (mut indegree, consumers) = input.indegree_and_consumers();
     let output_pub_set: HashSet<usize> = input.output_public_indices.iter().copied().collect();
-    // Per-statement distinct-consumer count. `consumers[d]` may name
-    // the same statement twice when one consumer has two `Internal(d)`
-    // entries; we want the distinct count for the publish-cap export
-    // book-keeping so `unfinished_consumers[d]` matches the number of
-    // `commit_extend` calls that will decrement it.
+    // While building each segment, the bin-packing fit check needs to
+    // know how many statements in the segment are currently "exported"
+    // (live consumers in a later segment, counted against
+    // `max_public_statements`). We track that via `unfinished_consumers[d]`:
+    // a per-statement countdown that decreases by one each time one of
+    // d's consumers is admitted to a segment. When it hits zero, and d
+    // isn't separately required by being output-public, d stops counting
+    // against the publish cap.
+    //
+    // `consumers[d]` may list the same consumer twice if that consumer
+    // has two `Internal(d)` entries in its dep_edges (e.g. an op whose
+    // two arguments both reference d). The countdown is decremented once
+    // per consumer admission, not once per dep edge, so we initialise it
+    // from the distinct-consumer count.
     let distinct_consumer_count: Vec<usize> = consumers
         .iter()
         .map(|cs| {
@@ -282,15 +143,15 @@ pub(super) fn kahn_bin_packing(
         .collect();
     let mut ordering: Vec<usize> = Vec::with_capacity(n);
     let mut pos_built = vec![usize::MAX; n];
-    let mut state = GreedyState::default();
-    state.unfinished_consumers = vec![0; n];
+    let mut state = GreedyState {
+        unfinished_consumers: vec![0; n],
+        ..GreedyState::default()
+    };
     let mut ready: Vec<usize> = (0..n).filter(|&s| indegree[s] == 0).collect();
 
-    // Coupling-aware tiebreak helper: count Internal deps of `s` that
-    // are already in the current segment. Encourages tight clusters
-    // (CPV body+head slices, dep-chained statements) to admit
-    // contiguously rather than letting unrelated ready statements
-    // wedge between them.
+    // Tiebreak: prefer ready statements that already have deps in the
+    // current segment, so dep-tight clusters admit contiguously instead
+    // of being split by unrelated statements.
     fn coupling_score(deps: &[AbstractDep], pos_built: &[usize], segment_start: usize) -> usize {
         deps.iter()
             .filter(|d| match d {
@@ -303,14 +164,11 @@ pub(super) fn kahn_bin_packing(
     }
 
     while !ready.is_empty() {
-        // Pick the next statement, and decide whether to extend the
-        // running segment or open a new one. With an empty segment any
-        // ready statement fits, so we skip the per-statement `can_extend`
-        // probe and just pick lowest tiebreak. With a non-empty segment
-        // we prefer the lowest-tiebreak ready statement that fits within
-        // the per-POD caps, falling back to the lowest-tiebreak overall
-        // when nothing fits (in which case we close the segment).
-        let (chosen_idx, opens_new_segment) = if state.totals.num_statements == 0 {
+        // If the segment is empty, pick by tiebreak alone; otherwise
+        // prefer the lowest-tiebreak ready statement that fits, falling
+        // back to lowest-tiebreak overall when nothing fits (which
+        // closes the segment).
+        let (chosen_idx, opens_new_segment) = if state.totals.num_operations == 0 {
             // Empty segment: no coupling signal yet, identity tiebreak only.
             let i = ready
                 .iter()
@@ -434,22 +292,18 @@ struct GreedyState {
     prev_pod_producers: Vec<usize>,
     external_imports: Vec<usize>,
     external_pods: Vec<usize>,
-    /// Tight count of statements admitted to the current segment that
-    /// would land on the chain tree if the segment closed now: a
-    /// statement is exported iff it still has at least one consumer
-    /// outside the segment OR it's in `output_public_indices`. As
-    /// admissions co-locate consumers with their producers, the count
-    /// can DECREASE. `unfinished_consumers[s]` tracks the remaining
-    /// out-of-segment consumer count per segment member; when it hits
-    /// zero (and `s` isn't an output-public), `s` drops out of the
-    /// exported set.
+    /// Statements admitted to the current segment that would land on
+    /// the chain tree if the segment closed now (live consumers
+    /// downstream of the segment, or output-public). Decreases as
+    /// admissions finish off a producer's remaining consumers; see
+    /// `unfinished_consumers` for the per-statement countdown.
     exported_count: usize,
     /// For each statement that has been admitted at any point, the
     /// number of distinct internal consumers not yet admitted to the
-    /// CURRENT segment. Sized once at the top of `kahn_bin_packing`.
+    /// current segment. Sized once at the top of `kahn_bin_packing`.
     /// `usize::MAX` for statements not yet admitted to any segment.
     /// On segment reset, entries for the previous segment's members
-    /// are stale but irrelevant — the export check only looks at
+    /// are stale but irrelevant: the export check only looks at
     /// statements in the current segment, identified via `pos_built >=
     /// state.a`.
     unfinished_consumers: Vec<usize>,
@@ -474,32 +328,35 @@ impl GreedyState {
         self.external_imports.clear();
         self.external_pods.clear();
         self.exported_count = 0;
-        // Don't touch `unfinished_consumers`: its entries are
-        // tagged-by-position via `pos_built` and the segment range
-        // `[a..)`. Old entries fall out of scope once `self.a`
-        // advances past them.
+        // Keep `unfinished_consumers`: prev-segment entries are stale
+        // but the export check skips them anyway (gated by segment
+        // membership), and future-segment members still hold their
+        // initial total-consumer counts from setup.
     }
 
     /// Would the current segment still satisfy all per-POD caps after
     /// adding `cost` / `deps`? On success, returns the number of *new*
-    /// import slots (chain + external) the admission would consume — used
+    /// import slots (chain + external) the admission would consume, used
     /// by the bin-packing tiebreak to prefer admissions that don't drag
     /// fresh imports into the segment. `None` means infeasible. Mutates
     /// only the `scratch_*` fields.
     fn can_extend(
         &mut self,
-        cost: &StatementCost,
+        cost: &OperationCost,
         deps: &[AbstractDep],
         pos_of: &[usize],
         is_exporter: bool,
         output_pub_set: &HashSet<usize>,
         params: &Params,
     ) -> Option<usize> {
-        // Tight publish-cap probe. Each of the candidate's in-segment
-        // Internal deps `d` loses one unfinished consumer; if d's
-        // count would drop to zero and d isn't an output-public, d
-        // exits the exported set so the segment can absorb one extra
-        // would-be-export.
+        // Compute the candidate's net effect on the segment's export
+        // count. Admitting the candidate may add one (if the candidate
+        // itself has downstream consumers or is output-public) and may
+        // subtract one for each in-segment producer it finishes off
+        // (the producer drops out of the exported set since none of
+        // its consumers sit downstream of the segment any more, unless
+        // it's separately output-public). Reject if the net effect would
+        // bust `max_public_statements`.
         let mut tentative_exports = self.exported_count;
         self.scratch_seen_segment_deps.clear();
         for dep in deps {
@@ -568,18 +425,20 @@ impl GreedyState {
         // Statement-table cap: local segment statements plus chain and
         // external imports together share `max_statements`, because each
         // `OpenInputStatement` op produces a statement in the POD's table.
-        if tentative.num_statements + n_producers + n_ext_imports > params.max_statements {
+        if tentative.num_operations + n_producers + n_ext_imports > params.max_statements {
             return None;
         }
         Some(self.scratch_new_producers.len() + self.scratch_new_ext_imports.len())
     }
 
-    /// Apply the extension to the segment. Caller must have verified
-    /// feasibility via [`can_extend`]; the mutation here is unchecked.
+    /// Apply the admission of `s` to the current segment: update
+    /// resource totals, custom-predicate dedup, the export-tracking
+    /// countdowns, and the input-tree import sets. The publish-cap
+    /// impact must already have been verified by [`can_extend`].
     fn commit_extend(
         &mut self,
         s: usize,
-        cost: &StatementCost,
+        cost: &OperationCost,
         deps: &[AbstractDep],
         pos_of: &[usize],
         is_exporter: bool,
@@ -593,9 +452,10 @@ impl GreedyState {
             }
         }
         self.totals.distinct_custom_predicates = self.distinct_cps.len();
-        // Decrement unfinished-consumer counts for each in-segment dep
-        // of `s`; if d's count reaches zero (and d isn't an
-        // output-public) d exits the exported set.
+        // Commit the subtraction side of can_extend's tentative count:
+        // each in-segment producer of `s` loses one unfinished consumer,
+        // and any whose count hits zero drops out of the exported set
+        // (unless it's separately output-public).
         self.scratch_seen_segment_deps.clear();
         for dep in deps {
             if let AbstractDep::Internal(d) = dep {
@@ -611,9 +471,9 @@ impl GreedyState {
                 }
             }
         }
-        // Seed s's unfinished-consumer count with its total distinct
-        // internal consumers; s joins the exported set if any consumer
-        // exists or s is an output-public.
+        // Set up s's own export-tracking entry: a fresh countdown of its
+        // consumers (none admitted yet, since s itself was just admitted)
+        // and a +1 to the exported set if s is itself an exporter.
         self.unfinished_consumers[s] = distinct_consumer_count;
         if is_exporter {
             self.exported_count += 1;
@@ -643,7 +503,7 @@ impl GreedyState {
 /// (where W = max_priv_statements), so reusing these buffers across
 /// calls keeps allocation off the hot path. Each set is `.clear()`ed
 /// at the top of every check, which is O(active) (active size is
-/// bounded by `MAX_TREE_IMPORTS`).
+/// bounded by `params.max_open_input_statements`).
 #[derive(Default)]
 struct DpWorkspace {
     /// Producers in earlier PODs that the current segment imports via
@@ -672,13 +532,7 @@ fn random_priority(rng: &mut ChaCha20Rng, n: usize) -> Vec<usize> {
 
 /// Generate the candidate orderings the cutter will try. Bin-packing
 /// goes first (strongest single seed on production-cap workloads),
-/// then DFS-from-sinks (a subtree-contiguous topological ordering
-/// targeted at workloads with wide producer-consumer index gaps),
-/// then the random-priority orderings for variety.
-///
-/// Duplicates would just mean cutting the same sequence twice; with one
-/// deterministic + ten random seeds, collisions are vanishingly rare
-/// and the redundant cut is cheaper than scanning for duplicates.
+/// then DFS-from-sinks, then the random-priority orderings for variety.
 fn candidate_orderings(input: &InputShape) -> Vec<Vec<usize>> {
     let n = input.num_statements();
     let mut orderings: Vec<Vec<usize>> = Vec::new();
@@ -701,10 +555,7 @@ fn candidate_orderings(input: &InputShape) -> Vec<Vec<usize>> {
     orderings
 }
 
-/// Per-statement position lookup against an ordering. `pos_in_ordering[s]`
-/// returns the position of statement `s` in the ordering. Built once
-/// and shared across the many `segment_feasible_with` calls the inner
-/// loop fires; rebuilding it per call would dominate that loop.
+/// Maps statements to their position in an ordering.
 fn build_pos_in_ordering(ordering: &[usize]) -> Vec<usize> {
     let n = ordering.len();
     let mut pos = vec![usize::MAX; n];
@@ -714,23 +565,28 @@ fn build_pos_in_ordering(ordering: &[usize]) -> Vec<usize> {
     pos
 }
 
-/// Build a topological ordering via depth-first search from sinks
-/// (statements with no internal consumers), recursing into deps before
-/// emitting each statement. The result is a forward topological order
-/// (producers before consumers) with the property that each
-/// statement's entire dep-closure is emitted contiguously immediately
-/// before it. For workloads with definition-then-distant-use patterns
-/// (e.g. cracked-refinery's `IsX` type assertions used much later in
-/// the replay chain), this shortens producer-consumer index gaps
-/// versus the canonical user-input order, giving bin-packing a
-/// chance to admit each definition-and-use cluster as one segment.
+/// Topological ordering that keeps each statement's dep-closure
+/// contiguous immediately before it. For workloads with
+/// definition-then-distant-use patterns this shortens producer-
+/// consumer index gaps versus the canonical user-input order, so the
+/// segment cutter can admit a definition-and-use cluster as one
+/// segment. Built by depth-first search from sinks (statements with
+/// no internal consumers), recursing into deps before emitting each
+/// statement.
 pub(super) fn build_dfs_topo_order(input: &InputShape) -> Vec<usize> {
     let n = input.num_statements();
-    let consumers = input.consumers();
+    let mut has_consumer = vec![false; n];
+    for deps in &input.dep_edges {
+        for dep in deps {
+            if let AbstractDep::Internal(d) = dep {
+                has_consumer[*d] = true;
+            }
+        }
+    }
     let mut visited = vec![false; n];
     let mut order: Vec<usize> = Vec::with_capacity(n);
     for s in 0..n {
-        if consumers[s].is_empty() && !visited[s] {
+        if !has_consumer[s] && !visited[s] {
             dfs_emit(s, input, &mut visited, &mut order);
         }
     }
@@ -748,9 +604,8 @@ fn dfs_emit(s: usize, input: &InputShape, visited: &mut [bool], order: &mut Vec<
         return;
     }
     visited[s] = true;
-    let deps = &input.dep_edges[s];
-    for idx in 0..deps.len() {
-        if let AbstractDep::Internal(d) = deps[idx] {
+    for dep in &input.dep_edges[s] {
+        if let AbstractDep::Internal(d) = *dep {
             dfs_emit(d, input, visited, order);
         }
     }
@@ -760,10 +615,7 @@ fn dfs_emit(s: usize, input: &InputShape, visited: &mut [bool], order: &mut Vec<
 /// Per-statement max-consumer-position lookup against an ordering.
 /// `max_consumer_pos[s]` is the largest position in `ordering` of any
 /// statement that has `s` as an `Internal` dep, or 0 if `s` has no
-/// internal consumers. Drives the per-segment publish-cap check: `s` is
-/// exported from segment `[a..p]` iff `max_consumer_pos[s] >= p` (some
-/// consumer lives after the segment) or `s` is in
-/// `output_public_indices` (the output POD pulls it via chain).
+/// internal consumers.
 fn build_max_consumer_pos(consumers: &[Vec<usize>], pos_in_ordering: &[usize]) -> Vec<usize> {
     let n = consumers.len();
     let mut mcp = vec![0_usize; n];
@@ -799,75 +651,19 @@ pub(super) fn segment_feasible(ordering: &[usize], input: &InputShape, a: usize,
     )
 }
 
-/// Simulate the greedy partition over a fixed ordering: extend each
-/// segment as long as feasibility holds, close at the first cap-bust.
-/// Mirrors what bin-packing's `can_extend` does on its own emitted
-/// ordering. Used by diagnostic probes to compare `K_bp_greedy`
-/// against the DP's `K_bp_dp` on the same ordering.
+/// Greedy partition of `ordering` into segments: extend each segment
+/// as long as feasibility holds, close at the first cap-bust. With
+/// `check_terminal`, additionally verifies that the final segment is
+/// feasible as the output POD; without, returns the non-terminal
+/// segmentation only.
 ///
 /// Returns `None` if any single statement is infeasible as a 1-stmt
-/// segment (e.g. its costs already exceed a per-POD cap); otherwise
-/// the number of segments greedy produces. Does not apply terminal
-/// (output-public) feasibility — the comparison value is greedy-K,
-/// not DP-K-terminal.
-pub(super) fn simulate_greedy_k(input: &InputShape, ordering: &[usize]) -> Option<usize> {
-    let n = ordering.len();
-    let pos_in_ordering = build_pos_in_ordering(ordering);
-    let consumers = input.consumers();
-    let max_consumer_pos = build_max_consumer_pos(&consumers, &pos_in_ordering);
-    let output_pub_set: HashSet<usize> = input.output_public_indices.iter().copied().collect();
-    let mut ws = DpWorkspace::default();
-    let mut k = 0_usize;
-    let mut a = 0_usize;
-    while a < n {
-        if !segment_feasible_with(
-            ordering,
-            &pos_in_ordering,
-            &max_consumer_pos,
-            &output_pub_set,
-            input,
-            a,
-            a + 1,
-            false,
-            &mut ws,
-        ) {
-            return None;
-        }
-        let mut p = a + 1;
-        while p < n
-            && segment_feasible_with(
-                ordering,
-                &pos_in_ordering,
-                &max_consumer_pos,
-                &output_pub_set,
-                input,
-                a,
-                p + 1,
-                false,
-                &mut ws,
-            )
-        {
-            p += 1;
-        }
-        k += 1;
-        a = p;
-    }
-    Some(k)
-}
-
-/// Greedy partition of `ordering` into segments, enforcing terminal
-/// (output-public) feasibility on the final segment. Mirrors what
-/// `simulate_greedy_k` does for non-terminal segments, then verifies
-/// the last one as terminal. Returns the segment boundary list or
-/// `None` if no valid partition exists for this ordering (a single
-/// statement cap-busts, or the trailing segment fails terminal
-/// availability and greedy can't backtrack to fix it).
-///
-/// This is the no-DP counterpart to `run_dp`, for the DP-vs-greedy
-/// sweep that probes whether the DP layer is load-bearing.
-fn greedy_segments_with_terminal(
+/// segment, or (when `check_terminal`) if the trailing segment fails
+/// terminal availability.
+fn greedy_segments(
     ordering: &[usize],
     input: &InputShape,
+    check_terminal: bool,
 ) -> Option<Vec<(usize, usize)>> {
     let n = ordering.len();
     if n == 0 {
@@ -913,30 +709,40 @@ fn greedy_segments_with_terminal(
         segments.push((a, p));
         a = p;
     }
-    let (last_a, last_p) = *segments
-        .last()
-        .expect("non-empty ordering produced no segments");
-    if !segment_feasible_with(
-        ordering,
-        &pos_in_ordering,
-        &max_consumer_pos,
-        &output_pub_set,
-        input,
-        last_a,
-        last_p,
-        true,
-        &mut ws,
-    ) {
-        return None;
+    if check_terminal {
+        let (last_a, last_p) = *segments
+            .last()
+            .expect("non-empty ordering produced no segments");
+        if !segment_feasible_with(
+            ordering,
+            &pos_in_ordering,
+            &max_consumer_pos,
+            &output_pub_set,
+            input,
+            last_a,
+            last_p,
+            true,
+            &mut ws,
+        ) {
+            return None;
+        }
     }
     Some(segments)
 }
 
+/// Number of segments a left-to-right greedy walk produces on the
+/// given ordering, ignoring terminal-segment feasibility. Useful for
+/// measuring how much the DP cutter improves on a greedy cut of the
+/// same ordering.
+pub(super) fn simulate_greedy_k(input: &InputShape, ordering: &[usize]) -> Option<usize> {
+    greedy_segments(ordering, input, false).map(|s| s.len())
+}
+
 /// No-DP variant of [`partition`]: tries every candidate ordering and
 /// keeps the lowest-K result, but uses greedy left-to-right cuts
-/// ([`greedy_segments_with_terminal`]) instead of the DP. Used by the
-/// DP-vs-greedy sweep to measure whether the DP layer contributes any
-/// K-improvement beyond what greedy achieves on the same orderings.
+/// ([`greedy_segments`]) instead of the DP. Used by the DP-vs-greedy
+/// sweep to measure whether the DP layer contributes any K-improvement
+/// beyond what greedy achieves on the same orderings.
 pub(super) fn partition_greedy_only(input: &InputShape) -> Option<OutputShape> {
     let n = input.num_statements();
     if n == 0 {
@@ -951,7 +757,7 @@ pub(super) fn partition_greedy_only(input: &InputShape) -> Option<OutputShape> {
     let mut best: Option<OutputShape> = None;
 
     for ordering in candidate_orderings(input) {
-        let Some(segments) = greedy_segments_with_terminal(&ordering, input) else {
+        let Some(segments) = greedy_segments(&ordering, input, true) else {
             continue;
         };
         let k = segments.len();
@@ -992,8 +798,8 @@ fn segment_feasible_with(
     // Single pass: per-statement, accumulate scalar sums + distinct CPs
     // (cap-checked via [`ResourceTotals::fits_in_pod`]) and record
     // input-tree imports. Input-tree imports come in two flavours, both
-    // capped together by `MAX_TREE_IMPORTS` because the POD circuit reads
-    // them through the same input-tree slots:
+    // capped together by `max_open_input_statements` because the POD
+    // circuit reads them through the same input-tree slots:
     // - prev-pod producers: statements produced in `[0..a)` (slot 0,
     //   the chain slot connecting this POD to its predecessor).
     // - external imports: external (input) statements (slots 1..N).
@@ -1031,9 +837,8 @@ fn segment_feasible_with(
         }
         // Mid-loop bail: the chain-slot + external-slot tree-imports
         // cap can only grow as we add more statements, so once it's
-        // busted there's no recovery. Cheap check (StampSet len is O(1))
-        // and saves the remaining statements' worth of inserts on
-        // infeasible segments.
+        // busted there's no recovery. Saves the remaining statements'
+        // worth of inserts on infeasible segments.
         if workspace.prev_pod_producers.len() + workspace.external_imports.len()
             > params.max_open_input_statements
         {
@@ -1060,8 +865,8 @@ fn segment_feasible_with(
         // Publish cap: each statement in the segment that has a consumer
         // at or beyond `p`, or that is an output-public (the terminal POD
         // pulls it from the chain), occupies one slot on the chain tree
-        // this POD appends to. The terminal POD doesn't extend the chain
-        // — its fresh-tree size is `|output_public_indices|`, pre-checked
+        // this POD appends to. The terminal POD doesn't extend the chain:
+        // its fresh-tree size is `|output_public_indices|`, pre-checked
         // by callers before invoking the partitioner.
         let mut exports = 0_usize;
         for &s in segment {
@@ -1230,9 +1035,9 @@ mod tests {
     /// `n` independent statements with default cost and no deps. Useful for
     /// driving the partitioner with no dependency structure.
     fn independent_statements(n: usize, output_public: Vec<usize>, params: Params) -> InputShape {
-        use super::super::cost::StatementCost;
+        use super::super::cost::OperationCost;
         InputShape {
-            costs: (0..n).map(|_| StatementCost::default()).collect(),
+            costs: (0..n).map(|_| OperationCost::default()).collect(),
             dep_edges: (0..n).map(|_| Vec::new()).collect(),
             output_public_indices: output_public,
             num_external_pods: 0,
@@ -1286,11 +1091,11 @@ mod tests {
         // statement from a single external POD. With one external pod,
         // `max_input_pods` can't force a split, so the only constraint
         // that drives K > 1 is the combined import cap.
-        use super::super::cost::StatementCost;
+        use super::super::cost::OperationCost;
         let params = Params::default();
         let n = params.max_open_input_statements + 1;
         let input = InputShape {
-            costs: (0..n).map(|_| StatementCost::default()).collect(),
+            costs: (0..n).map(|_| OperationCost::default()).collect(),
             dep_edges: (0..n)
                 .map(|i| {
                     vec![AbstractDep::External {
@@ -1319,13 +1124,13 @@ mod tests {
         // max_statements = 3, a 2-POD partition is feasible: one POD
         // holds [0,1] (2 stmts, 0 imports) and the other [2,3] (2
         // stmts + 1 chain import of stmt 1 = 3 stmts at cap).
-        use super::super::cost::StatementCost;
+        use super::super::cost::OperationCost;
         let params = Params {
             max_statements: 3,
             ..Params::default()
         };
         let input = InputShape {
-            costs: (0..4).map(|_| StatementCost::default()).collect(),
+            costs: (0..4).map(|_| OperationCost::default()).collect(),
             dep_edges: vec![
                 vec![],
                 vec![AbstractDep::Internal(0)],
@@ -1473,5 +1278,113 @@ mod tests {
         // the empirical justification for the DP layer; no assertion on it
         // because the goal here is to *measure* DP's contribution, not
         // enforce it.
+    }
+
+    /// One-off measurement: across the same random distribution as the
+    /// DP-vs-greedy sweep, how often does DFS-from-sinks produce a
+    /// strictly better K than bin-packing on the same input?
+    #[test]
+    fn dfs_vs_bin_packing_contribution_sweep() {
+        use std::collections::BTreeMap;
+
+        use rand::SeedableRng;
+        use rand_chacha::ChaCha20Rng;
+
+        use super::super::partition_milp::random_input;
+
+        let param_variants: Vec<(&str, Params)> = vec![
+            (
+                "tight",
+                Params {
+                    max_statements: 3,
+                    max_input_pods: 2,
+                    ..Params::default()
+                },
+            ),
+            (
+                "medium",
+                Params {
+                    max_statements: 5,
+                    max_input_pods: 3,
+                    ..Params::default()
+                },
+            ),
+            (
+                "resource-pressure",
+                Params {
+                    max_statements: 8,
+                    max_input_pods: 3,
+                    max_signed_by: 2,
+                    ..Params::default()
+                },
+            ),
+        ];
+        let n_values: Vec<usize> = vec![8, 12, 16, 24, 32];
+        let trials_per_combo: usize = 25;
+
+        let mut rng = ChaCha20Rng::seed_from_u64(0xDEADBEEF);
+        let mut head_to_head: BTreeMap<i64, usize> = BTreeMap::new();
+        let mut dfs_rescues_overall: usize = 0;
+        let mut compared: usize = 0;
+
+        for (_label, params) in &param_variants {
+            for &n in &n_values {
+                for _ in 0..trials_per_combo {
+                    let input = random_input(&mut rng, n, params.clone());
+                    let identity: Vec<usize> = (0..input.num_statements()).collect();
+                    let k_bp = kahn_bin_packing(&input, &identity)
+                        .and_then(|o| partition_with_ordering(&input, &o))
+                        .map(|s| s.pod_count);
+                    let dfs_ord = build_dfs_topo_order(&input);
+                    let k_dfs = partition_with_ordering(&input, &dfs_ord).map(|s| s.pod_count);
+
+                    // The 10 random-priority orderings the production
+                    // pipeline runs alongside BP and DFS.
+                    let mut rprng = ChaCha20Rng::seed_from_u64(RANDOM_SEED);
+                    let mut k_best_random: Option<usize> = None;
+                    for _ in 0..NUM_RANDOM_ORDERINGS {
+                        let prio = random_priority(&mut rprng, input.num_statements());
+                        if let Some(o) = kahn_with_priority(&input, &prio) {
+                            if let Some(out) = partition_with_ordering(&input, &o) {
+                                k_best_random = Some(
+                                    k_best_random.map_or(out.pod_count, |k| k.min(out.pod_count)),
+                                );
+                            }
+                        }
+                    }
+
+                    if let (Some(bp), Some(dfs)) = (k_bp, k_dfs) {
+                        compared += 1;
+                        let d = dfs as i64 - bp as i64;
+                        *head_to_head.entry(d).or_insert(0) += 1;
+
+                        // "Rescue": DFS strictly beats the best of BP and
+                        // all 10 random orderings.
+                        let k_others = match (Some(bp), k_best_random) {
+                            (Some(a), Some(b)) => Some(a.min(b)),
+                            (Some(a), None) => Some(a),
+                            (None, Some(b)) => Some(b),
+                            (None, None) => None,
+                        };
+                        if let Some(others) = k_others {
+                            if dfs < others {
+                                dfs_rescues_overall += 1;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        eprintln!();
+        eprintln!("=== DFS-from-sinks vs bin-packing head-to-head (K_dfs - K_bp) ===");
+        for (d, count) in &head_to_head {
+            eprintln!("    diff={:+}: {}", d, count);
+        }
+        eprintln!();
+        eprintln!(
+            "DFS strictly beats min(BP, 10 random) on: {}/{} inputs",
+            dfs_rescues_overall, compared
+        );
     }
 }
