@@ -14,7 +14,7 @@ use crate::{
         hash_values, AnchoredKey, CustomPredicate, CustomPredicateRef, Error, Hash, Key,
         MiddlewareInnerError, NativePredicate, Params, Predicate, PredicateOrWildcard, Result,
         Statement, StatementArg, StatementTmpl, StatementTmplArg, ToFields, Value, ValueRef,
-        Wildcard, BASE_PARAMS, F,
+        Wildcard, BASE_PARAMS, EMPTY_HASH, F,
     },
 };
 
@@ -636,14 +636,37 @@ impl Operation {
                 Self::check_replace_value_with_entry(entries, st_in, st_out)?
             }
             (Self::OpenInputStatement(data), st) => {
-                let st_hash = st.hash();
-                MerkleTree::verify(
+                // The input pod's MT contains hashes of pub_raw_statements (intro statements use
+                // EMPTY_HASH in their IntroPredicateRef.verifier_data_hash). The deduced `st` may
+                // be the normalized form (with the input pod's vd_hash). Verify MT inclusion
+                // against the raw form, and check that `st` matches `raw_statement` either
+                // verbatim or modulo intro-statement normalization.
+                let raw_hash = data.raw_statement.hash();
+                let mt_ok = MerkleTree::verify(
                     data.sts_root,
                     &data.proof,
                     &Value::from(data.st_index as i64).raw(),
-                    &st_hash.raw(),
+                    &raw_hash.raw(),
                 )
-                .is_ok()
+                .is_ok();
+                let st_matches_raw = match (st, &data.raw_statement) {
+                    // Intro statements: when raw_statement is in its un-normalized form
+                    // (EMPTY_HASH in IntroPredicateRef.verifier_data_hash), accept st as the
+                    // normalized version of it. Without this branch, opening a fresh intro pod's
+                    // statement would fail because st has the input pod's vd_hash while
+                    // raw_statement still has EMPTY_HASH.
+                    (Statement::Intro(st_ir, st_args), Statement::Intro(raw_ir, raw_args))
+                        if raw_ir.verifier_data_hash == EMPTY_HASH =>
+                    {
+                        st_ir.name == raw_ir.name
+                            && st_ir.args_len == raw_ir.args_len
+                            && st_args == raw_args
+                    }
+                    // All other cases (chained MainPods storing already-normalized intro
+                    // statements, non-intro statements) require exact equality.
+                    (a, b) => a == b,
+                };
+                mt_ok && st_matches_raw
             }
             _ => return Err(deduction_err()),
         };

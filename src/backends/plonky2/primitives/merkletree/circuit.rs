@@ -360,7 +360,7 @@ fn keypath_target(
     [path, extra_bits].concat()
 }
 
-fn kv_hash_target(
+pub fn kv_hash_target(
     builder: &mut CircuitBuilder<F, D>,
     key: &ValueTarget,
     value: &ValueTarget,
