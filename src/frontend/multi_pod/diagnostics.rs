@@ -15,7 +15,7 @@ use std::{
 };
 
 use super::{
-    cost::{ResourceTotals, StatementCost},
+    cost::{OperationCost, ResourceTotals},
     shape::{AbstractDep, InputShape, OutputShape},
 };
 use crate::middleware::Params;
@@ -64,12 +64,9 @@ fn lower_bound(used: usize, limit: usize) -> Option<usize> {
 ///
 /// Merkle dimensions report small and medium counts separately, each
 /// against its own pool cap. Small-eligible ops can substitute up into
-/// medium slots when small is exhausted; that substitution is enforced by
-/// [`ResourceTotals::fits_in_pod`] / [`ResourceTotals::min_pods`] rather
-/// than visible here, since folding it into the display ("total" rows)
-/// confused readers comparing per-pool usage.
+/// medium slots when small is exhausted.
 fn aggregate_rows<'a>(
-    costs: impl IntoIterator<Item = &'a StatementCost>,
+    costs: impl IntoIterator<Item = &'a OperationCost>,
     params: &Params,
 ) -> (Vec<UtilizationRow>, usize) {
     let totals = ResourceTotals::accumulate(costs);
@@ -78,26 +75,26 @@ fn aggregate_rows<'a>(
     let rows = vec![
         UtilizationRow {
             name: "total statements",
-            used: totals.num_statements,
+            used: totals.num_operations,
             limit: params.max_statements,
         },
         UtilizationRow {
-            name: "merkle proofs (small)",
+            name: "merkle proofs (s)",
             used: totals.merkle_proofs_small,
             limit: state.max_small,
         },
         UtilizationRow {
-            name: "merkle proofs (medium)",
+            name: "merkle proofs (m)",
             used: totals.merkle_proofs_medium,
             limit: state.max_medium,
         },
         UtilizationRow {
-            name: "merkle state transitions (small)",
+            name: "merkle state transitions (s)",
             used: totals.merkle_state_transitions_small,
             limit: transition.max_small,
         },
         UtilizationRow {
-            name: "merkle state transitions (medium)",
+            name: "merkle state transitions (m)",
             used: totals.merkle_state_transitions_medium,
             limit: transition.max_medium,
         },
@@ -122,7 +119,7 @@ fn aggregate_rows<'a>(
             limit: params.max_custom_predicates,
         },
     ];
-    (rows, totals.num_statements)
+    (rows, totals.num_operations)
 }
 
 /// Pre-solve aggregate resource summary.
@@ -137,11 +134,11 @@ impl ResourceSummary {
         Self::from_costs(input.costs.iter(), &input.params)
     }
 
-    /// Build a summary from a stream of `StatementCost`s plus a `Params`,
+    /// Build a summary from a stream of `OperationCost`s plus a `Params`,
     /// without going through an `InputShape`. Lets callers report on
     /// builder-stage costs before deps have been materialised.
     pub fn from_costs<'a>(
-        costs: impl IntoIterator<Item = &'a StatementCost>,
+        costs: impl IntoIterator<Item = &'a OperationCost>,
         params: &Params,
     ) -> Self {
         let (rows, num_statements) = aggregate_rows(costs, params);
@@ -202,6 +199,11 @@ pub struct PodUtilization {
     pub resources: Vec<UtilizationRow>,
     pub imports: UtilizationRow,
     pub external_pods: UtilizationRow,
+    /// Statements this POD contributes to a Merkle tree. For intermediate
+    /// PODs: locally-proved statements consumed downstream. For the output
+    /// POD: the fresh tree size (`|output_public_indices|`). The limit is
+    /// the per-POD `max_public_statements` cap.
+    pub publishes: UtilizationRow,
 }
 
 /// Post-solve per-POD breakdown.
@@ -230,11 +232,44 @@ impl SolutionBreakdown {
 
         let output_pub_set: BTreeSet<usize> = input.output_public_indices.iter().copied().collect();
 
+        let output_pod = pod_count.saturating_sub(1);
+        let mut exported: Vec<bool> = vec![false; n];
+        for s in 0..n {
+            let p = pod_of[s];
+            if p == usize::MAX {
+                continue;
+            }
+            for dep in &input.dep_edges[s] {
+                if let AbstractDep::Internal(d) = dep {
+                    if pod_of[*d] != p {
+                        exported[*d] = true;
+                    }
+                }
+            }
+        }
+        for &op in &output_pub_set {
+            if pod_of[op] != usize::MAX && pod_of[op] != output_pod {
+                exported[op] = true;
+            }
+        }
+
+        let publishes_limit = input.params.max_public_statements;
+        let mut publishes_count: Vec<usize> = vec![0; pod_count];
+        for s in 0..n {
+            let p = pod_of[s];
+            if p != usize::MAX && p != output_pod && exported[s] {
+                publishes_count[p] += 1;
+            }
+        }
+        if pod_count > 0 {
+            publishes_count[output_pod] = input.output_public_indices.len();
+        }
+
         let pods = (0..pod_count)
             .map(|pod_idx| {
                 let stmts = &output.pod_statements[pod_idx];
                 let is_output = pod_idx + 1 == pod_count;
-                let (resources, num_stmts) =
+                let (mut resources, num_stmts) =
                     aggregate_rows(stmts.iter().map(|&s| &input.costs[s]), &input.params);
 
                 let mut chain_imports: HashSet<usize> = HashSet::new();
@@ -263,15 +298,31 @@ impl SolutionBreakdown {
                     }
                 }
 
+                // Statement-table cap: each `OpenInputStatement` op
+                // produces a statement in the POD's statement table, so
+                // the "total statements" row reflects local statements
+                // PLUS chain and external imports: the same number
+                // `segment_feasible_with` checks against
+                // `max_statements`.
+                let total_imports = chain_imports.len() + external_imports.len();
+                if let Some(row) = resources.iter_mut().find(|r| r.name == "total statements") {
+                    row.used += total_imports;
+                }
+
                 let imports_row = UtilizationRow {
                     name: "tree imports",
-                    used: chain_imports.len() + external_imports.len(),
+                    used: total_imports,
                     limit: input.params.max_open_input_statements,
                 };
                 let external_row = UtilizationRow {
                     name: "external pods",
                     used: external_pods.len(),
                     limit: input.params.max_input_pods,
+                };
+                let publishes_row = UtilizationRow {
+                    name: "tree publishes",
+                    used: publishes_count[pod_idx],
+                    limit: publishes_limit,
                 };
 
                 PodUtilization {
@@ -281,6 +332,7 @@ impl SolutionBreakdown {
                     resources,
                     imports: imports_row,
                     external_pods: external_row,
+                    publishes: publishes_row,
                 }
             })
             .collect();
@@ -309,10 +361,10 @@ impl fmt::Display for SolutionBreakdown {
             };
             writeln!(f, "  POD {} ({}):", pod.pod_idx, role)?;
 
-            for row in pod
-                .resources
-                .iter()
-                .chain([&pod.imports, &pod.external_pods])
+            for row in
+                pod.resources
+                    .iter()
+                    .chain([&pod.imports, &pod.external_pods, &pod.publishes])
             {
                 if row.used > 0 {
                     let pct = if row.limit > 0 {
@@ -555,7 +607,7 @@ mod tests {
 
     fn independent(n: usize, output_public: Vec<usize>, params: Params) -> InputShape {
         InputShape {
-            costs: (0..n).map(|_| StatementCost::default()).collect(),
+            costs: (0..n).map(|_| OperationCost::default()).collect(),
             dep_edges: (0..n).map(|_| Vec::new()).collect(),
             output_public_indices: output_public,
             num_external_pods: 0,

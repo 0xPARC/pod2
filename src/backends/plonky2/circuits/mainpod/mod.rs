@@ -31,7 +31,6 @@ use crate::{
             },
             mux_table::{MuxTableTarget, TableEntryTarget},
         },
-        emptypod::EmptyPod,
         error::Result,
         mainpod::{self, MerkleProofs, MerkleTransitionProofs, SignedBy},
         primitives::{
@@ -1782,6 +1781,35 @@ fn build_custom_predicate_table_circuit(
     Ok(custom_predicate_table)
 }
 
+// Entry for StsRoots transition table, where one statement is inserted.
+struct StsRootsEntry {
+    old_root: HashOutTarget,
+    new_root: HashOutTarget,
+    st_hash: ValueTarget,
+}
+
+impl Flattenable for StsRootsEntry {
+    fn flatten(&self) -> Vec<Target> {
+        self.old_root
+            .elements
+            .into_iter()
+            .chain(self.new_root.elements)
+            .chain(self.st_hash.elements)
+            .collect()
+    }
+    fn from_flattened(params: &Params, vs: &[Target]) -> Self {
+        assert_eq!(vs.len(), Self::size(params));
+        Self {
+            old_root: HashOutTarget::try_from(&vs[..4]).expect("len = 4"),
+            new_root: HashOutTarget::try_from(&vs[4..8]).expect("len = 4"),
+            st_hash: ValueTarget::from_slice(&vs[8..12]),
+        }
+    }
+    fn size(params: &Params) -> usize {
+        2 * HashOutTarget::size(params) + ValueTarget::size(params)
+    }
+}
+
 fn verify_main_pod_circuit(
     builder: &mut CircuitBuilder,
     main_pod: &MainPodVerifyTarget,
@@ -1875,6 +1903,24 @@ fn verify_main_pod_circuit(
         &main_pod.aux_table_input,
     )?;
 
+    let mut sts_roots_table = Vec::new();
+    for sts_mt_proof in &main_pod.sts_mt_proofs {
+        let measure = measure_gates_begin!(builder, "StsMtProof");
+        // For correct usage the proof should be insertion, but update or deletion don't affect
+        // soundness (we always check the transition value), so there's no need to enforce any
+        // check.
+        // We don't verify the key either, a prover could leave gaps in the array but that would
+        // only break the verification (correctness).
+        verify_merkle_state_transition_circuit(builder, sts_mt_proof);
+
+        sts_roots_table.push(StsRootsEntry {
+            old_root: sts_mt_proof.old_root,
+            new_root: sts_mt_proof.new_root,
+            st_hash: sts_mt_proof.op_value,
+        });
+        measure_gates_end!(builder, measure);
+    }
+
     // Statement at index 0 is always None to be used for padding operation arguments in custom
     // predicate statements
     let st_none = StatementTarget::new_native(builder, params, NativePredicate::None, &[]);
@@ -1890,9 +1936,9 @@ fn verify_main_pod_circuit(
         .collect_vec();
 
     // 5. Verify statements
-    for (j, (is_pub, st_insert_proof, st, op)) in izip!(
+    for (j, (is_pub, pub_insert_idx, st, op)) in izip!(
         &main_pod.statements_is_pub,
-        &main_pod.sts_mt_proofs,
+        &main_pod.pub_insert_idx,
         &main_pod.statements,
         &main_pod.operations
     )
@@ -1911,16 +1957,20 @@ fn verify_main_pod_circuit(
             &aux_table,
         )?;
         let measure = measure_gates_begin!(builder, "PubSt");
-        // proof is insertion (0: insertion, 1: update, 2: deletion)
-        builder.assert_zero(st_insert_proof.op);
-        // we don't verify the key, a prover could leave gaps in the array but that would break the
-        // verification
         let st_hash = statement_hashes[i];
-        builder.connect_flattenable(&st_insert_proof.op_value, &ValueTarget::from(st_hash));
-        builder.connect_flattenable(&st_insert_proof.old_root, &sts_root);
-        verify_merkle_state_transition_circuit(builder, st_insert_proof);
+        let sts_roots_entry = builder.vec_ref_small(params, &sts_roots_table, *pub_insert_idx);
+        builder.conditional_assert_eq_flattenable(
+            is_pub.target,
+            &sts_roots_entry.old_root,
+            &sts_root,
+        );
+        builder.conditional_assert_eq_flattenable(
+            is_pub.target,
+            &sts_roots_entry.st_hash,
+            &ValueTarget::from(st_hash),
+        );
         let new_sts_root =
-            builder.select_flattenable(params, *is_pub, &st_insert_proof.new_root, &sts_root);
+            builder.select_flattenable(params, *is_pub, &sts_roots_entry.new_root, &sts_root);
         sts_root = new_sts_root;
         measure_gates_end!(builder, measure);
     }
@@ -2052,7 +2102,6 @@ impl AuxTableInputTargets {
         &self,
         params: &Params,
         pw: &mut PartialWitness<F>,
-        vds_set: &VDSet,
         input: &AuxTableInput,
     ) -> Result<()> {
         self.set_container_mtp_targets(
@@ -2067,22 +2116,10 @@ impl AuxTableInputTargets {
             self.open_input_statements[i].set_targets(pw, data)?;
         }
         // Padding
-        let pad_data = if input.open_input_statements.is_empty() {
-            let empty_pod = EmptyPod::new_boxed(vds_set.clone());
-            let (_, proof) = empty_pod.pub_raw_statements_mt().prove(0)?;
-            let pad_raw_st = empty_pod.pub_raw_statements()[0].clone();
-            InputPodOpenStatement {
-                pod_index: params.max_input_pods - 1,
-                sts_root: empty_pod.statements_root(),
-                st_index: 0,
-                proof,
-                raw_statement: pad_raw_st,
+        if let Some(pad_data) = &input.pad_open_input_statement {
+            for i in input.open_input_statements.len()..params.max_open_input_statements {
+                self.open_input_statements[i].set_targets(pw, pad_data)?;
             }
-        } else {
-            input.open_input_statements[0].clone()
-        };
-        for i in input.open_input_statements.len()..params.max_open_input_statements {
-            self.open_input_statements[i].set_targets(pw, &pad_data)?;
         }
 
         assert!(input.public_key_of_sks.len() <= params.max_public_key_of);
@@ -2142,6 +2179,7 @@ pub struct MainPodVerifyTarget {
     vd_mt_proofs: Vec<MerkleProofExistenceTarget>,
     extend_pod0_pub_statements: BoolTarget,
     statements_is_pub: Vec<BoolTarget>,
+    pub_insert_idx: Vec<Target>,
     statements: Vec<StatementTarget>,
     operations: Vec<OperationTarget>,
     sts_mt_proofs: Vec<MerkleTreeStateTransitionProofTarget>,
@@ -2165,13 +2203,16 @@ impl MainPodVerifyTarget {
             statements_is_pub: (0..params.max_statements)
                 .map(|_| builder.add_virtual_bool_target_safe())
                 .collect(),
+            pub_insert_idx: (0..params.max_statements)
+                .map(|_| builder.add_virtual_target())
+                .collect(),
             statements: (0..params.max_statements)
                 .map(|_| builder.add_virtual_statement(false))
                 .collect(),
             operations: (0..params.max_statements)
                 .map(|_| builder.add_virtual_operation(params))
                 .collect(),
-            sts_mt_proofs: (0..params.max_statements)
+            sts_mt_proofs: (0..params.max_public_statements)
                 .map(|_| {
                     MerkleTreeStateTransitionProofTarget::new_virtual(
                         BASE_PARAMS.max_depth_public_statements_mt,
@@ -2215,6 +2256,7 @@ pub struct AuxTableInput {
     pub merkle_proofs: MerkleProofs,
     pub merkle_transition_proofs: MerkleTransitionProofs,
     pub open_input_statements: Vec<InputPodOpenStatement>,
+    pub pad_open_input_statement: Option<InputPodOpenStatement>,
     pub public_key_of_sks: Vec<SecretKey>,
     pub signed_bys: Vec<SignedBy>,
     pub custom_predicate_verifications: Vec<CustomPredicateVerification>,
@@ -2277,19 +2319,31 @@ impl InnerCircuit for MainPodVerifyTarget {
             }
         }
 
-        // Skip statement and operation 0 wich are a hardcoded None
+        for (i, sts_mt_proof) in input.sts_mt_proofs.iter().enumerate() {
+            self.sts_mt_proofs[i].set_targets(pw, sts_mt_proof)?;
+        }
+        let pad_sts_mt_proof = MerkleTreeStateTransitionProof::pad();
+        for i in input.sts_mt_proofs.len()..self.params.max_public_statements {
+            self.sts_mt_proofs[i].set_targets(pw, &pad_sts_mt_proof)?;
+        }
+
+        // Skip statement and operation 0 which are a hardcoded None
         let statements_is_pub = &input.statements_is_pub[1..];
-        let sts_mt_proofs = &input.sts_mt_proofs[1..];
         let statements = &input.statements[1..];
         let operations = &input.operations[1..];
+        let mut sts_mt_proofs_idx = 0;
         assert_eq!(statements.len(), self.params.max_statements);
-        for (i, (is_pub, st, sts_mt_proof, op)) in
-            izip!(statements_is_pub, statements, sts_mt_proofs, operations).enumerate()
-        {
+        for (i, (is_pub, st, op)) in izip!(statements_is_pub, statements, operations).enumerate() {
             pw.set_bool_target(self.statements_is_pub[i], *is_pub)?;
+            pw.set_target(
+                self.pub_insert_idx[i],
+                F::from_canonical_usize(sts_mt_proofs_idx),
+            )?;
+            if *is_pub {
+                sts_mt_proofs_idx += 1;
+            }
             self.statements[i].set_targets(pw, st)?;
             self.operations[i].set_targets(pw, &self.params, op)?;
-            self.sts_mt_proofs[i].set_targets(pw, sts_mt_proof)?;
         }
 
         assert!(input.custom_predicates_with_mpt_proofs.len() <= self.params.max_custom_predicates);
@@ -2308,12 +2362,8 @@ impl InnerCircuit for MainPodVerifyTarget {
             self.custom_predicates[i].set_targets(pw, &pad_cp, &pad_mtp)?;
         }
 
-        self.aux_table_input.set_targets(
-            &self.params,
-            pw,
-            &input.vds_set,
-            &input.aux_table_input,
-        )?;
+        self.aux_table_input
+            .set_targets(&self.params, pw, &input.aux_table_input)?;
 
         Ok(())
     }

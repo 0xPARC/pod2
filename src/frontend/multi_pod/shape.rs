@@ -13,7 +13,7 @@ use std::collections::BTreeSet;
 
 use serde::{Deserialize, Serialize};
 
-use super::cost::StatementCost;
+use super::cost::OperationCost;
 use crate::middleware::Params;
 
 /// A positional dependency. Internal points at another statement in the
@@ -38,7 +38,7 @@ pub enum AbstractDep {
 #[non_exhaustive]
 pub struct InputShape {
     /// Per-statement resource costs.
-    pub costs: Vec<StatementCost>,
+    pub costs: Vec<OperationCost>,
     /// For each statement, the list of dependencies (in original order).
     pub dep_edges: Vec<Vec<AbstractDep>>,
     /// Statements that must be visible in the output POD's fresh tree.

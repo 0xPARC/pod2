@@ -105,11 +105,10 @@ impl DependencyGraph {
                 }
             }
 
-            // Staging-time `OpenInputStatement` ops carry no arg statements
-            // (op.1 is empty) but functionally pull an input statement out of an
-            // external POD's public statement tree. Model them like a
-            // synthetic-republish node so the partitioner accounts for the
-            // external pod requirement and the per-POD import budgets.
+            // `OpenInputStatement` carries no arg statements; its dependency
+            // on the source pod is implicit in the aux's `sts_root`.
+            // Materialize it as an External dep here so the partitioner
+            // accounts for the input-tree slot and the external-pod reference.
             if let OperationType::Native(NativeOperation::OpenInputStatement) = op.0 {
                 if let OperationAux::OpenInputStatement(InputPodOpenStatement {
                     sts_root, ..

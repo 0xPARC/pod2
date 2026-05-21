@@ -42,7 +42,7 @@ mod partition;
 mod partition_milp;
 mod shape;
 
-use cost::StatementCost;
+use cost::OperationCost;
 use deps::{DependencyGraph, ExternalDependency, StatementSource};
 pub use diagnostics::{ResourceSummary, SolutionBreakdown};
 pub use shape::{AbstractDep, InputShape, OutputShape};
@@ -279,11 +279,11 @@ impl MultiPodBuilder {
     /// Pre-solve resource summary. Aggregates per-statement costs against
     /// per-POD limits and identifies the bottleneck resource.
     pub fn resource_summary(&self) -> ResourceSummary {
-        let costs: Vec<StatementCost> = self
+        let costs: Vec<OperationCost> = self
             .builder
             .operations
             .iter()
-            .map(|op| StatementCost::from_operation(op, &self.params))
+            .map(|op| OperationCost::from_operation(op, &self.params))
             .collect();
         ResourceSummary::from_costs(costs.iter(), &self.params)
     }
@@ -506,7 +506,7 @@ impl SolvedMultiPod {
                 if builder.statements.iter().any(|(_, s)| s == stmt) {
                     builder.reveal(stmt)?;
                 } else {
-                    // Output-public produced upstream — open from chain.
+                    // Output-public produced upstream; open from chain.
                     builder.open_input_st(true, 0, stmt)?;
                 }
             }
@@ -810,11 +810,11 @@ fn build_shape_and_index(
     let n_synth = synthetic_to_statement.len();
 
     // Augmented costs: originals + zero costs for synthetics.
-    let mut costs: Vec<StatementCost> = operations
+    let mut costs: Vec<OperationCost> = operations
         .iter()
-        .map(|op| StatementCost::from_operation(op, params))
+        .map(|op| OperationCost::from_operation(op, params))
         .collect();
-    costs.extend((0..n_synth).map(|_| StatementCost::default()));
+    costs.extend((0..n_synth).map(|_| OperationCost::default()));
 
     // Augmented dep_edges. Original statements: External(pod, statement)
     // becomes Internal(synth_idx) when the input statement is being
@@ -1073,6 +1073,112 @@ mod tests {
             pod.pod
                 .verify()
                 .unwrap_or_else(|e| panic!("POD {} verification failed: {:?}", i, e));
+        }
+    }
+
+    /// Captured `multi_pod_tree::InputShape` for zk-craft's
+    /// `CraftRefineryCracked` action (episode-1 plugin). Used to
+    /// stress-test the partitioner against a realistic, large input.
+    /// See `sdk/src/tests.rs::capture_cracked_refinery_input_shape`
+    /// in the zk-craft repo for how the fixture is regenerated.
+    const CRACKED_REFINERY_FIXTURE: &str = include_str!("tests/fixtures/cracked_refinery.json");
+
+    /// Pins partition quality on the cracked-refinery fixture. The
+    /// resource-induced lower bound (`max_r ceil(total_r / cap_r)` over
+    /// per-statement-summable resources) is K=12, driven by 96
+    /// custom-predicate verifications at cap 8/POD. Under statement-
+    /// table accounting, per-POD publish cap (`max_public_statements
+    /// = 20`), coupling-aware bin-packing tiebreak (admit ready
+    /// statements whose Internal deps already sit in the current
+    /// segment first), and dynamic export tracking (the publish-cap
+    /// counter releases a segment slot when an admitted statement
+    /// absorbs its dep's last unfinished consumer), the heuristic
+    /// reaches K=13. MILP+cap reaches K=12, so the gap is 1 POD. See
+    /// `docs/multipod_merkle_statement_tree.md` ("Custom predicate
+    /// body+head locality" and "Future generators under consideration")
+    /// for the structural reason and candidates that might close it.
+    #[test]
+    fn cracked_refinery_fixture_partitions() {
+        let shape: InputShape =
+            serde_json::from_str(CRACKED_REFINERY_FIXTURE).expect("fixture deserializes");
+        assert_eq!(shape.num_statements(), 345);
+
+        let outcome = partition::partition(&shape);
+        match outcome {
+            Some(out) => {
+                eprintln!(
+                    "cracked refinery partitioned into {} PODs, sizes={:?}",
+                    out.pod_count,
+                    out.pod_statements
+                        .iter()
+                        .map(|v| v.len())
+                        .collect::<Vec<_>>()
+                );
+                let breakdown = diagnostics::SolutionBreakdown::from_solution(&shape, &out);
+                eprintln!("{}", breakdown);
+                eprintln!("POD 0 stmt indices: {:?}", out.pod_statements[0]);
+                eprintln!("POD 1 stmt indices: {:?}", out.pod_statements[1]);
+                let total_placed: usize = out.pod_statements.iter().map(|v| v.len()).sum();
+                assert_eq!(total_placed, shape.num_statements());
+                assert_eq!(
+                    out.pod_count, 13,
+                    "expected 13 PODs under the per-POD publish cap with \
+                     coupling-aware bin-packing and dynamic export \
+                     tracking; MILP+cap optimum is 12"
+                );
+                let breakdown_for_check =
+                    diagnostics::SolutionBreakdown::from_solution(&shape, &out);
+                for pod in &breakdown_for_check.pods {
+                    assert!(
+                        pod.publishes.used <= shape.params.max_public_statements,
+                        "POD {} publishes {} > max_public_statements ({})",
+                        pod.pod_idx,
+                        pod.publishes.used,
+                        shape.params.max_public_statements
+                    );
+                }
+
+                // Probe whether the DP layer beats greedy on bin-packing's
+                // ordering. Under dynamic export tracking, bin-packing
+                // builds segments large enough that greedy cuts can no
+                // longer hit the DP's optimum on this ordering: greedy
+                // returns K=14, DP returns K=13. Pinned so any future
+                // shift back to parity is visible.
+                let identity: Vec<usize> = (0..shape.num_statements()).collect();
+                let bp_ordering =
+                    partition::kahn_bin_packing(&shape, &identity).expect("DAG must be acyclic");
+                let k_greedy = partition::simulate_greedy_k(&shape, &bp_ordering)
+                    .expect("greedy partition must be feasible on bin-packing's ordering");
+                let k_dp = partition::partition_with_ordering(&shape, &bp_ordering)
+                    .expect("DP must find a feasible partition on bin-packing's ordering")
+                    .pod_count;
+                eprintln!(
+                    "K_bp_greedy={} K_bp_dp={} on bin-packing's ordering",
+                    k_greedy, k_dp
+                );
+                assert!(
+                    k_dp <= k_greedy,
+                    "DP must be at least as good as greedy on a fixed ordering"
+                );
+                assert_eq!(k_greedy, 14, "greedy on bin-packing's ordering pins at 14");
+                assert_eq!(k_dp, 13, "DP on bin-packing's ordering pins at 13");
+
+                // Probe the DFS-from-sinks ordering's K directly.
+                let dfs_ordering = partition::build_dfs_topo_order(&shape);
+                let k_dfs = partition::partition_with_ordering(&shape, &dfs_ordering)
+                    .expect("DP must find a feasible partition on the DFS ordering")
+                    .pod_count;
+                eprintln!("K_dfs_dp={} on DFS-from-sinks ordering", k_dfs);
+            }
+            None => {
+                let diag = diagnostics::diagnose_failure(&shape);
+                panic!(
+                    "partition() returned None; diagnosis: {}",
+                    diag.as_ref()
+                        .map(|v| v.to_string())
+                        .unwrap_or_else(|| "None".to_string())
+                );
+            }
         }
     }
 

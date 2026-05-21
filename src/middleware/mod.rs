@@ -927,10 +927,7 @@ pub struct BaseParams {
     //
     // The following parameters define how a pod id is calculated.
     //
-    /// Number of public statements to hash to calculate the public inputs.  Must be equal or
-    /// greater than `max_public_statements`.
-    pub num_public_statements_hash: usize,
-    // TODO: Doc
+    /// Max depth of the public statement merkle tree
     pub max_depth_public_statements_mt: usize,
     pub max_statement_args: usize,
     //
@@ -945,7 +942,6 @@ pub struct BaseParams {
 }
 
 pub const BASE_PARAMS: BaseParams = BaseParams {
-    num_public_statements_hash: 16,
     max_depth_public_statements_mt: 10,
     max_statement_args: 5,
     max_custom_predicate_arity: 5,
@@ -1002,9 +998,8 @@ impl Default for ParamsContainers {
 #[serde(rename_all = "camelCase")]
 pub struct Params {
     pub max_input_pods: usize,
-    // pub max_input_pods_public_statements: usize,
     pub max_statements: usize,
-    // pub max_public_statements: usize,
+    pub max_public_statements: usize,
     pub max_open_input_statements: usize,
     // max number of different custom predicates that can be used in a MainPod
     pub max_custom_predicates: usize,
@@ -1027,12 +1022,11 @@ impl Default for Params {
     fn default() -> Self {
         Self {
             max_input_pods: 2,
-            // max_input_pods_public_statements: 8,
             max_statements: 48,
-            // max_public_statements: 8,
+            max_public_statements: 20,
             max_open_input_statements: 20,
-            max_custom_predicates: 8,
-            max_custom_predicate_verifications: 8,
+            max_custom_predicates: 10,
+            max_custom_predicate_verifications: 10,
             max_custom_predicate_wildcards: 8,
             containers: ParamsContainers::default(),
             max_depth_mt_vds: 6, // up to 64 (2^6) different pod circuits
@@ -1045,9 +1039,6 @@ impl Default for Params {
 impl Params {
     // Convenient methods to get base params
 
-    pub const fn num_public_statements_hash() -> usize {
-        BASE_PARAMS.num_public_statements_hash
-    }
     pub const fn max_statement_args() -> usize {
         BASE_PARAMS.max_statement_args
     }
@@ -1160,7 +1151,6 @@ pub trait Pod: fmt::Debug + DynClone + Sync + Send + Any + EqualsAny {
     fn is_main(&self) -> bool {
         false
     }
-    // TODO: Remove?  Is this even used?
     /// Root of the public statements.  Different pods can have the same `statements_root` if they
     /// expose the same public statements even if they arrive to them through different private
     /// inputs.

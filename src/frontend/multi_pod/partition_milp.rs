@@ -1,20 +1,5 @@
-//! Test-only MILP oracle for the multi-POD partitioner.
-//!
-//! Used by the DP-vs-MILP parity sweep to assert that whenever the MILP
-//! finds a feasible partition, the DP does too. The MILP is never invoked
-//! from production paths.
-//!
-//! Modelled on `src/lang/frontend_ast_split_milp.rs`. Variables:
-//! - `assign[s][p]`: binary, each statement assigned to exactly one POD.
-//! - `import_from[d][p]`: binary, statement `d` is imported into POD `p`
-//!   (`d` produced earlier and either consumed by some statement in `p`
-//!   or is an output-public statement and `p` is the output POD).
-//! - `ext_import_from[e][p]`: binary, external (input) statement `e` is
-//!   imported into POD `p` (some statement in `p` names it).
-//! - `ext_used[e][p]`: binary, POD `p` references external pod `e`.
-//! - `cp_used[b][p]`: binary, POD `p` uses custom predicate `b`.
-//! - `uses_chain[p]`: binary, POD `p` consumes at least one chain-tree
-//!   import (which costs an input-pod slot 0).
+//! MILP solver, designed to produce globally optimal solutions, though
+//! potentially slowly compared to the heuristic solver.
 //!
 //! Constraints encode topological precedence, multi-dim per-POD resource
 //! caps, the input-pod cap, and the output-POD availability for
@@ -30,21 +15,12 @@ use good_lp::{
 };
 
 use super::{
-    cost::{CustomPredicateId, ResourceTotals, StatementCost},
+    cost::{CustomPredicateId, OperationCost, ResourceTotals},
     shape::{AbstractDep, InputShape, OutputShape},
 };
 use crate::middleware::Params;
 
 const SOLVER_BINARY_THRESHOLD: f64 = 0.5;
-const SCIP_RANDOM_SEED: i32 = 0;
-/// Per-call wall-clock budget for the SCIP solver. Generous enough that
-/// the parity sweep (n <= 16) never approaches it, but bounded so an
-/// ad-hoc call on a hard instance (e.g. cracked-refinery at fixed K)
-/// returns rather than running indefinitely. A timeout surfaces as
-/// `None` from `solve_for_k`, indistinguishable from "infeasible";
-/// callers that need to distinguish should pick a budget that's clearly
-/// longer than any feasible MILP would take.
-const SCIP_TIME_LIMIT_SECONDS: f64 = 600.0;
 
 struct MilpVars {
     n: usize,
@@ -90,14 +66,22 @@ fn declare_vars(
 }
 
 fn build_model(vars: ProblemVariables) -> SCIPProblem {
-    // Constant objective: any feasible integer solution satisfies the gap
-    // limit, so SCIP returns on the first incumbent.
+    // We only need feasibility, not optimization: any integer-feasible
+    // partition is a valid answer. The constant `minimise(0)` objective
+    // expresses that, and the options below tune SCIP for "first feasible
+    // solution wins" rather than "prove optimality".
     vars.minimise(0_i32)
         .using(good_lp::solvers::scip::scip)
-        .set_option("randomization/randomseedshift", SCIP_RANDOM_SEED)
+        // Suppress per-node solver progress on stdout.
         .set_verbose(false)
+        // Stop as soon as an incumbent is found instead of trying to
+        // close the optimality gap (a no-op for a constant objective,
+        // but SCIP doesn't necessarily short-circuit on its own).
         .set_option("limits/gap", 1e20_f64)
-        .set_option("limits/time", SCIP_TIME_LIMIT_SECONDS)
+        // Disable cutting-plane separation. Cutting planes tighten the
+        // LP relaxation, which only helps when optimizing; with a
+        // constant objective the LP bound is irrelevant and the
+        // separation rounds are just wasted CPU per node.
         .set_option("separating/maxrounds", 0_i32)
         .set_option("separating/maxroundsroot", 0_i32)
 }
@@ -473,7 +457,9 @@ pub fn solve_for_k(input: &InputShape, k: usize) -> Option<OutputShape> {
     })
 }
 
-/// Find a feasible partition by trying K = 1, 2, ..., n.
+/// Find the optimum (smallest feasible) K by trying values upward from
+/// the resource-sum lower bound. Any K below `lower_bound` is provably
+/// infeasible by the per-resource floor, so we skip those MILP calls.
 pub(super) fn solve(input: &InputShape) -> Option<OutputShape> {
     let n = input.num_statements();
     if n == 0 {
@@ -483,7 +469,10 @@ pub(super) fn solve(input: &InputShape) -> Option<OutputShape> {
             pod_republished_externals: vec![],
         });
     }
-    for k in 1..=n {
+    let lower_bound = ResourceTotals::accumulate(input.costs.iter())
+        .min_pods(&input.params)
+        .max(1);
+    for k in lower_bound..=n {
         if let Some(out) = solve_for_k(input, k) {
             return Some(out);
         }
@@ -545,9 +534,9 @@ pub(super) fn random_input(
         })
         .collect();
 
-    let costs: Vec<StatementCost> = (0..n)
+    let costs: Vec<OperationCost> = (0..n)
         .map(|_| {
-            let mut c = StatementCost::default();
+            let mut c = OperationCost::default();
             if rng.gen_bool(0.15) {
                 c.signed_by = 1;
             }
@@ -583,7 +572,7 @@ mod tests {
 
     fn independent(n: usize, output_public: Vec<usize>, params: Params) -> InputShape {
         InputShape {
-            costs: (0..n).map(|_| StatementCost::default()).collect(),
+            costs: (0..n).map(|_| OperationCost::default()).collect(),
             dep_edges: (0..n).map(|_| Vec::new()).collect(),
             output_public_indices: output_public,
             num_external_pods: 0,
@@ -609,7 +598,7 @@ mod tests {
         let params = Params::default();
         let n = params.max_open_input_statements + 1;
         let input = InputShape {
-            costs: (0..n).map(|_| StatementCost::default()).collect(),
+            costs: (0..n).map(|_| OperationCost::default()).collect(),
             dep_edges: (0..n)
                 .map(|i| {
                     vec![AbstractDep::External {

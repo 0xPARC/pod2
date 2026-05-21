@@ -1,7 +1,7 @@
-//! Per-statement resource cost analysis.
+//! Per-operation resource cost analysis.
 //!
 //! Each operation consumes resources from several per-POD budgets. This
-//! module maps an `Operation` to a [`StatementCost`] vector and exposes the
+//! module maps an `Operation` to its [`OperationCost`] and exposes the
 //! tree-specific caps as module-level constants until they land in
 //! `middleware::Params`.
 
@@ -35,8 +35,8 @@ impl From<&CustomPredicateRef> for CustomPredicateId {
     }
 }
 
-/// Resource cost of a single statement/operation. Each field corresponds
-/// to a per-POD limit in `Params`.
+/// Resource cost of a single operation. Each field corresponds to a
+/// per-POD limit in `Params`.
 ///
 /// Merkle proofs and state transitions are split into `_small` and
 /// `_medium` because the POD circuit exposes two slot pools per category
@@ -53,7 +53,7 @@ impl From<&CustomPredicateRef> for CustomPredicateId {
 ///   `params.containers.max_depth_small` counts as medium regardless of
 ///   op kind.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct StatementCost {
+pub struct OperationCost {
     /// `Contains`-family proofs on a shallow tree (depth <=
     /// `max_depth_small`). May occupy either a small or medium state slot.
     pub merkle_proofs_small: usize,
@@ -72,18 +72,21 @@ pub struct StatementCost {
     pub signed_by: usize,
     /// PublicKeyOf operations.
     pub public_key_of: usize,
-    /// Custom predicates used by this statement. Drives the per-POD
+    /// Custom predicates used by this operation. Drives the per-POD
     /// `max_custom_predicates` distinct-count cap.
     pub custom_predicates_ids: BTreeSet<CustomPredicateId>,
 }
 
-/// Aggregate of [`StatementCost`]s over an arbitrary subset of
-/// statements: per-resource sums plus the count of distinct custom
-/// predicates. Replaces per-call hand-rolled sums in the partitioner,
-/// MILP oracle, and diagnostics.
+/// The total resources consumed over an arbitrary range of operations, as
+/// specified in the input. We can use this to estimate the total number of
+/// PODs needed to perform some set of operations, or to calculate whether
+/// a given set of operations can be performed in a single POD.
+///
+/// Does not account for the cost of publishing or importing statements,
+/// which is tracked separately.
 #[derive(Clone, Debug, Default)]
 pub struct ResourceTotals {
-    pub num_statements: usize,
+    pub num_operations: usize,
     pub merkle_proofs_small: usize,
     pub merkle_proofs_medium: usize,
     pub merkle_state_transitions_small: usize,
@@ -95,9 +98,9 @@ pub struct ResourceTotals {
 }
 
 impl ResourceTotals {
-    /// Sum a stream of [`StatementCost`]s into a single [`ResourceTotals`].
-    /// Distinct custom predicates are deduped across the stream.
-    pub fn accumulate<'a>(costs: impl IntoIterator<Item = &'a StatementCost>) -> Self {
+    /// Custom predicates are deduped across the stream, so the distinct
+    /// count reflects the union rather than the sum.
+    pub fn accumulate<'a>(costs: impl IntoIterator<Item = &'a OperationCost>) -> Self {
         let mut t = Self::default();
         let mut distinct: BTreeSet<&CustomPredicateId> = BTreeSet::new();
         for c in costs {
@@ -108,17 +111,13 @@ impl ResourceTotals {
         t
     }
 
-    /// Minimum PODs needed to hold these totals under `params`' per-POD
-    /// caps. Returns `max_r ceil(used_r / cap_r)` across every dimension;
-    /// 0 if empty, 1 if non-empty with all zero sums (a single POD still
-    /// holds the statements).
-    ///
-    /// For the absorbable-bin merkle dimensions (state, transition), the
-    /// per-dimension bound is `max(ceil(m / cap_m), ceil((s + m) / (cap_s +
-    /// cap_m)))`: medium ops must fit in medium slots, and the combined
-    /// load must fit across both pools.
+    /// Minimum number of PODs required to perform the input operations, not
+    /// accounting for any additional cost of publishing and importing
+    /// statements across POD boundaries. This provides us with a lower bound
+    /// estimate, allowing us to exit early from the solver if we find any
+    /// configuration which achieves this lower bound.
     pub fn min_pods(&self, params: &Params) -> usize {
-        if self.num_statements == 0 {
+        if self.num_operations == 0 {
             return 0;
         }
         let mut bound = 1_usize;
@@ -128,7 +127,7 @@ impl ResourceTotals {
             }
         };
 
-        bump(&mut bound, self.num_statements, params.max_statements);
+        bump(&mut bound, self.num_operations, params.max_statements);
         bump(
             &mut bound,
             self.custom_pred_verifications,
@@ -165,13 +164,12 @@ impl ResourceTotals {
         bound
     }
 
-    /// Incrementally add a single statement's resource cost to these
-    /// totals. Updates the scalar sums only; callers that track distinct
-    /// custom predicates must set `distinct_custom_predicates` themselves
-    /// (typically from the size of their own dedup structure) before
+    /// Updates the scalar sums for one operation. The caller is
+    /// responsible for keeping `distinct_custom_predicates` correct
+    /// (typically by deduping CP IDs in its own structure) before
     /// calling [`fits_in_pod`].
-    pub fn add(&mut self, cost: &StatementCost) {
-        self.num_statements += 1;
+    pub fn add(&mut self, cost: &OperationCost) {
+        self.num_operations += 1;
         self.merkle_proofs_small += cost.merkle_proofs_small;
         self.merkle_proofs_medium += cost.merkle_proofs_medium;
         self.merkle_state_transitions_small += cost.merkle_state_transitions_small;
@@ -181,13 +179,15 @@ impl ResourceTotals {
         self.public_key_of += cost.public_key_of;
     }
 
-    /// True iff all sums fit in one POD under `params`. Used by the DP's
-    /// segment-feasibility check to replace a multi-condition cap check.
-    /// Applies the absorbable-bin rule for merkle dimensions.
+    /// True iff all sums fit in one POD under `params`.
+    ///
+    /// The `num_operations` vs `max_statements` term is the local-output
+    /// contribution only; callers that need to account for publishing and
+    /// importing statements must do that separately.
     pub fn fits_in_pod(&self, params: &Params) -> bool {
         let state = &params.containers.state;
         let transition = &params.containers.transition;
-        self.num_statements <= params.max_statements
+        self.num_operations <= params.max_statements
             && self.merkle_proofs_medium <= state.max_medium
             && self.merkle_proofs_small + self.merkle_proofs_medium <= state.max_total()
             && self.merkle_state_transitions_medium <= transition.max_medium
@@ -200,16 +200,12 @@ impl ResourceTotals {
     }
 }
 
-impl StatementCost {
+impl OperationCost {
     /// Compute the resource cost of a frontend operation.
     ///
     /// Inspects `op.2` (the [`OperationAux`]) to determine merkle-tree
     /// depth; operations on trees deeper than
-    /// `params.containers.max_depth_small` are charged to the medium pool
-    /// regardless of op kind. The caller is expected to have run
-    /// `MainPodBuilder::fill_in_aux` on `op` (which `MainPodBuilder::op`
-    /// does automatically); merkle operations without a populated aux
-    /// trip an `unreachable!`.
+    /// `params.containers.max_depth_small` are charged to the medium pool.
     pub fn from_operation(op: &Operation, params: &Params) -> Self {
         let mut cost = Self::default();
         let max_depth_small = params.containers.max_depth_small;
@@ -259,6 +255,7 @@ impl StatementCost {
                 NativeOperation::PublicKeyOf => {
                     cost.public_key_of = 1;
                 }
+                // Zero-cost ops (no per-POD resource consumed).
                 NativeOperation::None
                 | NativeOperation::EqualFromEntries
                 | NativeOperation::NotEqualFromEntries
@@ -270,11 +267,13 @@ impl StatementCost {
                 | NativeOperation::ProductOf
                 | NativeOperation::MaxOf
                 | NativeOperation::HashOf
+                // Tracked separately by the partitioner.
+                | NativeOperation::OpenInputStatement
+                // Syntactic sugar variants (lowered before proving).
                 | NativeOperation::GtEqFromEntries
                 | NativeOperation::GtFromEntries
                 | NativeOperation::GtToNotEqual
-                | NativeOperation::ReplaceValueWithEntry
-                | NativeOperation::OpenInputStatement => {}
+                | NativeOperation::ReplaceValueWithEntry => {}
             },
             OperationType::Custom(cpr) => {
                 cost.custom_pred_verifications = 1;
@@ -355,14 +354,14 @@ mod tests {
     #[test]
     fn scalar_native_ops_map_to_their_cost_dimension() {
         let params = Params::default();
-        let sb = StatementCost::from_operation(
+        let sb = OperationCost::from_operation(
             &native_op(NativeOperation::SignedBy, OperationAux::None),
             &params,
         );
         assert_eq!(sb.signed_by, 1);
         assert_eq!(sb.public_key_of, 0);
 
-        let pk = StatementCost::from_operation(
+        let pk = OperationCost::from_operation(
             &native_op(NativeOperation::PublicKeyOf, OperationAux::None),
             &params,
         );
@@ -377,7 +376,7 @@ mod tests {
         let params = Params::default();
         let max_depth_small = params.containers.max_depth_small;
 
-        let shallow = StatementCost::from_operation(
+        let shallow = OperationCost::from_operation(
             &native_op(
                 NativeOperation::ContainsFromEntries,
                 merkle_proof_aux(max_depth_small),
@@ -387,7 +386,7 @@ mod tests {
         assert_eq!(shallow.merkle_proofs_small, 1);
         assert_eq!(shallow.merkle_proofs_medium, 0);
 
-        let deep = StatementCost::from_operation(
+        let deep = OperationCost::from_operation(
             &native_op(
                 NativeOperation::ContainsFromEntries,
                 merkle_proof_aux(max_depth_small + 1),
@@ -404,7 +403,7 @@ mod tests {
     fn not_contains_always_uses_medium_slot() {
         let params = Params::default();
         let max_depth_small = params.containers.max_depth_small;
-        let cost = StatementCost::from_operation(
+        let cost = OperationCost::from_operation(
             &native_op(
                 NativeOperation::NotContainsFromEntries,
                 merkle_proof_aux(max_depth_small),
@@ -422,7 +421,7 @@ mod tests {
         let params = Params::default();
         let max_depth_small = params.containers.max_depth_small;
 
-        let update_shallow = StatementCost::from_operation(
+        let update_shallow = OperationCost::from_operation(
             &native_op(
                 NativeOperation::ContainerUpdateFromEntries,
                 state_transition_aux(max_depth_small, MerkleTreeOp::Update),
@@ -432,7 +431,7 @@ mod tests {
         assert_eq!(update_shallow.merkle_state_transitions_small, 1);
         assert_eq!(update_shallow.merkle_state_transitions_medium, 0);
 
-        let update_deep = StatementCost::from_operation(
+        let update_deep = OperationCost::from_operation(
             &native_op(
                 NativeOperation::ContainerUpdateFromEntries,
                 state_transition_aux(max_depth_small + 1, MerkleTreeOp::Update),
@@ -442,7 +441,7 @@ mod tests {
         assert_eq!(update_deep.merkle_state_transitions_small, 0);
         assert_eq!(update_deep.merkle_state_transitions_medium, 1);
 
-        let insert = StatementCost::from_operation(
+        let insert = OperationCost::from_operation(
             &native_op(
                 NativeOperation::ContainerInsertFromEntries,
                 state_transition_aux(max_depth_small, MerkleTreeOp::Insert),
