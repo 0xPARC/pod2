@@ -58,13 +58,6 @@ struct MilpVars {
     ext_used: Vec<Vec<Variable>>,
     cp_used: Vec<Vec<Variable>>,
     uses_chain: Vec<Variable>,
-    /// Publish-cap auxiliary variables. `Some` only when the cap is
-    /// enabled. `is_exp[d]` is 1 iff statement `d` is imported by at
-    /// least one POD other than its host (i.e. `d` lands on the chain
-    /// tree). `pub_at[d][p] = AND(assign[d][p], is_exp[d])`, summed over
-    /// `d` against `max_public_statements` for each non-output `p`.
-    is_exp: Option<Vec<Variable>>,
-    pub_at: Option<Vec<Vec<Variable>>>,
 }
 
 fn mk_binary_grid(vars: &mut ProblemVariables, rows: usize, cols: usize) -> Vec<Vec<Variable>> {
@@ -80,16 +73,7 @@ fn declare_vars(
     num_ext_pods: usize,
     num_ext_statements: usize,
     num_cps: usize,
-    with_publish_cap: bool,
 ) -> MilpVars {
-    let (is_exp, pub_at) = if with_publish_cap {
-        (
-            Some((0..n).map(|_| vars.add(variable().binary())).collect()),
-            Some(mk_binary_grid(vars, n, k)),
-        )
-    } else {
-        (None, None)
-    };
     MilpVars {
         n,
         k,
@@ -102,8 +86,6 @@ fn declare_vars(
         ext_used: mk_binary_grid(vars, num_ext_pods, k),
         cp_used: mk_binary_grid(vars, num_cps, k),
         uses_chain: (0..k).map(|_| vars.add(variable().binary())).collect(),
-        is_exp,
-        pub_at,
     }
 }
 
@@ -193,43 +175,6 @@ fn compute_pod_bounds(input: &InputShape, k: usize) -> Vec<(usize, usize)> {
 /// Solve the MILP for exactly `k` PODs. Returns `Some(OutputShape)` if a
 /// feasible partition exists at this K, `None` otherwise.
 pub fn solve_for_k(input: &InputShape, k: usize) -> Option<OutputShape> {
-    solve_for_k_inner(input, k, false, SCIP_RANDOM_SEED)
-}
-
-/// As [`solve_for_k`], but additionally enforces
-/// `input.params.max_public_statements` as a per-POD cap on the number of
-/// statements appended to the chain tree (intermediate PODs) or to the
-/// output POD's fresh tree. Used by `#[ignore]`'d probes that need to
-/// know the optimal K under the prospective publish cap; production
-/// `solve_for_k` is unchanged.
-pub fn solve_for_k_with_publish_cap(input: &InputShape, k: usize) -> Option<OutputShape> {
-    solve_for_k_inner(input, k, true, SCIP_RANDOM_SEED)
-}
-
-/// As [`solve_for_k_with_publish_cap`], but with an explicit SCIP random
-/// seed. Different seeds produce different feasible partitions when more
-/// than one exists at the target `k`; probes use this to surface which
-/// per-statement co-locations are structurally required (stable across
-/// seeds) versus incidental to a particular solver run.
-pub fn solve_for_k_with_publish_cap_seed(
-    input: &InputShape,
-    k: usize,
-    seed: i32,
-) -> Option<OutputShape> {
-    solve_for_k_inner(input, k, true, seed)
-}
-
-fn solve_for_k_inner(
-    input: &InputShape,
-    k: usize,
-    with_publish_cap: bool,
-    seed: i32,
-) -> Option<OutputShape> {
-    if with_publish_cap
-        && input.output_public_indices.len() > input.params.max_public_statements
-    {
-        return None;
-    }
     let n = input.num_statements();
     let num_ext_pods = input.num_external_pods;
     let num_ext_statements = input.num_external_statements();
@@ -288,16 +233,8 @@ fn solve_for_k_inner(
     let last_pod = k - 1;
 
     let mut vars = ProblemVariables::new();
-    let v = declare_vars(
-        &mut vars,
-        n,
-        k,
-        num_ext_pods,
-        num_ext_statements,
-        num_cps,
-        with_publish_cap,
-    );
-    let mut model = build_model(vars, seed);
+    let v = declare_vars(&mut vars, n, k, num_ext_pods, num_ext_statements, num_cps);
+    let mut model = build_model(vars, SCIP_RANDOM_SEED);
 
     // (1) Each statement in exactly one POD.
     for s in 0..n {
@@ -511,38 +448,6 @@ fn solve_for_k_inner(
             if p < *lo || p > *hi {
                 model.add_constraint(constraint!(v.assign[s][p] == 0));
             }
-        }
-    }
-
-    // (12) Publish cap. A statement `d` is "exported" iff at least one
-    // POD imports it (via the chain). The host POD pays one publish
-    // slot per exported local statement. Linearised through `is_exp[d]`
-    // (`= OR_p import_from[d][p]`) and `pub_at[d][p] = AND(assign[d][p],
-    // is_exp[d])`. Output POD's chain contribution is zero (it builds a
-    // fresh tree instead, and its `|output_public_indices| <=
-    // max_public_statements` pre-check above already rejects oversize
-    // requests).
-    if with_publish_cap {
-        let is_exp = v.is_exp.as_ref().expect("is_exp declared when cap is on");
-        let pub_at = v.pub_at.as_ref().expect("pub_at declared when cap is on");
-        let max_pub = input.params.max_public_statements as f64;
-        for d in 0..n {
-            for p in 0..k {
-                model.add_constraint(constraint!(is_exp[d] >= v.import_from[d][p]));
-            }
-            let sum_imports: Expression = (0..k).map(|p| v.import_from[d][p]).sum();
-            model.add_constraint(constraint!(is_exp[d] <= sum_imports));
-            for p in 0..k {
-                model.add_constraint(constraint!(pub_at[d][p] <= v.assign[d][p]));
-                model.add_constraint(constraint!(pub_at[d][p] <= is_exp[d]));
-                model.add_constraint(constraint!(
-                    pub_at[d][p] >= v.assign[d][p] + is_exp[d] - 1
-                ));
-            }
-        }
-        for p in 0..last_pod {
-            let sum: Expression = (0..n).map(|d| pub_at[d][p]).sum();
-            model.add_constraint(constraint!(sum <= max_pub));
         }
     }
 

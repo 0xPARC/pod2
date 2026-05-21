@@ -91,12 +91,10 @@ pub fn partition(input: &InputShape) -> Option<OutputShape> {
 /// merkle pools, CPV cap, signed_by / public_key_of, input-pod cap,
 /// publish cap). Each successful merge drops K by 1.
 ///
-/// Motivated by the `cracked_refinery_milp_multi_seed_pair_stability`
-/// probe: 58% of the heuristic's violations of MILP-stable pairs are
-/// adjacent-POD splits. Merging adjacent PODs is the cheapest fix for
-/// that class, and it directly reduces K rather than just balancing.
-/// Long-range cluster splits (the other 42%) aren't repaired here;
-/// those need cluster-aware admission, not local repair.
+/// Cheap local repair for the common case where two adjacent PODs
+/// should structurally be one but the per-ordering cutter didn't see
+/// it. Long-range cluster splits aren't repaired here; those need
+/// cluster-aware admission, not local repair.
 fn refine_via_merges(input: &InputShape, mut output: OutputShape) -> OutputShape {
     loop {
         let mut applied = false;
@@ -117,11 +115,7 @@ fn refine_via_merges(input: &InputShape, mut output: OutputShape) -> OutputShape
 /// Try to merge POD `p` and POD `p+1`. Returns `Some(new_output)` if
 /// the combined POD passes [`segment_feasible_with`] against a
 /// freshly-reconstructed topo ordering, `None` otherwise.
-fn try_merge_adjacent(
-    input: &InputShape,
-    output: &OutputShape,
-    p: usize,
-) -> Option<OutputShape> {
+fn try_merge_adjacent(input: &InputShape, output: &OutputShape, p: usize) -> Option<OutputShape> {
     let pod_count = output.pod_count;
     if p + 1 >= pod_count {
         return None;
@@ -207,11 +201,7 @@ fn try_merge_adjacent(
 /// Returns the subset in some valid order; returns a shorter list iff
 /// the subset has a cycle (which shouldn't happen for a well-formed
 /// partition since the global DAG is acyclic).
-fn topo_sort_subset(
-    input: &InputShape,
-    stmts: &[usize],
-    consumers: &[Vec<usize>],
-) -> Vec<usize> {
+fn topo_sort_subset(input: &InputShape, stmts: &[usize], consumers: &[Vec<usize>]) -> Vec<usize> {
     let in_subset: HashSet<usize> = stmts.iter().copied().collect();
     let n = input.num_statements();
     let mut indegree = vec![0_usize; n];
@@ -300,15 +290,8 @@ pub(super) fn kahn_bin_packing(
     // are already in the current segment. Encourages tight clusters
     // (CPV body+head slices, dep-chained statements) to admit
     // contiguously rather than letting unrelated ready statements
-    // wedge between them. Motivated by the
-    // `cracked_refinery_milp_seed_stability` probe: dep-tight clusters
-    // consistently co-locate across MILP seeds, so surfacing them
-    // during admission matches MILP's local structure.
-    fn coupling_score(
-        deps: &[AbstractDep],
-        pos_built: &[usize],
-        segment_start: usize,
-    ) -> usize {
+    // wedge between them.
+    fn coupling_score(deps: &[AbstractDep], pos_built: &[usize], segment_start: usize) -> usize {
         deps.iter()
             .filter(|d| match d {
                 AbstractDep::Internal(d) => {

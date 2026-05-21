@@ -364,10 +364,10 @@ impl fmt::Display for SolutionBreakdown {
             };
             writeln!(f, "  POD {} ({}):", pod.pod_idx, role)?;
 
-            for row in pod
-                .resources
-                .iter()
-                .chain([&pod.imports, &pod.external_pods, &pod.publishes])
+            for row in
+                pod.resources
+                    .iter()
+                    .chain([&pod.imports, &pod.external_pods, &pod.publishes])
             {
                 if row.used > 0 {
                     let pct = if row.limit > 0 {
