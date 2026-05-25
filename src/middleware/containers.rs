@@ -22,6 +22,8 @@ use crate::{
     },
 };
 
+pub const EMPTY_MT_ROOT: Hash = EMPTY_HASH;
+
 #[derive(Clone, Debug)]
 pub struct Container {
     root: Hash,
@@ -639,5 +641,12 @@ mod tests {
     #[test]
     fn test_nested() {
         test_databases(&_test_nested);
+    }
+
+    #[test]
+    fn test_empty() {
+        assert_eq!(EMPTY_MT_ROOT, Array::new(Vec::new()).commitment());
+        assert_eq!(EMPTY_MT_ROOT, Set::new(HashSet::new()).commitment());
+        assert_eq!(EMPTY_MT_ROOT, Dictionary::new(HashMap::new()).commitment());
     }
 }

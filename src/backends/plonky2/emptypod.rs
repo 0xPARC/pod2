@@ -1,6 +1,6 @@
 use itertools::Itertools;
 use plonky2::{
-    hash::hash_types::HashOutTarget,
+    hash::hash_types::{HashOut, HashOutTarget},
     iop::witness::{PartialWitness, WitnessWrite},
     plonk::{
         circuit_data::{self, CircuitConfig},
@@ -12,15 +12,11 @@ use serde::{Deserialize, Serialize};
 use crate::{
     backends::plonky2::{
         basetypes::{CircuitBuilder, Proof, C, D},
-        cache_get_standard_rec_main_pod_common_circuit_data,
-        circuits::{
-            common::{Flattenable, StatementTarget},
-            mainpod::{calculate_statements_hash_circuit, PI_OFFSET_STATEMENTS_HASH},
-        },
-        deserialize_proof, deserialize_verifier_only,
+        cache_get_standard_rec_main_pod_common_circuit_data, deserialize_proof,
+        deserialize_verifier_only,
         error::{Error, Result},
         hash_common_data,
-        mainpod::{self, calculate_statements_hash},
+        mainpod::public_inputs,
         recursion::pad_circuit,
         serialization::{
             CircuitDataSerializer, VerifierCircuitDataSerializer, VerifierOnlyCircuitDataSerializer,
@@ -29,8 +25,8 @@ use crate::{
     },
     cache::{self, CacheEntry},
     middleware::{
-        self, Hash, IntroPredicateRef, Params, Pod, PodType, Statement, ToFields, VDSet,
-        VerifierOnlyCircuitData, EMPTY_HASH, F, HASH_SIZE,
+        self, containers::Array, Hash, IntroPredicateRef, Params, Pod, PodType, Statement, VDSet,
+        Value, VerifierOnlyCircuitData, EMPTY_HASH, F,
     },
     timed,
 };
@@ -44,6 +40,10 @@ fn empty_statement() -> Statement {
         },
         vec![],
     )
+}
+
+fn sts_mt() -> Array {
+    Array::new(vec![Value::from(empty_statement().hash())])
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -63,21 +63,22 @@ impl EmptyPodVerifyTarget {
 }
 
 fn verify_empty_pod_circuit(
-    params: &Params,
+    _params: &Params,
     builder: &mut CircuitBuilder,
     empty_pod: &EmptyPodVerifyTarget,
 ) {
-    let empty_statement =
-        StatementTarget::from_flattened(params, &builder.constants(&empty_statement().to_fields()));
-    let sts_hash = calculate_statements_hash_circuit(builder, &[empty_statement]);
-    builder.register_public_inputs(&sts_hash.elements);
+    let sts_root = builder.constant_hash(HashOut {
+        elements: sts_mt().commitment().0,
+    });
+    builder.register_public_inputs(&sts_root.elements);
     builder.register_public_inputs(&empty_pod.vds_root.elements);
+    let is_main = builder._false();
+    builder.register_public_input(is_main.target);
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct EmptyPod {
     params: Params,
-    sts_hash: Hash,
     verifier_only: VerifierOnlyCircuitDataSerializer,
     common_hash: String,
     vd_set: VDSet,
@@ -130,17 +131,11 @@ impl EmptyPod {
         let mut pw = PartialWitness::<F>::new();
         empty_pod_verify_target.set_targets(&mut pw, vd_set.root())?;
         let proof = timed!("EmptyPod prove", data.prove(pw)?);
-        let sts_hash = {
-            let v = &proof.public_inputs
-                [PI_OFFSET_STATEMENTS_HASH..PI_OFFSET_STATEMENTS_HASH + HASH_SIZE];
-            Hash([v[0], v[1], v[2], v[3]])
-        };
         let common_hash = hash_common_data(&data.common).expect("hash ok");
         Ok(EmptyPod {
             params: Params::default(),
             verifier_only: VerifierOnlyCircuitDataSerializer(data.verifier_only.clone()),
             common_hash,
-            sts_hash,
             vd_set,
             proof: proof.proof,
         })
@@ -167,22 +162,19 @@ impl Pod for EmptyPod {
     }
     fn verify(&self) -> Result<()> {
         let statements = self
-            .pub_self_statements()
+            .pub_raw_statements()
             .into_iter()
-            .map(mainpod::Statement::from)
+            .map(|st| Value::from(st.hash()))
             .collect_vec();
-        let sts_hash = calculate_statements_hash(&statements);
-        if sts_hash != self.sts_hash {
-            return Err(Error::statements_hash_not_equal(self.sts_hash, sts_hash));
+        let sts_root = Array::new(statements).commitment();
+        if sts_root != self.statements_root() {
+            return Err(Error::statements_root_not_equal(
+                self.statements_root(),
+                sts_root,
+            ));
         }
 
-        let public_inputs = sts_hash
-            .to_fields()
-            .iter()
-            .chain(self.vd_set.root().0.iter())
-            .cloned()
-            .collect_vec();
-
+        let public_inputs = public_inputs(sts_root, self.vd_set.root(), false);
         let standard_empty_pod_verifier_data = cache_get_standard_empty_pod_verifier_circuit_data();
         standard_empty_pod_verifier_data
             .verify(ProofWithPublicInputs {
@@ -192,14 +184,15 @@ impl Pod for EmptyPod {
             .map_err(|e| Error::plonky2_proof_fail("EmptyPod", e))
     }
 
-    fn statements_hash(&self) -> Hash {
-        self.sts_hash
-    }
     fn pod_type(&self) -> (usize, &'static str) {
         (PodType::Empty as usize, "Empty")
     }
 
-    fn pub_self_statements(&self) -> Vec<middleware::Statement> {
+    fn pub_raw_statements_mt(&self) -> Array {
+        sts_mt()
+    }
+
+    fn pub_raw_statements(&self) -> Vec<middleware::Statement> {
         vec![empty_statement()]
     }
 
@@ -224,19 +217,13 @@ impl Pod for EmptyPod {
         })
         .expect("serialization to json")
     }
-    fn deserialize_data(
-        params: Params,
-        data: serde_json::Value,
-        vd_set: VDSet,
-        sts_hash: Hash,
-    ) -> Result<Self> {
+    fn deserialize_data(params: Params, data: serde_json::Value, vd_set: VDSet) -> Result<Self> {
         let data: Data = serde_json::from_value(data)?;
         let common_circuit_data = cache_get_standard_rec_main_pod_common_circuit_data();
         let proof = deserialize_proof(&common_circuit_data, &data.proof)?;
         let verifier_only = deserialize_verifier_only(&data.verifier_only)?;
         Ok(Self {
             params,
-            sts_hash,
             verifier_only: VerifierOnlyCircuitDataSerializer(verifier_only),
             common_hash: data.common_hash,
             vd_set,

@@ -1,18 +1,17 @@
-use itertools::Itertools;
-
 use crate::{
     backends::plonky2::{
         basetypes::{Proof, VerifierOnlyCircuitData},
-        error::{Error, Result},
-        mainpod::{self, calculate_statements_hash},
+        error::Result,
     },
-    middleware::{Hash, IntroPredicateRef, Params, Pod, PodType, Statement, VDSet, EMPTY_HASH},
+    middleware::{
+        containers::Array, Hash, IntroPredicateRef, Params, Pod, PodType, Statement, VDSet, Value,
+        EMPTY_HASH,
+    },
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MockEmptyPod {
     params: Params,
-    sts_hash: Hash,
     vd_set: VDSet,
 }
 
@@ -29,11 +28,8 @@ fn empty_statement() -> Statement {
 
 impl MockEmptyPod {
     pub fn new_boxed(params: &Params, vd_set: VDSet) -> Box<dyn Pod> {
-        let statements = [mainpod::Statement::from(empty_statement())];
-        let sts_hash = calculate_statements_hash(&statements);
         Box::new(Self {
             params: params.clone(),
-            sts_hash,
             vd_set,
         })
     }
@@ -44,24 +40,17 @@ impl Pod for MockEmptyPod {
         &self.params
     }
     fn verify(&self) -> Result<()> {
-        let statements = self
-            .pub_self_statements()
-            .into_iter()
-            .map(mainpod::Statement::from)
-            .collect_vec();
-        let sts_hash = calculate_statements_hash(&statements);
-        if sts_hash != self.sts_hash {
-            return Err(Error::statements_hash_not_equal(self.sts_hash, sts_hash));
-        }
         Ok(())
-    }
-    fn statements_hash(&self) -> Hash {
-        self.sts_hash
     }
     fn pod_type(&self) -> (usize, &'static str) {
         (PodType::MockEmpty as usize, "MockEmpty")
     }
-    fn pub_self_statements(&self) -> Vec<Statement> {
+
+    fn pub_raw_statements_mt(&self) -> Array {
+        Array::new(vec![Value::from(empty_statement().hash())])
+    }
+
+    fn pub_raw_statements(&self) -> Vec<Statement> {
         vec![empty_statement()]
     }
 
@@ -83,17 +72,8 @@ impl Pod for MockEmptyPod {
     fn serialize_data(&self) -> serde_json::Value {
         serde_json::Value::Null
     }
-    fn deserialize_data(
-        params: Params,
-        _data: serde_json::Value,
-        vd_set: VDSet,
-        sts_hash: Hash,
-    ) -> Result<Self> {
-        Ok(Self {
-            params,
-            sts_hash,
-            vd_set,
-        })
+    fn deserialize_data(params: Params, _data: serde_json::Value, vd_set: VDSet) -> Result<Self> {
+        Ok(Self { params, vd_set })
     }
 }
 

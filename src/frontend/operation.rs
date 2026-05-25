@@ -202,7 +202,6 @@ impl Operation {
     op_impl_oa!(gt, GtFromEntries, 2);
     op_impl_oa!(lt_eq, LtEqFromEntries, 2);
     op_impl_oa!(lt, LtFromEntries, 2);
-    op_impl_st!(copy, CopyStatement, 1);
     op_impl_st!(transitive_eq, TransitiveEqualFromStatements, 2);
     op_impl_st!(lt_to_ne, LtToNotEqual, 1);
     op_impl_st!(gt_to_ne, GtToNotEqual, 1);

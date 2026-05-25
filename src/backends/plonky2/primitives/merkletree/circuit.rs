@@ -190,7 +190,7 @@ impl MerkleClaimAndProofTarget {
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct MerkleProofExistenceTarget {
-    max_depth: usize,
+    pub(crate) max_depth: usize,
     pub(crate) root: HashOutTarget,
     pub(crate) key: ValueTarget,
     pub(crate) value: ValueTarget,
@@ -360,7 +360,7 @@ fn keypath_target(
     [path, extra_bits].concat()
 }
 
-fn kv_hash_target(
+pub fn kv_hash_target(
     builder: &mut CircuitBuilder<F, D>,
     key: &ValueTarget,
     value: &ValueTarget,

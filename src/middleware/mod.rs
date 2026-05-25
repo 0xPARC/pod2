@@ -927,9 +927,8 @@ pub struct BaseParams {
     //
     // The following parameters define how a pod id is calculated.
     //
-    /// Number of public statements to hash to calculate the public inputs.  Must be equal or
-    /// greater than `max_public_statements`.
-    pub num_public_statements_hash: usize,
+    /// Max depth of the public statement merkle tree
+    pub max_depth_public_statements_mt: usize,
     pub max_statement_args: usize,
     //
     // The following parameters define how a custom predicate batch id is calculated.
@@ -943,7 +942,7 @@ pub struct BaseParams {
 }
 
 pub const BASE_PARAMS: BaseParams = BaseParams {
-    num_public_statements_hash: 16,
+    max_depth_public_statements_mt: 10,
     max_statement_args: 5,
     max_custom_predicate_arity: 5,
     max_depth_custom_batch_mt: 16, // up to 65k (2^16) custom predicates in a batch
@@ -999,9 +998,9 @@ impl Default for ParamsContainers {
 #[serde(rename_all = "camelCase")]
 pub struct Params {
     pub max_input_pods: usize,
-    pub max_input_pods_public_statements: usize,
     pub max_statements: usize,
     pub max_public_statements: usize,
+    pub max_open_input_statements: usize,
     // max number of different custom predicates that can be used in a MainPod
     pub max_custom_predicates: usize,
     // max number of operations using custom predicates that can be verified in the MainPod
@@ -1023,11 +1022,11 @@ impl Default for Params {
     fn default() -> Self {
         Self {
             max_input_pods: 2,
-            max_input_pods_public_statements: 8,
             max_statements: 48,
-            max_public_statements: 8,
-            max_custom_predicates: 8,
-            max_custom_predicate_verifications: 8,
+            max_public_statements: 20,
+            max_open_input_statements: 20,
+            max_custom_predicates: 10,
+            max_custom_predicate_verifications: 10,
             max_custom_predicate_wildcards: 8,
             containers: ParamsContainers::default(),
             max_depth_mt_vds: 6, // up to 64 (2^6) different pod circuits
@@ -1040,9 +1039,6 @@ impl Default for Params {
 impl Params {
     // Convenient methods to get base params
 
-    pub const fn num_public_statements_hash() -> usize {
-        BASE_PARAMS.num_public_statements_hash
-    }
     pub const fn max_statement_args() -> usize {
         BASE_PARAMS.max_statement_args
     }
@@ -1051,10 +1047,6 @@ impl Params {
     }
     pub const fn max_custom_batch_size() -> usize {
         2usize.pow(BASE_PARAMS.max_depth_custom_batch_mt as u32)
-    }
-
-    pub fn max_priv_statements(&self) -> usize {
-        self.max_statements - self.max_public_statements
     }
 
     /// Maximum number of entries permitted in a `record` declaration: the
@@ -1096,10 +1088,9 @@ impl Params {
         BASE_PARAMS.max_depth_custom_batch_mt
     }
 
-    /// Total size of the statement table including None, input statements from signed pods and
-    /// input recursive pods and new statements (public & private)
+    /// Total size of the statement table including None
     pub fn statement_table_size(&self) -> usize {
-        1 + self.max_input_pods * self.max_input_pods_public_statements + self.max_statements
+        1 + self.max_statements
     }
 
     pub fn print_serialized_sizes(&self) {
@@ -1160,27 +1151,30 @@ pub trait Pod: fmt::Debug + DynClone + Sync + Send + Any + EqualsAny {
     fn is_main(&self) -> bool {
         false
     }
-    /// Hash of the public statements.  This can be used to identify a Pod.  Different pods can
-    /// have the same `statements_hash` if they expose the same public statements even if they
-    /// arrive to them through different private inputs.
-    fn statements_hash(&self) -> Hash;
+    /// Root of the public statements.  Different pods can have the same `statements_root` if they
+    /// expose the same public statements even if they arrive to them through different private
+    /// inputs.
+    fn statements_root(&self) -> Hash {
+        self.pub_raw_statements_mt().commitment()
+    }
     // TODO: String instead of &str
     /// Return a uuid of the pod type and its name.  The name is only used as metadata.
     fn pod_type(&self) -> (usize, &'static str);
-    /// Statements as internally generated, where self-referencing arguments use SELF in the
-    /// anchored key.  The serialization of these statements is used to calculate the id.
-    fn pub_self_statements(&self) -> Vec<Statement>;
-    /// Normalized statements, where self-referencing arguments use the pod id instead of SELF in
-    /// the anchored key.
+    // Merkle tree of raw public statements
+    fn pub_raw_statements_mt(&self) -> Array;
+    /// Statements as internally generated, where intro statements don't encode the verifier data
+    /// hash.  The serialization of these statements is used to calculate the statements root.
+    fn pub_raw_statements(&self) -> Vec<Statement>;
+    /// Normalized statements, where intro statements get the corresponding verifier data hash.
     fn pub_statements(&self) -> Vec<Statement> {
         let verifier_data_hash = self.verifier_data_hash();
-        self.pub_self_statements()
+        self.pub_raw_statements()
             .into_iter()
             .map(|statement| normalize_statement(&statement, verifier_data_hash))
             .collect()
     }
     /// Return this Pods data serialized into a json value.  This serialization can skip `params,
-    /// id, vds_root`
+    /// statements_root, vds_root`
     fn serialize_data(&self) -> serde_json::Value;
 
     /// Returns the deserialized Pod.
@@ -1188,7 +1182,6 @@ pub trait Pod: fmt::Debug + DynClone + Sync + Send + Any + EqualsAny {
         params: Params,
         data: serde_json::Value,
         vd_set: VDSet,
-        sts_hash: Hash,
     ) -> Result<Self, BackendError>
     where
         Self: Sized;
@@ -1226,11 +1219,10 @@ pub trait Signer {
 #[derive(Debug)]
 pub struct MainPodInputs<'a> {
     pub pods: &'a [&'a dyn Pod],
-    pub statements: &'a [Statement],
+    pub extend_pod0_pub_statements: bool,
+    /// Slice of (is_public, statement)
+    pub statements: &'a [(bool, Statement)],
     pub operations: &'a [Operation],
-    /// Statements that need to be made public (they can come from input pods or input
-    /// statements)
-    pub public_statements: &'a [Statement],
     pub vd_set: VDSet,
 }
 

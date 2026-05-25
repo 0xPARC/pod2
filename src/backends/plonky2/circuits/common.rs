@@ -2,7 +2,7 @@
 
 use std::{array, iter};
 
-use itertools::Itertools;
+use itertools::{zip_eq, Itertools};
 use plonky2::{
     field::{
         extension::Extendable,
@@ -74,21 +74,21 @@ impl ValueTarget {
     }
 
     pub fn one(builder: &mut CircuitBuilder) -> Self {
-        Self {
-            elements: array::from_fn(|i| {
-                if i == 0 {
-                    builder.one()
-                } else {
-                    builder.zero()
-                }
-            }),
-        }
+        let one = builder.one();
+        Self::from_int_lo(builder, one)
     }
 
     pub fn from_slice(xs: &[Target]) -> Self {
         assert_eq!(xs.len(), VALUE_SIZE);
         Self {
             elements: array::from_fn(|i| xs[i]),
+        }
+    }
+
+    pub fn from_int_lo(builder: &mut CircuitBuilder, x: Target) -> Self {
+        let zero = builder.zero();
+        Self {
+            elements: [x, zero, zero, zero],
         }
     }
 
@@ -242,6 +242,12 @@ impl StatementTarget {
         builder.is_equal_flattenable(&self.pred_hash, &blank_intro)
     }
 
+    pub fn pred_is_none(&self, params: &Params, builder: &mut CircuitBuilder) -> BoolTarget {
+        let none =
+            PredicateTarget::new_native(builder, params, NativePredicate::None).hash(builder);
+        builder.is_equal_flattenable(&self.pred_hash, &none)
+    }
+
     pub fn has_native_type(&self, builder: &mut CircuitBuilder, t: NativePredicate) -> BoolTarget {
         let expected_predicate_hash =
             builder.constant_hash(HashOut::from(Predicate::Native(t).hash()));
@@ -338,12 +344,6 @@ impl OperationTarget {
             self.args[i].set_targets(pw, arg.as_usize())?;
         }
         self.aux_index.set_targets(pw, op.aux().table_index(params))
-    }
-
-    fn size(params: &Params) -> usize {
-        OperationTypeTarget::size(params)
-            + BASE_PARAMS.max_operation_args * IndexTarget::size(params)
-            + IndexTarget::size(params)
     }
 }
 
@@ -767,6 +767,37 @@ impl CustomPredicateInBatchTarget {
     }
 }
 
+/// Input pod table entry
+#[derive(Clone, Serialize, Deserialize)]
+pub struct InputPodEntryTarget {
+    pub sts_root: HashOutTarget,
+    pub vd_hash: HashOutTarget,
+    pub is_main: BoolTarget,
+}
+
+impl Flattenable for InputPodEntryTarget {
+    fn flatten(&self) -> Vec<Target> {
+        self.sts_root
+            .elements
+            .iter()
+            .chain(self.vd_hash.elements.iter())
+            .chain(iter::once(&self.is_main.target))
+            .cloned()
+            .collect()
+    }
+    fn from_flattened(params: &Params, vs: &[Target]) -> Self {
+        assert_eq!(vs.len(), Self::size(params));
+        Self {
+            sts_root: HashOutTarget::from_flattened(params, &vs[0..4]),
+            vd_hash: HashOutTarget::from_flattened(params, &vs[4..8]),
+            is_main: BoolTarget::new_unsafe(vs[8]),
+        }
+    }
+    fn size(params: &Params) -> usize {
+        2 * HashOutTarget::size(params) + 1
+    }
+}
+
 /// Custom predicate table entry
 #[derive(Clone, Serialize, Deserialize)]
 pub struct CustomPredicateEntryTarget {
@@ -967,7 +998,7 @@ impl Flattenable for CustomPredicateVerifyQueryTarget {
     }
     fn size(params: &Params) -> usize {
         StatementTarget::size(params) * (1 + BASE_PARAMS.max_operation_args)
-            + OperationTarget::size(params)
+            + OperationTypeTarget::size(params)
     }
 }
 
@@ -1288,7 +1319,12 @@ impl IndexTarget {
     }
 
     pub fn set_targets(&self, pw: &mut PartialWitness<F>, index: usize) -> Result<()> {
-        assert!(index == 0 || index < self.max_array_len);
+        assert!(
+            index == 0 || index < self.max_array_len,
+            "index = {}, max = {}",
+            index,
+            self.max_array_len
+        );
         pw.set_target(self.low, F::from_canonical_usize(index & ((1 << 6) - 1)))?;
         pw.set_target(self.high, F::from_canonical_usize(index >> 6))?;
         Ok(())
@@ -1386,6 +1422,12 @@ pub trait CircuitBuilderPod<F: RichField + Extendable<D>, const D: usize> {
     ) -> T;
     fn connect_flattenable<T: Flattenable>(&mut self, xs: &T, ys: &T);
     fn is_equal_flattenable<T: Flattenable>(&mut self, xs: &T, ys: &T) -> BoolTarget;
+    fn conditional_assert_eq_flattenable<T: Flattenable>(
+        &mut self,
+        condition: Target,
+        xs: &T,
+        ys: &T,
+    );
 
     /// Convenience methods for Boolean into-iters.
     fn all(&mut self, xs: impl IntoIterator<Item = BoolTarget>) -> BoolTarget;
@@ -1753,7 +1795,12 @@ impl CircuitBuilderPod<F, D> for CircuitBuilder {
 
     fn random_access_long(&mut self, i: &IndexTarget, array: &[Target]) -> Target {
         const CHUNK_LEN: usize = 64; // Max size of a single gate native random access
-        assert!(array.len() <= i.max_array_len);
+        assert!(
+            array.len() <= i.max_array_len,
+            "array.len = {}, max = {}",
+            array.len(),
+            i.max_array_len
+        );
         // Limit to 4 chunks (combination of 4 random_access of CHUNK_LEN elements) to avoid
         // abusing this method.
         assert!(array.len() <= 4 * CHUNK_LEN);
@@ -1764,7 +1811,7 @@ impl CircuitBuilderPod<F, D> for CircuitBuilder {
         let num_chunks = array.len().div_ceil(CHUNK_LEN);
         for chunk in array.chunks(CHUNK_LEN) {
             let mut index_chunk = i.low;
-            // If we have several chunks and the last one is smaller (it's index needs less than 6
+            // If we have several chunks and the last one is smaller (its index needs less than 6
             // bits), make it zero except when it's used so that the range check over the index
             // passes.
             if chunk.len() <= CHUNK_LEN / 2 && num_chunks > 1 {
@@ -1780,6 +1827,7 @@ impl CircuitBuilderPod<F, D> for CircuitBuilder {
     }
 
     fn vec_ref<T: Flattenable>(&mut self, params: &Params, ts: &[T], i: &IndexTarget) -> T {
+        assert!(!ts.is_empty());
         let matrix_row_ref = |builder: &mut CircuitBuilder, m: &[Vec<Target>], i| {
             let num_rows = m.len();
             let num_columns = m
@@ -1837,6 +1885,7 @@ impl CircuitBuilderPod<F, D> for CircuitBuilder {
         )
     }
 
+    /// Selects `x` or `y` based on `b`, i.e., this returns `if b { x } else { y }`.
     fn select_flattenable<T: Flattenable>(
         &mut self,
         params: &Params,
@@ -1861,6 +1910,17 @@ impl CircuitBuilderPod<F, D> for CircuitBuilder {
 
     fn is_equal_flattenable<T: Flattenable>(&mut self, xs: &T, ys: &T) -> BoolTarget {
         self.is_equal_slice(&xs.flatten(), &ys.flatten())
+    }
+
+    fn conditional_assert_eq_flattenable<T: Flattenable>(
+        &mut self,
+        condition: Target,
+        xs: &T,
+        ys: &T,
+    ) {
+        for (x, y) in zip_eq(xs.flatten(), ys.flatten()) {
+            self.conditional_assert_eq(condition, x, y);
+        }
     }
 
     fn all(&mut self, xs: impl IntoIterator<Item = BoolTarget>) -> BoolTarget {
