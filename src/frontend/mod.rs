@@ -697,6 +697,7 @@ impl MainPodBuilder {
             vec![],
             OperationAux::OpenInputStatement(InputPodOpenStatement {
                 pod_index,
+                vd_hash: pod.pod.verifier_data_hash(),
                 sts_root: sts_mt.commitment(),
                 st_index,
                 proof: mt_proof,

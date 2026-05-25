@@ -11,10 +11,10 @@ use crate::{
         merkletree::{MerkleProof, MerkleTree, MerkleTreeOp, MerkleTreeStateTransitionProof},
     },
     middleware::{
-        hash_values, AnchoredKey, CustomPredicate, CustomPredicateRef, Error, Hash, Key,
-        MiddlewareInnerError, NativePredicate, Params, Predicate, PredicateOrWildcard, Result,
-        Statement, StatementArg, StatementTmpl, StatementTmplArg, ToFields, Value, ValueRef,
-        Wildcard, BASE_PARAMS, F,
+        hash_values, normalize_statement, AnchoredKey, CustomPredicate, CustomPredicateRef, Error,
+        Hash, Key, MiddlewareInnerError, NativePredicate, Params, Predicate, PredicateOrWildcard,
+        Result, Statement, StatementArg, StatementTmpl, StatementTmplArg, ToFields, Value,
+        ValueRef, Wildcard, BASE_PARAMS, F,
     },
 };
 
@@ -27,6 +27,7 @@ pub enum OperationType {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct InputPodOpenStatement {
     pub pod_index: usize,
+    pub vd_hash: Hash,
     pub sts_root: Hash,
     pub st_index: usize,
     pub proof: MerkleProof,
@@ -53,14 +54,15 @@ impl fmt::Display for OperationAux {
             }
             Self::OpenInputStatement(InputPodOpenStatement {
                 pod_index,
+                vd_hash,
                 sts_root,
                 st_index,
                 proof,
                 raw_statement,
             }) => write!(
                 f,
-                "pod_input_merkle_proof({}, {}, {}, {:?}, {})",
-                pod_index, sts_root, st_index, proof, raw_statement
+                "pod_input_merkle_proof({}, {}, {}, {}, {:?}, {})",
+                pod_index, vd_hash, sts_root, st_index, proof, raw_statement
             )?,
             Self::Signature(sig) => write!(f, "signature({:?})", sig)?,
         }
@@ -636,12 +638,16 @@ impl Operation {
                 Self::check_replace_value_with_entry(entries, st_in, st_out)?
             }
             (Self::OpenInputStatement(data), st) => {
-                let st_hash = st.hash();
+                let st0 = normalize_statement(&data.raw_statement, data.vd_hash);
+                if st != &st0 {
+                    return Err(deduction_err());
+                }
+                let raw_st_hash = data.raw_statement.hash();
                 MerkleTree::verify(
                     data.sts_root,
                     &data.proof,
                     &Value::from(data.st_index as i64).raw(),
-                    &st_hash.raw(),
+                    &raw_st_hash.raw(),
                 )
                 .is_ok()
             }

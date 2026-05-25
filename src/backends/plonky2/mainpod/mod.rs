@@ -555,6 +555,7 @@ impl MainPodProver for Prover {
             let pad_raw_st = pod.pub_raw_statements()[0].clone();
             Some(InputPodOpenStatement {
                 pod_index: 0,
+                vd_hash: pod.verifier_data_hash(),
                 sts_root: pod.statements_root(),
                 st_index: 0,
                 proof,

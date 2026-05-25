@@ -166,12 +166,20 @@ impl MockMainPod {
     fn precheck_open_input_statement(&self, op: &InputPodOpenStatement) -> Result<()> {
         let InputPodOpenStatement {
             pod_index,
+            vd_hash,
             sts_root,
             st_index,
             raw_statement,
             ..
         } = op;
         let pod = &self.input_pods[*pod_index];
+        let vd_hash0 = pod.verifier_data_hash();
+        if vd_hash0 != *vd_hash {
+            return Err(Error::custom(format!(
+                "OpenInputStatement uses a vd_hash different than the input pod one: {} != {}",
+                vd_hash, vd_hash0
+            )));
+        }
         let sts_root0 = pod.statements_root();
         if sts_root0 != *sts_root {
             return Err(Error::custom(format!("OpenInputStatement uses a statements root different than the input pod one: {} != {}", sts_root, sts_root0)));
