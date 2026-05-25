@@ -1520,11 +1520,8 @@ fn make_statement_arg_from_template_circuit(
 ) -> StatementArgTarget {
     let zero = builder.zero();
     let (is_literal, value_literal) = st_tmpl_arg.as_literal(builder);
-    let (is_ak, ak_id_wc_index, ak_key_lit_or_wc) = st_tmpl_arg.as_anchored_key(builder);
+    let (is_ak, ak_id_wc_index, ak_key) = st_tmpl_arg.as_anchored_key(builder);
     let (is_wc_literal, wc_index) = st_tmpl_arg.as_wildcard_literal(builder);
-
-    let ((_is_ak_key_lit, ak_key_lit), (is_ak_key_wc, ak_key_wc_index)) =
-        ak_key_lit_or_wc.cases(builder);
 
     // optimization: ak_id_wc_index and wc_index use the same signals, so we only need to do one
     // random access to resolve both of them
@@ -1537,16 +1534,6 @@ fn make_statement_arg_from_template_circuit(
     let first_index = builder.select(is_first_index_valid, first_index, zero);
     let resolved_ak_id = builder.vec_ref_small(params, args, first_index);
     let resolved_wc = resolved_ak_id;
-
-    // If the index is not used, use a 0 instead to still pass the range constraints from
-    // vec_ref
-    let second_index = ak_key_wc_index;
-    let is_second_index_valid = builder.and(is_ak, is_ak_key_wc);
-    let second_index = builder.select(is_second_index_valid, second_index, zero);
-    let resolved_ak_key = builder.vec_ref_small(params, args, second_index);
-
-    let ak_key = ak_key_lit; // is_ak_key_lit
-    let ak_key = builder.select_flattenable(params, is_ak_key_wc, &resolved_ak_key, &ak_key);
 
     let first = ValueTarget::zero(builder); // is_none
     let first = builder.select_flattenable(params, is_literal, &value_literal, &first);
