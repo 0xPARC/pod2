@@ -85,6 +85,8 @@ impl StatementCost {
                         cost.merkle_state_transitions = 1;
                     }
 
+                    NativeOperation::OpenInputStatement => todo!(),
+
                     // SignedBy operation
                     NativeOperation::SignedBy => {
                         cost.signed_by = 1;
@@ -97,7 +99,6 @@ impl StatementCost {
 
                     // Operations with no special resource costs
                     NativeOperation::None
-                    | NativeOperation::CopyStatement
                     | NativeOperation::EqualFromEntries
                     | NativeOperation::NotEqualFromEntries
                     | NativeOperation::LtEqFromEntries
