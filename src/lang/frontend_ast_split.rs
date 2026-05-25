@@ -1038,17 +1038,36 @@ fn first_cap_violation(
         return None;
     }
 
-    // Suffix unions: suffix_wcs[p] is the union of ordered_wcs[p..n].
-    // Precomputed so each bucket's `live` set is an O(segment) intersection
-    // instead of an O(n) re-flat-map.
+    let mut prefix_wcs: Vec<HashSet<String>> = vec![HashSet::new(); n + 1];
+    for p in 0..n {
+        prefix_wcs[p + 1] = prefix_wcs[p].clone();
+        prefix_wcs[p + 1].extend(ordered_wcs[p].iter().cloned());
+    }
     let mut suffix_wcs: Vec<HashSet<String>> = vec![HashSet::new(); n + 1];
     for p in (0..n).rev() {
         suffix_wcs[p] = suffix_wcs[p + 1].clone();
         suffix_wcs[p].extend(ordered_wcs[p].iter().cloned());
     }
+    let original_pub_set: HashSet<String> = original_public_args.iter().cloned().collect();
 
-    let mut incoming_public: Vec<String> = original_public_args.to_vec();
-    let mut incoming_set: HashSet<String> = incoming_public.iter().cloned().collect();
+    // Mirrors `try_partition`'s `incoming_at`: originals still in use plus
+    // privates that cross the boundary. Without this, accumulating
+    // promotions in a running ledger would report public args the DP would
+    // have pruned, inflating `total_public` past the real cap.
+    let incoming_at = |a: usize| -> Vec<String> {
+        let mut out: Vec<String> = if a == 0 {
+            original_public_args.to_vec()
+        } else {
+            suffix_wcs[a]
+                .iter()
+                .filter(|w| original_pub_set.contains(*w) || prefix_wcs[a].contains(*w))
+                .cloned()
+                .collect()
+        };
+        out.sort();
+        out
+    };
+
     let mut pos = 0;
     let mut link_index = 0;
 
@@ -1058,55 +1077,48 @@ fn first_cap_violation(
         let bucket_size = if is_last { remaining } else { max_arity - 1 };
         let end = pos + bucket_size;
 
+        let incoming_public = incoming_at(pos);
+        let incoming_set: HashSet<String> = incoming_public.iter().cloned().collect();
+
         let segment_wcs: HashSet<String> = ordered_wcs[pos..end]
             .iter()
             .flat_map(|s| s.iter().cloned())
             .collect();
 
-        let live: HashSet<String> = if is_last {
-            HashSet::new()
-        } else {
-            segment_wcs
-                .intersection(&suffix_wcs[end])
-                .cloned()
-                .collect()
-        };
-
-        let mut new_promotions: Vec<String> = live
-            .iter()
-            .filter(|w| !incoming_set.contains(*w))
-            .cloned()
-            .collect();
-        new_promotions.sort();
-        let total_public = incoming_public.len() + new_promotions.len();
-        if total_public > max_args {
-            return Some(CapViolation::PublicArgs {
-                link_index,
-                statement_range: (pos, end),
-                incoming_public,
-                crossing_wildcards: new_promotions,
-                total_public,
-            });
+        if !is_last {
+            let next_incoming = incoming_at(end);
+            if next_incoming.len() > max_args {
+                let mut crossings: Vec<String> = next_incoming
+                    .iter()
+                    .filter(|w| !incoming_set.contains(*w))
+                    .cloned()
+                    .collect();
+                crossings.sort();
+                return Some(CapViolation::PublicArgs {
+                    link_index,
+                    statement_range: (pos, end),
+                    incoming_public,
+                    crossing_wildcards: crossings,
+                    total_public: next_incoming.len(),
+                });
+            }
         }
 
-        let private_args: Vec<String> = segment_wcs
-            .difference(&incoming_set)
-            .filter(|w| !live.contains(*w))
-            .cloned()
-            .collect();
-        let private_count = private_args.len();
-        let total_count = total_public + private_count;
-        if total_count > max_wildcards {
+        let mut total = incoming_set.clone();
+        total.extend(segment_wcs.iter().cloned());
+        if total.len() > max_wildcards {
+            let private_count = segment_wcs
+                .iter()
+                .filter(|w| !incoming_set.contains(*w))
+                .count();
             return Some(CapViolation::TotalArgs {
                 link_index,
-                public_count: total_public,
+                public_count: incoming_public.len(),
                 private_count,
-                total_count,
+                total_count: total.len(),
             });
         }
 
-        incoming_set.extend(new_promotions.iter().cloned());
-        incoming_public.extend(new_promotions);
         pos = end;
         link_index += 1;
     }
@@ -1460,16 +1472,16 @@ mod tests {
         // Test that a wildcard used across multiple chain boundaries
         // doesn't get duplicated in incoming_public
         let input = r#"
-            reuse_pred(A, private: T) = AND (
-                Equal(T["x"], A["start"])
-                Equal(T["y"], 1)
-                Equal(T["z"], 2)
-                Equal(T["w"], 3)
-                Equal(A["mid"], T["x"])
-                Equal(T["a"], 4)
-                Equal(T["b"], 5)
-                Equal(T["c"], 6)
-                Equal(A["end"], T["x"])
+            reuse_pred(A, private: X) = AND (
+                Equal(X["x"], A["start"])
+                Equal(X["y"], 1)
+                Equal(X["z"], 2)
+                Equal(X["w"], 3)
+                Equal(A["mid"], X["x"])
+                Equal(X["a"], 4)
+                Equal(X["b"], 5)
+                Equal(X["c"], 6)
+                Equal(A["end"], X["x"])
             )
         "#;
 
@@ -1482,7 +1494,7 @@ mod tests {
         let split_result = result.unwrap();
         let chain = &split_result.predicates;
         // Should split into 2 predicates
-        // T is used in first segment and crosses to second, then used again in second
+        // X is used in first segment and crosses to second, then used again in second
         assert_eq!(chain.len(), 2);
 
         // Check that second predicate's public args don't have duplicates
@@ -1508,20 +1520,20 @@ mod tests {
     /// statements have been clustered, so they don't consume bucket slots that would reduce
     /// liveness at split boundaries.
     ///
-    /// 4 public args, 7 statements: W1 used in stmts 0,1,4; W2 used in stmts 1,2,3;
+    /// 4 public args, 7 statements: X0 used in stmts 0,1,4; X1 used in stmts 1,2,3;
     /// stmts 5,6 reference only public args.  The scoring correctly defers stmts 5,6,
-    /// yielding bucket0={0,1,2,3}, bucket1={4,5,6} with only W1 crossing (4+1=5 <= max).
+    /// yielding bucket0={0,1,2,3}, bucket1={4,5,6} with only X0 crossing (4+1=5 <= max).
     #[test]
     fn test_split_succeeds_with_four_public_args_and_public_only_statements() {
         // Optimal split: bucket0={0,1,2,3}, bucket1={4,5,6}
-        // Only W1 crosses (used in 0,1 and 4), total = 4 public + 1 crossing = 5 (OK)
+        // Only X0 crosses (used in 0,1 and 4), total = 4 public + 1 crossing = 5 (OK)
         let input = r#"
-            pred(A, B, C, D, private: W1, W2) = AND(
-                Equal(W1["x"], A["v"])
-                Equal(W2["y"], W1["x"])
-                Equal(W2["z"], B["v"])
-                Equal(C["r"], W2["y"])
-                Equal(D["s"], W1["x"])
+            pred(A, B, C, D, private: X0, X1) = AND(
+                Equal(X0["x"], A["v"])
+                Equal(X1["y"], X0["x"])
+                Equal(X1["z"], B["v"])
+                Equal(C["r"], X1["y"])
+                Equal(D["s"], X0["x"])
                 Equal(A["out"], C["out"])
                 Equal(B["out"], D["out"])
             )
@@ -1546,13 +1558,13 @@ mod tests {
         // A is used only in the first segment; B is used only in the second segment.
         // The continuation predicate (pred_1) must include B but not A.
         let input = r#"
-            pred(A, B, private: T) = AND(
-                Equal(T["x"], A["val"])
-                Equal(T["y"], 1)
-                Equal(T["z"], 2)
-                Equal(T["w"], 3)
-                Equal(B["r"], T["x"])
-                Equal(B["s"], T["y"])
+            pred(A, B, private: X) = AND(
+                Equal(X["x"], A["val"])
+                Equal(X["y"], 1)
+                Equal(X["z"], 2)
+                Equal(X["w"], 3)
+                Equal(B["r"], X["x"])
+                Equal(B["s"], X["y"])
             )
         "#;
 
@@ -1581,8 +1593,8 @@ mod tests {
         );
     }
 
-    /// 6 statements with 2 public args (A0, A1) and 5 private wildcards
-    /// (T0..T4). A feasible 4+2 chain exists where exactly 3 wildcards cross
+    /// 6 statements with 2 public args (A, B) and 5 private wildcards
+    /// (X0..X4). A feasible 4+2 chain exists where exactly 3 wildcards cross
     /// the boundary (3 promotions + 2 incoming = 5 total public, hitting the
     /// cap). The splitter must find one: a partition that puts an extra
     /// wildcard across the boundary fails the per-link public-arg cap.
@@ -1592,15 +1604,15 @@ mod tests {
     fn test_splitter_handles_tight_public_arg_cap() {
         let pred = build_pred(
             "p",
-            &["A0", "A1"],
-            &["T0", "T1", "T2", "T3", "T4"],
+            &["A", "B"],
+            &["X0", "X1", "X2", "X3", "X4"],
             &[
-                &["T0", "T4", "T2"],
-                &["T1", "T3", "T4"],
-                &["T2", "T3", "T1"],
-                &["T4", "A0", "A1"],
-                &["T3", "T0", "T2"],
-                &["T0", "A1", "T1"],
+                &["X0", "X4", "X2"],
+                &["X1", "X3", "X4"],
+                &["X2", "X3", "X1"],
+                &["X4", "A", "B"],
+                &["X3", "X0", "X2"],
+                &["X0", "B", "X1"],
             ],
         );
         let params = Params::default();
@@ -1623,14 +1635,14 @@ mod tests {
         let pred = build_pred(
             "dense",
             &["A"],
-            &["W0", "W1", "W2", "W3", "W4", "W5", "W6", "W7", "W8"],
+            &["X0", "X1", "X2", "X3", "X4", "X5", "X6", "X7", "X8"],
             &[
-                &["W0", "W1", "W2", "W3", "W4", "W5", "W6", "W7", "W8"],
-                &["W0"],
-                &["W0"],
-                &["W0"],
-                &["W0"],
-                &["W0"],
+                &["X0", "X1", "X2", "X3", "X4", "X5", "X6", "X7", "X8"],
+                &["X0"],
+                &["X0"],
+                &["X0"],
+                &["X0"],
+                &["X0"],
             ],
         );
         let params = Params::default();
@@ -1649,7 +1661,7 @@ mod tests {
                 assert_eq!(link_index, 0, "dense statement should fall in link 0");
                 assert!(
                     private_count >= 8,
-                    "link 0 should declare W1..W8 as private, got private_count={}",
+                    "link 0 should declare X1..X8 as private, got private_count={}",
                     private_count
                 );
                 assert!(
@@ -1677,15 +1689,15 @@ mod tests {
         // all cross the K=2 boundary at position 4. The bucket walk then
         // sees 6 promotions on top of the 0 incoming publics -> 6 > 5.
         let ordered_wcs: Vec<HashSet<String>> = vec![
-            mk(&["T0", "T1"]),
-            mk(&["T2", "T3"]),
-            mk(&["T4", "T5"]),
-            mk(&["T0", "T2"]),
-            mk(&["T1", "T3"]),
-            mk(&["T4", "T5"]),
-            mk(&["T0", "T4"]),
-            mk(&["T1", "T5"]),
-            mk(&["T2", "T3"]),
+            mk(&["X0", "X1"]),
+            mk(&["X2", "X3"]),
+            mk(&["X4", "X5"]),
+            mk(&["X0", "X2"]),
+            mk(&["X1", "X3"]),
+            mk(&["X4", "X5"]),
+            mk(&["X0", "X4"]),
+            mk(&["X1", "X5"]),
+            mk(&["X2", "X3"]),
         ];
         let params = Params::default();
         let violation =
@@ -1713,6 +1725,58 @@ mod tests {
             }
             CapViolation::TotalArgs { .. } => {
                 panic!("expected PublicArgs violation, got TotalArgs")
+            }
+        }
+    }
+
+    /// Past the first link, original publics that are no longer used must
+    /// drop out of the reported incoming set: otherwise the diagnostic
+    /// blames public args the chain wouldn't actually pass.
+    #[test]
+    fn test_first_cap_violation_prunes_unused_original_publics() {
+        let mk = |names: &[&str]| -> HashSet<String> {
+            names.iter().map(|s| s.to_string()).collect()
+        };
+        // Originals A, B used only at position 0; X3..X8 first appear in
+        // link 1 and cross into link 2. Six crossers exceed max_args = 5,
+        // so the bust is at link 1's transition - where A and B should
+        // already be pruned.
+        let ordered_wcs: Vec<HashSet<String>> = vec![
+            mk(&["A", "B", "X0", "X1", "X2"]), // 0
+            mk(&["X0"]),                       // 1
+            mk(&["X1"]),                       // 2
+            mk(&["X2"]),                       // 3
+            mk(&["X3", "X4", "X5"]),           // 4 - link 1 starts
+            mk(&["X6", "X7", "X8"]),           // 5
+            mk(&["X3", "X6"]),                 // 6
+            mk(&["X4", "X7"]),                 // 7
+            mk(&["X3", "X4", "X5", "X6", "X7", "X8"]), // 8 - link 2
+            mk(&["X3"]),                       // 9
+        ];
+        let originals = vec!["A".to_string(), "B".to_string()];
+        let params = Params::default();
+        let violation =
+            first_cap_violation(&ordered_wcs, &originals, &params).expect("expected a violation");
+
+        match violation {
+            CapViolation::PublicArgs {
+                link_index,
+                incoming_public,
+                crossing_wildcards,
+                total_public,
+                ..
+            } => {
+                assert_eq!(link_index, 1);
+                assert!(
+                    !incoming_public.iter().any(|w| w == "A" || w == "B"),
+                    "unused original publics should be pruned, got: {:?}",
+                    incoming_public
+                );
+                assert_eq!(crossing_wildcards.len(), 6);
+                assert_eq!(total_public, 6);
+            }
+            CapViolation::TotalArgs { .. } => {
+                panic!("expected PublicArgs, got TotalArgs")
             }
         }
     }

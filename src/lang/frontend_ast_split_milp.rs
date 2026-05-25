@@ -272,8 +272,10 @@ mod tests {
         for &n_stmts in &[9usize, 10, 11, 12] {
             for &n_pub in &[3usize, 4] {
                 for &n_priv in &[4usize, 5, 6] {
-                    let pub_names: Vec<String> = (0..n_pub).map(|i| format!("A{}", i)).collect();
-                    let priv_names: Vec<String> = (0..n_priv).map(|i| format!("T{}", i)).collect();
+                    let pub_names: Vec<String> = (0..n_pub)
+                        .map(|i| char::from(b'A' + i as u8).to_string())
+                        .collect();
+                    let priv_names: Vec<String> = (0..n_priv).map(|i| format!("X{}", i)).collect();
                     let all_names: Vec<String> =
                         pub_names.iter().chain(priv_names.iter()).cloned().collect();
 
