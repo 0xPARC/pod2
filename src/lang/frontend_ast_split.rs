@@ -1734,24 +1734,23 @@ mod tests {
     /// blames public args the chain wouldn't actually pass.
     #[test]
     fn test_first_cap_violation_prunes_unused_original_publics() {
-        let mk = |names: &[&str]| -> HashSet<String> {
-            names.iter().map(|s| s.to_string()).collect()
-        };
+        let mk =
+            |names: &[&str]| -> HashSet<String> { names.iter().map(|s| s.to_string()).collect() };
         // Originals A, B used only at position 0; X3..X8 first appear in
         // link 1 and cross into link 2. Six crossers exceed max_args = 5,
         // so the bust is at link 1's transition - where A and B should
         // already be pruned.
         let ordered_wcs: Vec<HashSet<String>> = vec![
-            mk(&["A", "B", "X0", "X1", "X2"]), // 0
-            mk(&["X0"]),                       // 1
-            mk(&["X1"]),                       // 2
-            mk(&["X2"]),                       // 3
-            mk(&["X3", "X4", "X5"]),           // 4 - link 1 starts
-            mk(&["X6", "X7", "X8"]),           // 5
-            mk(&["X3", "X6"]),                 // 6
-            mk(&["X4", "X7"]),                 // 7
+            mk(&["A", "B", "X0", "X1", "X2"]),         // 0
+            mk(&["X0"]),                               // 1
+            mk(&["X1"]),                               // 2
+            mk(&["X2"]),                               // 3
+            mk(&["X3", "X4", "X5"]),                   // 4 - link 1 starts
+            mk(&["X6", "X7", "X8"]),                   // 5
+            mk(&["X3", "X6"]),                         // 6
+            mk(&["X4", "X7"]),                         // 7
             mk(&["X3", "X4", "X5", "X6", "X7", "X8"]), // 8 - link 2
-            mk(&["X3"]),                       // 9
+            mk(&["X3"]),                               // 9
         ];
         let originals = vec!["A".to_string(), "B".to_string()];
         let params = Params::default();
