@@ -524,7 +524,7 @@ pub fn verify_merkle_state_transition_circuit(
     // 5.1) old_siblings[i] == new_siblings[i] ∀ i \ {d}
     // 5.2) at i==d, if old_siblings[i] != new_siblings[i]: old_siblings[i] ==
     //   EMPTY_HASH new_siblings[i] == old_leaf_hash
-    // 5.3) assert that if old_key!=empty, both old_leaf_path&new_leaf_path
+    // 5.3) assert that if other_leaf!=empty, both old_leaf_path&new_leaf_path
     //   should diverge at the inputted divergence level
     let old_siblings = proof.op_proof.siblings.clone();
     let new_siblings = proof.siblings.clone();
@@ -572,13 +572,16 @@ pub fn verify_merkle_state_transition_circuit(
             );
         }
 
-        // 5.3) assert that if old_key!=empty, both old_leaf_path&new_leaf_path
-        //   should diverge at the inputted divergence level. We can check it
-        //   without having into account old_key!=empty, since if
-        //   old_key==empty, the paths would still diverge.
+        // 5.3) assert that if other_leaf!=empty, both old_leaf_path&new_leaf_path
+        //   should diverge at the inputted divergence level.
         let paths_eq_at_d = builder.is_equal(old_leaf_path[i].target, new_leaf_path[i].target);
-        builder.conditional_assert_eq(
+        // case_ii is 1 when other_leaf is not empty, 0 when it is empty
+        let is_divergence_level_and_other_not_empty = builder.mul(
             is_divergence_level.target,
+            proof.op_proof.case_ii_selector.target,
+        );
+        builder.conditional_assert_eq(
+            is_divergence_level_and_other_not_empty,
             // expect them to not be equal, ie. the is_equal check to be 0
             paths_eq_at_d.target,
             zero,
@@ -666,6 +669,7 @@ impl MerkleTreeStateTransitionProofTarget {
 pub mod tests {
     use std::collections::HashMap;
 
+    use hex::FromHex;
     use plonky2::plonk::{circuit_builder::CircuitBuilder, circuit_data::CircuitConfig};
 
     use super::*;
@@ -1235,5 +1239,48 @@ pub mod tests {
         assert_eq!(state_transition_proof.old_root, old_root);
         assert_ne!(state_transition_proof.new_root, tree.root()); // Tamper check
         Ok(())
+    }
+
+    #[test]
+    fn test_bug_1() {
+        let mtp0: MerkleTreeStateTransitionProof = serde_json::from_str(
+            r#"{
+            "op":"Insert",
+            "old_root":"1a3770fb451cc268188c073a6352aa4b35beadf20e5989a2996bdd904fffadf5",
+            "op_proof":{
+                "existence":false,
+                "siblings":["5d255b153d7fe694d31e937b1d5d00817e253f4ef13d17fb5420fe8e1d0d9e26"],
+                "other_leaf":null
+            },
+            "new_root":"d3fb1acab11597c2aa4360a993a4fd442d30f465be6344ffb19e109fa472a054",
+            "op_key":"6fedd0b4ba63ea956a48f6a9c9e8a246b6557998c503ac446c08c2914a6a7f6a",
+            "op_value":"6fedd0b4ba63ea956a48f6a9c9e8a246b6557998c503ac446c08c2914a6a7f6a",
+            "value":null,
+            "siblings":["5d255b153d7fe694d31e937b1d5d00817e253f4ef13d17fb5420fe8e1d0d9e26"]
+            }"#,
+        )
+        .unwrap();
+
+        MerkleTree::verify_state_transition(&mtp0).unwrap();
+
+        let mut mt = MerkleTree::new(&HashMap::new());
+        let v =
+            RawValue::from_hex("c12630431004e5c9affc59ceb1a4b4eaf63ce1d38fa756527f239100320b981b")
+                .unwrap();
+        mt.insert(&v, &v).unwrap();
+        let v =
+            RawValue::from_hex("081b2c7abca61c01a27e68ab98d0188549ea0b2bc0e4ccc771568e9f21410b2f")
+                .unwrap();
+        mt.insert(&v, &v).unwrap();
+        println!("{}", mt);
+
+        let v =
+            RawValue::from_hex("6fedd0b4ba63ea956a48f6a9c9e8a246b6557998c503ac446c08c2914a6a7f6a")
+                .unwrap();
+        let mtp = mt.insert(&v, &v).unwrap();
+        assert_eq!(mtp0, mtp);
+        println!("{}", mt);
+
+        run_state_transition_circuit(true, 32, &mtp).unwrap();
     }
 }
