@@ -12,17 +12,18 @@
 //!
 //! - **Picking an ordering**. Combinatorial: there's no realistic way
 //!   to search every topological order. We sample a small set of
-//!   candidates: one bin-packing ordering ([`kahn_bin_packing`]) and
-//!   ten random-priority orderings ([`kahn_with_priority`]).
+//!   candidates: one bin-packing ordering ([`kahn_bin_packing`]), the
+//!   DFS-from-sinks ordering ([`build_dfs_topo_order`]), and ten
+//!   random-priority orderings ([`kahn_with_priority`]).
 //!
 //! - **Cutting the ordering into segments**. Once the order is fixed
 //!   this collapses to a 1D problem: where do POD boundaries go?
 //!   Dynamic programming over prefixes solves it optimally in
 //!   O(n * W^2) where W = `max_priv_statements` (see [`run_dp`]). It
 //!   also ensures feasibility in cases where a left-to-right greedy
-//!   walk produces an infeasible partition; the DP-vs-greedy random
-//!   sweep ([`dp_vs_greedy_random_sweep`]) measures how often this
-//!   actually rescues a solution.
+//!   walk produces an infeasible partition; the per-ordering
+//!   feasibility-rescue counts in [`ordering_and_cutter_contribution_sweep`]
+//!   quantify how often this happens.
 
 use std::{
     cmp::Reverse,
@@ -498,12 +499,7 @@ impl GreedyState {
     }
 }
 
-/// Reusable scratch for [`run_dp`]'s segment-feasibility checks. The
-/// inner loop fires up to `n * W` feasibility checks per ordering
-/// (where W = max_priv_statements), so reusing these buffers across
-/// calls keeps allocation off the hot path. Each set is `.clear()`ed
-/// at the top of every check, which is O(active) (active size is
-/// bounded by `params.max_open_input_statements`).
+/// Reusable scratch for [`run_dp`]'s segment-feasibility checks.
 #[derive(Default)]
 struct DpWorkspace {
     /// Producers in earlier PODs that the current segment imports via
@@ -736,39 +732,6 @@ fn greedy_segments(
 /// same ordering.
 pub(super) fn simulate_greedy_k(input: &InputShape, ordering: &[usize]) -> Option<usize> {
     greedy_segments(ordering, input, false).map(|s| s.len())
-}
-
-/// No-DP variant of [`partition`]: tries every candidate ordering and
-/// keeps the lowest-K result, but uses greedy left-to-right cuts
-/// ([`greedy_segments`]) instead of the DP. Used by the DP-vs-greedy
-/// sweep to measure whether the DP layer contributes any K-improvement
-/// beyond what greedy achieves on the same orderings.
-pub(super) fn partition_greedy_only(input: &InputShape) -> Option<OutputShape> {
-    let n = input.num_statements();
-    if n == 0 {
-        return Some(OutputShape {
-            pod_count: 0,
-            pod_statements: vec![],
-            pod_republished_externals: vec![],
-        });
-    }
-
-    let lower_bound = resource_lower_bound_k(input);
-    let mut best: Option<OutputShape> = None;
-
-    for ordering in candidate_orderings(input) {
-        let Some(segments) = greedy_segments(&ordering, input, true) else {
-            continue;
-        };
-        let k = segments.len();
-        if best.as_ref().is_none_or(|b| k < b.pod_count) {
-            best = Some(reconstruct(&ordering, &segments));
-            if k <= lower_bound {
-                break;
-            }
-        }
-    }
-    best
 }
 
 /// Workspace-backed feasibility check. Returns true iff segment `[a..p]`
@@ -1055,8 +1018,6 @@ mod tests {
 
     #[test]
     fn single_pod_fits_when_caps_allow() {
-        // Default Params: max_priv_statements is large, single POD should
-        // accommodate a handful of independent statements.
         let input = independent_statements(3, vec![0, 1, 2], Params::default());
         let out = partition(&input).expect("should partition into a single POD");
         assert_eq!(out.pod_count, 1);
@@ -1150,18 +1111,22 @@ mod tests {
         assert_eq!(all, vec![0, 1, 2, 3]);
     }
 
-    /// DP vs greedy random sweep. For each generated input, compares
-    /// `partition` (full pipeline, DP cuts per ordering) against
-    /// `partition_greedy_only` (same orderings, greedy cuts). Reports the
-    /// K-diff distribution and the count of "DP rescue" cases where
-    /// greedy is infeasible but DP isn't (the empirical justification
-    /// for the DP layer). Asserts on the inverse direction (greedy
-    /// feasible, DP infeasible) which should never happen.
+    /// Per-input grid of K under each (ordering tier, cutter) pair.
+    /// Scores each of the three ordering tiers (BP, DFS, random) under
+    /// each of the two cutters (DP, greedy), then derives the per-tier
+    /// contribution counts. The random row aggregates min-over-N over
+    /// the N random orderings used by production, matching how the
+    /// tier is consumed; bp and dfs are single-ordering tiers.
+    ///
+    /// Asserts that greedy never strictly beats DP on the *same*
+    /// individual ordering; that check fires inside the random loop
+    /// per ordering as well, separately from the min-of-N aggregation
+    /// reported below.
     ///
     /// Shares its RNG seed and parameter variants with the DP-vs-MILP
     /// parity sweep so the two sweeps probe the same distribution.
     #[test]
-    fn dp_vs_greedy_random_sweep() {
+    fn ordering_and_cutter_contribution_sweep() {
         use std::collections::BTreeMap;
 
         use rand::SeedableRng;
@@ -1199,177 +1164,148 @@ mod tests {
         let n_values: Vec<usize> = vec![8, 12, 16, 24, 32];
         let trials_per_combo: usize = 25;
 
+        #[derive(Default)]
+        struct CellStats {
+            feas: usize,
+            k_sum: usize,
+            k_max: usize,
+        }
+        impl CellStats {
+            fn record(&mut self, k: Option<usize>) {
+                if let Some(k) = k {
+                    self.feas += 1;
+                    self.k_sum += k;
+                    if k > self.k_max {
+                        self.k_max = k;
+                    }
+                }
+            }
+        }
+
+        const ORDERINGS: [&str; 3] = ["bp", "dfs", "random"];
+        const CUTTERS: [&str; 2] = ["dp", "greedy"];
+
+        let mut cells: BTreeMap<(&str, &str), CellStats> = BTreeMap::new();
+        let mut dp_beats_greedy: BTreeMap<&str, usize> = BTreeMap::new();
+        let mut dp_rescues_greedy: BTreeMap<&str, usize> = BTreeMap::new();
+        let mut k_rescues: BTreeMap<&str, usize> = BTreeMap::new();
+        let mut feas_rescues: BTreeMap<&str, usize> = BTreeMap::new();
+
+        let mut total: usize = 0;
         let mut rng = ChaCha20Rng::seed_from_u64(0xDEADBEEF);
-        let mut checked = 0_usize;
-        let mut both_feasible = 0_usize;
-        let mut dp_rescue = 0_usize;
-        let mut k_diff: BTreeMap<i64, usize> = BTreeMap::new();
-        let mut k_diff_by_variant: BTreeMap<&str, BTreeMap<i64, usize>> = BTreeMap::new();
 
         for (label, params) in &param_variants {
             for &n in &n_values {
                 for trial in 0..trials_per_combo {
-                    let input = random_input(&mut rng, n, params.clone());
-                    let dp_out = partition(&input);
-                    let greedy_out = partition_greedy_only(&input);
-
-                    checked += 1;
-                    match (&dp_out, &greedy_out) {
-                        (Some(d), Some(g)) => {
-                            both_feasible += 1;
-                            let diff = g.pod_count as i64 - d.pod_count as i64;
-                            *k_diff.entry(diff).or_insert(0) += 1;
-                            *k_diff_by_variant
-                                .entry(label)
-                                .or_default()
-                                .entry(diff)
-                                .or_insert(0) += 1;
-                            if diff < 0 {
-                                panic!(
-                                    "greedy returned smaller K than DP on [{} n={} trial={}]: \
-                                     DP={}, greedy={}",
-                                    label, n, trial, d.pod_count, g.pod_count
-                                );
-                            }
-                        }
-                        (Some(d), None) => {
-                            dp_rescue += 1;
-                            eprintln!(
-                                "DP RESCUE [{} n={} trial={}]: DP={} PODs, greedy=none",
-                                label, n, trial, d.pod_count
-                            );
-                        }
-                        (None, Some(_)) => {
-                            panic!(
-                                "greedy feasible but DP infeasible on [{} n={} trial={}] \
-                                 (DP considers greedy's cuts as a subset of its choices, \
-                                 so this should never happen)",
-                                label, n, trial
-                            );
-                        }
-                        (None, None) => {}
-                    }
-                }
-            }
-        }
-
-        eprintln!();
-        eprintln!("=== DP-vs-greedy random sweep ===");
-        eprintln!(
-            "  checked={} both_feasible={} dp_rescue={}",
-            checked, both_feasible, dp_rescue
-        );
-        eprintln!("  K diff (K_greedy - K_dp) overall:");
-        for (diff, count) in &k_diff {
-            eprintln!("    diff={:+}: {}", diff, count);
-        }
-        eprintln!("  K diff by variant:");
-        for (variant, dist) in &k_diff_by_variant {
-            eprint!("    {}: ", variant);
-            for (diff, count) in dist {
-                eprint!("({:+}: {}) ", diff, count);
-            }
-            eprintln!();
-        }
-
-        // The right-direction divergence ("greedy feasible, DP infeasible")
-        // would be a bug and is panicked above. The other direction ("DP
-        // feasible, greedy infeasible") is reported as `dp_rescue` and is
-        // the empirical justification for the DP layer; no assertion on it
-        // because the goal here is to *measure* DP's contribution, not
-        // enforce it.
-    }
-
-    /// One-off measurement: across the same random distribution as the
-    /// DP-vs-greedy sweep, how often does DFS-from-sinks produce a
-    /// strictly better K than bin-packing on the same input?
-    #[test]
-    fn dfs_vs_bin_packing_contribution_sweep() {
-        use std::collections::BTreeMap;
-
-        use rand::SeedableRng;
-        use rand_chacha::ChaCha20Rng;
-
-        use super::super::partition_milp::random_input;
-
-        let param_variants: Vec<(&str, Params)> = vec![
-            (
-                "tight",
-                Params {
-                    max_statements: 3,
-                    max_input_pods: 2,
-                    ..Params::default()
-                },
-            ),
-            (
-                "medium",
-                Params {
-                    max_statements: 5,
-                    max_input_pods: 3,
-                    ..Params::default()
-                },
-            ),
-            (
-                "resource-pressure",
-                Params {
-                    max_statements: 8,
-                    max_input_pods: 3,
-                    max_signed_by: 2,
-                    ..Params::default()
-                },
-            ),
-        ];
-        let n_values: Vec<usize> = vec![8, 12, 16, 24, 32];
-        let trials_per_combo: usize = 25;
-
-        let mut rng = ChaCha20Rng::seed_from_u64(0xDEADBEEF);
-        let mut head_to_head: BTreeMap<i64, usize> = BTreeMap::new();
-        let mut dfs_rescues_overall: usize = 0;
-        let mut compared: usize = 0;
-
-        for (_label, params) in &param_variants {
-            for &n in &n_values {
-                for _ in 0..trials_per_combo {
+                    total += 1;
                     let input = random_input(&mut rng, n, params.clone());
                     let identity: Vec<usize> = (0..input.num_statements()).collect();
-                    let k_bp = kahn_bin_packing(&input, &identity)
-                        .and_then(|o| partition_with_ordering(&input, &o))
-                        .map(|s| s.pod_count);
-                    let dfs_ord = build_dfs_topo_order(&input);
-                    let k_dfs = partition_with_ordering(&input, &dfs_ord).map(|s| s.pod_count);
 
-                    // The 10 random-priority orderings the production
-                    // pipeline runs alongside BP and DFS.
+                    let k_per_ord_dp = |o: &[usize]| -> Option<usize> {
+                        partition_with_ordering(&input, o).map(|s| s.pod_count)
+                    };
+                    let k_per_ord_greedy = |o: &[usize]| -> Option<usize> {
+                        greedy_segments(o, &input, true).map(|s| s.len())
+                    };
+
+                    // Per-individual-ordering correctness invariant: greedy
+                    // never strictly beats DP on the same ordering, and DP
+                    // is always feasible where greedy is. Checked here so
+                    // the random tier's individual orderings are tested
+                    // separately from the min-of-N aggregation used in the
+                    // contribution stats below.
+                    let check_invariant =
+                        |ord: &str,
+                         k_dp: Option<usize>,
+                         k_gr: Option<usize>,
+                         suffix: &str| match (k_dp, k_gr) {
+                            (Some(d), Some(g)) => assert!(
+                                d <= g,
+                                "greedy strictly beat DP on {}{} [{} n={} trial={}] \
+                                 (greedy={}, dp={})",
+                                ord,
+                                suffix,
+                                label,
+                                n,
+                                trial,
+                                g,
+                                d,
+                            ),
+                            (None, Some(_)) => unreachable!(
+                                "greedy feasible but DP infeasible on {}{} [{} n={} trial={}]: \
+                                 DP considers greedy's cuts as a subset of its choices",
+                                ord, suffix, label, n, trial,
+                            ),
+                            _ => {}
+                        };
+
+                    let bp_ord = kahn_bin_packing(&input, &identity);
+                    let dfs_ord = build_dfs_topo_order(&input);
+                    let k_bp_dp = bp_ord.as_deref().and_then(k_per_ord_dp);
+                    let k_bp_gr = bp_ord.as_deref().and_then(k_per_ord_greedy);
+                    let k_dfs_dp = k_per_ord_dp(&dfs_ord);
+                    let k_dfs_gr = k_per_ord_greedy(&dfs_ord);
+                    check_invariant("bp", k_bp_dp, k_bp_gr, "");
+                    check_invariant("dfs", k_dfs_dp, k_dfs_gr, "");
+
+                    let mut k_rnd_dp: Option<usize> = None;
+                    let mut k_rnd_gr: Option<usize> = None;
                     let mut rprng = ChaCha20Rng::seed_from_u64(RANDOM_SEED);
-                    let mut k_best_random: Option<usize> = None;
-                    for _ in 0..NUM_RANDOM_ORDERINGS {
+                    for i in 0..NUM_RANDOM_ORDERINGS {
                         let prio = random_priority(&mut rprng, input.num_statements());
-                        if let Some(o) = kahn_with_priority(&input, &prio) {
-                            if let Some(out) = partition_with_ordering(&input, &o) {
-                                k_best_random = Some(
-                                    k_best_random.map_or(out.pod_count, |k| k.min(out.pod_count)),
-                                );
-                            }
+                        let Some(o) = kahn_with_priority(&input, &prio) else {
+                            continue;
+                        };
+                        let k_dp = k_per_ord_dp(&o);
+                        let k_gr = k_per_ord_greedy(&o);
+                        check_invariant("random", k_dp, k_gr, &format!(" #{}", i));
+                        if let Some(k) = k_dp {
+                            k_rnd_dp = Some(k_rnd_dp.map_or(k, |cur| cur.min(k)));
+                        }
+                        if let Some(k) = k_gr {
+                            k_rnd_gr = Some(k_rnd_gr.map_or(k, |cur| cur.min(k)));
                         }
                     }
 
-                    if let (Some(bp), Some(dfs)) = (k_bp, k_dfs) {
-                        compared += 1;
-                        let d = dfs as i64 - bp as i64;
-                        *head_to_head.entry(d).or_insert(0) += 1;
-
-                        // "Rescue": DFS strictly beats the best of BP and
-                        // all 10 random orderings.
-                        let k_others = match (Some(bp), k_best_random) {
-                            (Some(a), Some(b)) => Some(a.min(b)),
-                            (Some(a), None) => Some(a),
-                            (None, Some(b)) => Some(b),
-                            (None, None) => None,
-                        };
-                        if let Some(others) = k_others {
-                            if dfs < others {
-                                dfs_rescues_overall += 1;
+                    // Tier-level contribution stats. For the random tier
+                    // these aggregate min-over-N orderings, matching how
+                    // production consumes the tier; for bp/dfs each tier
+                    // is a single ordering. Per-individual-ordering
+                    // correctness is already asserted above.
+                    let row = [
+                        ("bp", k_bp_dp, k_bp_gr),
+                        ("dfs", k_dfs_dp, k_dfs_gr),
+                        ("random", k_rnd_dp, k_rnd_gr),
+                    ];
+                    for &(ord, k_dp, k_gr) in &row {
+                        cells.entry((ord, "dp")).or_default().record(k_dp);
+                        cells.entry((ord, "greedy")).or_default().record(k_gr);
+                        match (k_dp, k_gr) {
+                            (Some(d), Some(g)) if d < g => {
+                                *dp_beats_greedy.entry(ord).or_default() += 1;
                             }
+                            (Some(_), None) => {
+                                *dp_rescues_greedy.entry(ord).or_default() += 1;
+                            }
+                            _ => {}
+                        }
+                    }
+
+                    let dp_ks = [("bp", k_bp_dp), ("dfs", k_dfs_dp), ("random", k_rnd_dp)];
+                    for &(this_ord, this_k) in &dp_ks {
+                        let others_min = dp_ks
+                            .iter()
+                            .filter(|(o, _)| *o != this_ord)
+                            .filter_map(|(_, k)| *k)
+                            .min();
+                        match (this_k, others_min) {
+                            (Some(t), Some(o)) if t < o => {
+                                *k_rescues.entry(this_ord).or_default() += 1;
+                            }
+                            (Some(_), None) => {
+                                *feas_rescues.entry(this_ord).or_default() += 1;
+                            }
+                            _ => {}
                         }
                     }
                 }
@@ -1377,14 +1313,57 @@ mod tests {
         }
 
         eprintln!();
-        eprintln!("=== DFS-from-sinks vs bin-packing head-to-head (K_dfs - K_bp) ===");
-        for (d, count) in &head_to_head {
-            eprintln!("    diff={:+}: {}", d, count);
+        eprintln!(
+            "=== Ordering tier x Cutter contribution sweep (inputs={}) ===",
+            total
+        );
+        eprintln!();
+        eprintln!(
+            "Per-tier K stats (random row = best of {} orderings per input):",
+            NUM_RANDOM_ORDERINGS
+        );
+        eprintln!(
+            "  {:<8} {:<8} {:>5}  {:>7}  {:>6}",
+            "tier", "cutter", "feas", "mean K", "max K"
+        );
+        for ord in &ORDERINGS {
+            for cut in &CUTTERS {
+                let (feas, k_sum, k_max) = cells
+                    .get(&(*ord, *cut))
+                    .map_or((0, 0, 0), |c| (c.feas, c.k_sum, c.k_max));
+                let mean = if feas == 0 {
+                    0.0
+                } else {
+                    k_sum as f64 / feas as f64
+                };
+                eprintln!(
+                    "  {:<8} {:<8} {:>5}  {:>7.2}  {:>6}",
+                    ord, cut, feas, mean, k_max
+                );
+            }
         }
         eprintln!();
         eprintln!(
-            "DFS strictly beats min(BP, 10 random) on: {}/{} inputs",
-            dfs_rescues_overall, compared
+            "DP vs greedy on the same tier (random = best of {}):",
+            NUM_RANDOM_ORDERINGS
         );
+        for ord in &ORDERINGS {
+            eprintln!(
+                "  {:<8} DP<greedy on {} inputs;  DP feasible / greedy infeasible on {}",
+                ord,
+                dp_beats_greedy.get(*ord).copied().unwrap_or(0),
+                dp_rescues_greedy.get(*ord).copied().unwrap_or(0),
+            );
+        }
+        eprintln!();
+        eprintln!("Per-tier rescue against the other two (DP cuts):");
+        for ord in &ORDERINGS {
+            eprintln!(
+                "  {:<8} K_rescue={} feasibility_rescue={}",
+                ord,
+                k_rescues.get(*ord).copied().unwrap_or(0),
+                feas_rescues.get(*ord).copied().unwrap_or(0),
+            );
+        }
     }
 }
