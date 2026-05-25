@@ -411,24 +411,18 @@ fn refine_ordering(
     current
 }
 
-/// DP-based partitioner. Given an ordering, find where to place K-1 boundaries
-/// so every link satisfies the per-link caps. Returns the per-link assignment
-/// in original-index order, or `None` if no placement fits at this K.
-///
 /// Splitting a predicate is two problems: pick a statement order, then pick
 /// where to cut it. Picking the order is the hard part: that's the job of
 /// the heuristics upstream (RCM, refinement, random shuffles). Picking the
-/// cuts, given a fixed order, is easy: a left-to-right DP finds a valid
-/// placement if one exists. So if the splitter ever fails, it's because no
-/// ordering it tried worked, not because the cutting step gave up.
-/// Cost is O(n^2 * K * W).
-fn try_dp_at_k(
+/// cuts, given a fixed order, is easy: a left-to-right prefix DP finds a
+/// min-K partition if one exists. So if the splitter ever fails, it's
+/// because no ordering it tried worked, not because the cutting step gave up.
+fn try_partition(
     ordering: &[usize],
-    k: usize,
     statements_using: &[Vec<usize>],
     is_original_public: &[bool],
     params: &Params,
-) -> Option<LinkAssignment> {
+) -> Option<(usize, LinkAssignment)> {
     let n = ordering.len();
     let max_arity = Params::max_custom_predicate_arity();
     let max_args = Params::max_statement_args();
@@ -468,55 +462,78 @@ fn try_dp_at_k(
         })
         .collect();
 
-    // dp[cur_k][p] = Some(prev_a) if 0..p can be partitioned into exactly
-    // cur_k links, with the cur_k'th link being chunk prev_a..p. Iterating
-    // `a` from largest to smallest fills earlier links to the cap and lets
-    // the trailing link absorb any slack, keeping the resulting chain in
-    // source order whenever the caps permit it.
-    let mut dp: Vec<Vec<Option<usize>>> = vec![vec![None; n + 1]; k + 1];
-    dp[0][0] = Some(0);
+    // True iff the segment `[a..p]` admits a link with `incoming_set[a]`
+    // as its incoming-public-args under the total-wildcards cap. The
+    // statement-count cap is the caller's job (via the `a` lower bound).
+    let segment_ok = |a: usize, p: usize| -> bool {
+        let Some(inc) = &incoming_set[a] else {
+            return false;
+        };
+        let mut total = inc.clone();
+        for pos in a..p {
+            total.extend(&wcs_at[pos]);
+        }
+        total.len() <= max_wildcards
+    };
 
-    for cur_k in 1..=k {
-        let is_last = cur_k == k;
-        let stmt_cap = if is_last { max_arity } else { max_arity - 1 };
-
-        for p in 1..=n {
-            let a_min = p.saturating_sub(stmt_cap);
-            for a in (a_min..p).rev() {
-                if dp[cur_k - 1][a].is_none() {
-                    continue;
-                }
-                let Some(inc) = &incoming_set[a] else {
-                    continue;
-                };
-                let mut total = inc.clone();
-                for pos in a..p {
-                    total.extend(&wcs_at[pos]);
-                }
-                if total.len() > max_wildcards {
-                    continue;
-                }
-                dp[cur_k][p] = Some(a);
-                break;
+    // Main prefix DP over non-terminal links (cap max_arity - 1).
+    let non_last_cap = max_arity - 1;
+    let mut dp: Vec<Option<(usize, usize)>> = vec![None; n + 1];
+    dp[0] = Some((0, 0));
+    for p in 1..=n {
+        let a_lo = p.saturating_sub(non_last_cap);
+        // Largest a first: source order wins ties.
+        for a in (a_lo..p).rev() {
+            let Some((prev_k, _)) = dp[a] else {
+                continue;
+            };
+            if !segment_ok(a, p) {
+                continue;
+            }
+            let new_k = prev_k + 1;
+            if dp[p].is_none_or(|(cur_k, _)| new_k < cur_k) {
+                dp[p] = Some((new_k, a));
             }
         }
     }
 
-    dp[k][n]?;
-
-    let mut links: LinkAssignment = vec![Vec::new(); k];
-    let mut cur_p = n;
-    for cur_k in (1..=k).rev() {
-        let a = dp[cur_k][cur_p].expect("dp reachability already verified");
-        for pos in a..cur_p {
-            links[cur_k - 1].push(ordering[pos]);
+    // Terminal scan: find the largest `a` such that `[a..n]` is feasible
+    // as the last link (cap max_arity) and `dp[a]` is reachable; that gives
+    // the smallest overall K because later prefixes have larger or equal
+    // min_k.
+    let a_lo = n.saturating_sub(max_arity);
+    let mut best: Option<(usize, usize)> = None; // (total_k, end_start)
+    for a in (a_lo..n).rev() {
+        let Some((prev_k, _)) = dp[a] else {
+            continue;
+        };
+        if !segment_ok(a, n) {
+            continue;
         }
-        cur_p = a;
+        let total_k = prev_k + 1;
+        if best.is_none_or(|(cur_k, _)| total_k < cur_k) {
+            best = Some((total_k, a));
+        }
+    }
+    let (k, end_start) = best?;
+
+    // Reconstruct: last link first, then walk dp's prev_a chain.
+    let mut links: LinkAssignment = vec![Vec::new(); k];
+    for pos in end_start..n {
+        links[k - 1].push(ordering[pos]);
+    }
+    let mut cur_p = end_start;
+    for i in (0..k - 1).rev() {
+        let (_, prev_a) = dp[cur_p].expect("dp reachability already verified");
+        for pos in prev_a..cur_p {
+            links[i].push(ordering[pos]);
+        }
+        cur_p = prev_a;
     }
     for link in &mut links {
         link.sort();
     }
-    Some(links)
+    Some((k, links))
 }
 
 /// Per-link statement assignment: `links[i]` is the list of original statement
@@ -756,24 +773,28 @@ fn split_into_chain(
     let k_min = compute_min_links(n);
     let orderings = candidate_orderings(&input);
 
-    let mut found: Option<LinkAssignment> = None;
-    'dp_search: for k in k_min..=n {
-        for ordering in &orderings {
-            if let Some(assignment) = try_dp_at_k(
-                ordering,
-                k,
-                &input.statements_using,
-                &input.is_original_public,
-                params,
-            ) {
-                found = Some(assignment);
-                break 'dp_search;
+    let mut found: Option<(usize, LinkAssignment)> = None;
+    for ordering in &orderings {
+        let Some((k, assignment)) = try_partition(
+            ordering,
+            &input.statements_using,
+            &input.is_original_public,
+            params,
+        ) else {
+            continue;
+        };
+        if found.as_ref().is_none_or(|(best_k, _)| k < *best_k) {
+            found = Some((k, assignment));
+            // K_min is the arity-only lower bound; no ordering can beat it,
+            // so stop the moment any candidate hits it.
+            if k <= k_min {
+                break;
             }
         }
     }
 
     let assignment = match found {
-        Some(a) => a,
+        Some((_, a)) => a,
         None => {
             // Lowest-cost ordering is at orderings[0] by construction;
             // candidate_orderings always produces at least the source order.
@@ -978,7 +999,7 @@ fn validate_chain(chain: &[CustomPredicateDef], params: &Params) {
 // overflows and renders a structured error. Not on the critical path: a bug
 // here makes diagnostics worse, not splits wrong.
 //
-// `first_cap_violation` mirrors the per-link cap rules in `try_dp_at_k`; if
+// `first_cap_violation` mirrors the per-link cap rules in `try_partition`; if
 // those rules change, update both.
 // ============================================================================
 
