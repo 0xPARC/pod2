@@ -45,8 +45,8 @@ use crate::{
             merkletree::{
                 verify_merkle_proof_circuit, verify_merkle_proof_existence_circuit,
                 verify_merkle_state_transition_circuit, MerkleClaimAndProof,
-                MerkleClaimAndProofTarget, MerkleProof, MerkleProofExistenceTarget, MerkleTreeOp,
-                MerkleTreeStateTransitionProof, MerkleTreeStateTransitionProofTarget,
+                MerkleClaimAndProofTarget, MerkleProof, MerkleProofExistenceTarget, MerkleTree,
+                MerkleTreeOp, MerkleTreeStateTransitionProof, MerkleTreeStateTransitionProofTarget,
             },
             signature::{verify_signature_circuit, SignatureVerifyTarget},
         },

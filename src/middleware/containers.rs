@@ -197,6 +197,28 @@ impl Container {
         Ok(self.mt().prove_nonexistence(&key_raw)?)
     }
     pub fn insert(&mut self, key: Value, value: Value) -> Result<MerkleTreeStateTransitionProof> {
+        // DBG
+        let hash: Hash = serde_json::from_str(
+            "\"1a3770fb451cc268188c073a6352aa4b35beadf20e5989a2996bdd904fffadf5\"",
+        )
+        .unwrap();
+        if self.root == hash {
+            println!("=== DBG ===");
+            for it in self.iter() {
+                let (k, v) = it.unwrap();
+                println!(
+                    "{} {}",
+                    serde_json::to_string(&k.raw()).unwrap(),
+                    serde_json::to_string(&v.raw()).unwrap()
+                );
+            }
+            println!(
+                "insert (key value): {} {}",
+                serde_json::to_string(&key.raw()).unwrap(),
+                serde_json::to_string(&value.raw()).unwrap()
+            );
+        }
+
         let (key_raw, value_raw) = (key.raw(), value.raw());
         store_value(self.db.as_mut(), key)?;
         store_value(self.db.as_mut(), value)?;

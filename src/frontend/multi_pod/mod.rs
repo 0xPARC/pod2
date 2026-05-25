@@ -454,7 +454,7 @@ impl SolvedMultiPod {
         }
 
         if p > 0 && !is_output {
-            builder.extend_input_pod0_public_statements();
+            builder.extend_input_pod0_public_statements().unwrap();
         }
 
         let n_orig = self.operations.len();

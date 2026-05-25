@@ -12,13 +12,16 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 pub use serialization::SerializedMainPod;
 
-use crate::middleware::{
-    self, check_custom_pred,
-    containers::{Container, Dictionary},
-    fill_wildcard_values, hash_op, max_op, prod_op, root_key_to_ak, sum_op, AnchoredKey, Hash,
-    InputPodOpenStatement, MainPodInputs, MainPodProver, NativeOperation, OperationAux,
-    OperationType, Params, PublicKey, RawValue, Signature, Signer, Statement, StatementArg, StrKey,
-    VDSet, Value, ValueRef, BASE_PARAMS, EMPTY_VALUE,
+use crate::{
+    backends::plonky2::primitives::merkletree::{MerkleTree, MerkleTreeOp},
+    middleware::{
+        self, check_custom_pred,
+        containers::{Container, Dictionary},
+        fill_wildcard_values, hash_op, max_op, prod_op, root_key_to_ak, sum_op, AnchoredKey, Hash,
+        InputPodOpenStatement, MainPodInputs, MainPodProver, NativeOperation, OperationAux,
+        OperationType, Params, PublicKey, RawValue, Signature, Signer, Statement, StatementArg,
+        StrKey, VDSet, Value, ValueRef, BASE_PARAMS, EMPTY_VALUE,
+    },
 };
 
 mod custom;
@@ -522,17 +525,17 @@ impl MainPodBuilder {
                             return Err(native_arg_error());
                         }
                     }
-                    (ContainsFromEntries, &[a1, a2, a3], _) => {
-                        let (r1, _v1) = a1.value_and_ref().ok_or_else(native_arg_error)?;
-                        let (r2, _v2) = a2.value_and_ref().ok_or_else(native_arg_error)?;
-                        let (r3, _v3) = a3.value_and_ref().ok_or_else(native_arg_error)?;
-                        // TODO: validate proof
+                    (ContainsFromEntries, &[a1, a2, a3], OperationAux::MerkleProof(mtp)) => {
+                        let (r1, v1) = a1.value_and_ref().ok_or_else(native_arg_error)?;
+                        let (r2, v2) = a2.value_and_ref().ok_or_else(native_arg_error)?;
+                        let (r3, v3) = a3.value_and_ref().ok_or_else(native_arg_error)?;
+                        MerkleTree::verify(v1.raw().into(), mtp, &v2.raw(), &v3.raw()).unwrap();
                         Statement::Contains(r1, r2, r3)
                     }
-                    (NotContainsFromEntries, &[a1, a2], _) => {
-                        let (r1, _v1) = a1.value_and_ref().ok_or_else(native_arg_error)?;
-                        let (r2, _v2) = a2.value_and_ref().ok_or_else(native_arg_error)?;
-                        // TODO: validate proof
+                    (NotContainsFromEntries, &[a1, a2], OperationAux::MerkleProof(mtp)) => {
+                        let (r1, v1) = a1.value_and_ref().ok_or_else(native_arg_error)?;
+                        let (r2, v2) = a2.value_and_ref().ok_or_else(native_arg_error)?;
+                        MerkleTree::verify_nonexistence(v1.raw().into(), mtp, &v2.raw()).unwrap();
                         Statement::NotContains(r1, r2)
                     }
                     (PublicKeyOf, &[a1, a2], _) => {
@@ -553,27 +556,53 @@ impl MainPodBuilder {
                             return Err(native_arg_error());
                         }
                     }
-                    (ContainerInsertFromEntries, &[a1, a2, a3, a4], _) => {
-                        let (r1, _v1) = a1.value_and_ref().ok_or_else(native_arg_error)?;
-                        let (r2, _v2) = a2.value_and_ref().ok_or_else(native_arg_error)?;
-                        let (r3, _v3) = a3.value_and_ref().ok_or_else(native_arg_error)?;
-                        let (r4, _v4) = a4.value_and_ref().ok_or_else(native_arg_error)?;
-                        // TODO: validate proof
+                    (
+                        ContainerInsertFromEntries,
+                        &[a1, a2, a3, a4],
+                        OperationAux::MerkleTreeStateTransitionProof(mtp),
+                    ) => {
+                        let (r1, v1) = a1.value_and_ref().ok_or_else(native_arg_error)?;
+                        let (r2, v2) = a2.value_and_ref().ok_or_else(native_arg_error)?;
+                        let (r3, v3) = a3.value_and_ref().ok_or_else(native_arg_error)?;
+                        let (r4, v4) = a4.value_and_ref().ok_or_else(native_arg_error)?;
+                        assert_eq!(mtp.op, MerkleTreeOp::Insert);
+                        assert_eq!(mtp.new_root, v1.raw().into());
+                        assert_eq!(mtp.old_root, v2.raw().into());
+                        assert_eq!(mtp.op_key, v3.raw());
+                        assert_eq!(mtp.op_value, v4.raw());
+                        MerkleTree::verify_state_transition(mtp).unwrap();
                         Statement::ContainerInsert(r1, r2, r3, r4)
                     }
-                    (ContainerUpdateFromEntries, &[a1, a2, a3, a4], _) => {
-                        let (r1, _v1) = a1.value_and_ref().ok_or_else(native_arg_error)?;
-                        let (r2, _v2) = a2.value_and_ref().ok_or_else(native_arg_error)?;
-                        let (r3, _v3) = a3.value_and_ref().ok_or_else(native_arg_error)?;
-                        let (r4, _v4) = a4.value_and_ref().ok_or_else(native_arg_error)?;
-                        // TODO: validate proof
+                    (
+                        ContainerUpdateFromEntries,
+                        &[a1, a2, a3, a4],
+                        OperationAux::MerkleTreeStateTransitionProof(mtp),
+                    ) => {
+                        let (r1, v1) = a1.value_and_ref().ok_or_else(native_arg_error)?;
+                        let (r2, v2) = a2.value_and_ref().ok_or_else(native_arg_error)?;
+                        let (r3, v3) = a3.value_and_ref().ok_or_else(native_arg_error)?;
+                        let (r4, v4) = a4.value_and_ref().ok_or_else(native_arg_error)?;
+                        assert_eq!(mtp.op, MerkleTreeOp::Update);
+                        assert_eq!(mtp.new_root, v1.raw().into());
+                        assert_eq!(mtp.old_root, v2.raw().into());
+                        assert_eq!(mtp.op_key, v3.raw());
+                        assert_eq!(mtp.op_value, v4.raw());
+                        MerkleTree::verify_state_transition(mtp).unwrap();
                         Statement::ContainerUpdate(r1, r2, r3, r4)
                     }
-                    (ContainerDeleteFromEntries, &[a1, a2, a3], _) => {
-                        let (r1, _v1) = a1.value_and_ref().ok_or_else(native_arg_error)?;
-                        let (r2, _v2) = a2.value_and_ref().ok_or_else(native_arg_error)?;
-                        let (r3, _v3) = a3.value_and_ref().ok_or_else(native_arg_error)?;
-                        // TODO: validate proof
+                    (
+                        ContainerDeleteFromEntries,
+                        &[a1, a2, a3],
+                        OperationAux::MerkleTreeStateTransitionProof(mtp),
+                    ) => {
+                        let (r1, v1) = a1.value_and_ref().ok_or_else(native_arg_error)?;
+                        let (r2, v2) = a2.value_and_ref().ok_or_else(native_arg_error)?;
+                        let (r3, v3) = a3.value_and_ref().ok_or_else(native_arg_error)?;
+                        assert_eq!(mtp.op, MerkleTreeOp::Delete);
+                        assert_eq!(mtp.new_root, v1.raw().into());
+                        assert_eq!(mtp.old_root, v2.raw().into());
+                        assert_eq!(mtp.op_key, v3.raw());
+                        MerkleTree::verify_state_transition(mtp).unwrap();
                         Statement::ContainerDelete(r1, r2, r3)
                     }
                     (ReplaceValueWithEntry, &args, _) => {
