@@ -432,13 +432,13 @@ impl GreedyState {
         Some(self.scratch_new_producers.len() + self.scratch_new_ext_imports.len())
     }
 
-    /// Apply the admission of `s` to the current segment: update
+    /// Apply the admission of `stmt` to the current segment: update
     /// resource totals, custom-predicate dedup, the export-tracking
     /// countdowns, and the input-tree import sets. The publish-cap
     /// impact must already have been verified by [`can_extend`].
     fn commit_extend(
         &mut self,
-        s: usize,
+        stmt: usize,
         cost: &OperationCost,
         deps: &[AbstractDep],
         pos_of: &[usize],
@@ -454,7 +454,7 @@ impl GreedyState {
         }
         self.totals.distinct_custom_predicates = self.distinct_cps.len();
         // Commit the subtraction side of can_extend's tentative count:
-        // each in-segment producer of `s` loses one unfinished consumer,
+        // each in-segment producer of `stmt` loses one unfinished consumer,
         // and any whose count hits zero drops out of the exported set
         // (unless it's separately output-public).
         self.scratch_seen_segment_deps.clear();
@@ -472,10 +472,11 @@ impl GreedyState {
                 }
             }
         }
-        // Set up s's own export-tracking entry: a fresh countdown of its
-        // consumers (none admitted yet, since s itself was just admitted)
-        // and a +1 to the exported set if s is itself an exporter.
-        self.unfinished_consumers[s] = distinct_consumer_count;
+        // Set up stmt's own export-tracking entry: a fresh countdown of
+        // its consumers (none admitted yet, since stmt itself was just
+        // admitted) and a +1 to the exported set if stmt is itself an
+        // exporter.
+        self.unfinished_consumers[stmt] = distinct_consumer_count;
         if is_exporter {
             self.exported_count += 1;
         }
@@ -734,9 +735,10 @@ pub(super) fn simulate_greedy_k(input: &InputShape, ordering: &[usize]) -> Optio
     greedy_segments(ordering, input, false).map(|s| s.len())
 }
 
-/// Workspace-backed feasibility check. Returns true iff segment `[a..p]`
-/// fits in one POD; `is_terminal` additionally enforces output-POD
-/// availability for output-public statements upstream of `a`.
+/// Workspace-backed feasibility check. Returns true iff segment
+/// `[start..end]` fits in one POD; `is_terminal` additionally enforces
+/// output-POD availability for output-public statements upstream of
+/// `start`.
 ///
 /// Reuses `workspace` for the membership sets and the distinct-CP dedup
 /// buffer; both are reset per call but their underlying allocations are
@@ -747,13 +749,13 @@ fn segment_feasible_with(
     max_consumer_pos: &[usize],
     output_pub_set: &HashSet<usize>,
     input: &InputShape,
-    a: usize,
-    p: usize,
+    start: usize,
+    end: usize,
     is_terminal: bool,
     workspace: &mut DpWorkspace,
 ) -> bool {
     let params = &input.params;
-    let segment = &ordering[a..p];
+    let segment = &ordering[start..end];
     if segment.is_empty() || segment.len() > params.max_statements {
         return false;
     }
@@ -763,7 +765,7 @@ fn segment_feasible_with(
     // input-tree imports. Input-tree imports come in two flavours, both
     // capped together by `max_open_input_statements` because the POD
     // circuit reads them through the same input-tree slots:
-    // - prev-pod producers: statements produced in `[0..a)` (slot 0,
+    // - prev-pod producers: statements produced in `[0..start)` (slot 0,
     //   the chain slot connecting this POD to its predecessor).
     // - external imports: external (input) statements (slots 1..N).
     // External-pod references are tracked separately for `max_input_pods`,
@@ -788,7 +790,7 @@ fn segment_feasible_with(
         for dep in &input.dep_edges[s] {
             match dep {
                 AbstractDep::Internal(d) => {
-                    if pos_in_ordering[*d] < a {
+                    if pos_in_ordering[*d] < start {
                         workspace.prev_pod_producers.insert(*d);
                     }
                 }
@@ -826,14 +828,14 @@ fn segment_feasible_with(
 
     if !is_terminal {
         // Publish cap: each statement in the segment that has a consumer
-        // at or beyond `p`, or that is an output-public (the terminal POD
-        // pulls it from the chain), occupies one slot on the chain tree
-        // this POD appends to. The terminal POD doesn't extend the chain:
-        // its fresh-tree size is `|output_public_indices|`, pre-checked
-        // by callers before invoking the partitioner.
+        // at or beyond `end`, or that is an output-public (the terminal
+        // POD pulls it from the chain), occupies one slot on the chain
+        // tree this POD appends to. The terminal POD doesn't extend the
+        // chain: its fresh-tree size is `|output_public_indices|`,
+        // pre-checked by callers before invoking the partitioner.
         let mut exports = 0_usize;
         for &s in segment {
-            if max_consumer_pos[s] >= p || output_pub_set.contains(&s) {
+            if max_consumer_pos[s] >= end || output_pub_set.contains(&s) {
                 exports += 1;
             }
         }
@@ -844,7 +846,7 @@ fn segment_feasible_with(
     // prev-pod producers (the output POD must republish them on its
     // fresh tree).
     for &out_pub in &input.output_public_indices {
-        if pos_in_ordering[out_pub] < a {
+        if pos_in_ordering[out_pub] < start {
             workspace.prev_pod_producers.insert(out_pub);
         }
     }
@@ -1215,10 +1217,9 @@ mod tests {
                     // separately from the min-of-N aggregation used in the
                     // contribution stats below.
                     let check_invariant =
-                        |ord: &str,
-                         k_dp: Option<usize>,
-                         k_gr: Option<usize>,
-                         suffix: &str| match (k_dp, k_gr) {
+                        |ord: &str, k_dp: Option<usize>, k_gr: Option<usize>, suffix: &str| match (
+                            k_dp, k_gr,
+                        ) {
                             (Some(d), Some(g)) => assert!(
                                 d <= g,
                                 "greedy strictly beat DP on {}{} [{} n={} trial={}] \

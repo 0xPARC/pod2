@@ -345,7 +345,7 @@ impl MultiPodBuilder {
             .take(output.pod_count.saturating_sub(1))
             .map(|s| s.len())
             .sum();
-        let chain_capacity = 2 << BASE_PARAMS.max_depth_public_statements_mt;
+        let chain_capacity = 2usize.pow(BASE_PARAMS.max_depth_public_statements_mt as u32);
         if chain_total > chain_capacity {
             return Err(Error::ChainTreeCapacityExceeded {
                 needed: chain_total,
@@ -454,7 +454,7 @@ impl SolvedMultiPod {
         }
 
         if p > 0 && !is_output {
-            builder.extend_input_pod0_public_statements();
+            builder.extend_input_pod0_public_statements()?;
         }
 
         let n_orig = self.operations.len();
