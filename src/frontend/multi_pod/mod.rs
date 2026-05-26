@@ -1,7 +1,5 @@
 //! Multi-POD builder for the Merkle statement tree design.
 //!
-//! See `docs/multipod_merkle_statement_tree.md` for the design overview.
-//!
 //! This is a parallel implementation alongside `super::multi_pod`. The old
 //! solver remains in place during development; once the new POD circuit
 //! lands, this module replaces `multi_pod` and that module is removed.
@@ -780,8 +778,7 @@ fn build_shape_and_index(
     // feasibility), republish all of E's used input statements. The
     // synth-hosting POD already pays one input-pod slot for E, so
     // bundling its other input statements is marginal cost there and
-    // frees downstream consumers from re-referencing E. See
-    // `docs/multipod_merkle_statement_tree.md`.
+    // frees downstream consumers from re-referencing E.
     let mut bundled_pods: HashSet<usize> = HashSet::new();
     for u in 0..external_statements.len() {
         if statement_consumer_count[u] >= 2 || must_republish[u] {
@@ -1093,10 +1090,7 @@ mod tests {
     /// segment first), and dynamic export tracking (the publish-cap
     /// counter releases a segment slot when an admitted statement
     /// absorbs its dep's last unfinished consumer), the heuristic
-    /// reaches K=13. MILP+cap reaches K=12, so the gap is 1 POD. See
-    /// `docs/multipod_merkle_statement_tree.md` ("Custom predicate
-    /// body+head locality" and "Future generators under consideration")
-    /// for the structural reason and candidates that might close it.
+    /// reaches K=13. MILP+cap reaches K=12, so the gap is 1 POD.
     #[test]
     fn cracked_refinery_fixture_partitions() {
         let shape: InputShape =

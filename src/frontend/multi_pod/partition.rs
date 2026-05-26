@@ -661,7 +661,7 @@ fn greedy_segments(
     ordering: &[usize],
     input: &InputShape,
     check_terminal: bool,
-) -> Option<Vec<(usize, usize)>> {
+) -> Option<Vec<Segment>> {
     let n = ordering.len();
     if n == 0 {
         return Some(Vec::new());
@@ -671,43 +671,43 @@ fn greedy_segments(
     let max_consumer_pos = build_max_consumer_pos(&consumers, &pos_in_ordering);
     let output_pub_set: HashSet<usize> = input.output_public_indices.iter().copied().collect();
     let mut ws = DpWorkspace::default();
-    let mut segments: Vec<(usize, usize)> = Vec::new();
-    let mut a = 0_usize;
-    while a < n {
+    let mut segments: Vec<Segment> = Vec::new();
+    let mut start = 0_usize;
+    while start < n {
         if !segment_feasible_with(
             ordering,
             &pos_in_ordering,
             &max_consumer_pos,
             &output_pub_set,
             input,
-            a,
-            a + 1,
+            start,
+            start + 1,
             false,
             &mut ws,
         ) {
             return None;
         }
-        let mut p = a + 1;
-        while p < n
+        let mut end = start + 1;
+        while end < n
             && segment_feasible_with(
                 ordering,
                 &pos_in_ordering,
                 &max_consumer_pos,
                 &output_pub_set,
                 input,
-                a,
-                p + 1,
+                start,
+                end + 1,
                 false,
                 &mut ws,
             )
         {
-            p += 1;
+            end += 1;
         }
-        segments.push((a, p));
-        a = p;
+        segments.push(Segment { start, end });
+        start = end;
     }
     if check_terminal {
-        let (last_a, last_p) = *segments
+        let last = *segments
             .last()
             .expect("non-empty ordering produced no segments");
         if !segment_feasible_with(
@@ -716,8 +716,8 @@ fn greedy_segments(
             &max_consumer_pos,
             &output_pub_set,
             input,
-            last_a,
-            last_p,
+            last.start,
+            last.end,
             true,
             &mut ws,
         ) {
@@ -736,9 +736,9 @@ pub(super) fn simulate_greedy_k(input: &InputShape, ordering: &[usize]) -> Optio
 }
 
 /// Workspace-backed feasibility check. Returns true iff segment
-/// `[start..end]` fits in one POD; `is_terminal` additionally enforces
-/// output-POD availability for output-public statements upstream of
-/// `start`.
+/// `ordering[start..end]` fits in one POD; `is_terminal` additionally
+/// enforces output-POD availability for output-public statements
+/// upstream of `start`.
 ///
 /// Reuses `workspace` for the membership sets and the distinct-CP dedup
 /// buffer; both are reset per call but their underlying allocations are
@@ -857,97 +857,190 @@ fn segment_feasible_with(
     tree_imports_ok(n_chain_imports_terminal, n_ext_imports, n_ext_pods, params)
 }
 
-/// Cut `ordering` into the fewest feasible PODs under per-POD caps.
-/// Returns the boundary list `[(a0, b0), (a1, b1), ..., (ak, n)]` (one
-/// tuple per POD, in chain order), or `None` if no valid partition
-/// exists for this ordering.
+/// A half-open boundary range covering one POD's statements:
+/// `ordering[start..end]`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Segment {
+    start: usize,
+    end: usize,
+}
+
+/// Which flavour of feasibility rules applies to a candidate segment:
+/// the chain-extending rules used for every POD except the last, or
+/// the output-POD rules (fresh public tree, must republish upstream
+/// output-publics).
+#[derive(Clone, Copy)]
+enum PodKind {
+    ChainExtending,
+    Output,
+}
+
+impl PodKind {
+    fn is_terminal(self) -> bool {
+        matches!(self, PodKind::Output)
+    }
+}
+
+/// One row of the `dp` table. The cell at index `end` answers a
+/// hypothetical question: "if we cut right here at boundary `end`,
+/// what's the cheapest way to partition statements `0..end` into
+/// chain-extending PODs?" `pod_count` is the answer (how many PODs);
+/// `prev_start` is where the most recent POD in that cheapest
+/// partition started.
 ///
-/// Dynamic programming over prefixes. `dp[p]` is the min-K non-terminal partition of
-/// `[0..p]`, computed by trying every segment `[a..p]` with `a` in
-/// `[p-W..p)` against [`segment_feasible_with`]. The output (terminal)
-/// segment falls out of a single scan over `[a..n]` for `a` in
-/// `[n-W..n)` after the main loop; pulling it out keeps the `dp[]`
-/// array single-flavoured and touches at most `W` extra segments,
-/// negligible next to the main loop's `n * W` work.
-fn run_dp(ordering: &[usize], input: &InputShape) -> Option<Vec<(usize, usize)>> {
+/// `prev_start` is purely a breadcrumb. The forward sweep only needs
+/// `pod_count` to compute later cells. We store `prev_start` so that,
+/// once the sweep finishes, we can walk backwards through cells to
+/// recover the actual cut positions.
+#[derive(Clone, Copy)]
+struct DpEntry {
+    pod_count: usize,
+    prev_start: usize,
+}
+
+/// Cut `ordering` into the fewest feasible PODs under per-POD caps.
+/// Returns the cut list as a `Vec<Segment>` (one entry per POD, in
+/// chain order), or `None` if no valid partition exists for this
+/// ordering.
+///
+/// Picture the statements laid out in a row. Around them sit `n + 1`
+/// boundary positions: 0 (before the first statement), 1 (between the
+/// first and second), ..., `n` (after the last). Choosing how to
+/// group statements into PODs is just choosing which boundaries to
+/// use as cuts - the run of statements between consecutive cuts is
+/// one POD. We want the fewest cuts possible while keeping every
+/// resulting POD feasible under all the per-POD caps.
+///
+/// We fill a table `dp` left to right, one cell per boundary. The
+/// cell at index `end` records the cheapest answer to "if we cut at
+/// boundary `end`, how few PODs cover statements `0..end`?" To
+/// compute it, we try every possible start for the last POD in the
+/// window `end - max_segment_len .. end`, check feasibility of that
+/// segment, and combine with the already-filled cell at `start`. The
+/// minimum over all feasible starts becomes the cell at `end`. We
+/// also remember which `start` won, so we can reconstruct the cuts
+/// later.
+///
+/// This is just function evaluation in a smart order, not a search.
+/// We never commit to "POD 0 ends here" up front. We just record,
+/// for every boundary, what the cheapest answer would be if a cut
+/// landed there. The actual cuts fall out only at the very end, by
+/// following breadcrumbs.
+///
+/// The last POD in the final chain has different feasibility rules
+/// than the rest: it publishes a fresh tree of public statements
+/// instead of extending the chain tree, and it may need to republish
+/// output-public statements that landed in earlier PODs. So the main
+/// sweep treats every segment as a chain-extending POD, and we do one
+/// extra scan at the end over candidate output-POD starts to pick the
+/// best one. That scan plus the breadcrumb chain back through `dp`
+/// gives the full cut list.
+///
+/// If the output-POD scan finds no feasible start, this ordering has
+/// no valid partition under the caps -- return `None` so the outer
+/// search can try a different ordering.
+#[allow(clippy::needless_range_loop)]
+fn run_dp(ordering: &[usize], input: &InputShape) -> Option<Vec<Segment>> {
     let n = ordering.len();
     let pos_in_ordering = build_pos_in_ordering(ordering);
     let consumers = input.consumers();
     let max_consumer_pos = build_max_consumer_pos(&consumers, &pos_in_ordering);
     let output_pub_set: HashSet<usize> = input.output_public_indices.iter().copied().collect();
-    // Any segment with more than `max_priv_statements` slots is
-    // infeasible, so we only need to consider cuts within the last W
-    // positions. That caps the inner loop at W choices per `p`, giving
-    // the O(n * W^2) total the module doc claims.
+    // Each POD holds at most `max_statements` local statements, so any
+    // candidate segment longer than that is infeasible. This bounds
+    // the inner loop's start window per `end`.
     let max_segment_len = input.params.max_statements;
 
-    // dp[p] = Some((min_k, prev_a)) iff `[0..p]` partitions into `min_k`
-    // non-terminal segments, with the last segment being `[prev_a..p]`.
-    let mut dp: Vec<Option<(usize, usize)>> = vec![None; n + 1];
+    // The table has `n + 1` cells, one per boundary position (including
+    // 0 and n). `dp[0]` is the base case: the empty prefix needs 0 PODs.
+    let mut dp: Vec<Option<DpEntry>> = vec![None; n + 1];
     let mut workspace = DpWorkspace::default();
+    dp[0] = Some(DpEntry {
+        pod_count: 0,
+        prev_start: 0,
+    });
 
-    dp[0] = Some((0, 0));
-
-    for p in 1..=n {
-        let a_lo = p.saturating_sub(max_segment_len);
-        let mut best: Option<(usize, usize)> = None;
-        for (a, slot) in dp.iter().take(p).enumerate().skip(a_lo) {
-            let Some((prev_k, _)) = *slot else { continue };
-            if segment_feasible_with(
+    // Compute one cell: try every feasible start for a POD ending at
+    // `end`, return the cheapest combination (or None if none fit).
+    // Used twice below: once per cell during the forward sweep, and
+    // once more for the output POD's terminal scan.
+    let best_segment_ending_at = |end: usize,
+                                  kind: PodKind,
+                                  dp: &[Option<DpEntry>],
+                                  workspace: &mut DpWorkspace|
+     -> Option<DpEntry> {
+        let window_start = end.saturating_sub(max_segment_len);
+        let mut best: Option<DpEntry> = None;
+        for start in window_start..end {
+            let Some(prev) = dp[start] else { continue };
+            if !segment_feasible_with(
                 ordering,
                 &pos_in_ordering,
                 &max_consumer_pos,
                 &output_pub_set,
                 input,
-                a,
-                p,
-                false,
-                &mut workspace,
+                start,
+                end,
+                kind.is_terminal(),
+                workspace,
             ) {
-                let k = prev_k + 1;
-                if best.is_none_or(|(cur_k, _)| k < cur_k) {
-                    best = Some((k, a));
-                }
+                continue;
+            }
+            let candidate = DpEntry {
+                pod_count: prev.pod_count + 1,
+                prev_start: start,
+            };
+            if best.is_none_or(|b| candidate.pod_count < b.pod_count) {
+                best = Some(candidate);
             }
         }
-        dp[p] = best;
+        best
+    };
+
+    // Forward sweep: fill cells left to right, treating every segment
+    // as a chain-extending POD (the output POD's special rules are
+    // handled separately below).
+    for end in 1..=n {
+        let entry = best_segment_ending_at(end, PodKind::ChainExtending, &dp, &mut workspace);
+        dp[end] = entry;
     }
 
-    // Terminal scan: pick the best `a` such that `[a..n]` is a valid
-    // output segment and `dp[a]` is reachable.
-    let a_lo = n.saturating_sub(max_segment_len);
-    let mut end_start: Option<usize> = None;
-    let mut best_k = usize::MAX;
-    for (a, dp_entry) in dp.iter().enumerate().take(n).skip(a_lo) {
-        let Some((prev_k, _)) = *dp_entry else {
-            continue;
-        };
-        if segment_feasible_with(
-            ordering,
-            &pos_in_ordering,
-            &max_consumer_pos,
-            &output_pub_set,
-            input,
-            a,
-            n,
-            true,
-            &mut workspace,
-        ) && prev_k + 1 < best_k
-        {
-            best_k = prev_k + 1;
-            end_start = Some(a);
-        }
-    }
-    let mut end_start = end_start?;
+    // Terminal scan: pick the cheapest output POD covering `start..n`,
+    // using the output-POD feasibility flavour. Returns `None` if no
+    // candidate is feasible.
+    let terminal = best_segment_ending_at(n, PodKind::Output, &dp, &mut workspace)?;
 
-    let mut segments_rev = vec![(end_start, n)];
-    while end_start > 0 {
-        let (_, prev_a) = dp[end_start].expect("dp reachability already established");
-        segments_rev.push((prev_a, end_start));
-        end_start = prev_a;
+    // Backtrack: walk `prev_start` breadcrumbs from `terminal` back to
+    // boundary 0 to recover the actual cut positions.
+    Some(backtrack_segments(&dp, terminal, n))
+}
+
+/// Reconstruct the cut list by following `prev_start` breadcrumbs.
+///
+/// Each cell `dp[k]` recorded "the most recent POD in my cheapest
+/// partition started at `prev_start`." Starting from the terminal
+/// segment and hopping back along those pointers visits one cell per
+/// POD, in reverse chain order. Reversing the collected `Segment`s
+/// gives the final cut list in chain order.
+///
+/// This walk doesn't search or revise anything; every cell along the
+/// path is already final from the forward sweep.
+fn backtrack_segments(dp: &[Option<DpEntry>], terminal: DpEntry, n: usize) -> Vec<Segment> {
+    let mut cursor = terminal.prev_start;
+    let mut segments = vec![Segment {
+        start: terminal.prev_start,
+        end: n,
+    }];
+    while cursor > 0 {
+        let entry = dp[cursor].expect("dp reachability already established");
+        segments.push(Segment {
+            start: entry.prev_start,
+            end: cursor,
+        });
+        cursor = entry.prev_start;
     }
-    segments_rev.reverse();
-    Some(segments_rev)
+    segments.reverse();
+    segments
 }
 
 /// Cut a single externally-supplied topological ordering into PODs.
@@ -964,12 +1057,12 @@ pub(super) fn partition_with_ordering(
     Some(reconstruct(ordering, &segments))
 }
 
-fn reconstruct(ordering: &[usize], segments: &[(usize, usize)]) -> OutputShape {
+fn reconstruct(ordering: &[usize], segments: &[Segment]) -> OutputShape {
     let pod_count = segments.len();
     let pod_statements: Vec<Vec<usize>> = segments
         .iter()
-        .map(|&(a, p)| {
-            let mut stmts: Vec<usize> = ordering[a..p].to_vec();
+        .map(|seg| {
+            let mut stmts: Vec<usize> = ordering[seg.start..seg.end].to_vec();
             stmts.sort_unstable();
             stmts
         })
