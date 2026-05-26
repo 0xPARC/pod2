@@ -11,7 +11,7 @@ use super::*;
 use crate::{
     backends::plonky2::{
         basetypes::C,
-        circuits::common::tests::I64_TEST_PAIRS,
+        circuits::common::{tests::I64_TEST_PAIRS, IndexTarget},
         mainpod::{
             extract_custom_predicate_verifications, extract_custom_predicates, OperationArg,
             OperationAux, Size,
@@ -1681,8 +1681,60 @@ fn test_custom_pred_verify_hash_table_index_selection() {
     assert!(custom_pred_verify_hash_table_lookup(1, hash0).is_err());
 }
 
-/// Drives `verify_custom_circuit` against a custom_pred_verify_hashes table whose
-/// only real entry stores the hash of `(stored_st, stored_op_type, stored_op_args)`.
+fn prove_connected_aux_query_hashes(
+    hash_pair: impl FnOnce(
+        &mut crate::backends::plonky2::basetypes::CircuitBuilder,
+    ) -> (HashOutTarget, HashOutTarget),
+) -> Result<()> {
+    let config = CircuitConfig::standard_recursion_config();
+    let mut builder = crate::backends::plonky2::basetypes::CircuitBuilder::new(config);
+    let (left, right) = hash_pair(&mut builder);
+    builder.connect_hashes(left, right);
+
+    let pw = PartialWitness::<F>::new();
+    let data = builder.build::<C>();
+    let proof = data.prove(pw)?;
+    data.verify(proof)?;
+    Ok(())
+}
+
+#[test]
+fn test_aux_query_hash_distinguishes_contains_from_not_contains() {
+    assert!(prove_connected_aux_query_hashes(|builder| {
+        let root = builder.constant_hash(HashOut {
+            elements: [F(1), F(2), F(3), F(4)],
+        });
+        let key = builder.constant_value(RawValue::from(42));
+        let value = builder.constant_value(RawValue::from(0));
+        let contains_hash = hash_merkle_contains_query(builder, root, key, value);
+        let not_contains_hash = hash_merkle_not_contains_query(builder, root, key);
+        (contains_hash, not_contains_hash)
+    })
+    .is_err());
+}
+
+#[test]
+fn test_aux_query_hash_distinguishes_transition_delete_from_delete_shape() {
+    assert!(prove_connected_aux_query_hashes(|builder| {
+        let old_root = builder.constant_hash(HashOut {
+            elements: [F(11), F(12), F(13), F(14)],
+        });
+        let new_root = builder.constant_hash(HashOut {
+            elements: [F(21), F(22), F(23), F(24)],
+        });
+        let key = builder.constant_value(RawValue::from(7));
+        let value = builder.constant_value(RawValue::from(0));
+        let delete_op = builder.constant(F::from_canonical_u8(MerkleTreeOp::Delete as u8));
+        let transition_hash =
+            hash_merkle_transition_query(builder, delete_op, old_root, new_root, key, value);
+        let delete_hash = hash_merkle_delete_query(builder, old_root, new_root, key);
+        (transition_hash, delete_hash)
+    })
+    .is_err());
+}
+
+/// Drives `verify_custom_circuit` against an aux table whose only real entry stores
+/// the hash of `(stored_st, stored_op_type, stored_op_args)`.
 /// The verify-side query is `(verify_st, verify_op_type, verify_op_args)` and points
 /// at row `aux_index_value`. The proof should succeed iff both queries agree and the
 /// index lands on the real row.
@@ -1736,14 +1788,14 @@ fn helper_verify_custom_mutation(
         .map(|_| builder.add_virtual_statement(false))
         .collect();
     let aux_index = IndexTarget::new_virtual(2, &mut builder);
+    let resolved_aux = tbl.get(&mut builder, &aux_index);
 
     let ok = verify_custom_circuit(
         &mut builder,
         &verify_st_target,
         &verify_op_type_target,
-        &aux_index,
+        &resolved_aux,
         &verify_op_args_target,
-        &tbl,
     );
     builder.assert_one(ok.target);
 
@@ -1858,7 +1910,7 @@ fn helper_verify_operation_through_aux_table(
     assert_eq!(custom_predicates.len(), params.max_custom_predicates);
     assert_eq!(
         custom_predicate_verifications.len(),
-        params.max_custom_predicate_verifications
+        params.max_custom_predicate_verification_ops
     );
 
     let config = CircuitConfig::standard_recursion_config();
@@ -1882,7 +1934,7 @@ fn helper_verify_operation_through_aux_table(
         .map(|_| CustomPredicateInBatchTarget::new_virtual(&mut builder))
         .collect();
     let custom_predicate_verifications_target: Vec<_> = (0..params
-        .max_custom_predicate_verifications)
+        .max_custom_predicate_verification_ops)
         .map(|_| CustomPredicateVerifyEntryTarget::new_virtual(params, &mut builder))
         .collect();
 
@@ -1894,13 +1946,13 @@ fn helper_verify_operation_through_aux_table(
     let aux_table_input = AuxTableInputTargets {
         merkle_proofs: MerkleProofsTarget::new_virtual(params, &mut builder),
         merkle_transition_proofs: MerkleTransitionProofsTarget::new_virtual(params, &mut builder),
-        open_input_statements: (0..params.max_open_input_statements)
+        open_input_statements: (0..params.max_open_input_statement_ops)
             .map(|_| OpenInputStatementTarget::new_virtual(&mut builder))
             .collect(),
-        public_key_of_sks: (0..params.max_public_key_of)
+        public_key_sks: (0..params.max_public_key_ops)
             .map(|_| builder.add_virtual_biguint320_target())
             .collect(),
-        signed_bys: (0..params.max_signed_by)
+        signed_bys: (0..params.max_signed_by_ops)
             .map(|_| SignedByTarget::new_virtual(&mut builder))
             .collect(),
         custom_predicate_verifications: custom_predicate_verifications_target.clone(),
@@ -1961,18 +2013,18 @@ fn helper_verify_operation_through_aux_table(
 fn test_verify_operation_custom_aux_index_binding() -> frontend::Result<()> {
     let params = Params {
         max_input_pods: 0,
-        max_open_input_statements: 0,
+        max_open_input_statement_ops: 0,
         max_custom_predicates: 1,
-        max_custom_predicate_verifications: 2,
+        max_custom_predicate_verification_ops: 2,
         max_custom_predicate_wildcards: 4,
-        max_public_key_of: 0,
-        max_signed_by: 0,
+        max_public_key_ops: 0,
+        max_signed_by_ops: 0,
         containers: middleware::ParamsContainers {
-            state: middleware::ParamsMerkleProofs {
+            state_ops: middleware::ParamsMerkleProofs {
                 max_small: 0,
                 max_medium: 0,
             },
-            transition: middleware::ParamsMerkleProofs {
+            transition_ops: middleware::ParamsMerkleProofs {
                 max_small: 0,
                 max_medium: 0,
             },
@@ -2041,7 +2093,7 @@ fn test_verify_operation_custom_aux_index_binding() -> frontend::Result<()> {
     .unwrap();
 
     // Mutation: aux points at the leading None row (non-custom slot).
-    // The custom_pred_verify_hashes entry there has the None tag, so aux_tag_ok fails.
+    // The aux entry there has the None tag, so aux_tag_ok fails.
     assert!(helper_verify_operation_through_aux_table(
         &params,
         &custom_predicates,
