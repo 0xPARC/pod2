@@ -20,15 +20,26 @@ const SOLVER_BINARY_THRESHOLD: f64 = 0.5;
 /// pin every variable other than `assign` to be an exact function of the
 /// assignment.
 struct MilpVars {
-    n: usize,
-    k: usize,
+    num_statements: usize,
+    num_links: usize,
     num_wildcards: usize,
+    /// `assign[stmt][link]` = 1 iff statement `stmt` is in link `link`.
     assign: Vec<Vec<Variable>>,
-    u: Vec<Vec<Variable>>,
-    before: Vec<Vec<Variable>>,
-    after: Vec<Vec<Variable>>,
-    pubin: Vec<Vec<Variable>>,
-    privin: Vec<Vec<Variable>>,
+    /// `used_in_link[wildcard][link]` = OR over statements referencing
+    /// `wildcard` of `assign[stmt][link]`.
+    used_in_link: Vec<Vec<Variable>>,
+    /// `used_at_or_before_link[wildcard][link]` = OR of
+    /// `used_in_link[wildcard][0..=link]`.
+    used_at_or_before_link: Vec<Vec<Variable>>,
+    /// `used_at_or_after_link[wildcard][link]` = OR of
+    /// `used_in_link[wildcard][link..num_links]`.
+    used_at_or_after_link: Vec<Vec<Variable>>,
+    /// `public_incoming[wildcard][link]` = 1 iff `wildcard` enters `link` as
+    /// a public arg.
+    public_incoming: Vec<Vec<Variable>>,
+    /// `private_incoming[wildcard][link]` = 1 iff `wildcard` is first
+    /// declared as a private arg in `link`.
+    private_incoming: Vec<Vec<Variable>>,
 }
 
 fn mk_binary_grid(vars: &mut ProblemVariables, rows: usize, cols: usize) -> Vec<Vec<Variable>> {
@@ -39,27 +50,31 @@ fn mk_binary_grid(vars: &mut ProblemVariables, rows: usize, cols: usize) -> Vec<
 
 fn declare_milp_vars(
     vars: &mut ProblemVariables,
-    n: usize,
-    k: usize,
+    num_statements: usize,
+    num_links: usize,
     num_wildcards: usize,
 ) -> MilpVars {
     MilpVars {
-        n,
-        k,
+        num_statements,
+        num_links,
         num_wildcards,
-        assign: mk_binary_grid(vars, n, k),
-        u: mk_binary_grid(vars, num_wildcards, k),
-        before: mk_binary_grid(vars, num_wildcards, k),
-        after: mk_binary_grid(vars, num_wildcards, k),
-        pubin: mk_binary_grid(vars, num_wildcards, k),
-        privin: mk_binary_grid(vars, num_wildcards, k),
+        assign: mk_binary_grid(vars, num_statements, num_links),
+        used_in_link: mk_binary_grid(vars, num_wildcards, num_links),
+        used_at_or_before_link: mk_binary_grid(vars, num_wildcards, num_links),
+        used_at_or_after_link: mk_binary_grid(vars, num_wildcards, num_links),
+        public_incoming: mk_binary_grid(vars, num_wildcards, num_links),
+        private_incoming: mk_binary_grid(vars, num_wildcards, num_links),
     }
 }
 
 fn source_order_tiebreaker(v: &MilpVars) -> Expression {
-    (0..v.n)
-        .flat_map(|s| (0..v.k).map(move |i| (s, i)))
-        .map(|(s, i)| ((v.n - s) as f64) * (i as f64) * v.assign[s][i])
+    (0..v.num_statements)
+        .flat_map(|stmt_idx| (0..v.num_links).map(move |link_idx| (stmt_idx, link_idx)))
+        .map(|(stmt_idx, link_idx)| {
+            ((v.num_statements - stmt_idx) as f64)
+                * (link_idx as f64)
+                * v.assign[stmt_idx][link_idx]
+        })
         .sum()
 }
 
@@ -84,109 +99,171 @@ fn add_structural_constraints<M: SolverModel>(
 ) {
     let max_arity = Params::max_custom_predicate_arity();
     let MilpVars {
-        n,
-        k,
+        num_statements,
+        num_links,
         num_wildcards,
         assign,
-        u,
-        before,
-        after,
-        pubin,
-        privin,
+        used_in_link,
+        used_at_or_before_link,
+        used_at_or_after_link,
+        public_incoming,
+        private_incoming,
     } = v;
-    let (n, k, num_wildcards) = (*n, *k, *num_wildcards);
+    let (num_statements, num_links, num_wildcards) = (*num_statements, *num_links, *num_wildcards);
 
     // C1: Each statement assigned to exactly one link.
-    for s in 0..n {
-        let sum: Expression = (0..k).map(|i| assign[s][i]).sum();
+    for stmt_idx in 0..num_statements {
+        let sum: Expression = (0..num_links)
+            .map(|link_idx| assign[stmt_idx][link_idx])
+            .sum();
         model.add_constraint(constraint!(sum == 1));
     }
 
     // C2: Per-link statement count. Non-last links reserve a slot for the
     // chain call. Also require at least one statement per link.
-    for i in 0..k {
-        let cap = if i + 1 < k { max_arity - 1 } else { max_arity };
-        let sum_le: Expression = (0..n).map(|s| assign[s][i]).sum();
+    for link_idx in 0..num_links {
+        let cap = if link_idx + 1 < num_links {
+            max_arity - 1
+        } else {
+            max_arity
+        };
+        let sum_le: Expression = (0..num_statements)
+            .map(|stmt_idx| assign[stmt_idx][link_idx])
+            .sum();
         model.add_constraint(constraint!(sum_le <= cap as f64));
-        let sum_ge: Expression = (0..n).map(|s| assign[s][i]).sum();
+        let sum_ge: Expression = (0..num_statements)
+            .map(|stmt_idx| assign[stmt_idx][link_idx])
+            .sum();
         model.add_constraint(constraint!(sum_ge >= 1));
     }
 
-    // C3: u[w][i] is exactly the OR over s referencing w of assign[s][i].
-    for w in 0..num_wildcards {
-        for i in 0..k {
-            for &s in &statements_using[w] {
-                model.add_constraint(constraint!(u[w][i] >= assign[s][i]));
+    // C3: used_in_link[w][i] = OR over statements referencing w of assign[s][i].
+    for wildcard_idx in 0..num_wildcards {
+        for link_idx in 0..num_links {
+            for &stmt_idx in &statements_using[wildcard_idx] {
+                model.add_constraint(constraint!(
+                    used_in_link[wildcard_idx][link_idx] >= assign[stmt_idx][link_idx]
+                ));
             }
-            let upper: Expression = statements_using[w]
+            let upper: Expression = statements_using[wildcard_idx]
                 .iter()
-                .map(|&s| Expression::from(assign[s][i]))
+                .map(|&stmt_idx| Expression::from(assign[stmt_idx][link_idx]))
                 .sum();
-            model.add_constraint(constraint!(u[w][i] <= upper));
+            model.add_constraint(constraint!(used_in_link[wildcard_idx][link_idx] <= upper));
         }
     }
 
-    // C4: before[w][i] = u[w][0] OR ... OR u[w][i].
-    for w in 0..num_wildcards {
-        model.add_constraint(constraint!(before[w][0] == u[w][0]));
-        for i in 1..k {
-            model.add_constraint(constraint!(before[w][i] >= before[w][i - 1]));
-            model.add_constraint(constraint!(before[w][i] >= u[w][i]));
-            model.add_constraint(constraint!(before[w][i] <= before[w][i - 1] + u[w][i]));
+    // C4: used_at_or_before_link[w][i] = used_in_link[w][0] OR ... OR used_in_link[w][i].
+    for wildcard_idx in 0..num_wildcards {
+        model.add_constraint(constraint!(
+            used_at_or_before_link[wildcard_idx][0] == used_in_link[wildcard_idx][0]
+        ));
+        for link_idx in 1..num_links {
+            model.add_constraint(constraint!(
+                used_at_or_before_link[wildcard_idx][link_idx]
+                    >= used_at_or_before_link[wildcard_idx][link_idx - 1]
+            ));
+            model.add_constraint(constraint!(
+                used_at_or_before_link[wildcard_idx][link_idx]
+                    >= used_in_link[wildcard_idx][link_idx]
+            ));
+            model.add_constraint(constraint!(
+                used_at_or_before_link[wildcard_idx][link_idx]
+                    <= used_at_or_before_link[wildcard_idx][link_idx - 1]
+                        + used_in_link[wildcard_idx][link_idx]
+            ));
         }
     }
 
-    // C5: after[w][i] = u[w][i] OR ... OR u[w][k-1].
-    for w in 0..num_wildcards {
-        model.add_constraint(constraint!(after[w][k - 1] == u[w][k - 1]));
-        for i in (0..k - 1).rev() {
-            model.add_constraint(constraint!(after[w][i] >= after[w][i + 1]));
-            model.add_constraint(constraint!(after[w][i] >= u[w][i]));
-            model.add_constraint(constraint!(after[w][i] <= after[w][i + 1] + u[w][i]));
+    // C5: used_at_or_after_link[w][i] = used_in_link[w][i] OR ... OR used_in_link[w][num_links-1].
+    for wildcard_idx in 0..num_wildcards {
+        model.add_constraint(constraint!(
+            used_at_or_after_link[wildcard_idx][num_links - 1]
+                == used_in_link[wildcard_idx][num_links - 1]
+        ));
+        for link_idx in (0..num_links - 1).rev() {
+            model.add_constraint(constraint!(
+                used_at_or_after_link[wildcard_idx][link_idx]
+                    >= used_at_or_after_link[wildcard_idx][link_idx + 1]
+            ));
+            model.add_constraint(constraint!(
+                used_at_or_after_link[wildcard_idx][link_idx]
+                    >= used_in_link[wildcard_idx][link_idx]
+            ));
+            model.add_constraint(constraint!(
+                used_at_or_after_link[wildcard_idx][link_idx]
+                    <= used_at_or_after_link[wildcard_idx][link_idx + 1]
+                        + used_in_link[wildcard_idx][link_idx]
+            ));
         }
     }
 
-    // C6: pubin definitions.
-    for w in 0..num_wildcards {
-        if is_original_public[w] {
-            model.add_constraint(constraint!(pubin[w][0] == 1));
-            for i in 1..k {
-                model.add_constraint(constraint!(pubin[w][i] == after[w][i]));
+    // C6: public_incoming definitions.
+    for wildcard_idx in 0..num_wildcards {
+        if is_original_public[wildcard_idx] {
+            model.add_constraint(constraint!(public_incoming[wildcard_idx][0] == 1));
+            for link_idx in 1..num_links {
+                model.add_constraint(constraint!(
+                    public_incoming[wildcard_idx][link_idx]
+                        == used_at_or_after_link[wildcard_idx][link_idx]
+                ));
             }
         } else {
-            model.add_constraint(constraint!(pubin[w][0] == 0));
-            for i in 1..k {
-                model.add_constraint(constraint!(pubin[w][i] <= before[w][i - 1]));
-                model.add_constraint(constraint!(pubin[w][i] <= after[w][i]));
+            model.add_constraint(constraint!(public_incoming[wildcard_idx][0] == 0));
+            for link_idx in 1..num_links {
                 model.add_constraint(constraint!(
-                    pubin[w][i] >= before[w][i - 1] + after[w][i] - 1
+                    public_incoming[wildcard_idx][link_idx]
+                        <= used_at_or_before_link[wildcard_idx][link_idx - 1]
+                ));
+                model.add_constraint(constraint!(
+                    public_incoming[wildcard_idx][link_idx]
+                        <= used_at_or_after_link[wildcard_idx][link_idx]
+                ));
+                model.add_constraint(constraint!(
+                    public_incoming[wildcard_idx][link_idx]
+                        >= used_at_or_before_link[wildcard_idx][link_idx - 1]
+                            + used_at_or_after_link[wildcard_idx][link_idx]
+                            - 1
                 ));
             }
         }
     }
 
-    // C7: privin definitions.
-    for w in 0..num_wildcards {
-        if is_original_public[w] {
-            for i in 0..k {
-                model.add_constraint(constraint!(privin[w][i] == 0));
+    // C7: private_incoming definitions.
+    for wildcard_idx in 0..num_wildcards {
+        if is_original_public[wildcard_idx] {
+            for link_idx in 0..num_links {
+                model.add_constraint(constraint!(private_incoming[wildcard_idx][link_idx] == 0));
             }
         } else {
-            model.add_constraint(constraint!(privin[w][0] == u[w][0]));
-            for i in 1..k {
-                model.add_constraint(constraint!(privin[w][i] <= u[w][i]));
-                model.add_constraint(constraint!(privin[w][i] <= 1 - before[w][i - 1]));
-                model.add_constraint(constraint!(privin[w][i] >= u[w][i] - before[w][i - 1]));
+            model.add_constraint(constraint!(
+                private_incoming[wildcard_idx][0] == used_in_link[wildcard_idx][0]
+            ));
+            for link_idx in 1..num_links {
+                model.add_constraint(constraint!(
+                    private_incoming[wildcard_idx][link_idx]
+                        <= used_in_link[wildcard_idx][link_idx]
+                ));
+                model.add_constraint(constraint!(
+                    private_incoming[wildcard_idx][link_idx]
+                        <= 1 - used_at_or_before_link[wildcard_idx][link_idx - 1]
+                ));
+                model.add_constraint(constraint!(
+                    private_incoming[wildcard_idx][link_idx]
+                        >= used_in_link[wildcard_idx][link_idx]
+                            - used_at_or_before_link[wildcard_idx][link_idx - 1]
+                ));
             }
         }
     }
 }
 
-/// Try to partition `n` statements into exactly `k` links using MILP.
-/// Returns `Some(assignment)` if feasible, `None` if infeasible at this K.
+/// Try to partition `num_statements` statements into exactly `num_links`
+/// links using MILP. Returns `Some(assignment)` if feasible, `None` if
+/// infeasible at this link count.
 pub(super) fn solve_milp_for_k(
-    n: usize,
-    k: usize,
+    num_statements: usize,
+    num_links: usize,
     statements_using: &[Vec<usize>],
     is_original_public: &[bool],
     params: &Params,
@@ -196,32 +273,37 @@ pub(super) fn solve_milp_for_k(
     let num_wildcards = is_original_public.len();
 
     let mut vars = ProblemVariables::new();
-    let v = declare_milp_vars(&mut vars, n, k, num_wildcards);
+    let v = declare_milp_vars(&mut vars, num_statements, num_links, num_wildcards);
     let objective = source_order_tiebreaker(&v);
     let mut model = build_scip_model(vars, objective);
     add_structural_constraints(&mut model, &v, statements_using, is_original_public);
 
     // C8: per-link public-args cap.
-    for i in 0..k {
-        let sum: Expression = (0..num_wildcards).map(|w| v.pubin[w][i]).sum();
+    for link_idx in 0..num_links {
+        let sum: Expression = (0..num_wildcards)
+            .map(|wildcard_idx| v.public_incoming[wildcard_idx][link_idx])
+            .sum();
         model.add_constraint(constraint!(sum <= max_args as f64));
     }
 
     // C9: per-link total declared wildcards cap.
-    for i in 0..k {
+    for link_idx in 0..num_links {
         let sum: Expression = (0..num_wildcards)
-            .map(|w| Expression::from(v.pubin[w][i]) + v.privin[w][i])
+            .map(|wildcard_idx| {
+                Expression::from(v.public_incoming[wildcard_idx][link_idx])
+                    + v.private_incoming[wildcard_idx][link_idx]
+            })
             .sum();
         model.add_constraint(constraint!(sum <= max_wildcards as f64));
     }
 
     let solution = model.solve().ok()?;
 
-    let mut links: LinkAssignment = vec![Vec::new(); k];
-    for s in 0..n {
-        for i in 0..k {
-            if solution.value(v.assign[s][i]) > SOLVER_BINARY_THRESHOLD {
-                links[i].push(s);
+    let mut links: LinkAssignment = vec![Vec::new(); num_links];
+    for stmt_idx in 0..num_statements {
+        for link_idx in 0..num_links {
+            if solution.value(v.assign[stmt_idx][link_idx]) > SOLVER_BINARY_THRESHOLD {
+                links[link_idx].push(stmt_idx);
                 break;
             }
         }
@@ -312,13 +394,13 @@ mod tests {
                         checked += 1;
 
                         let input = prepare_split_input(&pred);
-                        let n = input.n;
+                        let num_statements = input.num_statements;
                         let milp_start = std::time::Instant::now();
                         let mut milp_ok = false;
-                        for k in compute_min_links(n)..=n {
+                        for num_links in compute_min_links(num_statements)..=num_statements {
                             if solve_milp_for_k(
-                                n,
-                                k,
+                                num_statements,
+                                num_links,
                                 &input.statements_using,
                                 &input.is_original_public,
                                 &params,

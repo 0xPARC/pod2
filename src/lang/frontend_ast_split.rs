@@ -245,31 +245,27 @@ struct WildcardLifetimes {
 }
 
 /// Compute [`WildcardLifetimes`] for a given ordering.
-fn wildcard_lifetimes(
-    ordering: &[usize],
-    statements_using: &[Vec<usize>],
-    num_wildcards: usize,
-) -> WildcardLifetimes {
-    let n = ordering.len();
-    let mut pos_of = vec![usize::MAX; n];
-    for (p, &s) in ordering.iter().enumerate() {
-        pos_of[s] = p;
+fn wildcard_lifetimes(ordering: &[usize], statements_using: &[Vec<usize>]) -> WildcardLifetimes {
+    let num_statements = ordering.len();
+    let mut position_of_statement = vec![usize::MAX; num_statements];
+    for (position, &statement) in ordering.iter().enumerate() {
+        position_of_statement[statement] = position;
     }
-    let mut wcs_at: Vec<HashSet<usize>> = vec![HashSet::new(); n];
-    for (w, stmts) in statements_using.iter().enumerate().take(num_wildcards) {
-        for &s in stmts {
-            wcs_at[pos_of[s]].insert(w);
+    let mut wcs_at: Vec<HashSet<usize>> = vec![HashSet::new(); num_statements];
+    for (wildcard, statements) in statements_using.iter().enumerate() {
+        for &statement in statements {
+            wcs_at[position_of_statement[statement]].insert(wildcard);
         }
     }
-    let mut prefix: Vec<HashSet<usize>> = vec![HashSet::new(); n + 1];
-    for p in 0..n {
-        prefix[p + 1] = prefix[p].clone();
-        prefix[p + 1].extend(&wcs_at[p]);
+    let mut prefix: Vec<HashSet<usize>> = vec![HashSet::new(); num_statements + 1];
+    for position in 0..num_statements {
+        prefix[position + 1] = prefix[position].clone();
+        prefix[position + 1].extend(&wcs_at[position]);
     }
-    let mut suffix: Vec<HashSet<usize>> = vec![HashSet::new(); n + 1];
-    for p in (0..n).rev() {
-        suffix[p] = suffix[p + 1].clone();
-        suffix[p].extend(&wcs_at[p]);
+    let mut suffix: Vec<HashSet<usize>> = vec![HashSet::new(); num_statements + 1];
+    for position in (0..num_statements).rev() {
+        suffix[position] = suffix[position + 1].clone();
+        suffix[position].extend(&wcs_at[position]);
     }
     WildcardLifetimes {
         wcs_at,
@@ -289,50 +285,51 @@ fn ordering_excess_cost(
     is_original_public: &[bool],
     max_args: usize,
 ) -> usize {
-    let n = ordering.len();
+    let num_statements = ordering.len();
     let num_wildcards = is_original_public.len();
+    debug_assert_eq!(statements_using.len(), num_wildcards);
 
-    let mut pos_of = vec![usize::MAX; n];
-    for (p, &s) in ordering.iter().enumerate() {
-        pos_of[s] = p;
+    let mut position_of_statement = vec![usize::MAX; num_statements];
+    for (position, &statement) in ordering.iter().enumerate() {
+        position_of_statement[statement] = position;
     }
 
     // Represent each wildcard by just the first and last position at which it
     // appears in the ordering.
-    let mut first = vec![usize::MAX; num_wildcards];
-    let mut last = vec![0usize; num_wildcards];
-    for (w, stmts) in statements_using.iter().enumerate().take(num_wildcards) {
-        for &s in stmts {
-            let p = pos_of[s];
-            if p < first[w] {
-                first[w] = p;
+    let mut first_position = vec![usize::MAX; num_wildcards];
+    let mut last_position = vec![0usize; num_wildcards];
+    for (wildcard, statements) in statements_using.iter().enumerate() {
+        for &statement in statements {
+            let position = position_of_statement[statement];
+            if position < first_position[wildcard] {
+                first_position[wildcard] = position;
             }
-            if p > last[w] {
-                last[w] = p;
+            if position > last_position[wildcard] {
+                last_position[wildcard] = position;
             }
         }
     }
 
     let mut total: usize = 0;
-    for p in 1..n {
-        let mut bw: usize = 0;
-        for w in 0..num_wildcards {
-            if first[w] == usize::MAX {
+    for boundary in 1..num_statements {
+        let mut crossing_count: usize = 0;
+        for wildcard in 0..num_wildcards {
+            if first_position[wildcard] == usize::MAX {
                 continue;
             }
             // Public args are alive from position 0 (declared on the predicate
             // signature regardless of where they're first referenced), so they
-            // cross p iff they're used at or after p. Private wildcards only
-            // count once they've actually appeared.
-            if is_original_public[w] {
-                if last[w] >= p {
-                    bw += 1;
+            // cross `boundary` iff they're used at or after it. Private
+            // wildcards only count once they've actually appeared.
+            if is_original_public[wildcard] {
+                if last_position[wildcard] >= boundary {
+                    crossing_count += 1;
                 }
-            } else if first[w] < p && last[w] >= p {
-                bw += 1;
+            } else if first_position[wildcard] < boundary && last_position[wildcard] >= boundary {
+                crossing_count += 1;
             }
         }
-        total += bw.saturating_sub(max_args);
+        total += crossing_count.saturating_sub(max_args);
     }
     total
 }
@@ -411,6 +408,17 @@ fn refine_ordering(
     current
 }
 
+/// One row of the prefix DP table. The cell at index `end` answers:
+/// "if we cut at boundary `end`, what's the smallest number of chain links
+/// that partitions `ordering[0..end]` legally?" `link_count` is the answer;
+/// `prev_start` is where the last link in that minimum-link partition began,
+/// kept so the reconstruction can walk back through the cells.
+#[derive(Clone, Copy)]
+struct DpEntry {
+    link_count: usize,
+    prev_start: usize,
+}
+
 /// Splitting a predicate is two problems: pick a statement order, then pick
 /// where to cut it. Picking the order is the hard part: that's the job of
 /// the heuristics upstream (RCM, refinement, random shuffles). Picking the
@@ -423,117 +431,136 @@ fn try_partition(
     is_original_public: &[bool],
     params: &Params,
 ) -> Option<(usize, LinkAssignment)> {
-    let n = ordering.len();
+    let num_statements = ordering.len();
     let max_arity = Params::max_custom_predicate_arity();
     let max_args = Params::max_statement_args();
     let max_wildcards = params.max_custom_predicate_wildcards;
     let num_wildcards = is_original_public.len();
+    debug_assert_eq!(statements_using.len(), num_wildcards);
 
     let WildcardLifetimes {
         wcs_at,
         prefix: prefix_wcs,
         suffix: suffix_wcs,
-    } = wildcard_lifetimes(ordering, statements_using, num_wildcards);
+    } = wildcard_lifetimes(ordering, statements_using);
 
-    // Wildcards incoming as public args to a link starting at boundary `a`:
-    //   - a = 0: full original-public-arg signature, including any unused
+    // Wildcards incoming as public args to a link starting at `start`:
+    //   - start = 0: full original-public-arg signature, including any unused
     //     originals: backward pruning never trims link 0.
-    //   - a > 0: originals still used at some position >= a, plus private
-    //     wildcards crossing a (used both < a and >= a).
-    let incoming_at = |a: usize| -> HashSet<usize> {
-        if a == 0 {
+    //   - start > 0: originals still used at some position >= start, plus
+    //     private wildcards crossing the boundary (used both < start and
+    //     >= start).
+    let incoming_at = |start: usize| -> HashSet<usize> {
+        if start == 0 {
             return (0..num_wildcards)
-                .filter(|&w| is_original_public[w])
+                .filter(|&wildcard| is_original_public[wildcard])
                 .collect();
         }
-        suffix_wcs[a]
+        suffix_wcs[start]
             .iter()
             .copied()
-            .filter(|&w| is_original_public[w] || prefix_wcs[a].contains(&w))
+            .filter(|&wildcard| {
+                is_original_public[wildcard] || prefix_wcs[start].contains(&wildcard)
+            })
             .collect()
     };
 
     // Incoming sets per boundary, with `None` for boundaries that are
     // already over `max_args` and so can never start a link.
-    let incoming_set: Vec<Option<HashSet<usize>>> = (0..=n)
-        .map(|a| {
-            let inc = incoming_at(a);
+    let incoming_set: Vec<Option<HashSet<usize>>> = (0..=num_statements)
+        .map(|boundary| {
+            let inc = incoming_at(boundary);
             (inc.len() <= max_args).then_some(inc)
         })
         .collect();
 
-    // True iff the segment `[a..p]` admits a link with `incoming_set[a]`
-    // as its incoming-public-args under the total-wildcards cap. The
-    // statement-count cap is the caller's job (via the `a` lower bound).
-    let segment_ok = |a: usize, p: usize| -> bool {
-        let Some(inc) = &incoming_set[a] else {
+    // True iff the segment `[start..end]` admits a link with
+    // `incoming_set[start]` as its incoming-public-args under the
+    // total-wildcards cap. The statement-count cap is the caller's job
+    // (via the `start` lower bound).
+    let segment_ok = |start: usize, end: usize| -> bool {
+        let Some(inc) = &incoming_set[start] else {
             return false;
         };
         let mut total = inc.clone();
-        for pos in a..p {
-            total.extend(&wcs_at[pos]);
+        for position in start..end {
+            total.extend(&wcs_at[position]);
         }
         total.len() <= max_wildcards
     };
 
     // Main prefix DP over non-terminal links (cap max_arity - 1).
     let non_last_cap = max_arity - 1;
-    let mut dp: Vec<Option<(usize, usize)>> = vec![None; n + 1];
-    dp[0] = Some((0, 0));
-    for p in 1..=n {
-        let a_lo = p.saturating_sub(non_last_cap);
-        // Largest a first: source order wins ties.
-        for a in (a_lo..p).rev() {
-            let Some((prev_k, _)) = dp[a] else {
+    let mut dp: Vec<Option<DpEntry>> = vec![None; num_statements + 1];
+    dp[0] = Some(DpEntry {
+        link_count: 0,
+        prev_start: 0,
+    });
+    for end in 1..=num_statements {
+        let earliest_start = end.saturating_sub(non_last_cap);
+        // Largest start first: source order wins ties.
+        for start in (earliest_start..end).rev() {
+            let Some(prev) = dp[start] else {
                 continue;
             };
-            if !segment_ok(a, p) {
+            if !segment_ok(start, end) {
                 continue;
             }
-            let new_k = prev_k + 1;
-            if dp[p].is_none_or(|(cur_k, _)| new_k < cur_k) {
-                dp[p] = Some((new_k, a));
+            let new_link_count = prev.link_count + 1;
+            if dp[end].is_none_or(|cur| new_link_count < cur.link_count) {
+                dp[end] = Some(DpEntry {
+                    link_count: new_link_count,
+                    prev_start: start,
+                });
             }
         }
     }
 
-    // Terminal scan: find the largest `a` such that `[a..n]` is feasible
-    // as the last link (cap max_arity) and `dp[a]` is reachable; that gives
-    // the smallest overall K because later prefixes have larger or equal
-    // min_k.
-    let a_lo = n.saturating_sub(max_arity);
-    let mut best: Option<(usize, usize)> = None; // (total_k, end_start)
-    for a in (a_lo..n).rev() {
-        let Some((prev_k, _)) = dp[a] else {
+    // Terminal scan: find the largest `start` such that `[start..num_statements]`
+    // is feasible as the last link (cap max_arity) and `dp[start]` is reachable;
+    // that gives the smallest overall link count because later prefixes have
+    // larger or equal minimum link count.
+    let earliest_last_link_start = num_statements.saturating_sub(max_arity);
+    let mut best: Option<DpEntry> = None;
+    for start in (earliest_last_link_start..num_statements).rev() {
+        let Some(prev) = dp[start] else {
             continue;
         };
-        if !segment_ok(a, n) {
+        if !segment_ok(start, num_statements) {
             continue;
         }
-        let total_k = prev_k + 1;
-        if best.is_none_or(|(cur_k, _)| total_k < cur_k) {
-            best = Some((total_k, a));
+        let total_link_count = prev.link_count + 1;
+        if best.is_none_or(|cur| total_link_count < cur.link_count) {
+            best = Some(DpEntry {
+                link_count: total_link_count,
+                prev_start: start,
+            });
         }
     }
-    let (k, end_start) = best?;
+    let DpEntry {
+        link_count: total_link_count,
+        prev_start: last_link_start,
+    } = best?;
 
-    // Reconstruct: last link first, then walk dp's prev_a chain.
-    let mut links: LinkAssignment = vec![Vec::new(); k];
-    for pos in end_start..n {
-        links[k - 1].push(ordering[pos]);
+    // Reconstruct: last link first, then walk dp's prev_start chain.
+    let mut links: LinkAssignment = vec![Vec::new(); total_link_count];
+    for position in last_link_start..num_statements {
+        links[total_link_count - 1].push(ordering[position]);
     }
-    let mut cur_p = end_start;
-    for i in (0..k - 1).rev() {
-        let (_, prev_a) = dp[cur_p].expect("dp reachability already verified");
-        for pos in prev_a..cur_p {
-            links[i].push(ordering[pos]);
+    let mut cur_end = last_link_start;
+    for link_idx in (0..total_link_count - 1).rev() {
+        let prev_start = dp[cur_end]
+            .expect("dp reachability already verified")
+            .prev_start;
+        for position in prev_start..cur_end {
+            links[link_idx].push(ordering[position]);
         }
-        cur_p = prev_a;
+        cur_end = prev_start;
     }
     for link in &mut links {
         link.sort();
     }
-    Some((k, links))
+    Some((total_link_count, links))
 }
 
 /// Per-link statement assignment: `links[i]` is the list of original statement
@@ -624,9 +651,14 @@ fn build_chain_links_from_assignment(
 /// Numeric encoding of a predicate's wildcard graph, ready for the DP
 /// partitioner.
 pub(super) struct SplitInput {
-    pub(super) n: usize,
+    /// Number of statements in the predicate being split.
+    pub(super) num_statements: usize,
     wildcard_names: Vec<String>,
+    /// For each wildcard (by index into `wildcard_names`), the list of
+    /// statement indices that reference it.
     pub(super) statements_using: Vec<Vec<usize>>,
+    /// For each wildcard, whether it was declared as a public arg on the
+    /// original predicate.
     pub(super) is_original_public: Vec<bool>,
     original_public_args: Vec<String>,
 }
@@ -675,7 +707,7 @@ pub(super) fn prepare_split_input(pred: &CustomPredicateDef) -> SplitInput {
     }
 
     SplitInput {
-        n: pred.statements.len(),
+        num_statements: pred.statements.len(),
         wildcard_names,
         statements_using,
         is_original_public,
@@ -684,71 +716,75 @@ pub(super) fn prepare_split_input(pred: &CustomPredicateDef) -> SplitInput {
 }
 
 /// Build the priority-ordered list of orderings the DP partitioner will try.
-/// Source order plus RCM orderings form the baseline; refined versions of the
-/// lowest-cost RCM seeds and a few random shuffles are prepended so the DP
-/// probes the lowest-bandwidth candidates first.
+/// Refined orderings (hill-climbed from the lowest-cost RCM seeds and a few
+/// random shuffles) come first, sorted by cost, so the DP probes the
+/// lowest-bandwidth candidates first. The unrefined baseline (source order
+/// plus RCM orderings) is appended as fallback: the cost function models the
+/// public-args cap but not the total-wildcards cap, so an unrefined seed can
+/// still be the one that satisfies both caps where its refined descendants
+/// don't.
 fn candidate_orderings(input: &SplitInput) -> Vec<Vec<usize>> {
     use rand::{seq::SliceRandom, SeedableRng};
     use rand_chacha::ChaCha20Rng;
 
-    let n = input.n;
+    let num_statements = input.num_statements;
     let max_args = Params::max_statement_args();
 
-    let mut orderings: Vec<Vec<usize>> = std::iter::once((0..n).collect())
-        .chain(rcm_orderings(n, &input.statements_using))
-        .collect();
-
-    let cost = |o: &[usize]| -> usize {
+    let cost = |ordering: &[usize]| -> usize {
         ordering_excess_cost(
-            o,
+            ordering,
             &input.statements_using,
             &input.is_original_public,
             max_args,
         )
     };
 
-    // Multi-start refinement. Refine the top REFINE_STARTS lowest-cost RCM
-    // orderings, then add REFINE_RANDOM_STARTS random shuffles each refined
-    // from a different seed. Tight predicates (4 public args, dense private
-    // wildcard pool > max_arity) have narrow feasibility basins that a
-    // single refinement from the RCM optimum routinely misses.
-    //
-    // Cost 0 means every position fits the public-args cap, but DP also
-    // checks the total-wildcards cap which cost doesn't model, so all seeds
-    // are refined unconditionally; the DP search picks the first one that
-    // satisfies both caps.
-    let mut refined_seeds: Vec<Vec<usize>> = orderings.clone();
-    refined_seeds.sort_by_key(|o| cost(o));
-    refined_seeds.truncate(REFINE_STARTS);
+    let baseline: Vec<Vec<usize>> = std::iter::once((0..num_statements).collect())
+        .chain(rcm_orderings(num_statements, &input.statements_using))
+        .collect();
 
-    let identity: Vec<usize> = (0..n).collect();
+    // Refinement seeds: top REFINE_STARTS lowest-cost baseline orderings plus
+    // REFINE_RANDOM_STARTS random shuffles. Tight predicates (4 public args,
+    // dense private wildcard pool > max_arity) have narrow feasibility basins
+    // that a single refinement from the RCM optimum routinely misses.
+    let mut refinement_seeds: Vec<Vec<usize>> = baseline.clone();
+    refinement_seeds.sort_by_key(|ordering| cost(ordering));
+    refinement_seeds.truncate(REFINE_STARTS);
+
+    let identity: Vec<usize> = (0..num_statements).collect();
     let mut shuffle_rng = ChaCha20Rng::seed_from_u64(seed_from_ordering(&identity));
     for _ in 0..REFINE_RANDOM_STARTS {
-        let mut shuffled: Vec<usize> = (0..n).collect();
+        let mut shuffled: Vec<usize> = (0..num_statements).collect();
         shuffled.shuffle(&mut shuffle_rng);
-        refined_seeds.push(shuffled);
+        refinement_seeds.push(shuffled);
     }
 
-    let mut refined: Vec<(Vec<usize>, usize)> = refined_seeds
+    let mut refined: Vec<(Vec<usize>, usize)> = refinement_seeds
         .into_iter()
         .map(|seed| {
-            let r = refine_ordering(
+            let result = refine_ordering(
                 seed,
                 &input.statements_using,
                 &input.is_original_public,
                 max_args,
                 REFINE_ITERATIONS,
             );
-            let c = cost(&r);
-            (r, c)
+            let result_cost = cost(&result);
+            (result, result_cost)
         })
         .collect();
-    // Refined orderings go first so DP probes the lowest-bandwidth candidates
-    // before the bulk RCM list.
-    refined.sort_by_key(|(_, c)| *c);
-    for (r, _) in refined.into_iter().rev() {
-        if !orderings.contains(&r) {
-            orderings.insert(0, r);
+    refined.sort_by_key(|(_, refined_cost)| *refined_cost);
+
+    let mut seen: HashSet<Vec<usize>> = HashSet::new();
+    let mut orderings: Vec<Vec<usize>> = Vec::with_capacity(refined.len() + baseline.len());
+    for (ordering, _) in refined {
+        if seen.insert(ordering.clone()) {
+            orderings.push(ordering);
+        }
+    }
+    for ordering in baseline {
+        if seen.insert(ordering.clone()) {
+            orderings.push(ordering);
         }
     }
 
@@ -769,13 +805,13 @@ fn split_into_chain(
     let real_statement_count = pred.statements.len();
 
     let input = prepare_split_input(pred);
-    let n = input.n;
-    let k_min = compute_min_links(n);
+    let num_statements = input.num_statements;
+    let min_link_count = compute_min_links(num_statements);
     let orderings = candidate_orderings(&input);
 
     let mut found: Option<(usize, LinkAssignment)> = None;
     for ordering in &orderings {
-        let Some((k, assignment)) = try_partition(
+        let Some((link_count, assignment)) = try_partition(
             ordering,
             &input.statements_using,
             &input.is_original_public,
@@ -783,11 +819,14 @@ fn split_into_chain(
         ) else {
             continue;
         };
-        if found.as_ref().is_none_or(|(best_k, _)| k < *best_k) {
-            found = Some((k, assignment));
-            // K_min is the arity-only lower bound; no ordering can beat it,
-            // so stop the moment any candidate hits it.
-            if k <= k_min {
+        if found
+            .as_ref()
+            .is_none_or(|(best_link_count, _)| link_count < *best_link_count)
+        {
+            found = Some((link_count, assignment));
+            // `min_link_count` is the arity-only lower bound; no ordering can
+            // beat it, so stop the moment any candidate hits it.
+            if link_count <= min_link_count {
                 break;
             }
         }
@@ -806,12 +845,12 @@ fn split_into_chain(
     };
 
     // Reorder map: original index -> position in flattened chain.
-    let mut reorder_map = vec![0usize; n];
+    let mut reorder_map = vec![0usize; num_statements];
     {
         let mut flat = 0usize;
         for link in &assignment {
-            for &s in link {
-                reorder_map[s] = flat;
+            for &statement in link {
+                reorder_map[statement] = flat;
                 flat += 1;
             }
         }
@@ -1130,10 +1169,10 @@ fn first_cap_violation(
 /// inverse of `SplitInput::statements_using`; resolving names once up front
 /// is cheaper than `stmts.contains(&s)` scans inside the ordering loop.
 fn wildcards_per_statement(input: &SplitInput) -> Vec<HashSet<String>> {
-    let mut out: Vec<HashSet<String>> = vec![HashSet::new(); input.n];
-    for (w, stmts) in input.statements_using.iter().enumerate() {
-        for &s in stmts {
-            out[s].insert(input.wildcard_names[w].clone());
+    let mut out: Vec<HashSet<String>> = vec![HashSet::new(); input.num_statements];
+    for (wildcard, statements) in input.statements_using.iter().enumerate() {
+        for &statement in statements {
+            out[statement].insert(input.wildcard_names[wildcard].clone());
         }
     }
     out
