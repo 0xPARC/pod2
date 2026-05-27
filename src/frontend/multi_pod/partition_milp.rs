@@ -23,11 +23,6 @@ use crate::middleware::Params;
 const SOLVER_BINARY_THRESHOLD: f64 = 0.5;
 
 struct MilpVars {
-    n: usize,
-    k: usize,
-    num_ext_pods: usize,
-    num_ext_statements: usize,
-    num_cps: usize,
     assign: Vec<Vec<Variable>>,
     import_from: Vec<Vec<Variable>>,
     ext_import_from: Vec<Vec<Variable>>,
@@ -51,11 +46,6 @@ fn declare_vars(
     num_cps: usize,
 ) -> MilpVars {
     MilpVars {
-        n,
-        k,
-        num_ext_pods,
-        num_ext_statements,
-        num_cps,
         assign: mk_binary_grid(vars, n, k),
         import_from: mk_binary_grid(vars, n, k),
         ext_import_from: mk_binary_grid(vars, num_ext_statements, k),
@@ -488,6 +478,7 @@ pub(super) fn solve(input: &InputShape) -> Option<OutputShape> {
 /// Shared between the DP-vs-MILP parity sweep and the DP-vs-greedy
 /// sweep in `partition.rs`; both consume the same RNG seed so the
 /// two sweeps see the same input distribution.
+#[cfg(test)]
 pub(super) fn random_input(
     rng: &mut rand_chacha::ChaCha20Rng,
     n: usize,

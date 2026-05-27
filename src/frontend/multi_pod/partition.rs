@@ -19,7 +19,7 @@
 //! - **Cutting the ordering into segments**. Once the order is fixed
 //!   this collapses to a 1D problem: where do POD boundaries go?
 //!   Dynamic programming over prefixes solves it optimally in
-//!   O(n * W^2) where W = `max_priv_statements` (see [`run_dp`]). It
+//!   O(n * W^2) where W = `max_statements` (see [`run_dp`]). It
 //!   also ensures feasibility in cases where a left-to-right greedy
 //!   walk produces an infeasible partition; the per-ordering
 //!   feasibility-rescue counts in [`ordering_and_cutter_contribution_sweep`]
@@ -515,15 +515,9 @@ struct DpWorkspace {
     distinct_cps: Vec<CustomPredicateId>,
 }
 
-/// Generate a per-statement priority vector by ranking a random
-/// permutation. The resulting `prio_of[s]` is `s`'s rank in the shuffle.
 fn random_priority(rng: &mut ChaCha20Rng, n: usize) -> Vec<usize> {
-    let mut shuffled: Vec<usize> = (0..n).collect();
-    shuffled.shuffle(rng);
-    let mut prio_of = vec![0_usize; n];
-    for (rank, &s) in shuffled.iter().enumerate() {
-        prio_of[s] = rank;
-    }
+    let mut prio_of: Vec<usize> = (0..n).collect();
+    prio_of.shuffle(rng);
     prio_of
 }
 
@@ -657,6 +651,7 @@ pub(super) fn segment_feasible(ordering: &[usize], input: &InputShape, a: usize,
 /// Returns `None` if any single statement is infeasible as a 1-stmt
 /// segment, or (when `check_terminal`) if the trailing segment fails
 /// terminal availability.
+#[cfg(test)]
 fn greedy_segments(
     ordering: &[usize],
     input: &InputShape,
@@ -731,6 +726,7 @@ fn greedy_segments(
 /// given ordering, ignoring terminal-segment feasibility. Useful for
 /// measuring how much the DP cutter improves on a greedy cut of the
 /// same ordering.
+#[cfg(test)]
 pub(super) fn simulate_greedy_k(input: &InputShape, ordering: &[usize]) -> Option<usize> {
     greedy_segments(ordering, input, false).map(|s| s.len())
 }
@@ -1049,6 +1045,7 @@ fn backtrack_segments(dp: &[Option<DpEntry>], terminal: DpEntry, n: usize) -> Ve
 /// would mean that ordering simply has no valid partition. Used by
 /// tests that want to compare the partitioner's output against an
 /// oracle-derived ordering.
+#[cfg(test)]
 pub(super) fn partition_with_ordering(
     input: &InputShape,
     ordering: &[usize],

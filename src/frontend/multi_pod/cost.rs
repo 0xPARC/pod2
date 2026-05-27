@@ -16,14 +16,6 @@ use crate::{
     },
 };
 
-/// Depth of each POD's Merkle statement tree. Capacity is `2^TREE_DEPTH`.
-pub const TREE_DEPTH: usize = 10;
-
-/// Total chain-tree capacity. The chain tree is shared across all PODs in
-/// a single chain, so this caps the total number of statements that can
-/// flow forward through chained PODs.
-pub const CHAIN_TREE_CAPACITY: usize = 1 << TREE_DEPTH;
-
 /// Identifier for a custom predicate, used to count distinct predicates
 /// per POD against `max_custom_predicates`.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]

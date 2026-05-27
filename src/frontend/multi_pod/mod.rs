@@ -1,9 +1,5 @@
 //! Multi-POD builder for the Merkle statement tree design.
 //!
-//! This is a parallel implementation alongside `super::multi_pod`. The old
-//! solver remains in place during development; once the new POD circuit
-//! lands, this module replaces `multi_pod` and that module is removed.
-//!
 //! The solver is purely symbolic: it consumes a positional [`InputShape`]
 //! and produces a positional [`OutputShape`]. The build layer in this
 //! module translates between user-facing builder state and the symbolic
@@ -12,12 +8,6 @@
 //!
 //! `solve()` partitions the workload symbolically; `prove()` then walks
 //! the partition and builds + proves each POD in chain order.
-//!
-//! The module is not yet re-exported from `frontend::mod`; until it is,
-//! the public surface is reachable only from tests, so we silence
-//! dead-code warnings module-wide.
-
-#![allow(dead_code)]
 
 use std::{
     collections::{hash_map::Entry, BTreeSet, HashMap, HashSet},
@@ -578,10 +568,13 @@ fn run_partition(shape: &InputShape, kind: SolverKind) -> Result<OutputShape> {
         }
     };
     outcome.ok_or_else(|| {
+        let detail = diagnostics::diagnose_failure(shape)
+            .map(|v| format!(": {}", v))
+            .unwrap_or_default();
         Error::NoFeasiblePartition(format!(
             "the {} could not find a feasible partition under the current \
-             params; run diagnose_failure() for details",
-            kind
+             params{}",
+            kind, detail
         ))
     })
 }
