@@ -436,6 +436,7 @@ impl GreedyState {
     /// resource totals, custom-predicate dedup, the export-tracking
     /// countdowns, and the input-tree import sets. The publish-cap
     /// impact must already have been verified by [`can_extend`].
+    #[allow(clippy::too_many_arguments)]
     fn commit_extend(
         &mut self,
         stmt: usize,
@@ -739,6 +740,7 @@ pub(super) fn simulate_greedy_k(input: &InputShape, ordering: &[usize]) -> Optio
 /// Reuses `workspace` for the membership sets and the distinct-CP dedup
 /// buffer; both are reset per call but their underlying allocations are
 /// shared across the ~28K calls in one `run_dp`.
+#[allow(clippy::too_many_arguments)]
 fn segment_feasible_with(
     ordering: &[usize],
     pos_in_ordering: &[usize],
