@@ -374,14 +374,6 @@ pub enum SplittingError {
         message: String,
     },
 
-    #[error("Too many total arguments in predicate '{predicate}': {count} exceeds max of {max_allowed}. {message}")]
-    TooManyTotalArgs {
-        predicate: String,
-        count: usize,
-        max_allowed: usize,
-        message: String,
-    },
-
     #[error("Too many total arguments in chain link {link_index} of predicate '{predicate}': {public_count} public + {private_count} private = {total_count} total (exceeds max of {max_allowed})")]
     TooManyTotalArgsInChainLink {
         predicate: String,
