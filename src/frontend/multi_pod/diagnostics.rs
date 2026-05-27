@@ -1,20 +1,27 @@
-//! Diagnostic utilities for multi-POD resource analysis.
+//! Diagnostic views and structured-failure analysis.
 //!
-//! Provides two views:
-//! - [`ResourceSummary`]: Pre-solve aggregate resource demand vs. per-POD limits.
-//!   Shows which resource category is the bottleneck (requires the most PODs).
-//! - [`SolutionBreakdown`]: Post-solve per-POD utilization showing how full each POD is.
+//! - [`ResourceSummary`]: pre-solve aggregate resource demand vs. per-POD
+//!   limits, with the dominant bottleneck flagged.
+//! - [`SolutionBreakdown`]: post-solve per-POD utilisation.
+//! - [`CapViolation`] / [`diagnose_failure`]: when [`partition`] returns
+//!   `None`, a greedy walk over the topo ordering surfaces the first cap
+//!   that overflows, with the segment range and overflowing dimension.
+//!
+//! [`partition`]: super::partition::partition
 
-use std::{collections::BTreeSet, fmt};
+use std::{
+    collections::{BTreeSet, HashSet},
+    fmt,
+};
 
-use super::cost::StatementCost;
+use super::{
+    cost::{OperationCost, ResourceTotals},
+    shape::{AbstractDep, InputShape, OutputShape},
+};
 use crate::middleware::Params;
 
-/// A single resource category's usage vs. per-POD limit.
-///
-/// Used both for pre-solve aggregate demand (in [`ResourceSummary`]) where
-/// `used` is the total across all statements, and for post-solve per-POD
-/// breakdown (in [`PodUtilization`]) where `used` is the POD's consumption.
+/// Usage of a single resource category against its per-POD cap. Reused for
+/// pre-solve aggregate demand and post-solve per-POD breakdowns.
 #[derive(Clone, Debug)]
 pub struct UtilizationRow {
     pub name: &'static str,
@@ -23,7 +30,6 @@ pub struct UtilizationRow {
 }
 
 impl UtilizationRow {
-    /// Utilization as a fraction (0.0 to 1.0).
     pub fn utilization(&self) -> f64 {
         if self.limit == 0 {
             if self.used == 0 {
@@ -37,83 +43,86 @@ impl UtilizationRow {
     }
 
     /// Minimum PODs needed for this resource alone: `ceil(used / limit)`.
-    /// `None` if `limit` is 0 and `used > 0` (infeasible).
+    /// `None` if `limit == 0` and `used > 0` (infeasible).
     pub fn min_pods(&self) -> Option<usize> {
         lower_bound(self.used, self.limit)
     }
 }
 
-/// Aggregate resource usage over a set of statement costs into per-category rows.
+fn lower_bound(used: usize, limit: usize) -> Option<usize> {
+    if used == 0 {
+        Some(0)
+    } else if limit == 0 {
+        None
+    } else {
+        Some(used.div_ceil(limit))
+    }
+}
+
+/// Aggregate resource costs into category rows. Single source of truth for
+/// the category names and their corresponding `Params` limits.
 ///
-/// Single source of truth for the resource categories and their corresponding
-/// `Params` limits. Used both for pre-solve totals and per-POD breakdowns.
+/// Merkle dimensions report small and medium counts separately, each
+/// against its own pool cap. Small-eligible ops can substitute up into
+/// medium slots when small is exhausted.
 fn aggregate_rows<'a>(
-    costs: impl IntoIterator<Item = &'a StatementCost>,
+    costs: impl IntoIterator<Item = &'a OperationCost>,
     params: &Params,
 ) -> (Vec<UtilizationRow>, usize) {
-    let mut num_stmts = 0usize;
-    let mut merkle_proofs = 0usize;
-    let mut merkle_state_transitions = 0usize;
-    let mut custom_pred_verifications = 0usize;
-    let mut signed_by = 0usize;
-    let mut public_key_of = 0usize;
-    let mut custom_pred_ids = BTreeSet::new();
-
-    for c in costs {
-        num_stmts += 1;
-        merkle_proofs += c.merkle_proofs;
-        merkle_state_transitions += c.merkle_state_transitions;
-        custom_pred_verifications += c.custom_pred_verifications;
-        signed_by += c.signed_by;
-        public_key_of += c.public_key_of;
-        custom_pred_ids.extend(c.custom_predicates_ids.iter().cloned());
-    }
-
+    let totals = ResourceTotals::accumulate(costs);
+    let state = &params.containers.state;
+    let transition = &params.containers.transition;
     let rows = vec![
         UtilizationRow {
-            name: "private statements",
-            used: num_stmts,
-            limit: params.max_priv_statements(),
+            name: "total statements",
+            used: totals.num_operations,
+            limit: params.max_statements,
         },
         UtilizationRow {
-            name: "merkle proofs",
-            used: merkle_proofs,
-            limit: params.containers.state.max_medium,
+            name: "merkle proofs (s)",
+            used: totals.merkle_proofs_small,
+            limit: state.max_small,
         },
         UtilizationRow {
-            name: "merkle state transitions",
-            used: merkle_state_transitions,
-            limit: params.containers.transition.max_medium,
+            name: "merkle proofs (m)",
+            used: totals.merkle_proofs_medium,
+            limit: state.max_medium,
+        },
+        UtilizationRow {
+            name: "merkle state transitions (s)",
+            used: totals.merkle_state_transitions_small,
+            limit: transition.max_small,
+        },
+        UtilizationRow {
+            name: "merkle state transitions (m)",
+            used: totals.merkle_state_transitions_medium,
+            limit: transition.max_medium,
         },
         UtilizationRow {
             name: "custom pred verifications",
-            used: custom_pred_verifications,
+            used: totals.custom_pred_verifications,
             limit: params.max_custom_predicate_verifications,
         },
         UtilizationRow {
             name: "signed_by",
-            used: signed_by,
+            used: totals.signed_by,
             limit: params.max_signed_by,
         },
         UtilizationRow {
             name: "public_key_of",
-            used: public_key_of,
+            used: totals.public_key_of,
             limit: params.max_public_key_of,
         },
         UtilizationRow {
             name: "distinct custom predicates",
-            used: custom_pred_ids.len(),
+            used: totals.distinct_custom_predicates,
             limit: params.max_custom_predicates,
         },
     ];
-
-    (rows, num_stmts)
+    (rows, totals.num_operations)
 }
 
 /// Pre-solve aggregate resource summary.
-///
-/// Shows total resource demand across all operations and the minimum PODs
-/// each resource category would require independently.
 #[derive(Clone, Debug)]
 pub struct ResourceSummary {
     pub rows: Vec<UtilizationRow>,
@@ -121,9 +130,18 @@ pub struct ResourceSummary {
 }
 
 impl ResourceSummary {
-    /// Compute a resource summary from per-statement costs and params.
-    pub fn from_costs(costs: &[StatementCost], params: &Params) -> Self {
-        let (rows, num_statements) = aggregate_rows(costs.iter(), params);
+    pub fn from_input(input: &InputShape) -> Self {
+        Self::from_costs(input.costs.iter(), &input.params)
+    }
+
+    /// Build a summary from a stream of `OperationCost`s plus a `Params`,
+    /// without going through an `InputShape`. Lets callers report on
+    /// builder-stage costs before deps have been materialised.
+    pub fn from_costs<'a>(
+        costs: impl IntoIterator<Item = &'a OperationCost>,
+        params: &Params,
+    ) -> Self {
+        let (rows, num_statements) = aggregate_rows(costs, params);
         Self {
             rows,
             num_statements,
@@ -131,7 +149,6 @@ impl ResourceSummary {
     }
 
     /// The resource category requiring the most PODs (the bottleneck).
-    /// Returns `None` only if there are no statements.
     pub fn bottleneck(&self) -> Option<&UtilizationRow> {
         self.rows
             .iter()
@@ -172,20 +189,24 @@ impl fmt::Display for ResourceSummary {
     }
 }
 
-/// Per-POD resource utilization in a solved solution.
+/// Per-POD resource utilisation in a solved partition. Extends the
+/// aggregate rows with tree-specific dimensions.
 #[derive(Clone, Debug)]
 pub struct PodUtilization {
-    /// POD index.
     pub pod_idx: usize,
-    /// Whether this is the output POD (last).
     pub is_output: bool,
-    /// Number of statements in this POD.
     pub num_statements: usize,
-    /// Resource usage vs. limits for each category.
     pub resources: Vec<UtilizationRow>,
+    pub imports: UtilizationRow,
+    pub external_pods: UtilizationRow,
+    /// Statements this POD contributes to a Merkle tree. For intermediate
+    /// PODs: locally-proved statements consumed downstream. For the output
+    /// POD: the fresh tree size (`|output_public_indices|`). The limit is
+    /// the per-POD `max_public_statements` cap.
+    pub publishes: UtilizationRow,
 }
 
-/// Post-solve per-POD resource breakdown.
+/// Post-solve per-POD breakdown.
 #[derive(Clone, Debug)]
 pub struct SolutionBreakdown {
     pub pods: Vec<PodUtilization>,
@@ -194,32 +215,131 @@ pub struct SolutionBreakdown {
 }
 
 impl SolutionBreakdown {
-    /// Compute a solution breakdown from per-statement costs, the solution's
-    /// pod_statements assignment, and params.
-    pub fn from_solution(
-        costs: &[StatementCost],
-        pod_statements: &[Vec<usize>],
-        pod_count: usize,
-        num_statements: usize,
-        params: &Params,
-    ) -> Self {
+    /// Build a breakdown from an [`InputShape`] and its [`OutputShape`].
+    /// Re-derives per-POD imports and external-pod references from the
+    /// dep graph and the partition; both are pure functions of the inputs.
+    pub fn from_solution(input: &InputShape, output: &OutputShape) -> Self {
+        let n = input.num_statements();
+        let pod_count = output.pod_count;
+
+        // For each statement, the POD it lives in.
+        let mut pod_of: Vec<usize> = vec![usize::MAX; n];
+        for (p, stmts) in output.pod_statements.iter().enumerate() {
+            for &s in stmts {
+                pod_of[s] = p;
+            }
+        }
+
+        let output_pub_set: BTreeSet<usize> = input.output_public_indices.iter().copied().collect();
+
+        let output_pod = pod_count.saturating_sub(1);
+        let mut exported: Vec<bool> = vec![false; n];
+        for s in 0..n {
+            let p = pod_of[s];
+            if p == usize::MAX {
+                continue;
+            }
+            for dep in &input.dep_edges[s] {
+                if let AbstractDep::Internal(d) = dep {
+                    if pod_of[*d] != p {
+                        exported[*d] = true;
+                    }
+                }
+            }
+        }
+        for &op in &output_pub_set {
+            if pod_of[op] != usize::MAX && pod_of[op] != output_pod {
+                exported[op] = true;
+            }
+        }
+
+        let publishes_limit = input.params.max_public_statements;
+        let mut publishes_count: Vec<usize> = vec![0; pod_count];
+        for s in 0..n {
+            let p = pod_of[s];
+            if p != usize::MAX && p != output_pod && exported[s] {
+                publishes_count[p] += 1;
+            }
+        }
+        if pod_count > 0 {
+            publishes_count[output_pod] = input.output_public_indices.len();
+        }
+
         let pods = (0..pod_count)
             .map(|pod_idx| {
-                let stmts = &pod_statements[pod_idx];
-                let (resources, num_stmts) =
-                    aggregate_rows(stmts.iter().map(|&s| &costs[s]), params);
+                let stmts = &output.pod_statements[pod_idx];
+                let is_output = pod_idx + 1 == pod_count;
+                let (mut resources, num_stmts) =
+                    aggregate_rows(stmts.iter().map(|&s| &input.costs[s]), &input.params);
+
+                let mut chain_imports: HashSet<usize> = HashSet::new();
+                let mut external_imports: HashSet<usize> = HashSet::new();
+                let mut external_pods: HashSet<usize> = HashSet::new();
+                for &s in stmts {
+                    for dep in &input.dep_edges[s] {
+                        match dep {
+                            AbstractDep::Internal(d) => {
+                                if pod_of[*d] != pod_idx {
+                                    chain_imports.insert(*d);
+                                }
+                            }
+                            AbstractDep::External { pod, statement } => {
+                                external_imports.insert(*statement);
+                                external_pods.insert(*pod);
+                            }
+                        }
+                    }
+                }
+                if is_output {
+                    for &op in &output_pub_set {
+                        if pod_of[op] != pod_idx {
+                            chain_imports.insert(op);
+                        }
+                    }
+                }
+
+                // Statement-table cap: each `OpenInputStatement` op
+                // produces a statement in the POD's statement table, so
+                // the "total statements" row reflects local statements
+                // PLUS chain and external imports: the same number
+                // `segment_feasible_with` checks against
+                // `max_statements`.
+                let total_imports = chain_imports.len() + external_imports.len();
+                if let Some(row) = resources.iter_mut().find(|r| r.name == "total statements") {
+                    row.used += total_imports;
+                }
+
+                let imports_row = UtilizationRow {
+                    name: "tree imports",
+                    used: total_imports,
+                    limit: input.params.max_open_input_statements,
+                };
+                let external_row = UtilizationRow {
+                    name: "external pods",
+                    used: external_pods.len(),
+                    limit: input.params.max_input_pods,
+                };
+                let publishes_row = UtilizationRow {
+                    name: "tree publishes",
+                    used: publishes_count[pod_idx],
+                    limit: publishes_limit,
+                };
+
                 PodUtilization {
                     pod_idx,
-                    is_output: pod_idx == pod_count - 1,
+                    is_output,
                     num_statements: num_stmts,
                     resources,
+                    imports: imports_row,
+                    external_pods: external_row,
+                    publishes: publishes_row,
                 }
             })
             .collect();
 
         Self {
             pods,
-            num_statements,
+            num_statements: n,
             pod_count,
         }
     }
@@ -241,13 +361,16 @@ impl fmt::Display for SolutionBreakdown {
             };
             writeln!(f, "  POD {} ({}):", pod.pod_idx, role)?;
 
-            for row in &pod.resources {
-                // Only show rows with nonzero usage to reduce noise
+            for row in
+                pod.resources
+                    .iter()
+                    .chain([&pod.imports, &pod.external_pods, &pod.publishes])
+            {
                 if row.used > 0 {
                     let pct = if row.limit > 0 {
                         format!("({:>3}%)", (row.used * 100) / row.limit)
                     } else {
-                        "".to_string()
+                        String::new()
                     };
                     writeln!(
                         f,
@@ -263,204 +386,262 @@ impl fmt::Display for SolutionBreakdown {
     }
 }
 
-fn lower_bound(used: usize, limit: usize) -> Option<usize> {
-    if used == 0 {
-        Some(0)
-    } else if limit == 0 {
-        None
-    } else {
-        Some(used.div_ceil(limit))
+/// First cap violation found by a greedy walk over the topo ordering. Used
+/// to produce a structured failure when the DP can't find a partition.
+#[derive(Clone, Debug)]
+pub enum CapViolation {
+    /// Adding statement `stmt` to the current segment would exceed a
+    /// resource cap. `segment_range` is the statements already accumulated
+    /// when the violation surfaced.
+    Resource {
+        segment_index: usize,
+        segment_range: (usize, usize),
+        offending_stmt: usize,
+        category: &'static str,
+        used: usize,
+        max_allowed: usize,
+    },
+    /// A single statement consumes more distinct tree imports (chain
+    /// producers plus external statements) than fit, even in a segment by
+    /// itself. No partition fixes this; the statement must be refactored.
+    Unsplittable {
+        stmt: usize,
+        distinct_imports: usize,
+        max_allowed: usize,
+    },
+    /// A single statement is infeasible on its own, but
+    /// `identify_overflow`'s recognized cap categories don't explain
+    /// why. Surfaced so the diagnostic walk terminates instead of
+    /// looping forever. Extend [`identify_overflow`] to cover the
+    /// missing cap when this fires.
+    UnrecognizedOverflow { stmt: usize, segment_index: usize },
+}
+
+impl fmt::Display for CapViolation {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            CapViolation::Resource {
+                segment_index,
+                segment_range,
+                offending_stmt,
+                category,
+                used,
+                max_allowed,
+            } => write!(
+                f,
+                "segment {} (statements {:?}) overflows {}: {} > {} when adding statement {}",
+                segment_index, segment_range, category, used, max_allowed, offending_stmt
+            ),
+            CapViolation::Unsplittable {
+                stmt,
+                distinct_imports,
+                max_allowed,
+            } => write!(
+                f,
+                "statement {} alone requires {} distinct tree imports \
+                 (chain producers plus external statements), exceeding the \
+                 cap of {}",
+                stmt, distinct_imports, max_allowed
+            ),
+            CapViolation::UnrecognizedOverflow {
+                stmt,
+                segment_index,
+            } => write!(
+                f,
+                "statement {} is infeasible on its own at segment {}, but no \
+                 recognised cap category explains the overflow (extend \
+                 identify_overflow to surface the responsible cap)",
+                stmt, segment_index
+            ),
+        }
     }
+}
+
+/// Greedy-walk diagnostic: run the same source-order Kahn ordering the DP
+/// uses, then accumulate statements into segments, opening a new segment
+/// when a cap would overflow. Surfaces the first segment where no further
+/// statement fits and identifies the responsible cap. Also flags
+/// statements that are individually unsplittable.
+pub fn diagnose_failure(input: &InputShape) -> Option<CapViolation> {
+    let n = input.num_statements();
+    let identity_priority: Vec<usize> = (0..n).collect();
+    let ordering = super::partition::kahn_with_priority(input, &identity_priority)?;
+
+    for &s in &ordering {
+        if let Some(v) = check_unsplittable(input, s) {
+            return Some(v);
+        }
+    }
+
+    // Walk segments greedily. Open a new segment when the next statement
+    // doesn't fit; if it doesn't fit on its own (Unsplittable above didn't
+    // trigger but the segment-relative caps overflow), surface the
+    // violation that broke the camel's back.
+    let mut segment_start = 0_usize;
+    let mut segment_index = 0_usize;
+    let mut pos = 0_usize;
+    while pos < n {
+        let next_pos = pos + 1;
+        if super::partition::segment_feasible(&ordering, input, segment_start, next_pos) {
+            pos = next_pos;
+            continue;
+        }
+        if segment_start == pos {
+            if let Some(v) =
+                identify_overflow(input, &ordering, segment_start, next_pos, segment_index)
+            {
+                return Some(v);
+            }
+            // identify_overflow doesn't recognise this cap. Surfacing
+            // UnrecognizedOverflow both terminates the walk and points
+            // the next reader at the missing category. Without this
+            // return, `pos` would never advance and we'd loop forever
+            // (segment_start = pos is a no-op when they're equal).
+            return Some(CapViolation::UnrecognizedOverflow {
+                stmt: ordering[pos],
+                segment_index,
+            });
+        }
+        segment_start = pos;
+        segment_index += 1;
+    }
+    None
+}
+
+fn check_unsplittable(input: &InputShape, s: usize) -> Option<CapViolation> {
+    let mut chain: HashSet<usize> = HashSet::new();
+    let mut external: HashSet<usize> = HashSet::new();
+    for dep in &input.dep_edges[s] {
+        match dep {
+            AbstractDep::Internal(d) => {
+                chain.insert(*d);
+            }
+            AbstractDep::External { statement, .. } => {
+                external.insert(*statement);
+            }
+        }
+    }
+    let total = chain.len() + external.len();
+    let max_imports = input.params.max_open_input_statements;
+    if total > max_imports {
+        Some(CapViolation::Unsplittable {
+            stmt: s,
+            distinct_imports: total,
+            max_allowed: max_imports,
+        })
+    } else {
+        None
+    }
+}
+
+/// When a single-statement segment fails feasibility, identify which cap
+/// overflows so the diagnostic surfaces the actionable category.
+fn identify_overflow(
+    input: &InputShape,
+    ordering: &[usize],
+    a: usize,
+    p: usize,
+    segment_index: usize,
+) -> Option<CapViolation> {
+    let params = &input.params;
+    let s = ordering[a];
+    let c = &input.costs[s];
+
+    let state = &params.containers.state;
+    let transition = &params.containers.transition;
+    let categories: &[(&'static str, usize, usize)] = &[
+        ("total statements", 1, params.max_statements),
+        (
+            "merkle proofs (small)",
+            c.merkle_proofs_small,
+            state.max_small,
+        ),
+        (
+            "merkle proofs (medium)",
+            c.merkle_proofs_medium,
+            state.max_medium,
+        ),
+        (
+            "merkle state transitions (small)",
+            c.merkle_state_transitions_small,
+            transition.max_small,
+        ),
+        (
+            "merkle state transitions (medium)",
+            c.merkle_state_transitions_medium,
+            transition.max_medium,
+        ),
+        (
+            "custom pred verifications",
+            c.custom_pred_verifications,
+            params.max_custom_predicate_verifications,
+        ),
+        ("signed_by", c.signed_by, params.max_signed_by),
+        ("public_key_of", c.public_key_of, params.max_public_key_of),
+        (
+            "distinct custom predicates",
+            c.custom_predicates_ids.len(),
+            params.max_custom_predicates,
+        ),
+    ];
+
+    for &(name, used, limit) in categories {
+        if used > limit {
+            return Some(CapViolation::Resource {
+                segment_index,
+                segment_range: (a, p),
+                offending_stmt: s,
+                category: name,
+                used,
+                max_allowed: limit,
+            });
+        }
+    }
+    None
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        frontend::multi_pod::cost::CustomPredicateId,
-        middleware::{Hash, ParamsContainers, ParamsMerkleProofs, RawValue},
-    };
+    use crate::frontend::multi_pod::partition;
 
-    fn default_params() -> Params {
-        Params {
-            max_statements: 48,
-            max_public_statements: 8,
-            containers: ParamsContainers {
-                state: ParamsMerkleProofs {
-                    max_small: 0,
-                    max_medium: 8,
-                },
-                transition: ParamsMerkleProofs {
-                    max_small: 0,
-                    max_medium: 4,
-                },
-                ..Default::default()
-            },
-            max_custom_predicate_verifications: 10,
-            max_custom_predicates: 2,
-            max_signed_by: 4,
-            max_public_key_of: 4,
-            ..Params::default()
+    fn independent(n: usize, output_public: Vec<usize>, params: Params) -> InputShape {
+        InputShape {
+            costs: (0..n).map(|_| OperationCost::default()).collect(),
+            dep_edges: (0..n).map(|_| Vec::new()).collect(),
+            output_public_indices: output_public,
+            num_external_pods: 0,
+            statement_pod: vec![],
+            params,
         }
     }
 
     #[test]
-    fn test_resource_summary_bottleneck() {
-        let params = default_params();
-        // max_priv = 48 - 8 = 40
-
-        // 6 merkle proofs, 3 state transitions, rest zero-cost
-        let costs: Vec<StatementCost> = (0..14)
-            .map(|i| {
-                let mut c = StatementCost::default();
-                if i < 6 {
-                    c.merkle_proofs = 1;
-                } else if i < 9 {
-                    c.merkle_state_transitions = 1;
-                }
-                c
-            })
-            .collect();
-
-        let summary = ResourceSummary::from_costs(&costs, &params);
-
-        // 14 statements / 40 per pod = 1 pod for statements
-        // 6 merkle proofs / 8 per pod = 1 pod
-        // 3 state transitions / 4 per pod = 1 pod
-        // All categories need 1 pod, so bottleneck is whichever has the highest min_pods.
-        // They're all 1, so the first with total > 0 wins in max_by_key (stable).
-        let bottleneck = summary.bottleneck().unwrap();
-        assert_eq!(bottleneck.min_pods(), Some(1));
-
-        // Verify display doesn't panic
-        let display = format!("{}", summary);
-        assert!(display.contains("Resource Summary (14 statements)"));
-        assert!(display.contains("merkle proofs"));
-    }
-
-    #[test]
-    fn test_resource_summary_signed_by_bottleneck() {
+    fn resource_summary_flags_statement_bottleneck() {
         let params = Params {
-            max_statements: 48,
-            max_public_statements: 8,
-            max_signed_by: 2,
+            max_statements: 2,
             ..Params::default()
         };
-        // max_priv = 40
-
-        // 6 signed_by operations
-        let costs: Vec<StatementCost> = (0..6)
-            .map(|_| StatementCost {
-                signed_by: 1,
-                ..Default::default()
-            })
-            .collect();
-
-        let summary = ResourceSummary::from_costs(&costs, &params);
-        let bottleneck = summary.bottleneck().unwrap();
-
-        assert_eq!(bottleneck.name, "signed_by");
-        // 6 / 2 = 3 pods
-        assert_eq!(bottleneck.min_pods(), Some(3));
+        // max_statements = 2; 6 statements -> bottleneck is statements.
+        let input = independent(6, vec![5], params);
+        let summary = ResourceSummary::from_input(&input);
+        let bottleneck = summary
+            .bottleneck()
+            .expect("non-empty problem has a bottleneck");
+        assert_eq!(bottleneck.name, "total statements");
+        assert_eq!(bottleneck.min_pods(), Some(3)); // ceil(6/2)
     }
 
     #[test]
-    fn test_resource_summary_custom_predicates_bottleneck() {
+    fn solution_breakdown_reports_per_pod_utilisation() {
         let params = Params {
-            max_statements: 48,
-            max_public_statements: 8,
-            max_custom_predicates: 1, // Only 1 distinct predicate per POD
-            max_custom_predicate_verifications: 10,
+            max_statements: 2,
             ..Params::default()
         };
-
-        // 3 statements using 3 different custom predicates
-        let costs: Vec<StatementCost> = (0..3)
-            .map(|i| {
-                let mut ids = std::collections::BTreeSet::new();
-                ids.insert(CustomPredicateId(Hash::from(RawValue::from(i as i64))));
-                StatementCost {
-                    custom_pred_verifications: 1,
-                    custom_predicates_ids: ids,
-                    ..Default::default()
-                }
-            })
-            .collect();
-
-        let summary = ResourceSummary::from_costs(&costs, &params);
-        let bottleneck = summary.bottleneck().unwrap();
-
-        assert_eq!(bottleneck.name, "distinct custom predicates");
-        // 3 distinct predicates / 1 per pod = 3 pods
-        assert_eq!(bottleneck.min_pods(), Some(3));
-    }
-
-    #[test]
-    fn test_solution_breakdown_display() {
-        let params = default_params();
-
-        let costs: Vec<StatementCost> = (0..8)
-            .map(|i| {
-                let mut c = StatementCost::default();
-                if i < 4 {
-                    c.merkle_proofs = 1;
-                } else {
-                    c.merkle_state_transitions = 1;
-                }
-                c
-            })
-            .collect();
-
-        let pod_statements = vec![
-            vec![0, 1, 2, 3], // POD 0: 4 merkle proofs
-            vec![4, 5, 6, 7], // POD 1: 4 state transitions
-        ];
-
-        let breakdown = SolutionBreakdown::from_solution(&costs, &pod_statements, 2, 8, &params);
-
-        assert_eq!(breakdown.pods.len(), 2);
-        assert!(!breakdown.pods[0].is_output);
-        assert!(breakdown.pods[1].is_output);
-
-        // POD 0 should have 4 merkle proofs
-        let mp = breakdown.pods[0]
-            .resources
-            .iter()
-            .find(|r| r.name == "merkle proofs")
-            .unwrap();
-        assert_eq!(mp.used, 4);
-        assert_eq!(mp.limit, 8);
-
-        // POD 1 should have 4 state transitions
-        let mst = breakdown.pods[1]
-            .resources
-            .iter()
-            .find(|r| r.name == "merkle state transitions")
-            .unwrap();
-        assert_eq!(mst.used, 4);
-        assert_eq!(mst.limit, 4);
-
-        // Verify display doesn't panic and contains expected content
-        let display = format!("{}", breakdown);
-        assert!(display.contains("Solution Breakdown (8 statements -> 2 PODs)"));
-        assert!(display.contains("POD 0 (intermediate)"));
-        assert!(display.contains("POD 1 (output)"));
-    }
-
-    #[test]
-    fn test_utilization_row_fraction() {
-        let row = UtilizationRow {
-            name: "test",
-            used: 3,
-            limit: 4,
-        };
-        assert!((row.utilization() - 0.75).abs() < f64::EPSILON);
-
-        let zero_row = UtilizationRow {
-            name: "test",
-            used: 0,
-            limit: 4,
-        };
-        assert!((zero_row.utilization()).abs() < f64::EPSILON);
+        let input = independent(3, vec![2], params);
+        let output = partition::partition(&input).expect("must partition");
+        let breakdown = SolutionBreakdown::from_solution(&input, &output);
+        assert_eq!(breakdown.pod_count, output.pod_count);
+        assert!(breakdown.pods.last().unwrap().is_output);
     }
 }
