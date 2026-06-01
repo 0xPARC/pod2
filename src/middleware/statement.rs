@@ -312,7 +312,7 @@ pub enum Statement {
         /*   key    */ ValueRef,
     ),
     Custom(CustomPredicateRef, Vec<ValueRef>),
-    Intro(IntroPredicateRef, Vec<Value>),
+    Intro(IntroPredicateRef, Vec<ValueRef>),
 }
 
 macro_rules! statement_constructor {
@@ -385,7 +385,6 @@ impl Statement {
         }
     }
     pub fn args(&self) -> Vec<StatementArg> {
-        use StatementArg::*;
         match self.clone() {
             Self::None => vec![],
             Self::Equal(ak1, ak2) => vec![ak1.into(), ak2.into()],
@@ -408,7 +407,7 @@ impl Statement {
             }
             Self::ContainerDelete(ak1, ak2, ak3) => vec![ak1.into(), ak2.into(), ak3.into()],
             Self::Custom(_, args) => Vec::from_iter(args.into_iter().map(StatementArg::from)),
-            Self::Intro(_, args) => Vec::from_iter(args.into_iter().map(Literal)),
+            Self::Intro(_, args) => Vec::from_iter(args.into_iter().map(StatementArg::from)),
         }
     }
 
@@ -485,14 +484,11 @@ impl Statement {
                 Self::Custom(cpr, v_args)
             }
             (Intro(ir), _) => {
-                let v_args: Result<Vec<Value>> = args
+                let v_args = args
                     .iter()
-                    .map(|x| match x {
-                        StatementArg::Literal(v) => Ok(v.clone()),
-                        _ => Err(Error::incorrect_statements_args()),
-                    })
-                    .collect();
-                Self::Intro(ir, v_args?)
+                    .map(|x| x.try_into())
+                    .collect::<Result<Vec<ValueRef>>>()?;
+                Self::Intro(ir, v_args)
             }
         };
         Ok(st)
