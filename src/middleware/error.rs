@@ -25,8 +25,6 @@ fn display_wc_map(wc_map: &[Option<Value>]) -> String {
 
 #[derive(Debug, thiserror::Error)]
 pub enum MiddlewareInnerError {
-    #[error("incorrect statement args")]
-    IncorrectStatementArgs,
     #[error("invalid deduction: {0:?} ⇏ {1:#}")]
     InvalidDeduction(Operation, Statement),
     #[error("statement argument {0:?} should be a {1}")]
@@ -94,9 +92,6 @@ macro_rules! new {
 }
 use MiddlewareInnerError::*;
 impl Error {
-    pub(crate) fn incorrect_statements_args() -> Self {
-        new!(IncorrectStatementArgs)
-    }
     pub(crate) fn invalid_deduction(op: Operation, st: Statement) -> Self {
         new!(InvalidDeduction(op, st))
     }

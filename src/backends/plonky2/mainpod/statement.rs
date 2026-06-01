@@ -5,8 +5,8 @@ use serde::{Deserialize, Serialize};
 use crate::{
     backends::plonky2::error::{Error, Result},
     middleware::{
-        self, hash_fields, Hash, NativePredicate, Predicate, StatementArg, ToFields, Value,
-        ValueRef, BASE_PARAMS,
+        self, hash_fields, Hash, NativePredicate, Predicate, StatementArg, ToFields, ValueRef,
+        BASE_PARAMS,
     },
 };
 
@@ -116,15 +116,15 @@ impl TryFrom<Statement> for middleware::Statement {
                 S::Custom(cpr, args)
             }
             Predicate::Intro(ir) => {
-                let vs: Vec<Value> = proper_args
+                let args: Vec<ValueRef> = proper_args
                     .into_iter()
                     .filter_map(|arg| match arg {
+                        SA::Literal(v) => Some(ValueRef::Literal(v)),
+                        SA::Key(k) => Some(ValueRef::Key(k)),
                         SA::None => None,
-                        SA::Literal(v) => Some(v),
-                        _ => unreachable!(),
                     })
                     .collect();
-                S::Intro(ir, vs)
+                S::Intro(ir, args)
             }
             Predicate::BatchSelf(_) => {
                 unreachable!()
