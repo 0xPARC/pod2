@@ -642,3 +642,22 @@ where
         Self::Literal(value.into())
     }
 }
+
+#[cfg(test)]
+pub mod tests {
+    use super::*;
+
+    #[test]
+    fn test_statement_arg_no_collision() {
+        let none = StatementArg::None;
+        let zero = StatementArg::Literal(0.into());
+        // [0, 0, 0, 0, 0, 0, 0, 0] != [0, 0, 0, VALUE_INT_TAG, 0, 0, 0, 0]
+        assert_ne!(none.to_fields(), zero.to_fields());
+
+        let root = Hash([F(1), F(2), F(3), F(4)]);
+        let one = StatementArg::Literal(root.into());
+        let ak = StatementArg::Key((root, 0i64).into());
+        // [1, 2, 3, 4, 0, 0, 0, 0] != [1, 2, 3, 4, 0, 0, 0, VALUE_INT_TAG]
+        assert_ne!(one.to_fields(), ak.to_fields());
+    }
+}

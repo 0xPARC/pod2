@@ -105,11 +105,13 @@ impl PartialOrd for RawValue {
     }
 }
 
+pub const VALUE_INT_TAG: F = F::NEG_ONE;
+
 impl From<i64> for RawValue {
     fn from(v: i64) -> Self {
         let lo = F::from_canonical_u64((v as u64) & 0xffffffff);
         let hi = F::from_canonical_u64((v as u64) >> 32);
-        RawValue([lo, hi, F::ZERO, F::ZERO])
+        RawValue([lo, hi, F::ZERO, VALUE_INT_TAG])
     }
 }
 

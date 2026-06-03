@@ -11,8 +11,10 @@ The backend encoding stores integers in such a way that arithmetic operations (a
 In the case of the Plonky2 backend, an integer $x$ is decomposed as
 $$x = x_0 + x_1 \cdot 2^{32}$$
 with $0 \leq x_0, x_1 < 2^{32}$ and represented as
-$$\texttt{map}\ \iota\ [x_0, x_1, 0, 0],$$
+$$\texttt{map}\ \iota\ [x_0, x_1, 0, -1],$$
 where $\iota:\mathbb{N}\cup\{0\}\rightarrow\texttt{GoldilocksField}$ is the canonical projection.
+
+We use `-1` as a tag in the last limb in order to distinguish the encoding of 0 from an empty value with zeroes.  `-1` in the GoldilocksField has the canonical projection of `18446744069414584320 = 0xffffffff00000000`.
 
 On the backend, a boolean is stored as an integer, either 0 or 1; so logical operations on booleans are also inexpensive.
 

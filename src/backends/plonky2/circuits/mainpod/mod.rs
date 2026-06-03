@@ -1535,12 +1535,12 @@ fn make_statement_arg_from_template_circuit(
     let resolved_ak_id = builder.vec_ref_small(params, args, first_index);
     let resolved_wc = resolved_ak_id;
 
-    let first = ValueTarget::zero(builder); // is_none
+    let first = ValueTarget::empty(builder); // is_none
     let first = builder.select_flattenable(params, is_literal, &value_literal, &first);
     let first = builder.select_flattenable(params, is_ak, &resolved_ak_id, &first);
     let first = builder.select_flattenable(params, is_wc_literal, &resolved_wc, &first);
 
-    let second = ValueTarget::zero(builder); // is_none or is_literal or is_wc_literal
+    let second = ValueTarget::empty(builder); // is_none or is_literal or is_wc_literal
     let second = builder.select_flattenable(params, is_ak, &ak_key, &second);
 
     StatementArgTarget::new(first, second)
@@ -1610,7 +1610,7 @@ fn make_custom_statement_circuit(
 
     // Build the statement
     let st_predicate = PredicateTarget::new_custom(builder, batch_id, index);
-    let arg_none = ValueTarget::zero(builder);
+    let arg_none = ValueTarget::empty(builder);
     let lt_mask = builder.lt_mask(
         Params::max_statement_args(),
         custom_predicate.predicate.args_len,

@@ -38,7 +38,7 @@ use crate::{
         OperationType, Params, Predicate, PredicateOrWildcard, PredicateOrWildcardPrefix,
         PredicatePrefix, RawValue, StatementArg, StatementTmpl, StatementTmplArg,
         StatementTmplArgPrefix, ToFields, Value, BASE_PARAMS, EMPTY_VALUE, F, HASH_SIZE,
-        STATEMENT_ARG_F_LEN, VALUE_SIZE,
+        STATEMENT_ARG_F_LEN, VALUE_INT_TAG, VALUE_SIZE,
     },
 };
 
@@ -67,10 +67,16 @@ impl From<HashOutTarget> for ValueTarget {
 }
 
 impl ValueTarget {
-    pub fn zero(builder: &mut CircuitBuilder) -> Self {
+    pub fn empty(builder: &mut CircuitBuilder) -> Self {
+        let zero = builder.zero();
         Self {
-            elements: [builder.zero(); VALUE_SIZE],
+            elements: [zero; VALUE_SIZE],
         }
+    }
+
+    pub fn zero(builder: &mut CircuitBuilder) -> Self {
+        let zero = builder.zero();
+        Self::from_int_lo(builder, zero)
     }
 
     pub fn one(builder: &mut CircuitBuilder) -> Self {
@@ -87,8 +93,9 @@ impl ValueTarget {
 
     pub fn from_int_lo(builder: &mut CircuitBuilder, x: Target) -> Self {
         let zero = builder.zero();
+        let int_tag = builder.constant(VALUE_INT_TAG);
         Self {
-            elements: [x, zero, zero, zero],
+            elements: [x, zero, zero, int_tag],
         }
     }
 
@@ -693,10 +700,7 @@ impl CustomPredicateInBatchTarget {
             MerkleClaimAndProofTarget::new_virtual(Params::max_depth_custom_batch_mt(), builder);
         let _true = builder._true();
         builder.connect(_true.target, mtp.existence.target);
-        let zero = builder.constant(F(0));
-        let key = ValueTarget {
-            elements: [index, zero, zero, zero],
-        };
+        let key = ValueTarget::from_int_lo(builder, index);
         builder.connect_values(key, mtp.key);
         let id = mtp.root;
 
@@ -1571,11 +1575,10 @@ impl CircuitBuilderPod<F, D> for CircuitBuilder {
     }
 
     fn assert_i64(&mut self, x: ValueTarget) {
-        // `x` should only have two limbs.
-        x.elements
-            .into_iter()
-            .skip(2)
-            .for_each(|l| self.assert_zero(l));
+        let zero = self.zero();
+        let int_tag = self.constant(VALUE_INT_TAG);
+        self.connect(x.elements[2], zero);
+        self.connect(x.elements[3], int_tag);
 
         // 32-bit range check.
         self.range_check(x.elements[0], NUM_BITS);
@@ -1622,6 +1625,7 @@ impl CircuitBuilderPod<F, D> for CircuitBuilder {
 
     fn i64_wrapping_add(&mut self, x: ValueTarget, y: ValueTarget) -> ValueTarget {
         let zero = self.zero();
+        let int_tag = self.constant(VALUE_INT_TAG);
 
         // Add components and carry where appropriate.
         let (_, sum) = std::iter::zip(&x.elements[..2], &y.elements[..2]).fold(
@@ -1636,7 +1640,7 @@ impl CircuitBuilderPod<F, D> for CircuitBuilder {
             },
         );
 
-        ValueTarget::from_slice(&[sum[0], sum[1], zero, zero])
+        ValueTarget::from_slice(&[sum[0], sum[1], zero, int_tag])
     }
 
     fn i64_add(&mut self, x: ValueTarget, y: ValueTarget) -> ValueTarget {
@@ -1666,6 +1670,7 @@ impl CircuitBuilderPod<F, D> for CircuitBuilder {
 
     fn i64_mul(&mut self, x: ValueTarget, y: ValueTarget) -> ValueTarget {
         let zero = self.zero();
+        let int_tag = self.constant(VALUE_INT_TAG);
         let i64_min = ValueTarget::from_slice(&self.constants(&RawValue::from(i64::MIN).0));
         let (abs_x, x_is_negative) = self.i64_abs(x);
         let (abs_y, y_is_negative) = self.i64_abs(y);
@@ -1695,7 +1700,7 @@ impl CircuitBuilderPod<F, D> for CircuitBuilder {
             self.split_low_high(sum2, NUM_BITS, F::BITS)
         };
 
-        let abs_prod = ValueTarget::from_slice(&[prod_lower, prod_upper, zero, zero]);
+        let abs_prod = ValueTarget::from_slice(&[prod_lower, prod_upper, zero, int_tag]);
 
         // Overflow check: The latter two products in `prods` should
         // have zero higher-order coefficients.
