@@ -71,7 +71,7 @@ impl OperationAux {
             Size::Small => 1,
             Size::Medium => {
                 Self::table_offset_merkle_proof(params, Size::Small)
-                    + params.containers.state.max_small
+                    + params.containers.state_ops.max_small
             }
         }
     }
@@ -79,32 +79,32 @@ impl OperationAux {
         match size {
             Size::Small => {
                 Self::table_offset_merkle_proof(params, Size::min())
-                    + params.containers.state.max_total()
+                    + params.containers.state_ops.max_total()
             }
             Size::Medium => {
                 Self::table_offset_merkle_transition_proof(params, Size::Small)
-                    + params.containers.transition.max_small
+                    + params.containers.transition_ops.max_small
             }
         }
     }
     fn table_offset_open_input_statement(params: &Params) -> usize {
         Self::table_offset_merkle_transition_proof(params, Size::min())
-            + params.containers.transition.max_total()
+            + params.containers.transition_ops.max_total()
     }
     fn table_offset_custom_pred_verify(params: &Params) -> usize {
-        Self::table_offset_open_input_statement(params) + params.max_open_input_statements
+        Self::table_offset_open_input_statement(params) + params.max_open_input_statement_ops
     }
     fn table_offset_public_key(params: &Params) -> usize {
-        Self::table_offset_custom_pred_verify(params) + params.max_custom_predicate_verifications
+        Self::table_offset_custom_pred_verify(params) + params.max_custom_predicate_verification_ops
     }
     fn table_offset_signed_by(params: &Params) -> usize {
         Self::table_offset_public_key(params) + params.max_public_key_ops
     }
     pub(crate) fn table_size(params: &Params) -> usize {
-        1 + params.containers.state.max_total()
-            + params.containers.transition.max_total()
-            + params.max_open_input_statements
-            + params.max_custom_predicate_verifications
+        1 + params.containers.state_ops.max_total()
+            + params.containers.transition_ops.max_total()
+            + params.max_open_input_statement_ops
+            + params.max_custom_predicate_verification_ops
             + params.max_public_key_ops
             + params.max_signed_by_ops
     }

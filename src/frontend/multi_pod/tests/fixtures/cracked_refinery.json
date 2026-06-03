@@ -5539,16 +5539,16 @@
     "maxInputPods": 2,
     "maxStatements": 48,
     "maxPublicStatements": 20,
-    "maxOpenInputStatements": 20,
+    "maxOpenInputStatementOps": 20,
     "maxCustomPredicates": 8,
-    "maxCustomPredicateVerifications": 8,
+    "maxCustomPredicateVerificationOps": 8,
     "maxCustomPredicateWildcards": 8,
     "containers": {
-      "state": {
+      "stateOps": {
         "maxSmall": 22,
         "maxMedium": 8
       },
-      "transition": {
+      "transitionOps": {
         "maxSmall": 12,
         "maxMedium": 6
       },

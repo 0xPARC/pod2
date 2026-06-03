@@ -966,10 +966,10 @@ impl ParamsMerkleProofs {
 #[serde(rename_all = "camelCase")]
 pub struct ParamsContainers {
     // Parameters for exists/nonexists container operations.  The small set only supports exists
-    pub state: ParamsMerkleProofs,
+    pub state_ops: ParamsMerkleProofs,
     // Parameters for transition container operations (insert, delete, update).  The small set only
     // supports update.
-    pub transition: ParamsMerkleProofs,
+    pub transition_ops: ParamsMerkleProofs,
     // Max depth of small proofs
     pub max_depth_small: usize,
     // Max depth of medium proofs
@@ -979,11 +979,11 @@ pub struct ParamsContainers {
 impl Default for ParamsContainers {
     fn default() -> Self {
         Self {
-            state: ParamsMerkleProofs {
+            state_ops: ParamsMerkleProofs {
                 max_small: 22,
                 max_medium: 8,
             },
-            transition: ParamsMerkleProofs {
+            transition_ops: ParamsMerkleProofs {
                 max_small: 12,
                 max_medium: 6,
             },
@@ -1000,11 +1000,11 @@ pub struct Params {
     pub max_input_pods: usize,
     pub max_statements: usize,
     pub max_public_statements: usize,
-    pub max_open_input_statements: usize,
+    pub max_open_input_statement_ops: usize,
     // max number of different custom predicates that can be used in a MainPod
     pub max_custom_predicates: usize,
     // max number of operations using custom predicates that can be verified in the MainPod
-    pub max_custom_predicate_verifications: usize,
+    pub max_custom_predicate_verification_ops: usize,
     pub max_custom_predicate_wildcards: usize,
     pub containers: ParamsContainers,
     // maximum depth of the merkle tree gadget used for verifier_data membership
@@ -1024,9 +1024,9 @@ impl Default for Params {
             max_input_pods: 2,
             max_statements: 48,
             max_public_statements: 20,
-            max_open_input_statements: 20,
+            max_open_input_statement_ops: 20,
             max_custom_predicates: 10,
-            max_custom_predicate_verifications: 10,
+            max_custom_predicate_verification_ops: 10,
             max_custom_predicate_wildcards: 8,
             containers: ParamsContainers::default(),
             max_depth_mt_vds: 6, // up to 64 (2^6) different pod circuits

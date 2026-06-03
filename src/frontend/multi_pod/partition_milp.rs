@@ -247,8 +247,8 @@ pub fn solve_for_k(input: &InputShape, k: usize) -> Option<OutputShape> {
     // (4) Multi-dim resource caps per POD. Merkle dimensions are
     // absorbable-bin: medium must fit alone, small+medium combined must
     // fit across both pools. Two linear constraints per dimension.
-    let state = &input.params.containers.state;
-    let transition = &input.params.containers.transition;
+    let state = &input.params.containers.state_ops;
+    let transition = &input.params.containers.transition_ops;
     let merkle_proofs_medium_cap = state.max_medium as f64;
     let merkle_proofs_total_cap = state.max_total() as f64;
     let merkle_trans_medium_cap = transition.max_medium as f64;
@@ -285,7 +285,7 @@ pub fn solve_for_k(input: &InputShape, k: usize) -> Option<OutputShape> {
             .map(|s| (input.costs[s].custom_pred_verifications as f64) * v.assign[s][p])
             .sum();
         model.add_constraint(constraint!(
-            cpv <= input.params.max_custom_predicate_verifications as f64
+            cpv <= input.params.max_custom_predicate_verification_ops as f64
         ));
 
         let sb: Expression = (0..n)
@@ -370,7 +370,7 @@ pub fn solve_for_k(input: &InputShape, k: usize) -> Option<OutputShape> {
     // (7b) Combined import cap: chain + external imports share the
     // `max_open_input_statements` budget (POD circuit reads both kinds
     // through the same input-tree slots).
-    let max_imports = input.params.max_open_input_statements as f64;
+    let max_imports = input.params.max_open_input_statement_ops as f64;
     for p in 0..k {
         let chain_sum: Expression = (0..n).map(|d| v.import_from[d][p]).sum();
         let ext_sum: Expression = (0..num_ext_statements)
@@ -587,7 +587,7 @@ mod tests {
         // infeasible because the combined import cap (chain + external)
         // is busted.
         let params = Params::default();
-        let n = params.max_open_input_statements + 1;
+        let n = params.max_open_input_statement_ops + 1;
         let input = InputShape {
             costs: (0..n).map(|_| OperationCost::default()).collect(),
             dep_edges: (0..n)

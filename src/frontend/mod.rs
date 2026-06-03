@@ -1040,7 +1040,7 @@ pub mod tests {
     fn test_ethdos_recursive() -> Result<()> {
         let params = Params {
             max_statements: 24,
-            max_open_input_statements: 8,
+            max_open_input_statement_ops: 8,
             ..Default::default()
         };
         let vd_set = &*MOCK_VD_SET;

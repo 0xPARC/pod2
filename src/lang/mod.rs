@@ -581,7 +581,7 @@ mod tests {
         let params = Params {
             max_input_pods: 3,
             max_statements: 31,
-            max_open_input_statements: 10,
+            max_open_input_statement_ops: 10,
             max_custom_predicate_wildcards: 12,
             ..Default::default()
         };

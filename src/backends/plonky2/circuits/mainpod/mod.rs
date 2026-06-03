@@ -203,12 +203,12 @@ enum OperationAuxTableTag {
 
 fn max_operation_aux_entry_len(params: &Params) -> usize {
     [
-        (params.containers.state.max_total() > 0).then(|| MerkleClaimTarget::size(params)),
-        (params.containers.transition.max_total() > 0)
+        (params.containers.state_ops.max_total() > 0).then(|| MerkleClaimTarget::size(params)),
+        (params.containers.transition_ops.max_total() > 0)
             .then(|| MerkleTreeStateTransitionClaimTarget::size(params)),
-        (params.max_custom_predicate_verifications > 0)
+        (params.max_custom_predicate_verification_ops > 0)
             .then(|| CustomPredicateVerifyQueryTarget::size(params)),
-        (params.max_open_input_statements > 0).then(|| StatementTarget::size(params)),
+        (params.max_open_input_statement_ops > 0).then(|| StatementTarget::size(params)),
         (params.max_public_key_ops > 0).then(|| PubKeySecKeyTarget::size(params)),
         (params.max_signed_by_ops > 0).then(|| MsgPubKeyTarget::size(params)),
     ]
@@ -361,7 +361,7 @@ fn append_open_input_statements_aux_table_circuit(
     }
     assert_eq!(params.max_input_pods, input_pod_table.len());
     assert_eq!(
-        params.max_open_input_statements,
+        params.max_open_input_statement_ops,
         open_input_statements.len()
     );
     for data in open_input_statements {
@@ -408,15 +408,15 @@ fn build_operation_aux_table_circuit(
 ) -> Result<MuxTableTarget> {
     let measure = measure_gates_begin!(builder, "BuildOpAuxTbl");
     assert_eq!(
-        params.max_custom_predicate_verifications,
+        params.max_custom_predicate_verification_ops,
         input.custom_predicate_verifications.len()
     );
     assert_eq!(
-        params.containers.state.max_small,
+        params.containers.state_ops.max_small,
         input.merkle_proofs.small.len()
     );
     assert_eq!(
-        params.containers.state.max_medium,
+        params.containers.state_ops.max_medium,
         input.merkle_proofs.medium.len()
     );
     let max_entry_len = max_operation_aux_entry_len(params);
@@ -593,7 +593,7 @@ fn verify_operation_circuit(
     }
     // Skip these if there are no resolved aux entries
     if let Some(resolved_aux) = resolved_aux {
-        if params.containers.state.max_total() > 0 {
+        if params.containers.state_ops.max_total() > 0 {
             op_checks.extend_from_slice(&[
                 verify_contains_from_entries_circuit(
                     params,
@@ -633,7 +633,7 @@ fn verify_operation_circuit(
                 &cache,
             ));
         }
-        if params.containers.transition.max_total() > 0 {
+        if params.containers.transition_ops.max_total() > 0 {
             op_checks.extend_from_slice(&[
                 verify_merkle_insert_circuit(
                     params,
@@ -661,7 +661,7 @@ fn verify_operation_circuit(
                 ),
             ]);
         }
-        if params.max_custom_predicate_verifications > 0 {
+        if params.max_custom_predicate_verification_ops > 0 {
             op_checks.push(verify_custom_circuit(
                 builder,
                 st,
@@ -670,7 +670,7 @@ fn verify_operation_circuit(
                 &cache.op_args,
             ));
         }
-        if params.max_open_input_statements > 0 {
+        if params.max_open_input_statement_ops > 0 {
             op_checks.extend_from_slice(&[verify_open_input_statement_circuit(
                 builder,
                 st,
@@ -1988,7 +1988,7 @@ pub struct MerkleProofsTarget {
 impl MerkleProofsTarget {
     pub fn new_virtual(params: &Params, builder: &mut CircuitBuilder) -> Self {
         Self {
-            small: (0..params.containers.state.max_small)
+            small: (0..params.containers.state_ops.max_small)
                 .map(|_| {
                     MerkleProofExistenceTarget::new_virtual(
                         params.containers.max_depth_small,
@@ -1996,7 +1996,7 @@ impl MerkleProofsTarget {
                     )
                 })
                 .collect(),
-            medium: (0..params.containers.state.max_medium)
+            medium: (0..params.containers.state_ops.max_medium)
                 .map(|_| {
                     MerkleClaimAndProofTarget::new_virtual(
                         params.containers.max_depth_medium,
@@ -2017,7 +2017,7 @@ pub struct MerkleTransitionProofsTarget {
 impl MerkleTransitionProofsTarget {
     pub fn new_virtual(params: &Params, builder: &mut CircuitBuilder) -> Self {
         Self {
-            small: (0..params.containers.transition.max_small)
+            small: (0..params.containers.transition_ops.max_small)
                 .map(|_| {
                     MerkleTreeStateTransitionProofTarget::new_virtual(
                         params.containers.max_depth_small,
@@ -2025,7 +2025,7 @@ impl MerkleTransitionProofsTarget {
                     )
                 })
                 .collect(),
-            medium: (0..params.containers.transition.max_medium)
+            medium: (0..params.containers.transition_ops.max_medium)
                 .map(|_| {
                     MerkleTreeStateTransitionProofTarget::new_virtual(
                         params.containers.max_depth_medium,
@@ -2055,43 +2055,46 @@ impl AuxTableInputTargets {
         merkle_proofs: &MerkleProofs,
         merkle_transition_proofs: &MerkleTransitionProofs,
     ) -> Result<()> {
-        assert!(merkle_proofs.small.len() <= params.containers.state.max_small);
+        assert!(merkle_proofs.small.len() <= params.containers.state_ops.max_small);
         for (i, mp) in merkle_proofs.small.iter().enumerate() {
             self.merkle_proofs.small[i].set_targets(pw, mp)?;
         }
         // Padding
         let pad_mp = MerkleClaimAndProof::pad();
-        for i in merkle_proofs.small.len()..params.containers.state.max_small {
+        for i in merkle_proofs.small.len()..params.containers.state_ops.max_small {
             self.merkle_proofs.small[i].set_targets(pw, &pad_mp)?;
         }
 
-        assert!(merkle_proofs.medium.len() <= params.containers.state.max_medium);
+        assert!(merkle_proofs.medium.len() <= params.containers.state_ops.max_medium);
         for (i, mp) in merkle_proofs.medium.iter().enumerate() {
             self.merkle_proofs.medium[i].set_targets(pw, mp)?;
         }
         // Padding
         let pad_mp = MerkleClaimAndProof::pad();
-        for i in merkle_proofs.medium.len()..params.containers.state.max_medium {
+        for i in merkle_proofs.medium.len()..params.containers.state_ops.max_medium {
             self.merkle_proofs.medium[i].set_targets(pw, &pad_mp)?;
         }
 
-        assert!(merkle_transition_proofs.small.len() <= params.containers.transition.max_small);
+        assert!(merkle_transition_proofs.small.len() <= params.containers.transition_ops.max_small);
         for (i, mtp) in merkle_transition_proofs.small.iter().enumerate() {
             self.merkle_transition_proofs.small[i].set_targets(pw, mtp)?;
         }
         // Padding
         let pad_mtp = MerkleTreeStateTransitionProof::pad();
-        for i in merkle_transition_proofs.small.len()..params.containers.transition.max_small {
+        for i in merkle_transition_proofs.small.len()..params.containers.transition_ops.max_small {
             self.merkle_transition_proofs.small[i].set_targets(pw, &pad_mtp)?;
         }
 
-        assert!(merkle_transition_proofs.medium.len() <= params.containers.transition.max_medium);
+        assert!(
+            merkle_transition_proofs.medium.len() <= params.containers.transition_ops.max_medium
+        );
         for (i, mtp) in merkle_transition_proofs.medium.iter().enumerate() {
             self.merkle_transition_proofs.medium[i].set_targets(pw, mtp)?;
         }
         // Padding
         let pad_mtp = MerkleTreeStateTransitionProof::pad();
-        for i in merkle_transition_proofs.medium.len()..params.containers.transition.max_medium {
+        for i in merkle_transition_proofs.medium.len()..params.containers.transition_ops.max_medium
+        {
             self.merkle_transition_proofs.medium[i].set_targets(pw, &pad_mtp)?;
         }
 
@@ -2111,13 +2114,13 @@ impl AuxTableInputTargets {
             &input.merkle_transition_proofs,
         )?;
 
-        assert!(input.open_input_statements.len() <= params.max_open_input_statements);
+        assert!(input.open_input_statements.len() <= params.max_open_input_statement_ops);
         for (i, data) in input.open_input_statements.iter().enumerate() {
             self.open_input_statements[i].set_targets(pw, data)?;
         }
         // Padding
         if let Some(pad_data) = &input.pad_open_input_statement {
-            for i in input.open_input_statements.len()..params.max_open_input_statements {
+            for i in input.open_input_statements.len()..params.max_open_input_statement_ops {
                 self.open_input_statements[i].set_targets(pw, pad_data)?;
             }
         }
@@ -2143,7 +2146,8 @@ impl AuxTableInputTargets {
         }
 
         assert!(
-            input.custom_predicate_verifications.len() <= params.max_custom_predicate_verifications
+            input.custom_predicate_verifications.len()
+                <= params.max_custom_predicate_verification_ops
         );
         for (i, cpv) in input.custom_predicate_verifications.iter().enumerate() {
             self.custom_predicate_verifications[i].set_targets(pw, params, cpv)?;
@@ -2163,7 +2167,7 @@ impl AuxTableInputTargets {
             .first()
             .unwrap_or(&empty_cpv);
         for i in
-            input.custom_predicate_verifications.len()..params.max_custom_predicate_verifications
+            input.custom_predicate_verifications.len()..params.max_custom_predicate_verification_ops
         {
             self.custom_predicate_verifications[i].set_targets(pw, params, pad_cpv)?;
         }
@@ -2190,7 +2194,7 @@ pub struct MainPodVerifyTarget {
 impl MainPodVerifyTarget {
     pub fn new_virtual(params: &Params, builder: &mut CircuitBuilder) -> Self {
         // Params validation
-        if params.max_open_input_statements > 0 {
+        if params.max_open_input_statement_ops > 0 {
             assert!(params.max_input_pods > 0);
         }
         MainPodVerifyTarget {
@@ -2228,7 +2232,7 @@ impl MainPodVerifyTarget {
                 merkle_transition_proofs: MerkleTransitionProofsTarget::new_virtual(
                     params, builder,
                 ),
-                open_input_statements: (0..params.max_open_input_statements)
+                open_input_statements: (0..params.max_open_input_statement_ops)
                     .map(|_| OpenInputStatementTarget::new_virtual(builder))
                     .collect(),
                 public_key_sks: (0..params.max_public_key_ops)
@@ -2237,7 +2241,7 @@ impl MainPodVerifyTarget {
                 signed_bys: (0..params.max_signed_by_ops)
                     .map(|_| SignedByTarget::new_virtual(builder))
                     .collect(),
-                custom_predicate_verifications: (0..params.max_custom_predicate_verifications)
+                custom_predicate_verifications: (0..params.max_custom_predicate_verification_ops)
                     .map(|_| CustomPredicateVerifyEntryTarget::new_virtual(params, builder))
                     .collect(),
             },

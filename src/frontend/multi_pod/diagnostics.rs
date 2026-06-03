@@ -70,8 +70,8 @@ fn aggregate_rows<'a>(
     params: &Params,
 ) -> (Vec<UtilizationRow>, usize) {
     let totals = ResourceTotals::accumulate(costs);
-    let state = &params.containers.state;
-    let transition = &params.containers.transition;
+    let state = &params.containers.state_ops;
+    let transition = &params.containers.transition_ops;
     let rows = vec![
         UtilizationRow {
             name: "total statements",
@@ -101,7 +101,7 @@ fn aggregate_rows<'a>(
         UtilizationRow {
             name: "custom pred verifications",
             used: totals.custom_pred_verifications,
-            limit: params.max_custom_predicate_verifications,
+            limit: params.max_custom_predicate_verification_ops,
         },
         UtilizationRow {
             name: "signed_by",
@@ -312,7 +312,7 @@ impl SolutionBreakdown {
                 let imports_row = UtilizationRow {
                     name: "tree imports",
                     used: total_imports,
-                    limit: input.params.max_open_input_statements,
+                    limit: input.params.max_open_input_statement_ops,
                 };
                 let external_row = UtilizationRow {
                     name: "external pods",
@@ -522,7 +522,7 @@ fn check_unsplittable(input: &InputShape, s: usize) -> Option<CapViolation> {
         }
     }
     let total = chain.len() + external.len();
-    let max_imports = input.params.max_open_input_statements;
+    let max_imports = input.params.max_open_input_statement_ops;
     if total > max_imports {
         Some(CapViolation::Unsplittable {
             stmt: s,
@@ -547,8 +547,8 @@ fn identify_overflow(
     let s = ordering[a];
     let c = &input.costs[s];
 
-    let state = &params.containers.state;
-    let transition = &params.containers.transition;
+    let state = &params.containers.state_ops;
+    let transition = &params.containers.transition_ops;
     let categories: &[(&'static str, usize, usize)] = &[
         ("total statements", 1, params.max_statements),
         (
@@ -574,7 +574,7 @@ fn identify_overflow(
         (
             "custom pred verifications",
             c.custom_pred_verifications,
-            params.max_custom_predicate_verifications,
+            params.max_custom_predicate_verification_ops,
         ),
         ("signed_by", c.signed_by, params.max_signed_by_ops),
         ("public_key", c.public_key, params.max_public_key_ops),

@@ -74,20 +74,20 @@ fn operation_verify(
         max_public_key_ops: aux.secret_keys.len(),
         max_signed_by_ops: aux.signed_bys.len(),
         containers: middleware::ParamsContainers {
-            state: middleware::ParamsMerkleProofs {
+            state_ops: middleware::ParamsMerkleProofs {
                 max_small: 0,
                 max_medium: aux.merkle_proofs.len(),
             },
-            transition: middleware::ParamsMerkleProofs {
+            transition_ops: middleware::ParamsMerkleProofs {
                 max_small: 0,
                 max_medium: aux.merkle_transition_proofs.len(),
             },
             max_depth_small: 8,
             max_depth_medium: 32,
         },
-        max_custom_predicate_verifications: 0,
+        max_custom_predicate_verification_ops: 0,
         max_custom_predicates: 0,
-        max_open_input_statements: 0,
+        max_open_input_statement_ops: 0,
         ..Default::default()
     };
 

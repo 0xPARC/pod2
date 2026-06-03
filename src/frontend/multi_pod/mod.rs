@@ -131,7 +131,7 @@ impl MultiPodBuilder {
         let unlimited_params = Params {
             max_statements: usize::MAX / 2,
             max_input_pods: usize::MAX / 2,
-            max_open_input_statements: usize::MAX / 2,
+            max_open_input_statement_ops: usize::MAX / 2,
             ..params.clone()
         };
         let builder = MainPodBuilder::new(&unlimited_params, vd_set);

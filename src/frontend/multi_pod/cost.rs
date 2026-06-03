@@ -123,7 +123,7 @@ impl ResourceTotals {
         bump(
             &mut bound,
             self.custom_pred_verifications,
-            params.max_custom_predicate_verifications,
+            params.max_custom_predicate_verification_ops,
         );
         bump(&mut bound, self.signed_by, params.max_signed_by_ops);
         bump(&mut bound, self.public_key, params.max_public_key_ops);
@@ -133,7 +133,7 @@ impl ResourceTotals {
             params.max_custom_predicates,
         );
 
-        let state = &params.containers.state;
+        let state = &params.containers.state_ops;
         bump(&mut bound, self.merkle_proofs_medium, state.max_medium);
         bump(
             &mut bound,
@@ -141,7 +141,7 @@ impl ResourceTotals {
             state.max_total(),
         );
 
-        let transition = &params.containers.transition;
+        let transition = &params.containers.transition_ops;
         bump(
             &mut bound,
             self.merkle_state_transitions_medium,
@@ -177,15 +177,15 @@ impl ResourceTotals {
     /// contribution only; callers that need to account for publishing and
     /// importing statements must do that separately.
     pub fn fits_in_pod(&self, params: &Params) -> bool {
-        let state = &params.containers.state;
-        let transition = &params.containers.transition;
+        let state = &params.containers.state_ops;
+        let transition = &params.containers.transition_ops;
         self.num_operations <= params.max_statements
             && self.merkle_proofs_medium <= state.max_medium
             && self.merkle_proofs_small + self.merkle_proofs_medium <= state.max_total()
             && self.merkle_state_transitions_medium <= transition.max_medium
             && self.merkle_state_transitions_small + self.merkle_state_transitions_medium
                 <= transition.max_total()
-            && self.custom_pred_verifications <= params.max_custom_predicate_verifications
+            && self.custom_pred_verifications <= params.max_custom_predicate_verification_ops
             && self.signed_by <= params.max_signed_by_ops
             && self.public_key <= params.max_public_key_ops
             && self.distinct_custom_predicates <= params.max_custom_predicates
