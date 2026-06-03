@@ -216,7 +216,7 @@ mod tests {
     fn test_e2e_simple_request() -> Result<(), LangError> {
         let input = r#"
             REQUEST(
-                Equal(ConstPod["my_val"], Raw(0x0000000000000000000000000000000000000000000000000000000000000001))
+                Equal(ConstPod["my_val"], Raw(0xffffffff00000000000000000000000000000000000000000000000000000001))
                 Lt(GovPod["dob"], ConstPod["my_val"])
             )
         "#;

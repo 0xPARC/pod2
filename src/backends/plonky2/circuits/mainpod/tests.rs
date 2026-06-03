@@ -1360,10 +1360,7 @@ fn test_custom_operation_verify_gadget_positive() -> frontend::Result<()> {
         Statement::equal(AnchoredKey::new(dict, Key::from("key")), Value::from(1234)),
     ];
     let args = vec![Value::from(dict), Value::from(1234)];
-    let expected_st = Statement::Custom(
-        custom_predicate.clone(),
-        vec![value_ref(args[0].clone()), value_ref(0)],
-    );
+    let expected_st = Statement::Custom(custom_predicate.clone(), vec![value_ref(args[0].clone())]);
 
     helper_custom_operation_verify_gadget(
         &params,
@@ -1381,10 +1378,7 @@ fn test_custom_operation_verify_gadget_positive() -> frontend::Result<()> {
         Statement::None,
     ];
     let args = vec![Value::from(dict), Value::from(0)];
-    let expected_st = Statement::Custom(
-        custom_predicate.clone(),
-        vec![value_ref(args[0].clone()), value_ref(0)],
-    );
+    let expected_st = Statement::Custom(custom_predicate.clone(), vec![value_ref(args[0].clone())]);
 
     helper_custom_operation_verify_gadget(
         &params,
@@ -1402,10 +1396,7 @@ fn test_custom_operation_verify_gadget_positive() -> frontend::Result<()> {
         Statement::equal(AnchoredKey::new(dict, Key::from("key")), Value::from(1234)),
     ];
     let args = vec![Value::from(dict), Value::from(1234)];
-    let expected_st = Statement::Custom(
-        custom_predicate.clone(),
-        vec![value_ref(args[0].clone()), value_ref(0)],
-    );
+    let expected_st = Statement::Custom(custom_predicate.clone(), vec![value_ref(args[0].clone())]);
 
     helper_custom_operation_verify_gadget(
         &params,
@@ -1454,10 +1445,7 @@ fn test_custom_operation_verify_gadget_negative() -> frontend::Result<()> {
         ),
     ];
     let args = vec![Value::from(dict), Value::from(secret_dict)];
-    let expected_st = Statement::Custom(
-        custom_predicate.clone(),
-        vec![value_ref(args[0].clone()), value_ref(0)],
-    );
+    let expected_st = Statement::Custom(custom_predicate.clone(), vec![value_ref(args[0].clone())]);
 
     helper_custom_operation_verify_gadget(
         &params,
