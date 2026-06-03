@@ -1013,9 +1013,9 @@ pub struct Params {
     // NotContains.
     pub max_depth_mt_vds: usize,
     // maximum number of public key derivations used for PublicKeyOf operation
-    pub max_public_key_of: usize,
+    pub max_public_key_ops: usize,
     // maximum number of signature verifications used for SignedBy operation
-    pub max_signed_by: usize,
+    pub max_signed_by_ops: usize,
 }
 
 impl Default for Params {
@@ -1030,8 +1030,8 @@ impl Default for Params {
             max_custom_predicate_wildcards: 8,
             containers: ParamsContainers::default(),
             max_depth_mt_vds: 6, // up to 64 (2^6) different pod circuits
-            max_public_key_of: 2,
-            max_signed_by: 4,
+            max_public_key_ops: 2,
+            max_signed_by_ops: 4,
         }
     }
 }

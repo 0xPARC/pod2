@@ -229,8 +229,8 @@ mod tests {
         let vd_set = &*MOCK_VD_SET;
 
         let mut builder = MainPodBuilder::new(&params, vd_set);
-        let _sum_of_stmt_1 = builder.pub_op(Operation::sum_of(11, 1, 10));
-        let _sum_of_stmt_2 = builder.pub_op(Operation::sum_of(10, 9, 1));
+        let _sum_of_stmt_1 = builder.pub_op(Operation::sum(1, 10, 11));
+        let _sum_of_stmt_2 = builder.pub_op(Operation::sum(9, 1, 10));
         let _eq_stmt = builder.pub_op(Operation::eq(10, 10));
 
         let prover = MockProver {};
@@ -242,8 +242,8 @@ mod tests {
         let request = parse_request(
             r#"
         REQUEST(
-            SumOf(a, b, c)
-            Equal(a, 10)
+            Sum(a, b, c)
+            Equal(c, 10)
         )
         "#,
             &params,
@@ -252,8 +252,8 @@ mod tests {
         .unwrap();
 
         let bindings = request.exact_match_pod(&*pod.pod).unwrap();
-        assert_eq!(*bindings.get("a").unwrap(), 10.into());
-        assert_eq!(*bindings.get("b").unwrap(), 9.into());
-        assert_eq!(*bindings.get("c").unwrap(), 1.into());
+        assert_eq!(*bindings.get("a").unwrap(), 9.into());
+        assert_eq!(*bindings.get("b").unwrap(), 1.into());
+        assert_eq!(*bindings.get("c").unwrap(), 10.into());
     }
 }

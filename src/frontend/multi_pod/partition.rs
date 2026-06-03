@@ -1250,7 +1250,7 @@ mod tests {
                 Params {
                     max_statements: 8,
                     max_input_pods: 3,
-                    max_signed_by: 2,
+                    max_signed_by_ops: 2,
                     ..Params::default()
                 },
             ),

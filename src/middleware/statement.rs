@@ -26,11 +26,11 @@ pub enum NativePredicate {
     Lt = 5,
     Contains = 6,
     NotContains = 7,
-    SumOf = 8,
-    ProductOf = 9,
-    MaxOf = 10,
-    HashOf = 11,
-    PublicKeyOf = 12,
+    Sum = 8,
+    Product = 9,
+    Max = 10,
+    Hash = 11,
+    PublicKey = 12,
     SignedBy = 13,
     ContainerInsert = 14,
     ContainerUpdate = 15,
@@ -66,16 +66,16 @@ impl NativePredicate {
             | NativePredicate::NotContains
             | NativePredicate::SetNotContains
             | NativePredicate::DictNotContains
-            | NativePredicate::PublicKeyOf
+            | NativePredicate::PublicKey
             | NativePredicate::SignedBy
             | NativePredicate::SetContains => 2,
             NativePredicate::Contains
             | NativePredicate::DictContains
             | NativePredicate::ArrayContains
-            | NativePredicate::SumOf
-            | NativePredicate::ProductOf
-            | NativePredicate::MaxOf
-            | NativePredicate::HashOf
+            | NativePredicate::Sum
+            | NativePredicate::Product
+            | NativePredicate::Max
+            | NativePredicate::Hash
             | NativePredicate::SetInsert
             | NativePredicate::SetDelete
             | NativePredicate::DictDelete
@@ -102,11 +102,11 @@ impl Display for NativePredicate {
             NativePredicate::GtEq => "GtEq",
             NativePredicate::Contains => "Contains",
             NativePredicate::NotContains => "NotContains",
-            NativePredicate::SumOf => "SumOf",
-            NativePredicate::ProductOf => "ProductOf",
-            NativePredicate::MaxOf => "MaxOf",
-            NativePredicate::HashOf => "HashOf",
-            NativePredicate::PublicKeyOf => "PublicKeyOf",
+            NativePredicate::Sum => "Sum",
+            NativePredicate::Product => "Product",
+            NativePredicate::Max => "Max",
+            NativePredicate::Hash => "Hash",
+            NativePredicate::PublicKey => "PublicKey",
             NativePredicate::SignedBy => "SignedBy",
             NativePredicate::ContainerInsert => "ContainerInsert",
             NativePredicate::ContainerUpdate => "ContainerUpdate",
@@ -145,11 +145,11 @@ impl FromStr for NativePredicate {
             "LtEq" => Ok(NativePredicate::LtEq),
             "Contains" => Ok(NativePredicate::Contains),
             "NotContains" => Ok(NativePredicate::NotContains),
-            "SumOf" => Ok(NativePredicate::SumOf),
-            "ProductOf" => Ok(NativePredicate::ProductOf),
-            "MaxOf" => Ok(NativePredicate::MaxOf),
-            "HashOf" => Ok(NativePredicate::HashOf),
-            "PublicKeyOf" => Ok(NativePredicate::PublicKeyOf),
+            "Sum" => Ok(NativePredicate::Sum),
+            "Product" => Ok(NativePredicate::Product),
+            "Max" => Ok(NativePredicate::Max),
+            "Hash" => Ok(NativePredicate::Hash),
+            "PublicKey" => Ok(NativePredicate::PublicKey),
             "SignedBy" => Ok(NativePredicate::SignedBy),
             "ContainerInsert" => Ok(NativePredicate::ContainerInsert),
             "ContainerUpdate" => Ok(NativePredicate::ContainerUpdate),
@@ -288,11 +288,11 @@ pub enum Statement {
         /* value */ ValueRef,
     ),
     NotContains(/* root  */ ValueRef, /* key   */ ValueRef),
-    SumOf(ValueRef, ValueRef, ValueRef),
-    ProductOf(ValueRef, ValueRef, ValueRef),
-    MaxOf(ValueRef, ValueRef, ValueRef),
-    HashOf(ValueRef, ValueRef, ValueRef),
-    PublicKeyOf(ValueRef, ValueRef),
+    Sum(ValueRef, ValueRef, ValueRef),
+    Product(ValueRef, ValueRef, ValueRef),
+    Max(ValueRef, ValueRef, ValueRef),
+    Hash(ValueRef, ValueRef, ValueRef),
+    PublicKey(ValueRef, ValueRef),
     SignedBy(ValueRef, ValueRef),
     ContainerInsert(
         /* new_root */ ValueRef,
@@ -352,11 +352,11 @@ impl Statement {
     statement_constructor!(lt, Lt, 2);
     statement_constructor!(contains, Contains, 3);
     statement_constructor!(not_contains, NotContains, 2);
-    statement_constructor!(sum_of, SumOf, 3);
-    statement_constructor!(product_of, ProductOf, 3);
-    statement_constructor!(max_of, MaxOf, 3);
-    statement_constructor!(hash_of, HashOf, 3);
-    statement_constructor!(public_key_of, PublicKeyOf, 2);
+    statement_constructor!(sum, Sum, 3);
+    statement_constructor!(product, Product, 3);
+    statement_constructor!(max, Max, 3);
+    statement_constructor!(_hash, Hash, 3);
+    statement_constructor!(public_key, PublicKey, 2);
     statement_constructor!(signed_by, SignedBy, 2);
     statement_constructor!(insert, ContainerInsert, 4);
     statement_constructor!(update, ContainerUpdate, 4);
@@ -371,11 +371,11 @@ impl Statement {
             Self::Lt(_, _) => Native(NativePredicate::Lt),
             Self::Contains(_, _, _) => Native(NativePredicate::Contains),
             Self::NotContains(_, _) => Native(NativePredicate::NotContains),
-            Self::SumOf(_, _, _) => Native(NativePredicate::SumOf),
-            Self::ProductOf(_, _, _) => Native(NativePredicate::ProductOf),
-            Self::MaxOf(_, _, _) => Native(NativePredicate::MaxOf),
-            Self::HashOf(_, _, _) => Native(NativePredicate::HashOf),
-            Self::PublicKeyOf(_, _) => Native(NativePredicate::PublicKeyOf),
+            Self::Sum(_, _, _) => Native(NativePredicate::Sum),
+            Self::Product(_, _, _) => Native(NativePredicate::Product),
+            Self::Max(_, _, _) => Native(NativePredicate::Max),
+            Self::Hash(_, _, _) => Native(NativePredicate::Hash),
+            Self::PublicKey(_, _) => Native(NativePredicate::PublicKey),
             Self::SignedBy(_, _) => Native(NativePredicate::SignedBy),
             Self::ContainerInsert(_, _, _, _) => Native(NativePredicate::ContainerInsert),
             Self::ContainerUpdate(_, _, _, _) => Native(NativePredicate::ContainerUpdate),
@@ -393,11 +393,11 @@ impl Statement {
             Self::Lt(ak1, ak2) => vec![ak1.into(), ak2.into()],
             Self::Contains(ak1, ak2, ak3) => vec![ak1.into(), ak2.into(), ak3.into()],
             Self::NotContains(ak1, ak2) => vec![ak1.into(), ak2.into()],
-            Self::SumOf(ak1, ak2, ak3) => vec![ak1.into(), ak2.into(), ak3.into()],
-            Self::ProductOf(ak1, ak2, ak3) => vec![ak1.into(), ak2.into(), ak3.into()],
-            Self::MaxOf(ak1, ak2, ak3) => vec![ak1.into(), ak2.into(), ak3.into()],
-            Self::HashOf(ak1, ak2, ak3) => vec![ak1.into(), ak2.into(), ak3.into()],
-            Self::PublicKeyOf(ak1, ak2) => vec![ak1.into(), ak2.into()],
+            Self::Sum(ak1, ak2, ak3) => vec![ak1.into(), ak2.into(), ak3.into()],
+            Self::Product(ak1, ak2, ak3) => vec![ak1.into(), ak2.into(), ak3.into()],
+            Self::Max(ak1, ak2, ak3) => vec![ak1.into(), ak2.into(), ak3.into()],
+            Self::Hash(ak1, ak2, ak3) => vec![ak1.into(), ak2.into(), ak3.into()],
+            Self::PublicKey(ak1, ak2) => vec![ak1.into(), ak2.into()],
             Self::SignedBy(ak1, ak2) => vec![ak1.into(), ak2.into()],
             Self::ContainerInsert(ak1, ak2, ak3, ak4) => {
                 vec![ak1.into(), ak2.into(), ak3.into(), ak4.into()]
@@ -439,20 +439,20 @@ impl Statement {
             (Native(NativePredicate::NotContains), &[a1, a2]) => {
                 Self::NotContains(a1.try_into()?, a2.try_into()?)
             }
-            (Native(NativePredicate::SumOf), &[a1, a2, a3]) => {
-                Self::SumOf(a1.try_into()?, a2.try_into()?, a3.try_into()?)
+            (Native(NativePredicate::Sum), &[a1, a2, a3]) => {
+                Self::Sum(a1.try_into()?, a2.try_into()?, a3.try_into()?)
             }
-            (Native(NativePredicate::ProductOf), &[a1, a2, a3]) => {
-                Self::ProductOf(a1.try_into()?, a2.try_into()?, a3.try_into()?)
+            (Native(NativePredicate::Product), &[a1, a2, a3]) => {
+                Self::Product(a1.try_into()?, a2.try_into()?, a3.try_into()?)
             }
-            (Native(NativePredicate::MaxOf), &[a1, a2, a3]) => {
-                Self::MaxOf(a1.try_into()?, a2.try_into()?, a3.try_into()?)
+            (Native(NativePredicate::Max), &[a1, a2, a3]) => {
+                Self::Max(a1.try_into()?, a2.try_into()?, a3.try_into()?)
             }
-            (Native(NativePredicate::HashOf), &[a1, a2, a3]) => {
-                Self::HashOf(a1.try_into()?, a2.try_into()?, a3.try_into()?)
+            (Native(NativePredicate::Hash), &[a1, a2, a3]) => {
+                Self::Hash(a1.try_into()?, a2.try_into()?, a3.try_into()?)
             }
-            (Native(NativePredicate::PublicKeyOf), &[a1, a2]) => {
-                Self::PublicKeyOf(a1.try_into()?, a2.try_into()?)
+            (Native(NativePredicate::PublicKey), &[a1, a2]) => {
+                Self::PublicKey(a1.try_into()?, a2.try_into()?)
             }
             (Native(NativePredicate::SignedBy), &[a1, a2]) => {
                 Self::SignedBy(a1.try_into()?, a2.try_into()?)

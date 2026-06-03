@@ -32,11 +32,11 @@ The following table summarises the natively-supported statements, where we write
 | 5    | `Lt`          | `ak1`, `ak2`        | `value_of(ak1) < value_of(ak2)`                                   |
 | 6    | `Contains`    | `ak1`, `ak2`, `ak3` | `(value_of(ak2), value_of(ak3)) ∈ value_of(ak1)` (Merkle inclusion) |
 | 7    | `NotContains` | `ak1`, `ak2`        | `(value_of(ak2), _) ∉ value_of(ak1)` (Merkle exclusion) |
-| 8    | `SumOf`       | `ak1`, `ak2`, `ak3` | `value_of(ak1) = value_of(ak2) + value_of(ak3)`                   |
-| 9    | `ProductOf`   | `ak1`, `ak2`, `ak3` | `value_of(ak1) = value_of(ak2) * value_of(ak3)`                   |
-| 10   | `MaxOf`       | `ak1`, `ak2`, `ak3` | `value_of(ak1) = max(value_of(ak2), value_of(ak3))`               |
-| 11   | `HashOf`      | `ak1`, `ak2`, `ak3` | `value_of(ak1) = hash(value_of(ak2), value_of(ak3))`              |
-| 12   | `PublicKeyOf` | `ak1`, `ak2`        | `value_of(ak1) = derive_public_key(value_of(ak2))`                |
+| 8    | `Sum`       | `ak1`, `ak2`, `ak3` | `value_of(ak3) = value_of(ak1) + value_of(ak2)`                   |
+| 9    | `Product`   | `ak1`, `ak2`, `ak3` | `value_of(ak3) = value_of(ak1) * value_of(ak2)`                   |
+| 10   | `Max`       | `ak1`, `ak2`, `ak3` | `value_of(ak3) = max(value_of(ak1), value_of(ak2))`               |
+| 11   | `Hash`      | `ak1`, `ak2`, `ak3` | `value_of(ak3) = hash(value_of(ak1), value_of(ak2))`              |
+| 12   | `PublicKey` | `ak1`, `ak2`        | `value_of(ak2) = derive_public_key(value_of(ak1))`                |
 | 13   | `SignedBy`    | `ak1`, `ak2`        | `value_of(ak1)` is signed by  `value_of(ak2)`                     |
 | 14   | `ContainerInsert` | `ak1`, `ak2`, `ak3`, `ak4` | `(value_of(ak3), _) ∉ value_of(ak2) ∧ value_of(ak1) = value_of(ak2) ∪ {(value_of(ak3), value_of(ak4))}` (Merkle insert) |
 | 15   | `ContainerUpdate` | `ak1`, `ak2`, `ak3`, `ak4` | `(value_of(ak3), v) ∈ value_of(ak2) ∧ value_of(ak1) = (value_of(ak2) - {(value_of(ak3), v)}) ∪ {(value_of(ak3), value_of(ak4))}` (Merkle update) |

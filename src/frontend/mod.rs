@@ -486,7 +486,7 @@ impl MainPodBuilder {
                         let (r2, v2) = a2.value_and_ref().ok_or_else(native_arg_error)?;
                         let (r3, v3) = a3.value_and_ref().ok_or_else(native_arg_error)?;
                         if middleware::Operation::check_int_fn(v1, v2, v3, sum_op)? {
-                            Statement::SumOf(r1, r2, r3)
+                            Statement::Sum(r1, r2, r3)
                         } else {
                             return Err(native_arg_error());
                         }
@@ -496,7 +496,7 @@ impl MainPodBuilder {
                         let (r2, v2) = a2.value_and_ref().ok_or_else(native_arg_error)?;
                         let (r3, v3) = a3.value_and_ref().ok_or_else(native_arg_error)?;
                         if middleware::Operation::check_int_fn(v1, v2, v3, prod_op)? {
-                            Statement::ProductOf(r1, r2, r3)
+                            Statement::Product(r1, r2, r3)
                         } else {
                             return Err(native_arg_error());
                         }
@@ -506,7 +506,7 @@ impl MainPodBuilder {
                         let (r2, v2) = a2.value_and_ref().ok_or_else(native_arg_error)?;
                         let (r3, v3) = a3.value_and_ref().ok_or_else(native_arg_error)?;
                         if middleware::Operation::check_int_fn(v1, v2, v3, max_op)? {
-                            Statement::MaxOf(r1, r2, r3)
+                            Statement::Max(r1, r2, r3)
                         } else {
                             return Err(native_arg_error());
                         }
@@ -515,8 +515,8 @@ impl MainPodBuilder {
                         let (r1, v1) = a1.value_and_ref().ok_or_else(native_arg_error)?;
                         let (r2, v2) = a2.value_and_ref().ok_or_else(native_arg_error)?;
                         let (r3, v3) = a3.value_and_ref().ok_or_else(native_arg_error)?;
-                        if v1 == &hash_op(v2.clone(), v3.clone()) {
-                            Statement::HashOf(r1, r2, r3)
+                        if v3 == &hash_op(v1.clone(), v2.clone()) {
+                            Statement::Hash(r1, r2, r3)
                         } else {
                             return Err(native_arg_error());
                         }
@@ -538,7 +538,7 @@ impl MainPodBuilder {
                         let (r1, v1) = a1.value_and_ref().ok_or_else(native_arg_error)?;
                         let (r2, v2) = a2.value_and_ref().ok_or_else(native_arg_error)?;
                         if middleware::Operation::check_public_key(v1, v2)? {
-                            Statement::PublicKeyOf(r1, r2)
+                            Statement::PublicKey(r1, r2)
                         } else {
                             return Err(native_arg_error());
                         }
@@ -1355,7 +1355,7 @@ pub mod tests {
     }
 
     #[test]
-    fn test_public_key_of() -> Result<()> {
+    fn test_public_key() -> Result<()> {
         let params = Params::default();
         let vd_set = &*MOCK_VD_SET;
 
@@ -1377,16 +1377,16 @@ pub mod tests {
             signed_dict.signature.clone(),
         ))?;
 
-        let st0 = builder.priv_op(Operation::dict_contains(
-            signed_dict.dict,
-            "owner",
-            Value::from(pk),
-        ))?;
         let local = dict!({ "known_secret" => sk.clone() });
-        let st1 = builder.priv_op(Operation::dict_contains(
+        let st0 = builder.priv_op(Operation::dict_contains(
             local,
             "known_secret",
             Value::from(sk),
+        ))?;
+        let st1 = builder.priv_op(Operation::dict_contains(
+            signed_dict.dict,
+            "owner",
+            Value::from(pk),
         ))?;
         builder
             .pub_op(Operation(
@@ -1406,7 +1406,7 @@ pub mod tests {
     }
 
     #[test]
-    fn test_public_key_of_wrong_key() -> Result<()> {
+    fn test_public_key_wrong_key() -> Result<()> {
         let params = Params::default();
         let vd_set = &*MOCK_VD_SET;
 
@@ -1426,15 +1426,15 @@ pub mod tests {
         builder
             .pub_op(Operation::dict_signed_by(&signed_dict))
             .unwrap();
-        let st0 = signed_dict.get_statement("owner").unwrap();
         let local = dict!({"known_secret" => SecretKey(BigUint::from(123u32))});
-        let st1 = builder
+        let st0 = builder
             .op(
                 true,
                 vec![],
                 Operation::dict_contains(local, "known_secret", SecretKey(BigUint::from(123u32))),
             )
             .unwrap();
+        let st1 = signed_dict.get_statement("owner").unwrap();
         assert!(builder
             .pub_op(Operation(
                 // OperationType
@@ -1449,7 +1449,7 @@ pub mod tests {
     }
 
     #[test]
-    fn test_public_key_of_wrong_type() -> Result<()> {
+    fn test_public_key_wrong_type() -> Result<()> {
         let params = Params::default();
         let vd_set = &*MOCK_VD_SET;
 
@@ -1465,7 +1465,7 @@ pub mod tests {
                 // OperationType
                 OperationType::Native(NativeOperation::PublicKeyFromEntries),
                 // Vec<OperationArg>
-                vec![OperationArg::Literal(int2), OperationArg::Literal(sk),],
+                vec![OperationArg::Literal(sk), OperationArg::Literal(int2),],
                 OperationAux::None,
             ))
             .is_err());
@@ -1480,8 +1480,8 @@ pub mod tests {
                 OperationType::Native(NativeOperation::PublicKeyFromEntries),
                 // Vec<OperationArg>
                 vec![
-                    OperationArg::Literal(pk.clone()),
                     OperationArg::Literal(int1),
+                    OperationArg::Literal(pk.clone()),
                 ],
                 OperationAux::None,
             ))

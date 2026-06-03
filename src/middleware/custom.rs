@@ -696,7 +696,7 @@ mod tests {
                         vec![STA::AnchoredKey(wc(1), key("c")), STA::Literal(2.into())],
                     ),
                     st(
-                        P::Native(NP::ProductOf),
+                        P::Native(NP::Product),
                         vec![
                             STA::AnchoredKey(wc(0), key("a")),
                             STA::AnchoredKey(wc(1), key("b")),
@@ -725,7 +725,7 @@ mod tests {
             CustomPredicateRef::new(cust_pred_batch, 0),
             vec![
                 Statement::equal(AnchoredKey::from((&d1, "c")), 2),
-                Statement::product_of(
+                Statement::product(
                     AnchoredKey::from((&d0, "a")),
                     AnchoredKey::from((&d1, "b")),
                     Value::from(3),
@@ -800,7 +800,7 @@ mod tests {
                     ],
                 ),
                 st(
-                    P::Native(NP::SumOf),
+                    P::Native(NP::Sum),
                     vec![
                         STA::Wildcard(wc(2)),
                         STA::Wildcard(wc(3)),
@@ -873,7 +873,7 @@ mod tests {
                 CustomPredicateRef::new(eth_dos_distance_batch.clone(), 2),
                 vec![value_ref("Alice"), value_ref("Charlie"), value_ref(6)],
             ),
-            Statement::sum_of(Value::from(7), Value::from(6), Value::from(1)),
+            Statement::sum(Value::from(7), Value::from(6), Value::from(1)),
             Statement::Custom(
                 CustomPredicateRef::new(eth_friend_batch.clone(), 0),
                 vec![value_ref("Charlie"), value_ref("Bob")],

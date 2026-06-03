@@ -599,7 +599,7 @@ mod tests {
 
             eth_dos_distance_ind(src, dst, distance, private: shorter_distance, intermed) = AND(
                 eth_dos_distance(src, dst, distance)
-                SumOf(distance, shorter_distance, 1)
+                Sum(shorter_distance, 1, distance)
                 eth_friend(intermed, dst)
             )
 
@@ -676,11 +676,11 @@ mod tests {
                 ],
             },
             StatementTmpl {
-                pred_or_wc: pred_lit(Predicate::Native(NativePredicate::SumOf)),
+                pred_or_wc: pred_lit(Predicate::Native(NativePredicate::Sum)),
                 args: vec![
-                    sta_wc_lit("distance", 2),         // public arg
                     sta_wc_lit("shorter_distance", 3), // private arg
                     sta_lit(1),
+                    sta_wc_lit("distance", 2), // public arg
                 ],
             },
             StatementTmpl {

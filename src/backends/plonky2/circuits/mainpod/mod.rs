@@ -209,8 +209,8 @@ fn max_operation_aux_entry_len(params: &Params) -> usize {
         (params.max_custom_predicate_verifications > 0)
             .then(|| CustomPredicateVerifyQueryTarget::size(params)),
         (params.max_open_input_statements > 0).then(|| StatementTarget::size(params)),
-        (params.max_public_key_of > 0).then(|| PubKeySecKeyTarget::size(params)),
-        (params.max_signed_by > 0).then(|| MsgPubKeyTarget::size(params)),
+        (params.max_public_key_ops > 0).then(|| PubKeySecKeyTarget::size(params)),
+        (params.max_signed_by_ops > 0).then(|| MsgPubKeyTarget::size(params)),
     ]
     .into_iter()
     .flatten()
@@ -477,8 +477,8 @@ fn build_operation_aux_table_circuit(
     // PublicKeyOf: verify the derivation from a Schnorr secret key to public key
     let invgenerator = builder.constant_point(Point::generator().inverse());
     let zero_bits: [BoolTarget; 320] = array::from_fn(|_| builder._false());
-    for sk in &input.public_key_of_sks {
-        let measure = measure_gates_begin!(builder, "PublicKeyOf");
+    for sk in &input.public_key_sks {
+        let measure = measure_gates_begin!(builder, "PublicKey");
         let group_orderm1 = &*GROUP_ORDER - BigUint::one();
         let group_orderm1target = builder.constant_biguint320(&group_orderm1);
         let compare_ok = list_le_circuit(
@@ -584,10 +584,10 @@ fn verify_operation_circuit(
             verify_lt_lteq_from_entries_circuit(builder, st, &op.op_type, &cache),
             verify_transitive_eq_circuit(params, builder, st, &op.op_type, &cache.op_args),
             verify_lt_to_neq_circuit(params, builder, st, &op.op_type, &cache.op_args),
-            verify_hash_of_circuit(params, builder, st, &op.op_type, &cache),
-            verify_sum_of_circuit(params, builder, st, &op.op_type, &cache),
-            verify_product_of_circuit(params, builder, st, &op.op_type, &cache),
-            verify_max_of_circuit(params, builder, st, &op.op_type, &cache),
+            verify_hash_from_entries_circuit(params, builder, st, &op.op_type, &cache),
+            verify_sum_from_entries_circuit(params, builder, st, &op.op_type, &cache),
+            verify_product_from_entries_circuit(params, builder, st, &op.op_type, &cache),
+            verify_max_from_entries_circuit(params, builder, st, &op.op_type, &cache),
             verify_replace_value_with_entry_circuit(params, builder, st, &op.op_type, &cache),
         ]);
     }
@@ -613,8 +613,8 @@ fn verify_operation_circuit(
                 ),
             ]);
         }
-        if params.max_public_key_of > 0 {
-            op_checks.push(verify_public_key_of_circuit(
+        if params.max_public_key_ops > 0 {
+            op_checks.push(verify_public_key_from_entries_circuit(
                 params,
                 builder,
                 st,
@@ -623,7 +623,7 @@ fn verify_operation_circuit(
                 &cache,
             ));
         }
-        if params.max_signed_by > 0 {
+        if params.max_signed_by_ops > 0 {
             op_checks.push(verify_signed_by_circuit(
                 params,
                 builder,
@@ -1157,21 +1157,21 @@ fn verify_lt_lteq_from_entries_circuit(
     ok
 }
 
-fn verify_hash_of_circuit(
+fn verify_hash_from_entries_circuit(
     params: &Params,
     builder: &mut CircuitBuilder,
     st: &StatementTarget,
     op_type: &OperationTypeTarget,
     cache: &StatementCachePriv,
 ) -> BoolTarget {
-    let measure = measure_gates_begin!(builder, "OpHashOf");
+    let measure = measure_gates_begin!(builder, "OpHash");
     let op_code_ok = op_type.has_native(builder, NativeOperation::HashFromEntries);
 
     let (arg_types_ok, [arg1_value, arg2_value, arg3_value]) = cache.first_n_args_as_values();
 
-    let expected_hash_value = builder.hash_values(arg2_value, arg3_value);
+    let expected_hash_value = builder.hash_values(arg1_value, arg2_value);
 
-    let hash_value_ok = builder.is_equal_slice(&arg1_value.elements, &expected_hash_value.elements);
+    let hash_value_ok = builder.is_equal_slice(&arg3_value.elements, &expected_hash_value.elements);
 
     let arg1_expected = cache.equations[0].lhs.clone();
     let arg2_expected = cache.equations[1].lhs.clone();
@@ -1179,7 +1179,7 @@ fn verify_hash_of_circuit(
     let expected_statement = StatementTarget::new_native(
         builder,
         params,
-        NativePredicate::HashOf,
+        NativePredicate::Hash,
         &[arg1_expected, arg2_expected, arg3_expected],
     );
     let st_ok = builder.is_equal_flattenable(st, &expected_statement);
@@ -1189,7 +1189,7 @@ fn verify_hash_of_circuit(
     ok
 }
 
-fn verify_public_key_of_circuit(
+fn verify_public_key_from_entries_circuit(
     params: &Params,
     builder: &mut CircuitBuilder,
     st: &StatementTarget,
@@ -1197,7 +1197,7 @@ fn verify_public_key_of_circuit(
     aux: &TableEntryTarget,
     cache: &StatementCachePriv,
 ) -> BoolTarget {
-    let measure = measure_gates_begin!(builder, "OpPublicKeyOf");
+    let measure = measure_gates_begin!(builder, "OpPublicKey");
     let (aux_tag_ok, resolved_pk_sk) =
         aux.as_type::<PubKeySecKeyTarget>(builder, OperationAuxTableTag::PublicKeyOf as u32);
 
@@ -1215,7 +1215,7 @@ fn verify_public_key_of_circuit(
     let expected_statement = StatementTarget::new_native(
         builder,
         params,
-        NativePredicate::PublicKeyOf,
+        NativePredicate::PublicKey,
         &[arg1_expected, arg2_expected],
     );
     let st_ok = builder.is_equal_flattenable(st, &expected_statement);
@@ -1261,14 +1261,14 @@ fn verify_signed_by_circuit(
     ok
 }
 
-fn verify_sum_of_circuit(
+fn verify_sum_from_entries_circuit(
     params: &Params,
     builder: &mut CircuitBuilder,
     st: &StatementTarget,
     op_type: &OperationTypeTarget,
     cache: &StatementCachePriv,
 ) -> BoolTarget {
-    let measure = measure_gates_begin!(builder, "OpSumOf");
+    let measure = measure_gates_begin!(builder, "OpSum");
     let value_zero = ValueTarget::zero(builder);
 
     let op_code_ok = op_type.has_native(builder, NativeOperation::SumFromEntries);
@@ -1276,12 +1276,12 @@ fn verify_sum_of_circuit(
     let (arg_types_ok, [arg1_value, arg2_value, arg3_value]) = cache.first_n_args_as_values();
 
     // Select to avoid overflow.
-    let summand1 = builder.select_value(op_code_ok, arg2_value, value_zero);
-    let summand2 = builder.select_value(op_code_ok, arg3_value, value_zero);
+    let summand1 = builder.select_value(op_code_ok, arg1_value, value_zero);
+    let summand2 = builder.select_value(op_code_ok, arg2_value, value_zero);
 
     let expected_sum = builder.i64_add(summand1, summand2);
 
-    let sum_ok = builder.is_equal_slice(&arg1_value.elements, &expected_sum.elements);
+    let sum_ok = builder.is_equal_slice(&arg3_value.elements, &expected_sum.elements);
 
     let arg1_expected = cache.equations[0].lhs.clone();
     let arg2_expected = cache.equations[1].lhs.clone();
@@ -1289,7 +1289,7 @@ fn verify_sum_of_circuit(
     let expected_statement = StatementTarget::new_native(
         builder,
         params,
-        NativePredicate::SumOf,
+        NativePredicate::Sum,
         &[arg1_expected, arg2_expected, arg3_expected],
     );
     let st_ok = builder.is_equal_flattenable(st, &expected_statement);
@@ -1299,14 +1299,14 @@ fn verify_sum_of_circuit(
     ok
 }
 
-fn verify_product_of_circuit(
+fn verify_product_from_entries_circuit(
     params: &Params,
     builder: &mut CircuitBuilder,
     st: &StatementTarget,
     op_type: &OperationTypeTarget,
     cache: &StatementCachePriv,
 ) -> BoolTarget {
-    let measure = measure_gates_begin!(builder, "OpProductOf");
+    let measure = measure_gates_begin!(builder, "OpProduct");
     let value_zero = ValueTarget::zero(builder);
 
     let op_code_ok = op_type.has_native(builder, NativeOperation::ProductFromEntries);
@@ -1314,12 +1314,12 @@ fn verify_product_of_circuit(
     let (arg_types_ok, [arg1_value, arg2_value, arg3_value]) = cache.first_n_args_as_values();
 
     // Select to avoid overflow.
-    let factor1 = builder.select_value(op_code_ok, arg2_value, value_zero);
-    let factor2 = builder.select_value(op_code_ok, arg3_value, value_zero);
+    let factor1 = builder.select_value(op_code_ok, arg1_value, value_zero);
+    let factor2 = builder.select_value(op_code_ok, arg2_value, value_zero);
 
     let expected_product = builder.i64_mul(factor1, factor2);
 
-    let product_ok = builder.is_equal_slice(&arg1_value.elements, &expected_product.elements);
+    let product_ok = builder.is_equal_slice(&arg3_value.elements, &expected_product.elements);
 
     let arg1_expected = cache.equations[0].lhs.clone();
     let arg2_expected = cache.equations[1].lhs.clone();
@@ -1327,7 +1327,7 @@ fn verify_product_of_circuit(
     let expected_statement = StatementTarget::new_native(
         builder,
         params,
-        NativePredicate::ProductOf,
+        NativePredicate::Product,
         &[arg1_expected, arg2_expected, arg3_expected],
     );
     let st_ok = builder.is_equal_flattenable(st, &expected_statement);
@@ -1337,34 +1337,34 @@ fn verify_product_of_circuit(
     ok
 }
 
-fn verify_max_of_circuit(
+fn verify_max_from_entries_circuit(
     params: &Params,
     builder: &mut CircuitBuilder,
     st: &StatementTarget,
     op_type: &OperationTypeTarget,
     cache: &StatementCachePriv,
 ) -> BoolTarget {
-    let measure = measure_gates_begin!(builder, "OpMaxOf");
+    let measure = measure_gates_begin!(builder, "OpMax");
     let op_code_ok = op_type.has_native(builder, NativeOperation::MaxFromEntries);
 
     let (arg_types_ok, [arg1_value, arg2_value, arg3_value]) = cache.first_n_args_as_values();
 
     // Check that arg1_value is equal to one of the other two
     // values.
-    let arg1_eq_arg2 = builder.is_equal_slice(&arg1_value.elements, &arg2_value.elements);
-    let arg1_eq_arg3 = builder.is_equal_slice(&arg1_value.elements, &arg3_value.elements);
+    let arg3_eq_arg1 = builder.is_equal_slice(&arg3_value.elements, &arg1_value.elements);
+    let arg3_eq_arg2 = builder.is_equal_slice(&arg3_value.elements, &arg2_value.elements);
 
-    let all_eq = builder.and(arg1_eq_arg2, arg1_eq_arg3);
+    let all_eq = builder.and(arg3_eq_arg1, arg3_eq_arg2);
     let not_all_eq = builder.not(all_eq);
 
-    let arg1_check = builder.or(arg1_eq_arg2, arg1_eq_arg3);
+    let arg1_check = builder.or(arg3_eq_arg1, arg3_eq_arg2);
 
     // If it is not equal to any of the other two values, it must be greater than it.
-    let lower_bound = builder.select_value(arg1_eq_arg2, arg3_value, arg2_value);
+    let lower_bound = builder.select_value(arg3_eq_arg1, arg2_value, arg1_value);
 
     // Only check lower bound if not all args are equal.
     let lt_check_enabled = builder.and(not_all_eq, op_code_ok);
-    builder.assert_i64_less_if(lt_check_enabled, lower_bound, arg1_value);
+    builder.assert_i64_less_if(lt_check_enabled, lower_bound, arg3_value);
 
     let arg1_expected = cache.equations[0].lhs.clone();
     let arg2_expected = cache.equations[1].lhs.clone();
@@ -1372,7 +1372,7 @@ fn verify_max_of_circuit(
     let expected_statement = StatementTarget::new_native(
         builder,
         params,
-        NativePredicate::MaxOf,
+        NativePredicate::Max,
         &[arg1_expected, arg2_expected, arg3_expected],
     );
     let st_ok = builder.is_equal_flattenable(st, &expected_statement);
@@ -2042,7 +2042,7 @@ struct AuxTableInputTargets {
     merkle_proofs: MerkleProofsTarget,
     merkle_transition_proofs: MerkleTransitionProofsTarget,
     open_input_statements: Vec<OpenInputStatementTarget>,
-    public_key_of_sks: Vec<BigUInt320Target>,
+    public_key_sks: Vec<BigUInt320Target>,
     signed_bys: Vec<SignedByTarget>,
     custom_predicate_verifications: Vec<CustomPredicateVerifyEntryTarget>,
 }
@@ -2122,23 +2122,23 @@ impl AuxTableInputTargets {
             }
         }
 
-        assert!(input.public_key_of_sks.len() <= params.max_public_key_of);
-        for (i, sk) in input.public_key_of_sks.iter().enumerate() {
-            pw.set_biguint320_target(&self.public_key_of_sks[i], &sk.0)?;
+        assert!(input.public_key_sks.len() <= params.max_public_key_ops);
+        for (i, sk) in input.public_key_sks.iter().enumerate() {
+            pw.set_biguint320_target(&self.public_key_sks[i], &sk.0)?;
         }
         // Padding
         let pad_sk = BigUint::ZERO;
-        for i in input.public_key_of_sks.len()..params.max_public_key_of {
-            pw.set_biguint320_target(&self.public_key_of_sks[i], &pad_sk)?;
+        for i in input.public_key_sks.len()..params.max_public_key_ops {
+            pw.set_biguint320_target(&self.public_key_sks[i], &pad_sk)?;
         }
 
-        assert!(input.signed_bys.len() <= params.max_signed_by);
+        assert!(input.signed_bys.len() <= params.max_signed_by_ops);
         for (i, signed_by) in input.signed_bys.iter().enumerate() {
             self.signed_bys[i].set_targets(pw, signed_by)?;
         }
         // Padding
         let pad_signed_by = SignedBy::dummy();
-        for i in input.signed_bys.len()..params.max_signed_by {
+        for i in input.signed_bys.len()..params.max_signed_by_ops {
             self.signed_bys[i].set_targets(pw, &pad_signed_by)?;
         }
 
@@ -2231,10 +2231,10 @@ impl MainPodVerifyTarget {
                 open_input_statements: (0..params.max_open_input_statements)
                     .map(|_| OpenInputStatementTarget::new_virtual(builder))
                     .collect(),
-                public_key_of_sks: (0..params.max_public_key_of)
+                public_key_sks: (0..params.max_public_key_ops)
                     .map(|_| builder.add_virtual_biguint320_target())
                     .collect(),
-                signed_bys: (0..params.max_signed_by)
+                signed_bys: (0..params.max_signed_by_ops)
                     .map(|_| SignedByTarget::new_virtual(builder))
                     .collect(),
                 custom_predicate_verifications: (0..params.max_custom_predicate_verifications)
@@ -2257,7 +2257,7 @@ pub struct AuxTableInput {
     pub merkle_transition_proofs: MerkleTransitionProofs,
     pub open_input_statements: Vec<InputPodOpenStatement>,
     pub pad_open_input_statement: Option<InputPodOpenStatement>,
-    pub public_key_of_sks: Vec<SecretKey>,
+    pub public_key_sks: Vec<SecretKey>,
     pub signed_bys: Vec<SignedBy>,
     pub custom_predicate_verifications: Vec<CustomPredicateVerification>,
 }

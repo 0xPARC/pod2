@@ -291,12 +291,12 @@ pub fn solve_for_k(input: &InputShape, k: usize) -> Option<OutputShape> {
         let sb: Expression = (0..n)
             .map(|s| (input.costs[s].signed_by as f64) * v.assign[s][p])
             .sum();
-        model.add_constraint(constraint!(sb <= input.params.max_signed_by as f64));
+        model.add_constraint(constraint!(sb <= input.params.max_signed_by_ops as f64));
 
         let pko: Expression = (0..n)
-            .map(|s| (input.costs[s].public_key_of as f64) * v.assign[s][p])
+            .map(|s| (input.costs[s].public_key as f64) * v.assign[s][p])
             .sum();
-        model.add_constraint(constraint!(pko <= input.params.max_public_key_of as f64));
+        model.add_constraint(constraint!(pko <= input.params.max_public_key_ops as f64));
     }
 
     // (5) Custom predicate cardinality.
@@ -669,7 +669,7 @@ mod tests {
                 Params {
                     max_statements: 8,
                     max_input_pods: 3,
-                    max_signed_by: 2,
+                    max_signed_by_ops: 2,
                     ..Params::default()
                 },
             ),

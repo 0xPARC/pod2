@@ -106,12 +106,12 @@ fn aggregate_rows<'a>(
         UtilizationRow {
             name: "signed_by",
             used: totals.signed_by,
-            limit: params.max_signed_by,
+            limit: params.max_signed_by_ops,
         },
         UtilizationRow {
-            name: "public_key_of",
-            used: totals.public_key_of,
-            limit: params.max_public_key_of,
+            name: "public_key",
+            used: totals.public_key,
+            limit: params.max_public_key_ops,
         },
         UtilizationRow {
             name: "distinct custom predicates",
@@ -576,8 +576,8 @@ fn identify_overflow(
             c.custom_pred_verifications,
             params.max_custom_predicate_verifications,
         ),
-        ("signed_by", c.signed_by, params.max_signed_by),
-        ("public_key_of", c.public_key_of, params.max_public_key_of),
+        ("signed_by", c.signed_by, params.max_signed_by_ops),
+        ("public_key", c.public_key, params.max_public_key_ops),
         (
             "distinct custom predicates",
             c.custom_predicates_ids.len(),

@@ -71,8 +71,8 @@ fn operation_verify(
 ) -> Result<()> {
     let params = Params {
         max_input_pods: 0,
-        max_public_key_of: aux.secret_keys.len(),
-        max_signed_by: aux.signed_bys.len(),
+        max_public_key_ops: aux.secret_keys.len(),
+        max_signed_by_ops: aux.signed_bys.len(),
         containers: middleware::ParamsContainers {
             state: middleware::ParamsMerkleProofs {
                 max_small: 0,
@@ -152,7 +152,7 @@ fn operation_verify(
         merkle_proofs: merkle_proofs_target,
         merkle_transition_proofs: merkle_transition_proofs_target,
         open_input_statements: Vec::new(),
-        public_key_of_sks: secret_keys_target,
+        public_key_sks: secret_keys_target,
         signed_bys: signed_by_targets,
         custom_predicate_verifications: Vec::new(),
     };
@@ -520,7 +520,7 @@ fn test_operation_verify_lteq() -> Result<()> {
 }
 
 #[test]
-fn test_operation_verify_hashof() -> Result<()> {
+fn test_operation_verify_hash() -> Result<()> {
     let input_values = [
         Value::from(RawValue([
             GoldilocksField(1),
@@ -530,20 +530,20 @@ fn test_operation_verify_hashof() -> Result<()> {
         ])),
         Value::from(512),
     ];
-    let v1 = hash_values(&input_values);
-    let [v2, v3] = input_values;
+    let v3 = hash_values(&input_values);
+    let [v1, v2] = input_values;
 
     let local = dict!({
-        "hola" => v1,
+        "hola" => v1.clone(),
         "mundo" => v2.clone(),
-        "!" => v3.clone(),
+        "!" => v3,
     });
 
     let st1: mainpod::Statement = Statement::contains(local.clone(), "hola", v1).into();
     let st2: mainpod::Statement = Statement::contains(local.clone(), "mundo", v2).into();
     let st3: mainpod::Statement = Statement::contains(local.clone(), "!", v3).into();
 
-    let st: mainpod::Statement = Statement::hash_of(
+    let st: mainpod::Statement = Statement::_hash(
         AnchoredKey::from((&local, "hola")),
         AnchoredKey::from((&local, "mundo")),
         AnchoredKey::from((&local, "!")),
@@ -563,7 +563,7 @@ fn test_operation_verify_hashof() -> Result<()> {
 }
 
 #[test]
-fn test_operation_verify_sumof() -> Result<()> {
+fn test_operation_verify_sum() -> Result<()> {
     I64_TEST_PAIRS
         .into_iter()
         .flat_map(|(a, b)| {
@@ -572,19 +572,19 @@ fn test_operation_verify_sumof() -> Result<()> {
         })
         .try_for_each(|(a, b, sum)| {
             let local = dict!({
-                "sum" => sum,
                 "a" => a,
                 "b" => b,
+                "sum" => sum,
             });
 
-            let st1: mainpod::Statement = Statement::contains(local.clone(), "sum", sum).into();
-            let st2: mainpod::Statement = Statement::contains(local.clone(), "a", a).into();
-            let st3: mainpod::Statement = Statement::contains(local.clone(), "b", b).into();
+            let st1: mainpod::Statement = Statement::contains(local.clone(), "a", a).into();
+            let st2: mainpod::Statement = Statement::contains(local.clone(), "b", b).into();
+            let st3: mainpod::Statement = Statement::contains(local.clone(), "sum", sum).into();
 
-            let st: mainpod::Statement = Statement::sum_of(
-                AnchoredKey::from((&local, "sum")),
+            let st: mainpod::Statement = Statement::sum(
                 AnchoredKey::from((&local, "a")),
                 AnchoredKey::from((&local, "b")),
+                AnchoredKey::from((&local, "sum")),
             )
             .into();
             let op = mainpod::Operation(
@@ -612,19 +612,19 @@ fn test_operation_verify_sumof_non_monotonic_repeated_indices() -> Result<()> {
     let st_noise: mainpod::Statement = Statement::contains(local.clone(), "noise", 99).into();
     let st_sum: mainpod::Statement = Statement::contains(local.clone(), "sum", 6).into();
 
-    let st: mainpod::Statement = Statement::sum_of(
+    let st: mainpod::Statement = Statement::sum(
+        AnchoredKey::from((&local, "a")),
+        AnchoredKey::from((&local, "a")),
         AnchoredKey::from((&local, "sum")),
-        AnchoredKey::from((&local, "a")),
-        AnchoredKey::from((&local, "a")),
     )
     .into();
     let op = mainpod::Operation(
         OperationType::Native(NativeOperation::SumFromEntries),
         vec![
             // Non-monotonic and repeated indices to stress random-access resolution.
+            OperationArg::Index(0),
+            OperationArg::Index(0),
             OperationArg::Index(2),
-            OperationArg::Index(0),
-            OperationArg::Index(0),
         ],
         OperationAux::None,
     );
@@ -633,7 +633,7 @@ fn test_operation_verify_sumof_non_monotonic_repeated_indices() -> Result<()> {
 }
 
 #[test]
-fn test_operation_verify_productof() -> Result<()> {
+fn test_operation_verify_product() -> Result<()> {
     I64_TEST_PAIRS
         .into_iter()
         .flat_map(|(a, b)| {
@@ -647,14 +647,14 @@ fn test_operation_verify_productof() -> Result<()> {
                 "b" => b,
             });
 
-            let st1: mainpod::Statement = Statement::contains(local.clone(), "prod", prod).into();
-            let st2: mainpod::Statement = Statement::contains(local.clone(), "a", a).into();
-            let st3: mainpod::Statement = Statement::contains(local.clone(), "b", b).into();
+            let st1: mainpod::Statement = Statement::contains(local.clone(), "a", a).into();
+            let st2: mainpod::Statement = Statement::contains(local.clone(), "b", b).into();
+            let st3: mainpod::Statement = Statement::contains(local.clone(), "prod", prod).into();
 
-            let st: mainpod::Statement = Statement::product_of(
-                AnchoredKey::from((&local, "prod")),
+            let st: mainpod::Statement = Statement::product(
                 AnchoredKey::from((&local, "a")),
                 AnchoredKey::from((&local, "b")),
+                AnchoredKey::from((&local, "prod")),
             )
             .into();
             let op = mainpod::Operation(
@@ -672,7 +672,7 @@ fn test_operation_verify_productof() -> Result<()> {
 }
 
 #[test]
-fn test_operation_verify_maxof() -> Result<()> {
+fn test_operation_verify_max() -> Result<()> {
     I64_TEST_PAIRS.into_iter().try_for_each(|(a, b)| {
         let max = i64::max(a, b);
         let local = dict!({
@@ -681,14 +681,14 @@ fn test_operation_verify_maxof() -> Result<()> {
             "b" => b,
         });
 
-        let st1: mainpod::Statement = Statement::contains(local.clone(), "max", max).into();
-        let st2: mainpod::Statement = Statement::contains(local.clone(), "a", a).into();
-        let st3: mainpod::Statement = Statement::contains(local.clone(), "b", b).into();
+        let st1: mainpod::Statement = Statement::contains(local.clone(), "a", a).into();
+        let st2: mainpod::Statement = Statement::contains(local.clone(), "b", b).into();
+        let st3: mainpod::Statement = Statement::contains(local.clone(), "max", max).into();
 
-        let st: mainpod::Statement = Statement::max_of(
-            AnchoredKey::from((&local, "max")),
+        let st: mainpod::Statement = Statement::max(
             AnchoredKey::from((&local, "a")),
             AnchoredKey::from((&local, "b")),
+            AnchoredKey::from((&local, "max")),
         )
         .into();
 
@@ -708,10 +708,10 @@ fn test_operation_verify_maxof() -> Result<()> {
 
 #[test]
 fn test_operation_verify_maxof_failures() {
-    [(5, 3, 4), (5, 5, 8), (3, 4, 5)]
+    [(3, 4, 5), (5, 8, 5), (4, 5, 3)]
         .into_iter()
         .for_each(|(max, a, b)| {
-            let st: mainpod::Statement = Statement::max_of(max, a, b).into();
+            let st: mainpod::Statement = Statement::max(a, b, max).into();
             let op = mainpod::Operation(
                 OperationType::Native(NativeOperation::MaxFromEntries),
                 vec![
@@ -956,7 +956,7 @@ fn test_operation_verify_merkle_delete() -> Result<()> {
 }
 
 #[test]
-fn test_operation_verify_publickeyof_ok() -> Result<()> {
+fn test_operation_verify_publickey_ok() -> Result<()> {
     [
         SecretKey(BigUint::one()),
         SecretKey::new_rand(),
@@ -966,12 +966,11 @@ fn test_operation_verify_publickeyof_ok() -> Result<()> {
     .try_for_each(|secret_key| {
         let public_key = secret_key.public_key();
 
-        let st: mainpod::Statement =
-            Statement::public_key_of(public_key, secret_key.clone()).into();
+        let st: mainpod::Statement = Statement::public_key(public_key, secret_key.clone()).into();
         let op = mainpod::Operation(
             OperationType::Native(NativeOperation::PublicKeyFromEntries),
             vec![OperationArg::Index(0), OperationArg::Index(0)],
-            OperationAux::PublicKeyOfIndex(0),
+            OperationAux::PublicKeyIndex(0),
         );
         let prev_statements = vec![Statement::None.into()];
         operation_verify(st, op, prev_statements, Aux::secret_key(secret_key))
@@ -979,26 +978,26 @@ fn test_operation_verify_publickeyof_ok() -> Result<()> {
 }
 
 #[test]
-fn test_operation_verify_publickeyof_failure_wrong_key() {
+fn test_operation_verify_publickey_failure_wrong_key() {
     let secret_key = SecretKey(BigUint::one());
     let public_key = SecretKey(BigUint::ZERO).public_key();
 
-    let st: mainpod::Statement = Statement::public_key_of(public_key, secret_key.clone()).into();
+    let st: mainpod::Statement = Statement::public_key(public_key, secret_key.clone()).into();
     let op = mainpod::Operation(
         OperationType::Native(NativeOperation::PublicKeyFromEntries),
         vec![OperationArg::Index(0), OperationArg::Index(0)],
-        OperationAux::PublicKeyOfIndex(0),
+        OperationAux::PublicKeyIndex(0),
     );
     let prev_statements = vec![Statement::None.into()];
     assert!(operation_verify(st, op, prev_statements, Aux::secret_key(secret_key)).is_err())
 }
 
 #[test]
-fn test_operation_verify_publickeyof_failure_pk_type() {
+fn test_operation_verify_publickey_failure_pk_type() {
     let secret_key = SecretKey(BigUint::one());
     let public_key = 123i64;
 
-    let st: mainpod::Statement = Statement::public_key_of(public_key, secret_key.clone()).into();
+    let st: mainpod::Statement = Statement::public_key(public_key, secret_key.clone()).into();
     let op = mainpod::Operation(
         OperationType::Native(NativeOperation::PublicKeyFromEntries),
         vec![OperationArg::Index(0), OperationArg::Index(0)],
@@ -1009,15 +1008,15 @@ fn test_operation_verify_publickeyof_failure_pk_type() {
 }
 
 #[test]
-fn test_operation_verify_publickeyof_failure_sk_type() {
+fn test_operation_verify_publickey_failure_sk_type() {
     let secret_key = 123i64;
     let public_key = SecretKey(BigUint::from(123u32)).public_key();
 
-    let st: mainpod::Statement = Statement::public_key_of(public_key, secret_key).into();
+    let st: mainpod::Statement = Statement::public_key(public_key, secret_key).into();
     let op = mainpod::Operation(
         OperationType::Native(NativeOperation::PublicKeyFromEntries),
         vec![OperationArg::Index(0), OperationArg::Index(0)],
-        OperationAux::PublicKeyOfIndex(0),
+        OperationAux::PublicKeyIndex(0),
     );
     let prev_statements = vec![Statement::None.into()];
     let aux = Aux::secret_key(SecretKey(BigUint::from(123u32)));
@@ -1025,15 +1024,15 @@ fn test_operation_verify_publickeyof_failure_sk_type() {
 }
 
 #[test]
-fn test_operation_verify_publickeyof_failure_sk_size() {
+fn test_operation_verify_publickey_failure_sk_size() {
     let secret_key = SecretKey(&*GROUP_ORDER - BigUint::ZERO);
     let public_key = secret_key.public_key();
 
-    let st: mainpod::Statement = Statement::public_key_of(public_key, secret_key.clone()).into();
+    let st: mainpod::Statement = Statement::public_key(public_key, secret_key.clone()).into();
     let op = mainpod::Operation(
         OperationType::Native(NativeOperation::PublicKeyFromEntries),
         vec![OperationArg::Index(0), OperationArg::Index(0)],
-        OperationAux::PublicKeyOfIndex(0),
+        OperationAux::PublicKeyIndex(0),
     );
     let prev_statements = vec![Statement::None.into()];
     assert!(operation_verify(st, op, prev_statements, Aux::secret_key(secret_key)).is_err())

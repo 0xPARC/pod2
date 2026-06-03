@@ -1181,7 +1181,7 @@ mod tests {
         };
 
         let params = Params {
-            max_signed_by: 2,
+            max_signed_by_ops: 2,
             ..Params::default()
         };
         let vd_set = &*MOCK_VD_SET;

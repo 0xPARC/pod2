@@ -170,16 +170,14 @@ impl OperationType {
                 NativeOperation::NotContainsFromEntries => {
                     Some(Predicate::Native(NativePredicate::NotContains))
                 }
-                NativeOperation::SumFromEntries => Some(Predicate::Native(NativePredicate::SumOf)),
+                NativeOperation::SumFromEntries => Some(Predicate::Native(NativePredicate::Sum)),
                 NativeOperation::ProductFromEntries => {
-                    Some(Predicate::Native(NativePredicate::ProductOf))
+                    Some(Predicate::Native(NativePredicate::Product))
                 }
-                NativeOperation::MaxFromEntries => Some(Predicate::Native(NativePredicate::MaxOf)),
-                NativeOperation::HashFromEntries => {
-                    Some(Predicate::Native(NativePredicate::HashOf))
-                }
+                NativeOperation::MaxFromEntries => Some(Predicate::Native(NativePredicate::Max)),
+                NativeOperation::HashFromEntries => Some(Predicate::Native(NativePredicate::Hash)),
                 NativeOperation::PublicKeyFromEntries => {
-                    Some(Predicate::Native(NativePredicate::PublicKeyOf))
+                    Some(Predicate::Native(NativePredicate::PublicKey))
                 }
                 NativeOperation::SignedByFromEntries => {
                     Some(Predicate::Native(NativePredicate::SignedBy))
@@ -456,20 +454,20 @@ impl Operation {
     }
 
     pub(crate) fn check_int_fn(
-        v1: &Value,
-        v2: &Value,
-        v3: &Value,
+        lhs: &Value,
+        rhs: &Value,
+        result: &Value,
         f: impl FnOnce(i64, i64) -> i64,
     ) -> Result<bool> {
-        let i1 = ok_or_type_err(v1.as_int(), v1, "Int")?;
-        let i2 = ok_or_type_err(v2.as_int(), v2, "Int")?;
-        let i3 = ok_or_type_err(v3.as_int(), v3, "Int")?;
-        Ok(i1 == f(i2, i3))
+        let ilhs = ok_or_type_err(lhs.as_int(), lhs, "Int")?;
+        let irhs = ok_or_type_err(rhs.as_int(), rhs, "Int")?;
+        let iresult = ok_or_type_err(result.as_int(), result, "Int")?;
+        Ok(iresult == f(irhs, ilhs))
     }
 
-    pub(crate) fn check_public_key(v1: &Value, v2: &Value) -> Result<bool> {
-        let pk = ok_or_type_err(v1.as_public_key(), v1, "PublicKey")?;
-        let sk = ok_or_type_err(v2.as_secret_key(), v2, "SecretKey")?;
+    pub(crate) fn check_public_key(sk: &Value, pk: &Value) -> Result<bool> {
+        let sk = ok_or_type_err(sk.as_secret_key(), sk, "SecretKey")?;
+        let pk = ok_or_type_err(pk.as_public_key(), pk, "PublicKey")?;
         Ok(sk.0 < *GROUP_ORDER && pk == sk.public_key())
     }
 
@@ -552,20 +550,20 @@ impl Operation {
                 Equal(ak5, ak6),
             ) => ak2 == ak3 && ak5 == ak1 && ak6 == ak4,
             (Self::LtToNotEqual(Lt(ak1, ak2)), NotEqual(ak3, ak4)) => ak1 == ak3 && ak2 == ak4,
-            (Self::SumFromEntries(s1, s2, s3), SumOf(v4, v5, v6)) => {
-                Self::check_int_fn(&val(v4, s1)?, &val(v5, s2)?, &val(v6, s3)?, sum_op)?
+            (Self::SumFromEntries(s1, s2, s3), Sum(v1, v2, v3)) => {
+                Self::check_int_fn(&val(v1, s1)?, &val(v2, s2)?, &val(v3, s3)?, sum_op)?
             }
-            (Self::ProductFromEntries(s1, s2, s3), ProductOf(v4, v5, v6)) => {
-                Self::check_int_fn(&val(v4, s1)?, &val(v5, s2)?, &val(v6, s3)?, prod_op)?
+            (Self::ProductFromEntries(s1, s2, s3), Product(v1, v2, v3)) => {
+                Self::check_int_fn(&val(v1, s1)?, &val(v2, s2)?, &val(v3, s3)?, prod_op)?
             }
-            (Self::MaxFromEntries(s1, s2, s3), MaxOf(v4, v5, v6)) => {
-                Self::check_int_fn(&val(v4, s1)?, &val(v5, s2)?, &val(v6, s3)?, max_op)?
+            (Self::MaxFromEntries(s1, s2, s3), Max(v1, v2, v3)) => {
+                Self::check_int_fn(&val(v1, s1)?, &val(v2, s2)?, &val(v3, s3)?, max_op)?
             }
-            (Self::HashFromEntries(s1, s2, s3), HashOf(v4, v5, v6)) => {
-                val(v4, s1)? == hash_op(val(v5, s2)?, val(v6, s3)?)
+            (Self::HashFromEntries(s1, s2, s3), Hash(v1, v2, v3)) => {
+                val(v3, s3)? == hash_op(val(v1, s1)?, val(v2, s2)?)
             }
-            (Self::PublicKeyFromEntries(s1, s2), PublicKeyOf(v3, v4)) => {
-                Self::check_public_key(&val(v3, s1)?, &val(v4, s2)?)?
+            (Self::PublicKeyFromEntries(s1, s2), PublicKey(v1, v2)) => {
+                Self::check_public_key(&val(v1, s1)?, &val(v2, s2)?)?
             }
             (Self::SignedByFromEntries(msg_s, pk_s, sig), SignedBy(msg_v, pk_v)) => {
                 Self::check_signed_by(&val(msg_v, msg_s)?, &val(pk_v, pk_s)?, sig)?
@@ -1126,7 +1124,7 @@ mod tests {
     }
 
     #[test]
-    fn check_public_key_of_op() -> Result<()> {
+    fn check_public_key_op() -> Result<()> {
         let fixed_sk = SecretKey(BigUint::from(0x1234567890abcdefu64));
         let fixed_pk = fixed_sk.public_key();
         let rand_sk = SecretKey::new_rand();
@@ -1138,38 +1136,38 @@ mod tests {
 
         let test_cases = [
             // Valid pairs
-            (fixed_pk, fixed_sk.clone(), true),
-            (rand_pk, rand_sk.clone(), true),
+            (fixed_sk.clone(), fixed_pk, true),
+            (rand_sk.clone(), rand_pk, true),
             // Mismatched pairs
-            (fixed_pk, rand_sk.clone(), false),
-            (rand_pk, fixed_sk.clone(), false),
+            (rand_sk.clone(), fixed_pk, false),
+            (fixed_sk.clone(), rand_pk, false),
             // Above group order
-            (small_pk, small_sk.clone(), true),
-            (small_pk, too_large_sk.clone(), false),
+            (small_sk.clone(), small_pk, true),
+            (too_large_sk.clone(), small_pk, false),
         ];
 
         let params = Params::default();
 
-        test_cases.iter().try_for_each(|(pk, sk, expect_good)| {
+        test_cases.iter().try_for_each(|(sk, pk, expect_good)| {
             // Form op
             let op = Operation::PublicKeyFromEntries(Statement::None, Statement::None);
 
             // Form output statement
-            let st = Statement::PublicKeyOf((*pk).into(), sk.clone().into());
+            let st = Statement::PublicKey(sk.clone().into(), (*pk).into());
 
             // Check
             op.check(&params, &st).map(|is_good| {
                 assert_eq!(
                     is_good, *expect_good,
                     "PublicKeyOf({}, {}) => {}",
-                    pk, sk, is_good
+                    sk, pk, is_good
                 );
             })
         })
     }
 
     #[test]
-    fn check_public_key_of_op_arg_types() -> Result<()> {
+    fn check_public_key_op_arg_types() -> Result<()> {
         let fixed_sk = SecretKey(BigUint::from(0x1234567890abcdefu64));
         let fixed_pk = fixed_sk.public_key();
 
@@ -1177,14 +1175,14 @@ mod tests {
 
         // Bad op and statement with bad first args
         let op = Operation::PublicKeyFromEntries(Statement::None, Statement::None);
-        let st = Statement::PublicKeyOf(fixed_pk.into(), fixed_pk.into());
+        let st = Statement::PublicKey(fixed_pk.into(), fixed_pk.into());
 
         // Check
         assert!(op.check(&params, &st).is_err());
 
         // Bad op and statement with bad second args
         let op = Operation::PublicKeyFromEntries(Statement::None, Statement::None);
-        let st = Statement::PublicKeyOf(fixed_sk.clone().into(), fixed_sk.clone().into());
+        let st = Statement::PublicKey(fixed_sk.clone().into(), fixed_sk.clone().into());
 
         // Check
         assert!(op.check(&params, &st).is_err());

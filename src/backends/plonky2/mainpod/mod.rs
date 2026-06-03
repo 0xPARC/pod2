@@ -272,7 +272,7 @@ pub(crate) fn extract_merkle_transition_proofs(
     Ok(tables)
 }
 
-pub(crate) fn extract_public_key_of(
+pub(crate) fn extract_public_key(
     params: &Params,
     aux_list: &mut [OperationAux],
     operations: &[middleware::Operation],
@@ -281,8 +281,8 @@ pub(crate) fn extract_public_key_of(
     let mut table = Vec::new();
     for (i, (op, st)) in operations.iter().zip(statements.iter()).enumerate() {
         if let (
-            middleware::Operation::PublicKeyFromEntries(_, sk_s),
-            middleware::Statement::PublicKeyOf(_, sk_ref),
+            middleware::Operation::PublicKeyFromEntries(sk_s, _),
+            middleware::Statement::PublicKey(sk_ref, _),
         ) = (op, st)
         {
             let deduction_err = || MiddlewareError::invalid_deduction(op.clone(), st.clone());
@@ -290,15 +290,15 @@ pub(crate) fn extract_public_key_of(
             let sk = value
                 .as_secret_key()
                 .ok_or_else(|| Error::custom("{value} not SecretKey"))?;
-            aux_list[i] = OperationAux::PublicKeyOfIndex(table.len());
+            aux_list[i] = OperationAux::PublicKeyIndex(table.len());
             table.push(sk);
         }
     }
-    if table.len() > params.max_public_key_of {
+    if table.len() > params.max_public_key_ops {
         return Err(Error::custom(format!(
             "The number of required PublicKeyOf verifications ({}) exceeds the maximum number ({}).",
             table.len(),
-            params.max_public_key_of
+            params.max_public_key_ops
         )));
     }
     Ok(table)
@@ -350,11 +350,11 @@ pub(crate) fn extract_signatures(
             });
         }
     }
-    if table.len() > params.max_signed_by {
+    if table.len() > params.max_signed_by_ops {
         return Err(Error::custom(format!(
             "The number of required signatures ({}) exceeds the maximum number ({}).",
             table.len(),
-            params.max_signed_by
+            params.max_signed_by_ops
         )));
     }
     Ok(table)
@@ -564,8 +564,8 @@ impl MainPodProver for Prover {
         } else {
             None
         };
-        let public_key_of_sks =
-            extract_public_key_of(params, &mut aux_list, inputs.operations, &input_statements)?;
+        let public_key_sks =
+            extract_public_key(params, &mut aux_list, inputs.operations, &input_statements)?;
         let signed_bys =
             extract_signatures(params, &mut aux_list, inputs.operations, &input_statements)?;
 
@@ -617,7 +617,7 @@ impl MainPodProver for Prover {
             merkle_proofs,
             open_input_statements,
             pad_open_input_statement,
-            public_key_of_sks,
+            public_key_sks,
             signed_bys,
             merkle_transition_proofs,
         };
@@ -962,7 +962,7 @@ pub mod tests {
     #[test]
     fn test_mini_0() {
         let params = middleware::Params {
-            max_signed_by: 1,
+            max_signed_by_ops: 1,
             max_input_pods: 1,
             max_statements: 8,
             max_open_input_statements: 4,
@@ -1015,7 +1015,7 @@ pub mod tests {
     #[test]
     fn test_mini_1() {
         let params = middleware::Params {
-            max_signed_by: 0,
+            max_signed_by_ops: 0,
             max_input_pods: 0,
             max_statements: 2,
             max_open_input_statements: 1,
@@ -1031,7 +1031,7 @@ pub mod tests {
                 max_depth_small: 8,
                 max_depth_medium: 32,
             },
-            max_public_key_of: 0,
+            max_public_key_ops: 0,
             max_custom_predicate_verifications: 0,
             max_custom_predicates: 0,
             ..Default::default()
@@ -1061,7 +1061,7 @@ pub mod tests {
     #[test]
     fn test_mainpod_small_empty() {
         let params = middleware::Params {
-            max_signed_by: 0,
+            max_signed_by_ops: 0,
             max_input_pods: 1,
             max_statements: 5,
             max_public_statements: 2,
@@ -1069,7 +1069,7 @@ pub mod tests {
             max_custom_predicates: 2,
             max_custom_predicate_verifications: 2,
             max_custom_predicate_wildcards: 3,
-            max_public_key_of: 2,
+            max_public_key_ops: 2,
             max_depth_mt_vds: 6,
             containers: middleware::ParamsContainers {
                 state: middleware::ParamsMerkleProofs {
@@ -1135,7 +1135,7 @@ pub mod tests {
     #[test]
     fn test_main_mini_custom_1() -> frontend::Result<()> {
         let params = Params {
-            max_signed_by: 0,
+            max_signed_by_ops: 0,
             max_input_pods: 0,
             max_statements: 9,
             max_open_input_statements: 0,
@@ -1214,7 +1214,7 @@ pub mod tests {
         use frontend::BuilderArg;
 
         let params = Params {
-            max_signed_by: 0,
+            max_signed_by_ops: 0,
             max_input_pods: 0,
             max_statements: 6,
             max_open_input_statements: 0,
