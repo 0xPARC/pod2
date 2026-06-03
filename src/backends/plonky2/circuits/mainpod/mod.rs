@@ -800,7 +800,7 @@ fn verify_merkle_insert_circuit(
         );
     let op_code_ok = op_type.has_native(builder, NativeOperation::ContainerInsertFromEntries);
 
-    let (arg_types_ok, [new_root_value, old_root_value, op_key_value, op_value_value]) =
+    let (arg_types_ok, [old_root_value, op_key_value, op_value_value, new_root_value]) =
         cache.first_n_args_as_values();
 
     let expected_merkle_op = builder.constant(F::from_canonical_u8(MerkleTreeOp::Insert as u8));
@@ -873,7 +873,7 @@ fn verify_merkle_update_circuit(
         );
     let op_code_ok = op_type.has_native(builder, NativeOperation::ContainerUpdateFromEntries);
 
-    let (arg_types_ok, [new_root_value, old_root_value, op_key_value, op_value_value]) =
+    let (arg_types_ok, [old_root_value, op_key_value, op_value_value, new_root_value]) =
         cache.first_n_args_as_values();
 
     let expected_merkle_op = builder.constant(F::from_canonical_u8(MerkleTreeOp::Update as u8));
@@ -946,7 +946,7 @@ fn verify_merkle_delete_circuit(
         );
     let op_code_ok = op_type.has_native(builder, NativeOperation::ContainerDeleteFromEntries);
 
-    let (arg_types_ok, [new_root_value, old_root_value, op_key_value]) =
+    let (arg_types_ok, [old_root_value, op_key_value, new_root_value]) =
         cache.first_n_args_as_values();
 
     let expected_merkle_op = builder.constant(F::from_canonical_u8(MerkleTreeOp::Delete as u8));

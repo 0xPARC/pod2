@@ -227,23 +227,23 @@ pub enum Operation {
     PublicKeyFromEntries(Statement, Statement),
     SignedByFromEntries(Statement, Statement, Signature),
     ContainerInsertFromEntries(
-        /* new_root */ Statement,
         /* old_root */ Statement,
         /*  key    */ Statement,
         /*  value  */ Statement,
+        /* new_root */ Statement,
         /*  proof  */ MerkleTreeStateTransitionProof,
     ),
     ContainerUpdateFromEntries(
-        /* new_root */ Statement,
         /* old_root */ Statement,
         /*  key    */ Statement,
         /*  value  */ Statement,
+        /* new_root */ Statement,
         /*  proof  */ MerkleTreeStateTransitionProof,
     ),
     ContainerDeleteFromEntries(
-        /* new_root */ Statement,
         /* old_root */ Statement,
         /*  key    */ Statement,
+        /* new_root */ Statement,
         /*  proof  */ MerkleTreeStateTransitionProof,
     ),
     ReplaceValueWithEntry(
@@ -569,8 +569,8 @@ impl Operation {
                 Self::check_signed_by(&val(msg_v, msg_s)?, &val(pk_v, pk_s)?, sig)?
             }
             (
-                Self::ContainerInsertFromEntries(new_root_s, old_root_s, key_s, val_s, pf),
-                ContainerInsert(new_root_v, old_root_v, key_v, val_v),
+                Self::ContainerInsertFromEntries(old_root_s, key_s, val_s, new_root_s, pf),
+                ContainerInsert(old_root_v, key_v, val_v, new_root_v),
             ) => {
                 let old_root = val(old_root_v, old_root_s)?;
                 let new_root = val(new_root_v, new_root_s)?;
@@ -589,8 +589,8 @@ impl Operation {
                 true
             }
             (
-                Self::ContainerUpdateFromEntries(new_root_s, old_root_s, key_s, val_s, pf),
-                ContainerUpdate(new_root_v, old_root_v, key_v, val_v),
+                Self::ContainerUpdateFromEntries(old_root_s, key_s, val_s, new_root_s, pf),
+                ContainerUpdate(old_root_v, key_v, val_v, new_root_v),
             ) => {
                 let old_root = val(old_root_v, old_root_s)?;
                 let new_root = val(new_root_v, new_root_s)?;
@@ -609,8 +609,8 @@ impl Operation {
                 true
             }
             (
-                Self::ContainerDeleteFromEntries(new_root_s, old_root_s, key_s, pf),
-                ContainerDelete(new_root_v, old_root_v, key_v),
+                Self::ContainerDeleteFromEntries(old_root_s, key_s, new_root_s, pf),
+                ContainerDelete(old_root_v, key_v, new_root_v),
             ) => {
                 let old_root = val(old_root_v, old_root_s)?;
                 let new_root = val(new_root_v, new_root_s)?;
@@ -1035,10 +1035,10 @@ mod tests {
                 );
                 // Form output statement
                 let st = Statement::ContainerInsert(
-                    new_root.into(),
                     old_root.into(),
                     k.into(),
                     v.into(),
+                    new_root.into(),
                 );
 
                 // Check op against output statement
@@ -1072,10 +1072,10 @@ mod tests {
                 );
                 // Form output statement
                 let st = Statement::ContainerUpdate(
-                    new_root.into(),
                     old_root.into(),
                     k.into(),
                     v.into(),
+                    new_root.into(),
                 );
 
                 // Check op against output statement
@@ -1107,7 +1107,7 @@ mod tests {
                     mtp,
                 );
                 // Form output statement
-                let st = Statement::ContainerDelete(new_root.into(), old_root.into(), k.into());
+                let st = Statement::ContainerDelete(old_root.into(), k.into(), new_root.into());
 
                 // Check op against output statement
                 op.check(&params, &st).and_then(|ind| {

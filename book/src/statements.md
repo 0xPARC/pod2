@@ -38,9 +38,9 @@ The following table summarises the natively-supported statements, where we write
 | 11   | `Hash`      | `ak1`, `ak2`, `ak3` | `value_of(ak3) = hash(value_of(ak1), value_of(ak2))`              |
 | 12   | `PublicKey` | `ak1`, `ak2`        | `value_of(ak2) = derive_public_key(value_of(ak1))`                |
 | 13   | `SignedBy`    | `ak1`, `ak2`        | `value_of(ak1)` is signed by  `value_of(ak2)`                     |
-| 14   | `ContainerInsert` | `ak1`, `ak2`, `ak3`, `ak4` | `(value_of(ak3), _) ∉ value_of(ak2) ∧ value_of(ak1) = value_of(ak2) ∪ {(value_of(ak3), value_of(ak4))}` (Merkle insert) |
-| 15   | `ContainerUpdate` | `ak1`, `ak2`, `ak3`, `ak4` | `(value_of(ak3), v) ∈ value_of(ak2) ∧ value_of(ak1) = (value_of(ak2) - {(value_of(ak3), v)}) ∪ {(value_of(ak3), value_of(ak4))}` (Merkle update) |
-| 16   | `ContainerDelete` | `ak1`, `ak2`, `ak3`        | `(value_of(ak3), v) ∈ value_of(ak2) ∧ value_of(ak1) = value_of(ak2) - {(value_of(ak3), v)}` (Merkle delete) |
+| 14   | `ContainerInsert` | `ak1`, `ak2`, `ak3`, `ak4` | `(value_of(ak2), _) ∉ value_of(ak1) ∧ value_of(ak4) = value_of(ak1) ∪ {(value_of(ak2), value_of(ak3))}` (Merkle insert) |
+| 15   | `ContainerUpdate` | `ak1`, `ak2`, `ak3`, `ak4` | `(value_of(ak2), v) ∈ value_of(ak1) ∧ value_of(ak4) = (value_of(ak1) - {(value_of(ak2), v)}) ∪ {(value_of(ak2), value_of(ak3))}` (Merkle update) |
+| 16   | `ContainerDelete` | `ak1`, `ak2`, `ak3`        | `(value_of(ak2), v) ∈ value_of(ak1) ∧ value_of(ak3) = value_of(ak1) - {(value_of(ak2), v)}` (Merkle delete) |
 
 ### Frontend statements
 
@@ -55,12 +55,12 @@ The frontend also exposes the following syntactic sugar predicates.  These predi
 | 1004 | ArrayContains | `ArrayContains(root, idx, val) -> Contains(root, idx, val)` |
 | 1005 | GtEq | `GtEq(a, b) -> LtEq(b, a)`|
 | 1006 | Gt | `Gt(a, b) -> Lt(b, a)` |
-| 1009 | DictInsert | `DictInsert(new_root, old_root, key, val) -> ContainerInsert(new_root, old_root, key, val)` |
-| 1010 | DictUpdate | `DictUpdate(new_root, old_root, key, val) -> ContainerUpdate(new_root, old_root, key, val)` |
-| 1011 | DictDelete | `DictDelete(new_root, old_root, key) -> ContainerDelete(new_root, old_root, key)` |
-| 1012 | SetInsert | `SetInsert(new_root, old_root, val) -> ContainerInsert(new_root, old_root, val, val)` |
-| 1013 | SetDelete | `SetDelete(new_root, old_root, val) -> ContainerDelete(new_root, old_root, val)` |
-| 1014 | ArrayUpdate | `ArrayUpdate(new_root, old_root, idx, val) -> ContainerUpdate(new_root, old_root, idx, val)` |
+| 1009 | DictInsert | `DictInsert(old_root, key, val, new_root) -> ContainerInsert(new_root, old_root, key, val)` |
+| 1010 | DictUpdate | `DictUpdate(old_root, key, val, new_root) -> ContainerUpdate(new_root, old_root, key, val)` |
+| 1011 | DictDelete | `DictDelete(old_root, key, new_root) -> ContainerDelete(new_root, old_root, key)` |
+| 1012 | SetInsert | `SetInsert(old_root, val, new_root) -> ContainerInsert(new_root, old_root, val, val)` |
+| 1013 | SetDelete | `SetDelete(old_root, val, new_root) -> ContainerDelete(new_root, old_root, val)` |
+| 1014 | ArrayUpdate | `ArrayUpdate(old_root, idx, val, new_root) -> ContainerUpdate(new_root, old_root, idx, val)` |
 
 
 ### Built-in statements for entries of any type

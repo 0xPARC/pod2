@@ -277,55 +277,55 @@ impl MainPodBuilder {
             }),
             Native(GtToNotEqual) => Ok(Operation(Native(LtToNotEqual), op.1, op.2)),
             Native(DictInsertFromEntries) => {
-                <[_; 4]>::try_from(op.1).map(|[new_dict, old_dict, key, value]| {
+                <[_; 4]>::try_from(op.1).map(|[old_dict, key, value, new_dict]| {
                     Operation(
                         Native(ContainerInsertFromEntries),
-                        vec![new_dict, old_dict, key, value],
+                        vec![old_dict, key, value, new_dict],
                         op.2,
                     )
                 })
             }
             Native(DictUpdateFromEntries) => {
-                <[_; 4]>::try_from(op.1).map(|[new_dict, old_dict, key, value]| {
+                <[_; 4]>::try_from(op.1).map(|[old_dict, key, value, new_dict]| {
                     Operation(
                         Native(ContainerUpdateFromEntries),
-                        vec![new_dict, old_dict, key, value],
+                        vec![old_dict, key, value, new_dict],
                         op.2,
                     )
                 })
             }
             Native(DictDeleteFromEntries) => {
-                <[_; 3]>::try_from(op.1).map(|[new_dict, old_dict, key]| {
+                <[_; 3]>::try_from(op.1).map(|[old_dict, key, new_dict]| {
                     Operation(
                         Native(ContainerDeleteFromEntries),
-                        vec![new_dict, old_dict, key],
+                        vec![old_dict, key, new_dict],
                         op.2,
                     )
                 })
             }
             Native(SetInsertFromEntries) => {
-                <[_; 3]>::try_from(op.1).map(|[new_set, old_set, value]| {
+                <[_; 3]>::try_from(op.1).map(|[old_set, value, new_set]| {
                     Operation(
                         Native(ContainerInsertFromEntries),
-                        vec![new_set, old_set, value.clone(), value],
+                        vec![old_set, value.clone(), value, new_set],
                         op.2,
                     )
                 })
             }
             Native(SetDeleteFromEntries) => {
-                <[_; 3]>::try_from(op.1).map(|[new_set, old_set, value]| {
+                <[_; 3]>::try_from(op.1).map(|[old_set, value, new_set]| {
                     Operation(
                         Native(ContainerDeleteFromEntries),
-                        vec![new_set, old_set, value],
+                        vec![old_set, value, new_set],
                         op.2,
                     )
                 })
             }
             Native(ArrayUpdateFromEntries) => {
-                <[_; 4]>::try_from(op.1).map(|[new_arr, old_arr, i, value]| {
+                <[_; 4]>::try_from(op.1).map(|[old_arr, i, value, new_arr]| {
                     Operation(
                         Native(ContainerUpdateFromEntries),
-                        vec![new_arr, old_arr, i, value],
+                        vec![old_arr, i, value, new_arr],
                         op.2,
                     )
                 })
@@ -377,21 +377,21 @@ impl MainPodBuilder {
             | (Native(ContainerUpdateFromEntries), OpAux::None)
             | (Native(ContainerDeleteFromEntries), OpAux::None) => {
                 let old_container =
-                    op.1.get(1)
+                    op.1.get(0)
                         .and_then(|arg| arg.value())
                         .ok_or(Error::custom(format!(
                             "Invalid container argument for op {}.",
                             op
                         )))?;
                 let key =
-                    op.1.get(2)
+                    op.1.get(1)
                         .and_then(|arg| arg.value())
                         .ok_or(Error::custom(format!(
                             "Invalid key argument for op {}.",
                             op
                         )))?;
                 let value =
-                    op.1.get(3)
+                    op.1.get(2)
                         .and_then(|arg| arg.value())
                         .cloned()
                         .unwrap_or(Value::from(EMPTY_VALUE));
@@ -1230,10 +1230,10 @@ pub mod tests {
         builder.pub_op(Operation(
             OperationType::Native(NativeOperation::DictInsertFromEntries),
             vec![
-                Value::from(new_dict.clone()).into(),
                 OperationArg::Statement(st0.clone()),
                 "d".into(),
                 4.into(),
+                Value::from(new_dict.clone()).into(),
             ],
             OperationAux::None,
         ))?;
@@ -1246,9 +1246,9 @@ pub mod tests {
         builder.pub_op(Operation(
             OperationType::Native(NativeOperation::DictDeleteFromEntries),
             vec![
-                OperationArg::Statement(st0.clone()),
                 Value::from(new_dict).into(),
                 "d".into(),
+                OperationArg::Statement(st0.clone()),
             ],
             OperationAux::None,
         ))?;
@@ -1258,10 +1258,10 @@ pub mod tests {
         builder.pub_op(Operation(
             OperationType::Native(NativeOperation::DictUpdateFromEntries),
             vec![
-                Value::from(new_old_dict).into(),
                 OperationArg::Statement(st0.clone()),
                 "c".into(),
                 55.into(),
+                Value::from(new_old_dict).into(),
             ],
             OperationAux::None,
         ))?;
@@ -1295,9 +1295,9 @@ pub mod tests {
             OperationType::Native(NativeOperation::SetInsertFromEntries),
             // Vec<OperationArg>
             vec![
-                Value::from(set1.clone()).into(),
                 Value::from(empty_set.clone()).into(),
                 1.into(),
+                Value::from(set1.clone()).into(),
             ],
             OperationAux::None,
         ))?;
@@ -1307,9 +1307,9 @@ pub mod tests {
             OperationType::Native(NativeOperation::SetDeleteFromEntries),
             // Vec<OperationArg>
             vec![
-                Value::from(empty_set.clone()).into(),
                 Value::from(set1.clone()).into(),
                 1.into(),
+                Value::from(empty_set.clone()).into(),
             ],
             OperationAux::None,
         ))?;
@@ -1338,10 +1338,10 @@ pub mod tests {
             OperationType::Native(NativeOperation::ArrayUpdateFromEntries),
             // Vec<OperationArg>
             vec![
-                Value::from(array2.clone()).into(),
                 Value::from(array1.clone()).into(),
                 0.into(),
                 5.into(),
+                Value::from(array2.clone()).into(),
             ],
             OperationAux::None,
         ))?;

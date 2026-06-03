@@ -886,7 +886,7 @@ fn test_operation_verify_merkle_insert() -> Result<()> {
     let old_root = state_transition_proof.old_root;
     let new_root = state_transition_proof.new_root;
 
-    let st: mainpod::Statement = Statement::insert(new_root, old_root, key, value).into();
+    let st: mainpod::Statement = Statement::insert(old_root, key, value, new_root).into();
     let op = mainpod::Operation(
         OperationType::Native(NativeOperation::ContainerInsertFromEntries),
         vec![
@@ -913,7 +913,7 @@ fn test_operation_verify_merkle_update() -> Result<()> {
     let old_root = state_transition_proof.old_root;
     let new_root = state_transition_proof.new_root;
 
-    let st: mainpod::Statement = Statement::update(new_root, old_root, key, value).into();
+    let st: mainpod::Statement = Statement::update(old_root, key, value, new_root).into();
     let op = mainpod::Operation(
         OperationType::Native(NativeOperation::ContainerUpdateFromEntries),
         vec![
@@ -939,7 +939,7 @@ fn test_operation_verify_merkle_delete() -> Result<()> {
     let old_root = state_transition_proof.old_root;
     let new_root = state_transition_proof.new_root;
 
-    let st: mainpod::Statement = Statement::delete(new_root, old_root, key).into();
+    let st: mainpod::Statement = Statement::delete(old_root, key, new_root).into();
     let op = mainpod::Operation(
         OperationType::Native(NativeOperation::ContainerDeleteFromEntries),
         vec![
