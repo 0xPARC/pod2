@@ -481,7 +481,7 @@ impl MainPodBuilder {
                     (LtToNotEqual, &[OperationArg::Statement(Statement::Lt(r1, r2))], _) => {
                         Statement::NotEqual(r1.clone(), r2.clone())
                     }
-                    (SumOf, &[a1, a2, a3], _) => {
+                    (SumFromEntries, &[a1, a2, a3], _) => {
                         let (r1, v1) = a1.value_and_ref().ok_or_else(native_arg_error)?;
                         let (r2, v2) = a2.value_and_ref().ok_or_else(native_arg_error)?;
                         let (r3, v3) = a3.value_and_ref().ok_or_else(native_arg_error)?;
@@ -491,7 +491,7 @@ impl MainPodBuilder {
                             return Err(native_arg_error());
                         }
                     }
-                    (ProductOf, &[a1, a2, a3], _) => {
+                    (ProductFromEntries, &[a1, a2, a3], _) => {
                         let (r1, v1) = a1.value_and_ref().ok_or_else(native_arg_error)?;
                         let (r2, v2) = a2.value_and_ref().ok_or_else(native_arg_error)?;
                         let (r3, v3) = a3.value_and_ref().ok_or_else(native_arg_error)?;
@@ -501,7 +501,7 @@ impl MainPodBuilder {
                             return Err(native_arg_error());
                         }
                     }
-                    (MaxOf, &[a1, a2, a3], _) => {
+                    (MaxFromEntries, &[a1, a2, a3], _) => {
                         let (r1, v1) = a1.value_and_ref().ok_or_else(native_arg_error)?;
                         let (r2, v2) = a2.value_and_ref().ok_or_else(native_arg_error)?;
                         let (r3, v3) = a3.value_and_ref().ok_or_else(native_arg_error)?;
@@ -511,7 +511,7 @@ impl MainPodBuilder {
                             return Err(native_arg_error());
                         }
                     }
-                    (HashOf, &[a1, a2, a3], _) => {
+                    (HashFromEntries, &[a1, a2, a3], _) => {
                         let (r1, v1) = a1.value_and_ref().ok_or_else(native_arg_error)?;
                         let (r2, v2) = a2.value_and_ref().ok_or_else(native_arg_error)?;
                         let (r3, v3) = a3.value_and_ref().ok_or_else(native_arg_error)?;
@@ -534,7 +534,7 @@ impl MainPodBuilder {
                         // TODO: validate proof
                         Statement::NotContains(r1, r2)
                     }
-                    (PublicKeyOf, &[a1, a2], _) => {
+                    (PublicKeyFromEntries, &[a1, a2], _) => {
                         let (r1, v1) = a1.value_and_ref().ok_or_else(native_arg_error)?;
                         let (r2, v2) = a2.value_and_ref().ok_or_else(native_arg_error)?;
                         if middleware::Operation::check_public_key(v1, v2)? {
@@ -543,7 +543,7 @@ impl MainPodBuilder {
                             return Err(native_arg_error());
                         }
                     }
-                    (SignedBy, &[a1, a2], OperationAux::Signature(sig)) => {
+                    (SignedByFromEntries, &[a1, a2], OperationAux::Signature(sig)) => {
                         let (r1, v1) = a1.value_and_ref().ok_or_else(native_arg_error)?;
                         let (r2, v2) = a2.value_and_ref().ok_or_else(native_arg_error)?;
                         if middleware::Operation::check_signed_by(v1, v2, sig)? {
@@ -1390,7 +1390,7 @@ pub mod tests {
         ))?;
         builder
             .pub_op(Operation(
-                OperationType::Native(NativeOperation::PublicKeyOf),
+                OperationType::Native(NativeOperation::PublicKeyFromEntries),
                 vec![OperationArg::Statement(st0), OperationArg::Statement(st1)],
                 OperationAux::None,
             ))
@@ -1438,7 +1438,7 @@ pub mod tests {
         assert!(builder
             .pub_op(Operation(
                 // OperationType
-                OperationType::Native(NativeOperation::PublicKeyOf),
+                OperationType::Native(NativeOperation::PublicKeyFromEntries),
                 // Vec<OperationArg>
                 vec![OperationArg::Statement(st0), OperationArg::Statement(st1)],
                 OperationAux::None,
@@ -1463,7 +1463,7 @@ pub mod tests {
         assert!(builder
             .pub_op(Operation(
                 // OperationType
-                OperationType::Native(NativeOperation::PublicKeyOf),
+                OperationType::Native(NativeOperation::PublicKeyFromEntries),
                 // Vec<OperationArg>
                 vec![OperationArg::Literal(int2), OperationArg::Literal(sk),],
                 OperationAux::None,
@@ -1477,7 +1477,7 @@ pub mod tests {
         assert!(builder
             .pub_op(Operation(
                 // OperationType
-                OperationType::Native(NativeOperation::PublicKeyOf),
+                OperationType::Native(NativeOperation::PublicKeyFromEntries),
                 // Vec<OperationArg>
                 vec![
                     OperationArg::Literal(pk.clone()),

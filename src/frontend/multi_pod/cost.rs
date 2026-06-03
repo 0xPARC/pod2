@@ -241,10 +241,10 @@ impl OperationCost {
                 | NativeOperation::SetDeleteFromEntries => {
                     cost.merkle_state_transitions_medium = 1;
                 }
-                NativeOperation::SignedBy => {
+                NativeOperation::SignedByFromEntries => {
                     cost.signed_by = 1;
                 }
-                NativeOperation::PublicKeyOf => {
+                NativeOperation::PublicKeyFromEntries => {
                     cost.public_key_of = 1;
                 }
                 // Zero-cost ops (no per-POD resource consumed).
@@ -255,10 +255,10 @@ impl OperationCost {
                 | NativeOperation::LtFromEntries
                 | NativeOperation::TransitiveEqualFromStatements
                 | NativeOperation::LtToNotEqual
-                | NativeOperation::SumOf
-                | NativeOperation::ProductOf
-                | NativeOperation::MaxOf
-                | NativeOperation::HashOf
+                | NativeOperation::SumFromEntries
+                | NativeOperation::ProductFromEntries
+                | NativeOperation::MaxFromEntries
+                | NativeOperation::HashFromEntries
                 // Tracked separately by the partitioner.
                 | NativeOperation::OpenInputStatement
                 // Syntactic sugar variants (lowered before proving).
@@ -347,14 +347,14 @@ mod tests {
     fn scalar_native_ops_map_to_their_cost_dimension() {
         let params = Params::default();
         let sb = OperationCost::from_operation(
-            &native_op(NativeOperation::SignedBy, OperationAux::None),
+            &native_op(NativeOperation::SignedByFromEntries, OperationAux::None),
             &params,
         );
         assert_eq!(sb.signed_by, 1);
         assert_eq!(sb.public_key_of, 0);
 
         let pk = OperationCost::from_operation(
-            &native_op(NativeOperation::PublicKeyOf, OperationAux::None),
+            &native_op(NativeOperation::PublicKeyFromEntries, OperationAux::None),
             &params,
         );
         assert_eq!(pk.public_key_of, 1);

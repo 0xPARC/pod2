@@ -1165,7 +1165,7 @@ fn verify_hash_of_circuit(
     cache: &StatementCachePriv,
 ) -> BoolTarget {
     let measure = measure_gates_begin!(builder, "OpHashOf");
-    let op_code_ok = op_type.has_native(builder, NativeOperation::HashOf);
+    let op_code_ok = op_type.has_native(builder, NativeOperation::HashFromEntries);
 
     let (arg_types_ok, [arg1_value, arg2_value, arg3_value]) = cache.first_n_args_as_values();
 
@@ -1201,7 +1201,7 @@ fn verify_public_key_of_circuit(
     let (aux_tag_ok, resolved_pk_sk) =
         aux.as_type::<PubKeySecKeyTarget>(builder, OperationAuxTableTag::PublicKeyOf as u32);
 
-    let op_code_ok = op_type.has_native(builder, NativeOperation::PublicKeyOf);
+    let op_code_ok = op_type.has_native(builder, NativeOperation::PublicKeyFromEntries);
     let (arg_types_ok, [arg1_value, arg2_value]) = cache.first_n_args_as_values();
     // inputting public_key, secret_key
     let pk_hash = arg1_value;
@@ -1237,7 +1237,7 @@ fn verify_signed_by_circuit(
     let (aux_tag_ok, resolved_msg_pk) =
         aux.as_type::<MsgPubKeyTarget>(builder, OperationAuxTableTag::SignedBy as u32);
 
-    let op_code_ok = op_type.has_native(builder, NativeOperation::SignedBy);
+    let op_code_ok = op_type.has_native(builder, NativeOperation::SignedByFromEntries);
     let (arg_types_ok, [arg1_value, arg2_value]) = cache.first_n_args_as_values();
     // inputting msg, pub_key
     let msg = arg1_value;
@@ -1271,7 +1271,7 @@ fn verify_sum_of_circuit(
     let measure = measure_gates_begin!(builder, "OpSumOf");
     let value_zero = ValueTarget::zero(builder);
 
-    let op_code_ok = op_type.has_native(builder, NativeOperation::SumOf);
+    let op_code_ok = op_type.has_native(builder, NativeOperation::SumFromEntries);
 
     let (arg_types_ok, [arg1_value, arg2_value, arg3_value]) = cache.first_n_args_as_values();
 
@@ -1309,7 +1309,7 @@ fn verify_product_of_circuit(
     let measure = measure_gates_begin!(builder, "OpProductOf");
     let value_zero = ValueTarget::zero(builder);
 
-    let op_code_ok = op_type.has_native(builder, NativeOperation::ProductOf);
+    let op_code_ok = op_type.has_native(builder, NativeOperation::ProductFromEntries);
 
     let (arg_types_ok, [arg1_value, arg2_value, arg3_value]) = cache.first_n_args_as_values();
 
@@ -1345,7 +1345,7 @@ fn verify_max_of_circuit(
     cache: &StatementCachePriv,
 ) -> BoolTarget {
     let measure = measure_gates_begin!(builder, "OpMaxOf");
-    let op_code_ok = op_type.has_native(builder, NativeOperation::MaxOf);
+    let op_code_ok = op_type.has_native(builder, NativeOperation::MaxFromEntries);
 
     let (arg_types_ok, [arg1_value, arg2_value, arg3_value]) = cache.first_n_args_as_values();
 

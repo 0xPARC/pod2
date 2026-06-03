@@ -281,7 +281,7 @@ pub(crate) fn extract_public_key_of(
     let mut table = Vec::new();
     for (i, (op, st)) in operations.iter().zip(statements.iter()).enumerate() {
         if let (
-            middleware::Operation::PublicKeyOf(_, sk_s),
+            middleware::Operation::PublicKeyFromEntries(_, sk_s),
             middleware::Statement::PublicKeyOf(_, sk_ref),
         ) = (op, st)
         {
@@ -334,7 +334,7 @@ pub(crate) fn extract_signatures(
     for (i, (op, st)) in operations.iter().zip(statements.iter()).enumerate() {
         let deduction_err = || MiddlewareError::invalid_deduction(op.clone(), st.clone());
         if let (
-            middleware::Operation::SignedBy(msg_s, pk_s, sig),
+            middleware::Operation::SignedByFromEntries(msg_s, pk_s, sig),
             middleware::Statement::SignedBy(msg_ref, pk_ref),
         ) = (op, st)
         {

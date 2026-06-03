@@ -102,12 +102,12 @@ pub enum NativeOperation {
     LtToNotEqual = 7,
     ContainsFromEntries = 8,
     NotContainsFromEntries = 9,
-    SumOf = 10,
-    ProductOf = 11,
-    MaxOf = 12,
-    HashOf = 13,
-    PublicKeyOf = 14,
-    SignedBy = 15,
+    SumFromEntries = 10,
+    ProductFromEntries = 11,
+    MaxFromEntries = 12,
+    HashFromEntries = 13,
+    PublicKeyFromEntries = 14,
+    SignedByFromEntries = 15,
     ContainerInsertFromEntries = 16,
     ContainerUpdateFromEntries = 17,
     ContainerDeleteFromEntries = 18,
@@ -170,14 +170,20 @@ impl OperationType {
                 NativeOperation::NotContainsFromEntries => {
                     Some(Predicate::Native(NativePredicate::NotContains))
                 }
-                NativeOperation::SumOf => Some(Predicate::Native(NativePredicate::SumOf)),
-                NativeOperation::ProductOf => Some(Predicate::Native(NativePredicate::ProductOf)),
-                NativeOperation::MaxOf => Some(Predicate::Native(NativePredicate::MaxOf)),
-                NativeOperation::HashOf => Some(Predicate::Native(NativePredicate::HashOf)),
-                NativeOperation::PublicKeyOf => {
+                NativeOperation::SumFromEntries => Some(Predicate::Native(NativePredicate::SumOf)),
+                NativeOperation::ProductFromEntries => {
+                    Some(Predicate::Native(NativePredicate::ProductOf))
+                }
+                NativeOperation::MaxFromEntries => Some(Predicate::Native(NativePredicate::MaxOf)),
+                NativeOperation::HashFromEntries => {
+                    Some(Predicate::Native(NativePredicate::HashOf))
+                }
+                NativeOperation::PublicKeyFromEntries => {
                     Some(Predicate::Native(NativePredicate::PublicKeyOf))
                 }
-                NativeOperation::SignedBy => Some(Predicate::Native(NativePredicate::SignedBy)),
+                NativeOperation::SignedByFromEntries => {
+                    Some(Predicate::Native(NativePredicate::SignedBy))
+                }
                 NativeOperation::ContainerInsertFromEntries => {
                     Some(Predicate::Native(NativePredicate::ContainerInsert))
                 }
@@ -216,12 +222,12 @@ pub enum Operation {
         /* key   */ Statement,
         /* proof */ MerkleProof,
     ),
-    SumOf(Statement, Statement, Statement),
-    ProductOf(Statement, Statement, Statement),
-    MaxOf(Statement, Statement, Statement),
-    HashOf(Statement, Statement, Statement),
-    PublicKeyOf(Statement, Statement),
-    SignedBy(Statement, Statement, Signature),
+    SumFromEntries(Statement, Statement, Statement),
+    ProductFromEntries(Statement, Statement, Statement),
+    MaxFromEntries(Statement, Statement, Statement),
+    HashFromEntries(Statement, Statement, Statement),
+    PublicKeyFromEntries(Statement, Statement),
+    SignedByFromEntries(Statement, Statement, Signature),
     ContainerInsertFromEntries(
         /* new_root */ Statement,
         /* old_root */ Statement,
@@ -284,12 +290,12 @@ impl Operation {
             Self::LtToNotEqual(_) => OT::Native(LtToNotEqual),
             Self::ContainsFromEntries(_, _, _, _) => OT::Native(ContainsFromEntries),
             Self::NotContainsFromEntries(_, _, _) => OT::Native(NotContainsFromEntries),
-            Self::SumOf(_, _, _) => OT::Native(SumOf),
-            Self::ProductOf(_, _, _) => OT::Native(ProductOf),
-            Self::MaxOf(_, _, _) => OT::Native(MaxOf),
-            Self::HashOf(_, _, _) => OT::Native(HashOf),
-            Self::PublicKeyOf(_, _) => OT::Native(PublicKeyOf),
-            Self::SignedBy(_, _, _) => OT::Native(SignedBy),
+            Self::SumFromEntries(_, _, _) => OT::Native(SumFromEntries),
+            Self::ProductFromEntries(_, _, _) => OT::Native(ProductFromEntries),
+            Self::MaxFromEntries(_, _, _) => OT::Native(MaxFromEntries),
+            Self::HashFromEntries(_, _, _) => OT::Native(HashFromEntries),
+            Self::PublicKeyFromEntries(_, _) => OT::Native(PublicKeyFromEntries),
+            Self::SignedByFromEntries(_, _, _) => OT::Native(SignedByFromEntries),
             Self::ContainerInsertFromEntries(_, _, _, _, _) => {
                 OT::Native(ContainerInsertFromEntries)
             }
@@ -314,12 +320,12 @@ impl Operation {
             Self::LtToNotEqual(s) => vec![s],
             Self::ContainsFromEntries(s1, s2, s3, _pf) => vec![s1, s2, s3],
             Self::NotContainsFromEntries(s1, s2, _pf) => vec![s1, s2],
-            Self::SumOf(s1, s2, s3) => vec![s1, s2, s3],
-            Self::ProductOf(s1, s2, s3) => vec![s1, s2, s3],
-            Self::MaxOf(s1, s2, s3) => vec![s1, s2, s3],
-            Self::HashOf(s1, s2, s3) => vec![s1, s2, s3],
-            Self::PublicKeyOf(s1, s2) => vec![s1, s2],
-            Self::SignedBy(s1, s2, _sig) => vec![s1, s2],
+            Self::SumFromEntries(s1, s2, s3) => vec![s1, s2, s3],
+            Self::ProductFromEntries(s1, s2, s3) => vec![s1, s2, s3],
+            Self::MaxFromEntries(s1, s2, s3) => vec![s1, s2, s3],
+            Self::HashFromEntries(s1, s2, s3) => vec![s1, s2, s3],
+            Self::PublicKeyFromEntries(s1, s2) => vec![s1, s2],
+            Self::SignedByFromEntries(s1, s2, _sig) => vec![s1, s2],
             Self::ContainerInsertFromEntries(s1, s2, s3, s4, _pf) => vec![s1, s2, s3, s4],
             Self::ContainerUpdateFromEntries(s1, s2, s3, s4, _pf) => vec![s1, s2, s3, s4],
             Self::ContainerDeleteFromEntries(s1, s2, s3, _pf) => vec![s1, s2, s3],
@@ -367,21 +373,23 @@ impl Operation {
                 (NO::NotContainsFromEntries, &[s1, s2], OA::MerkleProof(pf)) => {
                     Self::NotContainsFromEntries(s1.clone(), s2.clone(), pf)
                 }
-                (NO::SumOf, &[s1, s2, s3], OA::None) => {
-                    Self::SumOf(s1.clone(), s2.clone(), s3.clone())
+                (NO::SumFromEntries, &[s1, s2, s3], OA::None) => {
+                    Self::SumFromEntries(s1.clone(), s2.clone(), s3.clone())
                 }
-                (NO::ProductOf, &[s1, s2, s3], OA::None) => {
-                    Self::ProductOf(s1.clone(), s2.clone(), s3.clone())
+                (NO::ProductFromEntries, &[s1, s2, s3], OA::None) => {
+                    Self::ProductFromEntries(s1.clone(), s2.clone(), s3.clone())
                 }
-                (NO::MaxOf, &[s1, s2, s3], OA::None) => {
-                    Self::MaxOf(s1.clone(), s2.clone(), s3.clone())
+                (NO::MaxFromEntries, &[s1, s2, s3], OA::None) => {
+                    Self::MaxFromEntries(s1.clone(), s2.clone(), s3.clone())
                 }
-                (NO::HashOf, &[s1, s2, s3], OA::None) => {
-                    Self::HashOf(s1.clone(), s2.clone(), s3.clone())
+                (NO::HashFromEntries, &[s1, s2, s3], OA::None) => {
+                    Self::HashFromEntries(s1.clone(), s2.clone(), s3.clone())
                 }
-                (NO::PublicKeyOf, &[s1, s2], OA::None) => Self::PublicKeyOf(s1.clone(), s2.clone()),
-                (NO::SignedBy, &[s1, s2], OA::Signature(sig)) => {
-                    Self::SignedBy(s1.clone(), s2.clone(), sig)
+                (NO::PublicKeyFromEntries, &[s1, s2], OA::None) => {
+                    Self::PublicKeyFromEntries(s1.clone(), s2.clone())
+                }
+                (NO::SignedByFromEntries, &[s1, s2], OA::Signature(sig)) => {
+                    Self::SignedByFromEntries(s1.clone(), s2.clone(), sig)
                 }
                 (
                     NO::ContainerInsertFromEntries,
@@ -544,22 +552,22 @@ impl Operation {
                 Equal(ak5, ak6),
             ) => ak2 == ak3 && ak5 == ak1 && ak6 == ak4,
             (Self::LtToNotEqual(Lt(ak1, ak2)), NotEqual(ak3, ak4)) => ak1 == ak3 && ak2 == ak4,
-            (Self::SumOf(s1, s2, s3), SumOf(v4, v5, v6)) => {
+            (Self::SumFromEntries(s1, s2, s3), SumOf(v4, v5, v6)) => {
                 Self::check_int_fn(&val(v4, s1)?, &val(v5, s2)?, &val(v6, s3)?, sum_op)?
             }
-            (Self::ProductOf(s1, s2, s3), ProductOf(v4, v5, v6)) => {
+            (Self::ProductFromEntries(s1, s2, s3), ProductOf(v4, v5, v6)) => {
                 Self::check_int_fn(&val(v4, s1)?, &val(v5, s2)?, &val(v6, s3)?, prod_op)?
             }
-            (Self::MaxOf(s1, s2, s3), MaxOf(v4, v5, v6)) => {
+            (Self::MaxFromEntries(s1, s2, s3), MaxOf(v4, v5, v6)) => {
                 Self::check_int_fn(&val(v4, s1)?, &val(v5, s2)?, &val(v6, s3)?, max_op)?
             }
-            (Self::HashOf(s1, s2, s3), HashOf(v4, v5, v6)) => {
+            (Self::HashFromEntries(s1, s2, s3), HashOf(v4, v5, v6)) => {
                 val(v4, s1)? == hash_op(val(v5, s2)?, val(v6, s3)?)
             }
-            (Self::PublicKeyOf(s1, s2), PublicKeyOf(v3, v4)) => {
+            (Self::PublicKeyFromEntries(s1, s2), PublicKeyOf(v3, v4)) => {
                 Self::check_public_key(&val(v3, s1)?, &val(v4, s2)?)?
             }
-            (Self::SignedBy(msg_s, pk_s, sig), SignedBy(msg_v, pk_v)) => {
+            (Self::SignedByFromEntries(msg_s, pk_s, sig), SignedBy(msg_v, pk_v)) => {
                 Self::check_signed_by(&val(msg_v, msg_s)?, &val(pk_v, pk_s)?, sig)?
             }
             (
@@ -1144,7 +1152,7 @@ mod tests {
 
         test_cases.iter().try_for_each(|(pk, sk, expect_good)| {
             // Form op
-            let op = Operation::PublicKeyOf(Statement::None, Statement::None);
+            let op = Operation::PublicKeyFromEntries(Statement::None, Statement::None);
 
             // Form output statement
             let st = Statement::PublicKeyOf((*pk).into(), sk.clone().into());
@@ -1168,14 +1176,14 @@ mod tests {
         let params = Params::default();
 
         // Bad op and statement with bad first args
-        let op = Operation::PublicKeyOf(Statement::None, Statement::None);
+        let op = Operation::PublicKeyFromEntries(Statement::None, Statement::None);
         let st = Statement::PublicKeyOf(fixed_pk.into(), fixed_pk.into());
 
         // Check
         assert!(op.check(&params, &st).is_err());
 
         // Bad op and statement with bad second args
-        let op = Operation::PublicKeyOf(Statement::None, Statement::None);
+        let op = Operation::PublicKeyFromEntries(Statement::None, Statement::None);
         let st = Statement::PublicKeyOf(fixed_sk.clone().into(), fixed_sk.clone().into());
 
         // Check
@@ -1193,7 +1201,7 @@ mod tests {
         let msg = Value::from("hello");
         let sig = Signer(sk).sign(msg.raw());
 
-        let op = Operation::SignedBy(Statement::None, Statement::None, sig);
+        let op = Operation::SignedByFromEntries(Statement::None, Statement::None, sig);
         let st = Statement::SignedBy(msg.into(), pk.into());
         op.check(&params, &st)?;
 

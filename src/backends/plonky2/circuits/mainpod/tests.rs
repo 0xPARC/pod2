@@ -550,7 +550,7 @@ fn test_operation_verify_hashof() -> Result<()> {
     )
     .into();
     let op = mainpod::Operation(
-        OperationType::Native(NativeOperation::HashOf),
+        OperationType::Native(NativeOperation::HashFromEntries),
         vec![
             OperationArg::Index(0),
             OperationArg::Index(1),
@@ -588,7 +588,7 @@ fn test_operation_verify_sumof() -> Result<()> {
             )
             .into();
             let op = mainpod::Operation(
-                OperationType::Native(NativeOperation::SumOf),
+                OperationType::Native(NativeOperation::SumFromEntries),
                 vec![
                     OperationArg::Index(0),
                     OperationArg::Index(1),
@@ -619,7 +619,7 @@ fn test_operation_verify_sumof_non_monotonic_repeated_indices() -> Result<()> {
     )
     .into();
     let op = mainpod::Operation(
-        OperationType::Native(NativeOperation::SumOf),
+        OperationType::Native(NativeOperation::SumFromEntries),
         vec![
             // Non-monotonic and repeated indices to stress random-access resolution.
             OperationArg::Index(2),
@@ -658,7 +658,7 @@ fn test_operation_verify_productof() -> Result<()> {
             )
             .into();
             let op = mainpod::Operation(
-                OperationType::Native(NativeOperation::ProductOf),
+                OperationType::Native(NativeOperation::ProductFromEntries),
                 vec![
                     OperationArg::Index(0),
                     OperationArg::Index(1),
@@ -693,7 +693,7 @@ fn test_operation_verify_maxof() -> Result<()> {
         .into();
 
         let op = mainpod::Operation(
-            OperationType::Native(NativeOperation::MaxOf),
+            OperationType::Native(NativeOperation::MaxFromEntries),
             vec![
                 OperationArg::Index(0),
                 OperationArg::Index(1),
@@ -713,7 +713,7 @@ fn test_operation_verify_maxof_failures() {
         .for_each(|(max, a, b)| {
             let st: mainpod::Statement = Statement::max_of(max, a, b).into();
             let op = mainpod::Operation(
-                OperationType::Native(NativeOperation::MaxOf),
+                OperationType::Native(NativeOperation::MaxFromEntries),
                 vec![
                     OperationArg::Index(0),
                     OperationArg::Index(0),
@@ -969,7 +969,7 @@ fn test_operation_verify_publickeyof_ok() -> Result<()> {
         let st: mainpod::Statement =
             Statement::public_key_of(public_key, secret_key.clone()).into();
         let op = mainpod::Operation(
-            OperationType::Native(NativeOperation::PublicKeyOf),
+            OperationType::Native(NativeOperation::PublicKeyFromEntries),
             vec![OperationArg::Index(0), OperationArg::Index(0)],
             OperationAux::PublicKeyOfIndex(0),
         );
@@ -985,7 +985,7 @@ fn test_operation_verify_publickeyof_failure_wrong_key() {
 
     let st: mainpod::Statement = Statement::public_key_of(public_key, secret_key.clone()).into();
     let op = mainpod::Operation(
-        OperationType::Native(NativeOperation::PublicKeyOf),
+        OperationType::Native(NativeOperation::PublicKeyFromEntries),
         vec![OperationArg::Index(0), OperationArg::Index(0)],
         OperationAux::PublicKeyOfIndex(0),
     );
@@ -1000,7 +1000,7 @@ fn test_operation_verify_publickeyof_failure_pk_type() {
 
     let st: mainpod::Statement = Statement::public_key_of(public_key, secret_key.clone()).into();
     let op = mainpod::Operation(
-        OperationType::Native(NativeOperation::PublicKeyOf),
+        OperationType::Native(NativeOperation::PublicKeyFromEntries),
         vec![OperationArg::Index(0), OperationArg::Index(0)],
         OperationAux::None,
     );
@@ -1015,7 +1015,7 @@ fn test_operation_verify_publickeyof_failure_sk_type() {
 
     let st: mainpod::Statement = Statement::public_key_of(public_key, secret_key).into();
     let op = mainpod::Operation(
-        OperationType::Native(NativeOperation::PublicKeyOf),
+        OperationType::Native(NativeOperation::PublicKeyFromEntries),
         vec![OperationArg::Index(0), OperationArg::Index(0)],
         OperationAux::PublicKeyOfIndex(0),
     );
@@ -1031,7 +1031,7 @@ fn test_operation_verify_publickeyof_failure_sk_size() {
 
     let st: mainpod::Statement = Statement::public_key_of(public_key, secret_key.clone()).into();
     let op = mainpod::Operation(
-        OperationType::Native(NativeOperation::PublicKeyOf),
+        OperationType::Native(NativeOperation::PublicKeyFromEntries),
         vec![OperationArg::Index(0), OperationArg::Index(0)],
         OperationAux::PublicKeyOfIndex(0),
     );
@@ -1054,7 +1054,7 @@ fn test_operation_verify_signedby_ok() -> Result<()> {
 
     let st: mainpod::Statement = Statement::signed_by(msg, pk).into();
     let op = mainpod::Operation(
-        OperationType::Native(NativeOperation::SignedBy),
+        OperationType::Native(NativeOperation::SignedByFromEntries),
         vec![OperationArg::Index(0), OperationArg::Index(0)],
         OperationAux::SignedByIndex(0),
     );
