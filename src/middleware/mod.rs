@@ -38,9 +38,8 @@ pub(crate) enum TypedValue {
     // Variants without "untagged" will be serialized as "tagged" values by
     // default, meaning that a Set appears in JSON as {"Set":[...]}
     // and not as [...]
-    // Arrays, Strings and Booleans are untagged, as there is a natural JSON
-    // representation for them that is unambiguous to deserialize and is fully
-    // compatible with the semantics of the POD types.
+    // Strings are untagged, as there is a natural JSON representation that
+    // is unambiguous to deserialize.
     // As JSON integers do not specify precision, and JavaScript is limited to
     // 53-bit precision for integers, integers are represented as tagged
     // strings, with a custom serializer and deserializer.
@@ -58,13 +57,13 @@ pub(crate) enum TypedValue {
     SecretKey(SecretKey),
     // Predicate as a value
     Predicate(Predicate),
-    // UNTAGGED TYPES:
-    #[serde(untagged)]
+    // Containers are tagged ({"Set": [...]}, {"Dictionary": [...]},
+    // {"Array": [...]}): all three serialize identically, so a tag is need to
+    // discriminate.
     Set(Set),
-    #[serde(untagged)]
     Dictionary(Dictionary),
-    #[serde(untagged)]
     Array(Array),
+    // UNTAGGED TYPES:
     #[serde(untagged)]
     String(String),
 }
@@ -320,12 +319,22 @@ impl JsonSchema for TypedValue {
             ..Default::default()
         };
 
-        // This is the part that Schemars can't generate automatically:
-        let untagged_array_schema = gen.subschema_for::<Array>();
-        let untagged_set_schema = gen.subschema_for::<Set>();
-        let untagged_dictionary_schema = gen.subschema_for::<Dictionary>();
+        let tagged = |tag: &str, inner: Schema| {
+            Schema::Object(SchemaObject {
+                instance_type: Some(SingleOrVec::Single(Box::new(InstanceType::Object))),
+                object: Some(Box::new(schemars::schema::ObjectValidation {
+                    properties: [(tag.to_string(), inner)].into_iter().collect(),
+                    required: [tag.to_string()].into_iter().collect(),
+                    ..Default::default()
+                })),
+                ..Default::default()
+            })
+        };
+        let set_schema = tagged("Set", gen.subschema_for::<Set>());
+        let dictionary_schema = tagged("Dictionary", gen.subschema_for::<Dictionary>());
+        let array_schema = tagged("Array", gen.subschema_for::<Array>());
+
         let untagged_string_schema = gen.subschema_for::<String>();
-        let untagged_bool_schema = gen.subschema_for::<bool>();
 
         Schema::Object(SchemaObject {
             subschemas: Some(Box::new(schemars::schema::SubschemaValidation {
@@ -335,16 +344,15 @@ impl JsonSchema for TypedValue {
                     Schema::Object(raw_schema),
                     Schema::Object(public_key_schema),
                     Schema::Object(secret_key_schema),
-                    untagged_array_schema,
-                    untagged_dictionary_schema,
+                    set_schema,
+                    dictionary_schema,
+                    array_schema,
                     untagged_string_schema,
-                    untagged_set_schema,
-                    untagged_bool_schema,
                 ]),
                 ..Default::default()
             })),
             metadata: Some(Box::new(schemars::schema::Metadata {
-                description: Some("Represents various POD value types. Array, String, and Bool variants are represented untagged in JSON.".to_string()),
+                description: Some("Represents various POD value types. Containers (Set, Dictionary, Array) are externally tagged; String is untagged.".to_string()),
                 ..Default::default()
             })),
             ..Default::default()
