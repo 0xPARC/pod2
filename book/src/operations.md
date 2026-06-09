@@ -42,12 +42,12 @@ The following table summarizes "syntactic sugar" operations.  These operations a
 | 1006 | GtEqFromEntries | `GtEqFromEntries(s1, s2) -> LtEqFromEntries(s2, s1)` |
 | 1007 | GtFromEntries | `GtFromEntries(s1, s2) -> LtFromEntries(s2, s1)` |
 | 1008 | GtToNotEqual | `GtToNotEqual(s1, s2) -> LtToNotEqual(s1, s2)` |
-| 1009 | DictInsertFromEntries | `DictInsertFromEntries(new_dict_st, old_dict_st, key_st, value_st, proof) -> ContainerInsertFromEntries(new_dict_st, old_dict_st, key_st, value_st, proof)` |
-| 1010 | DictUpdateFromEntries | `DictInsertUpdateEntries(new_dict_st, old_dict_st, key_st, value_st, proof) -> ContainerUpdateFromEntries(new_dict_st, old_dict_st, key_st, value_st, proof)` |
-| 1011 | DictDeleteFromEntries | `DictInsertDeleteEntries(new_dict_st, old_dict_st, key_st, proof) -> ContainerDeleteFromEntries(new_dict_st, old_dict_st, key_st, value_st, proof)` |
-| 1009 | SetInsertFromEntries | `SetInsertFromEntries(new_set_st, old_set_st, value_st, proof) -> ContainerInsertFromEntries(new_set_st, old_set_st, value_st, value_st, proof)` |
-| 1011 | SetDeleteFromEntries | `SetInsertDeleteEntries(new_set_st, old_set_st, value_st, proof) -> ContainerDeleteFromEntries(new_set_st, old_set_st, value_st, value_st, proof)` |
-| 1010 | ArrayUpdateFromEntries | `ArrayInsertUpdateEntries(new_array_st, old_array_st, index_st, value_st, proof) -> ContainerUpdateFromEntries(new_array_st, old_array_st, index_st, value_st, proof)` |
+| 1009 | DictInsertFromEntries | `DictInsertFromEntries(old_dict_st, key_st, value_st, new_dict_st, proof) -> ContainerInsertFromEntries(old_dict_st, key_st, value_st, new_dict_st, proof)` |
+| 1010 | DictUpdateFromEntries | `DictInsertUpdateEntries(old_dict_st, key_st, value_st, new_dict_st, proof) -> ContainerUpdateFromEntries(old_dict_st, key_st, value_st, new_dict_st, proof)` |
+| 1011 | DictDeleteFromEntries | `DictInsertDeleteEntries(old_dict_st, key_st, new_dict_st, proof) -> ContainerDeleteFromEntries(old_dict_st, key_st, value_st, new_dict_st, proof)` |
+| 1009 | SetInsertFromEntries | `SetInsertFromEntries(old_set_st, value_st, new_set_st, proof) -> ContainerInsertFromEntries(old_set_st, value_st, value_st, new_set_st, proof)` |
+| 1011 | SetDeleteFromEntries | `SetInsertDeleteEntries(old_set_st, value_st, new_set_st, proof) -> ContainerDeleteFromEntries(old_set_st, value_st, value_st, new_set_st, proof)` |
+| 1010 | ArrayUpdateFromEntries | `ArrayInsertUpdateEntries(old_array_st, index_st, value_st, new_array_st, proof) -> ContainerUpdateFromEntries(old_array_st, index_st, value_st, new_array_st, proof)` |
 
 <br><br>
 

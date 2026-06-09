@@ -55,12 +55,12 @@ The frontend also exposes the following syntactic sugar predicates.  These predi
 | 1004 | ArrayContains | `ArrayContains(root, idx, val) -> Contains(root, idx, val)` |
 | 1005 | GtEq | `GtEq(a, b) -> LtEq(b, a)`|
 | 1006 | Gt | `Gt(a, b) -> Lt(b, a)` |
-| 1009 | DictInsert | `DictInsert(old_root, key, val, new_root) -> ContainerInsert(new_root, old_root, key, val)` |
-| 1010 | DictUpdate | `DictUpdate(old_root, key, val, new_root) -> ContainerUpdate(new_root, old_root, key, val)` |
-| 1011 | DictDelete | `DictDelete(old_root, key, new_root) -> ContainerDelete(new_root, old_root, key)` |
-| 1012 | SetInsert | `SetInsert(old_root, val, new_root) -> ContainerInsert(new_root, old_root, val, val)` |
-| 1013 | SetDelete | `SetDelete(old_root, val, new_root) -> ContainerDelete(new_root, old_root, val)` |
-| 1014 | ArrayUpdate | `ArrayUpdate(old_root, idx, val, new_root) -> ContainerUpdate(new_root, old_root, idx, val)` |
+| 1009 | DictInsert | `DictInsert(old_root, key, val, new_root) -> ContainerInsert(old_root, key, val, new_root)` |
+| 1010 | DictUpdate | `DictUpdate(old_root, key, val, new_root) -> ContainerUpdate(old_root, key, val, new_root)` |
+| 1011 | DictDelete | `DictDelete(old_root, key, new_root) -> ContainerDelete(old_root, key, new_root)` |
+| 1012 | SetInsert | `SetInsert(old_root, val, new_root) -> ContainerInsert(old_root, val, val, new_root)` |
+| 1013 | SetDelete | `SetDelete(old_root, val, new_root) -> ContainerDelete(old_root, val, new_root)` |
+| 1014 | ArrayUpdate | `ArrayUpdate(old_root, idx, val, new_root) -> ContainerUpdate(old_root, idx, val, new_root)` |
 
 
 ### Built-in statements for entries of any type
@@ -91,7 +91,7 @@ Gt(A["price"], B["balance"])
 
 The statements ```Lt```, ```GEq```, ```Leq``` are defined analogously.
 
-```SumOf(x, y, z)``` asserts that ```x```, ```y```, ```z``` are entries of type ```Integer```, and ```x = y + z```
+```SumOf(x, y, z)``` asserts that ```x```, ```y```, ```z``` are entries of type ```Integer```, and ```z = x + y```
 
 ```ProductOf``` and ```MaxOf``` are defined analogously.
 

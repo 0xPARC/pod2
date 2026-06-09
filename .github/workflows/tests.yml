@@ -19,3 +19,7 @@ jobs:
     - name: Run tests
       # RocksDB is disabled by default but we still want to test it.
       run: cargo test --release --features db_rocksdb
+    - name: Run example 1
+      run: cargo run --release --example main_pod_points -- --mock
+    - name: Run example 2
+      run: cargo run --release --example signed_dict

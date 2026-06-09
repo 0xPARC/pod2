@@ -966,7 +966,7 @@ fn test_operation_verify_publickey_ok() -> Result<()> {
     .try_for_each(|secret_key| {
         let public_key = secret_key.public_key();
 
-        let st: mainpod::Statement = Statement::public_key(public_key, secret_key.clone()).into();
+        let st: mainpod::Statement = Statement::public_key(secret_key.clone(), public_key).into();
         let op = mainpod::Operation(
             OperationType::Native(NativeOperation::PublicKeyFromEntries),
             vec![OperationArg::Index(0), OperationArg::Index(0)],
@@ -982,7 +982,7 @@ fn test_operation_verify_publickey_failure_wrong_key() {
     let secret_key = SecretKey(BigUint::one());
     let public_key = SecretKey(BigUint::ZERO).public_key();
 
-    let st: mainpod::Statement = Statement::public_key(public_key, secret_key.clone()).into();
+    let st: mainpod::Statement = Statement::public_key(secret_key.clone(), public_key).into();
     let op = mainpod::Operation(
         OperationType::Native(NativeOperation::PublicKeyFromEntries),
         vec![OperationArg::Index(0), OperationArg::Index(0)],
@@ -997,7 +997,7 @@ fn test_operation_verify_publickey_failure_pk_type() {
     let secret_key = SecretKey(BigUint::one());
     let public_key = 123i64;
 
-    let st: mainpod::Statement = Statement::public_key(public_key, secret_key.clone()).into();
+    let st: mainpod::Statement = Statement::public_key(secret_key.clone(), public_key).into();
     let op = mainpod::Operation(
         OperationType::Native(NativeOperation::PublicKeyFromEntries),
         vec![OperationArg::Index(0), OperationArg::Index(0)],
@@ -1012,7 +1012,7 @@ fn test_operation_verify_publickey_failure_sk_type() {
     let secret_key = 123i64;
     let public_key = SecretKey(BigUint::from(123u32)).public_key();
 
-    let st: mainpod::Statement = Statement::public_key(public_key, secret_key).into();
+    let st: mainpod::Statement = Statement::public_key(secret_key, public_key).into();
     let op = mainpod::Operation(
         OperationType::Native(NativeOperation::PublicKeyFromEntries),
         vec![OperationArg::Index(0), OperationArg::Index(0)],
@@ -1028,7 +1028,7 @@ fn test_operation_verify_publickey_failure_sk_size() {
     let secret_key = SecretKey(&*GROUP_ORDER - BigUint::ZERO);
     let public_key = secret_key.public_key();
 
-    let st: mainpod::Statement = Statement::public_key(public_key, secret_key.clone()).into();
+    let st: mainpod::Statement = Statement::public_key(secret_key.clone(), public_key).into();
     let op = mainpod::Operation(
         OperationType::Native(NativeOperation::PublicKeyFromEntries),
         vec![OperationArg::Index(0), OperationArg::Index(0)],

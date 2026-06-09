@@ -209,7 +209,7 @@ fn max_operation_aux_entry_len(params: &Params) -> usize {
         (params.max_custom_predicate_verification_ops > 0)
             .then(|| CustomPredicateVerifyQueryTarget::size(params)),
         (params.max_open_input_statement_ops > 0).then(|| StatementTarget::size(params)),
-        (params.max_public_key_ops > 0).then(|| PubKeySecKeyTarget::size(params)),
+        (params.max_public_key_ops > 0).then(|| SecKeyPubKeyTarget::size(params)),
         (params.max_signed_by_ops > 0).then(|| MsgPubKeyTarget::size(params)),
     ]
     .into_iter()
@@ -237,7 +237,7 @@ impl Flattenable for HashPairTarget {
     }
 }
 
-type PubKeySecKeyTarget = HashPairTarget; // (public_key, secret_key)
+type SecKeyPubKeyTarget = HashPairTarget; // (secret_key, public_key)
 type MsgPubKeyTarget = HashPairTarget; // (message, public_key)
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -497,7 +497,7 @@ fn build_operation_aux_table_circuit(
             pk.x.components.into_iter().chain(pk.u.components).collect(),
         );
 
-        let entry: PubKeySecKeyTarget = HashPairTarget(pk_hash, sk_hash);
+        let entry: SecKeyPubKeyTarget = HashPairTarget(sk_hash, pk_hash);
 
         table.push(builder, OperationAuxTableTag::PublicKeyOf as u32, &entry);
         measure_gates_end!(builder, measure);
@@ -1198,17 +1198,16 @@ fn verify_public_key_from_entries_circuit(
     cache: &StatementCachePriv,
 ) -> BoolTarget {
     let measure = measure_gates_begin!(builder, "OpPublicKey");
-    let (aux_tag_ok, resolved_pk_sk) =
-        aux.as_type::<PubKeySecKeyTarget>(builder, OperationAuxTableTag::PublicKeyOf as u32);
+    let (aux_tag_ok, resolved_sk_pk) =
+        aux.as_type::<SecKeyPubKeyTarget>(builder, OperationAuxTableTag::PublicKeyOf as u32);
 
     let op_code_ok = op_type.has_native(builder, NativeOperation::PublicKeyFromEntries);
     let (arg_types_ok, [arg1_value, arg2_value]) = cache.first_n_args_as_values();
-    // inputting public_key, secret_key
-    let pk_hash = arg1_value;
-    let sk_hash = arg2_value;
+    let sk_hash = arg1_value;
+    let pk_hash = arg2_value;
 
-    let pk_ok = builder.is_equal_slice(&pk_hash.elements, &resolved_pk_sk.0.elements);
-    let sk_ok = builder.is_equal_slice(&sk_hash.elements, &resolved_pk_sk.1.elements);
+    let sk_ok = builder.is_equal_slice(&sk_hash.elements, &resolved_sk_pk.0.elements);
+    let pk_ok = builder.is_equal_slice(&pk_hash.elements, &resolved_sk_pk.1.elements);
 
     let arg1_expected = cache.equations[0].lhs.clone();
     let arg2_expected = cache.equations[1].lhs.clone();

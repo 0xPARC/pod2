@@ -270,7 +270,7 @@ pub(super) fn kahn_with_priority(input: &InputShape, prio_of: &[usize]) -> Optio
 
 /// Per-segment cap check for input-tree imports (chain slot + external
 /// slots) and input-pods. Tree imports are capped by
-/// `params.max_open_input_statements`; the chain slot counts as one
+/// `params.max_open_input_statement_ops`; the chain slot counts as one
 /// input-pod iff there are any prev-pod producers.
 fn tree_imports_ok(
     n_producers: usize,
