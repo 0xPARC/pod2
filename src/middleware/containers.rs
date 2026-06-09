@@ -111,6 +111,57 @@ impl<'de> Deserialize<'de> for Container {
     }
 }
 
+// Enforce the same rules about key types and key-value relationships that
+// are enforced by Dictionary/Set/Array constructors.
+
+impl<'de> Deserialize<'de> for Set {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let inner = Container::deserialize(deserializer)?;
+        for kv in inner.iter() {
+            let (key, value) = kv.map_err(D::Error::custom)?;
+            if key != value {
+                return Err(D::Error::custom("not a set: entry key != value"));
+            }
+        }
+        Ok(Set { inner })
+    }
+}
+
+impl<'de> Deserialize<'de> for Dictionary {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let inner = Container::deserialize(deserializer)?;
+        for kv in inner.iter() {
+            let (key, _) = kv.map_err(D::Error::custom)?;
+            if !matches!(&key.typed, TypedValue::String(_)) {
+                return Err(D::Error::custom("not a dictionary: non-string key"));
+            }
+        }
+        Ok(Dictionary { inner })
+    }
+}
+
+impl<'de> Deserialize<'de> for Array {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let inner = Container::deserialize(deserializer)?;
+        for kv in inner.iter() {
+            let (key, _) = kv.map_err(D::Error::custom)?;
+            if !matches!(&key.typed, TypedValue::Int(i) if *i >= 0) {
+                return Err(D::Error::custom("not an array: non-index key"));
+            }
+        }
+        Ok(Array { inner })
+    }
+}
+
 impl PartialEq for Container {
     fn eq(&self, other: &Self) -> bool {
         self.root == other.root
@@ -254,7 +305,8 @@ impl Container {
 /// Dictionary: the user original keys and values are hashed to be used in the leaf.
 ///    leaf.key=hash(original_key)
 ///    leaf.value=hash(original_value)
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, Serialize, JsonSchema)]
+#[serde(transparent)]
 pub struct Dictionary {
     pub(crate) inner: Container,
 }
@@ -361,7 +413,8 @@ impl Eq for Dictionary {}
 /// Set: the value field of the leaf is unused, and the key contains the hash of the element.
 ///    leaf.key=hash(original_value)
 ///    leaf.value=0
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, Serialize, JsonSchema)]
+#[serde(transparent)]
 pub struct Set {
     pub(crate) inner: Container,
 }
@@ -440,7 +493,8 @@ impl Eq for Set {}
 ///    leaf.value=original_value
 /// Due to its construction this should be seen as a sparse array, where there can be gaps
 /// (unused indices).
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, Serialize, JsonSchema)]
+#[serde(transparent)]
 pub struct Array {
     pub(crate) inner: Container,
 }
@@ -520,6 +574,64 @@ impl Eq for Array {}
 mod tests {
     use super::*;
     use crate::middleware::db::mem::MemDB;
+
+    #[test]
+    fn value_serde_round_trip_preserves_container_kind() {
+        let dict = Value::from(Dictionary::new(
+            [(StrKey::from("score"), Value::from(42))].into(),
+        ));
+        let array = Value::from(Array::new(vec![Value::from(10), Value::from("x")]));
+        let set = Value::from(Set::new(HashSet::from([Value::from(7)])));
+        let nested = Value::from(Dictionary::new(
+            [(
+                StrKey::from("items"),
+                Value::from(Array::new(vec![Value::from(1)])),
+            )]
+            .into(),
+        ));
+        let empty_dict = Value::from(Dictionary::new([].into()));
+        let empty_array = Value::from(Array::new(vec![]));
+        // Sets always have identical keys and values, so this example is
+        // used to check that a dict which happens to have key=value is not
+        // mistakenly interpreted as a set.
+        let self_keyed_dict = Value::from(Dictionary::new(
+            [(StrKey::from("a"), Value::from("a"))].into(),
+        ));
+        let identity_array = Value::from(Array::new(vec![Value::from(0), Value::from(1)]));
+
+        for value in [
+            dict,
+            array,
+            set,
+            nested,
+            empty_dict,
+            empty_array,
+            self_keyed_dict,
+            identity_array,
+        ] {
+            let json = serde_json::to_string(&value).unwrap();
+            let back: Value = serde_json::from_str(&json).unwrap();
+            assert_eq!(back.raw(), value.raw(), "raw mismatch for {value}");
+            assert_eq!(
+                std::mem::discriminant(&back.typed),
+                std::mem::discriminant(&value.typed),
+                "kind mismatch: {value} came back as {back}"
+            );
+        }
+    }
+
+    /// A tagged container claiming a kind its contents violate must be
+    /// rejected rather than constructed.
+    #[test]
+    fn mistagged_container_is_rejected() {
+        // Dictionary content under a Set tag: entries have key != value.
+        let dict = Value::from(Dictionary::new(
+            [(StrKey::from("score"), Value::from(42))].into(),
+        ));
+        let json = serde_json::to_string(&dict).unwrap();
+        let mistagged = json.replacen("Dictionary", "Set", 1);
+        assert!(serde_json::from_str::<Value>(&mistagged).is_err());
+    }
 
     fn test_databases(test_fn: &dyn Fn(Box<dyn DB>)) {
         let db = MemDB::new();
