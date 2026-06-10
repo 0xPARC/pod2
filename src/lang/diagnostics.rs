@@ -45,10 +45,27 @@ fn render_with_span(
     span: &Span,
     label: &str,
 ) -> String {
-    let annotation = Level::Error.span(span.start..span.end).label(label);
+    let annotation = Level::Error.span(clamped_range(source, span)).label(label);
     let snippet = build_snippet(source, path).annotation(annotation);
     let msg = Level::Error.title(title).snippet(snippet);
     renderer.render(msg).to_string()
+}
+
+/// Clamp a span to the source bounds: parse errors at end of input carry a
+/// span one past the last byte, which annotate_snippets rejects with a
+/// panic. A span that clamps to zero width is widened back over the
+/// previous character so the caret stays visible.
+fn clamped_range(source: &str, span: &Span) -> std::ops::Range<usize> {
+    let end = span.end.min(source.len());
+    let mut start = span.start.min(end);
+    while start == end && start > 0 {
+        start -= 1;
+        if !source.is_char_boundary(start) {
+            continue;
+        }
+        break;
+    }
+    start..end
 }
 
 /// Render an error with an optional span — delegates to `render_with_span` or `render_title_only`.
@@ -477,6 +494,20 @@ mod tests {
     /// Parse a request from source and extract the error, or panic.
     fn request_err(source: &str) -> LangError {
         crate::lang::parse_request(source, &crate::middleware::Params::default(), &[]).unwrap_err()
+    }
+
+    /// A parse error at end of input has a span one past the last byte;
+    /// rendering it must clamp rather than panic, and the annotation must
+    /// still land on the last character.
+    #[test]
+    fn test_eof_parse_error_renders_clamped() {
+        let source = "REQUEST( nonsense";
+        let err = request_err(source);
+        let rendered = render_error(source, None, &err);
+        assert!(rendered.contains("error"), "rendered: {rendered}");
+        // Display attaches the source and renders the same snippet; it
+        // must not panic either.
+        let _ = err.to_string();
     }
 
     #[test]
