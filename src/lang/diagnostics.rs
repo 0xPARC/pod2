@@ -58,12 +58,14 @@ fn render_with_span(
 fn clamped_range(source: &str, span: &Span) -> std::ops::Range<usize> {
     let end = span.end.min(source.len());
     let mut start = span.start.min(end);
-    while start == end && start > 0 {
-        start -= 1;
-        if !source.is_char_boundary(start) {
-            continue;
+    if start == end {
+        while start > 0 {
+            start -= 1;
+            if !source.is_char_boundary(start) {
+                continue;
+            }
+            break;
         }
-        break;
     }
     start..end
 }
@@ -507,6 +509,31 @@ mod tests {
         assert!(rendered.contains("error"), "rendered: {rendered}");
         // Display attaches the source and renders the same snippet; it
         // must not panic either.
+        let _ = err.to_string();
+    }
+
+    /// A zero-width span at EOF must widen back over the whole previous
+    /// character: stopping partway through a multi-byte one would hand
+    /// annotate_snippets a range starting off a char boundary.
+    #[test]
+    fn test_clamped_range_widens_over_multibyte_char() {
+        let source = "abc\u{e9}"; // final char occupies bytes 3..5
+        let span = Span {
+            start: source.len(),
+            end: source.len() + 1,
+        };
+        assert_eq!(clamped_range(source, &span), 3..5);
+    }
+
+    /// Same as test_eof_parse_error_renders_clamped, but the source ends
+    /// with a multi-byte character so the widened span must land on its
+    /// boundary.
+    #[test]
+    fn test_eof_parse_error_after_multibyte_char_renders_clamped() {
+        let source = "REQUEST( nonsense // abc\u{e9}";
+        let err = request_err(source);
+        let rendered = render_error(source, None, &err);
+        assert!(rendered.contains("error"), "rendered: {rendered}");
         let _ = err.to_string();
     }
 
