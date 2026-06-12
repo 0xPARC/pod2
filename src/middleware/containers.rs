@@ -302,6 +302,16 @@ impl Container {
     }
 }
 
+/// The kind of container a `Value` holds. Returned by
+/// `Value::container_kind`, which reports the typed variant without the
+/// kind coercion that `as_dictionary`/`as_set`/`as_array` perform.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+pub enum ContainerKind {
+    Dictionary,
+    Set,
+    Array,
+}
+
 /// Dictionary: the user original keys and values are hashed to be used in the leaf.
 ///    leaf.key=hash(original_key)
 ///    leaf.value=hash(original_value)
@@ -353,6 +363,9 @@ impl Dictionary {
     }
     pub fn get(&self, key: &StrKey) -> Result<Option<Value>> {
         self.inner.get(key.raw())
+    }
+    pub fn get_raw(&self, key: RawValue) -> Result<Option<Value>> {
+        self.inner.get(key)
     }
     pub fn prove(&self, key: &StrKey) -> Result<(Value, MerkleProof)> {
         self.inner.prove(key.raw())
@@ -441,6 +454,9 @@ impl Set {
     pub fn contains(&self, value: &Value) -> Result<bool> {
         Ok(self.inner.get(value.raw())?.is_some())
     }
+    pub fn get_raw(&self, value: RawValue) -> Result<Option<Value>> {
+        self.inner.get(value)
+    }
     pub fn prove(&self, value: &Value) -> Result<MerkleProof> {
         let (_, proof) = self.inner.prove(value.raw())?;
         Ok(proof)
@@ -527,6 +543,9 @@ impl Array {
     pub fn get(&self, i: usize) -> Result<Option<Value>> {
         self.inner.get(Value::from(i as i64).raw())
     }
+    pub fn get_raw(&self, key: RawValue) -> Result<Option<Value>> {
+        self.inner.get(key)
+    }
     pub fn prove(&self, i: usize) -> Result<(Value, MerkleProof)> {
         self.inner.prove(Value::from(i as i64).raw())
     }
@@ -574,6 +593,45 @@ impl Eq for Array {}
 mod tests {
     use super::*;
     use crate::middleware::db::mem::MemDB;
+
+    #[test]
+    fn container_kind_reports_typed_variant_without_coercion() {
+        let dict = Value::from(Dictionary::new(
+            [(StrKey::from("score"), Value::from(42))].into(),
+        ));
+        let set = Value::from(Set::new(HashSet::from([Value::from(7)])));
+        let array = Value::from(Array::new(vec![Value::from(10)]));
+
+        assert_eq!(dict.container_kind(), Some(ContainerKind::Dictionary));
+        assert_eq!(set.container_kind(), Some(ContainerKind::Set));
+        assert_eq!(array.container_kind(), Some(ContainerKind::Array));
+        assert_eq!(Value::from(42).container_kind(), None);
+        assert_eq!(Value::from("x").container_kind(), None);
+        // A raw value carrying a container's commitment is still None: the
+        // type information is not in the value.
+        assert_eq!(Value::from(dict.raw()).container_kind(), None);
+    }
+
+    #[test]
+    fn get_raw_addresses_the_same_leaves_as_typed_keys() {
+        let dict = Dictionary::new([(StrKey::from("score"), Value::from(42))].into());
+        let arr = Array::new(vec![Value::from(10), Value::from(20)]);
+        let elem = Value::from("member");
+        let set = Set::new(HashSet::from([elem.clone()]));
+
+        // The raw of a typed key addresses the same leaf as the typed get.
+        assert_eq!(
+            dict.get_raw(StrKey::from("score").raw()).unwrap(),
+            Some(Value::from(42))
+        );
+        assert_eq!(
+            arr.get_raw(Value::from(1i64).raw()).unwrap(),
+            Some(Value::from(20))
+        );
+        assert_eq!(set.get_raw(elem.raw()).unwrap(), Some(elem));
+
+        assert_eq!(dict.get_raw(Value::from(123).raw()).unwrap(), None);
+    }
 
     #[test]
     fn value_serde_round_trip_preserves_container_kind() {

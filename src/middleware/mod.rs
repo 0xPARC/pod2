@@ -530,6 +530,19 @@ impl Value {
             _ => None,
         }
     }
+    /// The Value's actual container kind, or None for non-containers.
+    ///
+    /// Unlike `as_dictionary`/`as_set`/`as_array`, which intentionally
+    /// coerce any container into the requested wrapper, this reports
+    /// the typed variant without conversion.
+    pub fn container_kind(&self) -> Option<containers::ContainerKind> {
+        match &self.typed {
+            TypedValue::Dictionary(_) => Some(containers::ContainerKind::Dictionary),
+            TypedValue::Set(_) => Some(containers::ContainerKind::Set),
+            TypedValue::Array(_) => Some(containers::ContainerKind::Array),
+            _ => None,
+        }
+    }
     pub fn as_dictionary(&self) -> Option<Dictionary> {
         match &self.typed {
             TypedValue::Set(s) => Some(Dictionary {
