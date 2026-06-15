@@ -63,7 +63,7 @@ pub struct OperationCost {
     /// SignedBy operations.
     pub signed_by: usize,
     /// PublicKeyOf operations.
-    pub public_key_of: usize,
+    pub public_key: usize,
     /// Custom predicates used by this operation. Drives the per-POD
     /// `max_custom_predicates` distinct-count cap.
     pub custom_predicates_ids: BTreeSet<CustomPredicateId>,
@@ -85,7 +85,7 @@ pub struct ResourceTotals {
     pub merkle_state_transitions_medium: usize,
     pub custom_pred_verifications: usize,
     pub signed_by: usize,
-    pub public_key_of: usize,
+    pub public_key: usize,
     pub distinct_custom_predicates: usize,
 }
 
@@ -123,17 +123,17 @@ impl ResourceTotals {
         bump(
             &mut bound,
             self.custom_pred_verifications,
-            params.max_custom_predicate_verifications,
+            params.max_custom_predicate_verification_ops,
         );
-        bump(&mut bound, self.signed_by, params.max_signed_by);
-        bump(&mut bound, self.public_key_of, params.max_public_key_of);
+        bump(&mut bound, self.signed_by, params.max_signed_by_ops);
+        bump(&mut bound, self.public_key, params.max_public_key_ops);
         bump(
             &mut bound,
             self.distinct_custom_predicates,
             params.max_custom_predicates,
         );
 
-        let state = &params.containers.state;
+        let state = &params.containers.state_ops;
         bump(&mut bound, self.merkle_proofs_medium, state.max_medium);
         bump(
             &mut bound,
@@ -141,7 +141,7 @@ impl ResourceTotals {
             state.max_total(),
         );
 
-        let transition = &params.containers.transition;
+        let transition = &params.containers.transition_ops;
         bump(
             &mut bound,
             self.merkle_state_transitions_medium,
@@ -168,7 +168,7 @@ impl ResourceTotals {
         self.merkle_state_transitions_medium += cost.merkle_state_transitions_medium;
         self.custom_pred_verifications += cost.custom_pred_verifications;
         self.signed_by += cost.signed_by;
-        self.public_key_of += cost.public_key_of;
+        self.public_key += cost.public_key;
     }
 
     /// True iff all sums fit in one POD under `params`.
@@ -177,17 +177,17 @@ impl ResourceTotals {
     /// contribution only; callers that need to account for publishing and
     /// importing statements must do that separately.
     pub fn fits_in_pod(&self, params: &Params) -> bool {
-        let state = &params.containers.state;
-        let transition = &params.containers.transition;
+        let state = &params.containers.state_ops;
+        let transition = &params.containers.transition_ops;
         self.num_operations <= params.max_statements
             && self.merkle_proofs_medium <= state.max_medium
             && self.merkle_proofs_small + self.merkle_proofs_medium <= state.max_total()
             && self.merkle_state_transitions_medium <= transition.max_medium
             && self.merkle_state_transitions_small + self.merkle_state_transitions_medium
                 <= transition.max_total()
-            && self.custom_pred_verifications <= params.max_custom_predicate_verifications
-            && self.signed_by <= params.max_signed_by
-            && self.public_key_of <= params.max_public_key_of
+            && self.custom_pred_verifications <= params.max_custom_predicate_verification_ops
+            && self.signed_by <= params.max_signed_by_ops
+            && self.public_key <= params.max_public_key_ops
             && self.distinct_custom_predicates <= params.max_custom_predicates
     }
 }
@@ -241,11 +241,11 @@ impl OperationCost {
                 | NativeOperation::SetDeleteFromEntries => {
                     cost.merkle_state_transitions_medium = 1;
                 }
-                NativeOperation::SignedBy => {
+                NativeOperation::SignedByFromEntries => {
                     cost.signed_by = 1;
                 }
-                NativeOperation::PublicKeyOf => {
-                    cost.public_key_of = 1;
+                NativeOperation::PublicKeyFromEntries => {
+                    cost.public_key = 1;
                 }
                 // Zero-cost ops (no per-POD resource consumed).
                 NativeOperation::None
@@ -255,10 +255,10 @@ impl OperationCost {
                 | NativeOperation::LtFromEntries
                 | NativeOperation::TransitiveEqualFromStatements
                 | NativeOperation::LtToNotEqual
-                | NativeOperation::SumOf
-                | NativeOperation::ProductOf
-                | NativeOperation::MaxOf
-                | NativeOperation::HashOf
+                | NativeOperation::SumFromEntries
+                | NativeOperation::ProductFromEntries
+                | NativeOperation::MaxFromEntries
+                | NativeOperation::HashFromEntries
                 // Tracked separately by the partitioner.
                 | NativeOperation::OpenInputStatement
                 // Syntactic sugar variants (lowered before proving).
@@ -347,17 +347,17 @@ mod tests {
     fn scalar_native_ops_map_to_their_cost_dimension() {
         let params = Params::default();
         let sb = OperationCost::from_operation(
-            &native_op(NativeOperation::SignedBy, OperationAux::None),
+            &native_op(NativeOperation::SignedByFromEntries, OperationAux::None),
             &params,
         );
         assert_eq!(sb.signed_by, 1);
-        assert_eq!(sb.public_key_of, 0);
+        assert_eq!(sb.public_key, 0);
 
         let pk = OperationCost::from_operation(
-            &native_op(NativeOperation::PublicKeyOf, OperationAux::None),
+            &native_op(NativeOperation::PublicKeyFromEntries, OperationAux::None),
             &params,
         );
-        assert_eq!(pk.public_key_of, 1);
+        assert_eq!(pk.public_key, 1);
         assert_eq!(pk.signed_by, 0);
     }
 

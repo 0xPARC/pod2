@@ -205,10 +205,10 @@ impl Operation {
     op_impl_st!(transitive_eq, TransitiveEqualFromStatements, 2);
     op_impl_st!(lt_to_ne, LtToNotEqual, 1);
     op_impl_st!(gt_to_ne, GtToNotEqual, 1);
-    op_impl_oa!(sum_of, SumOf, 3);
-    op_impl_oa!(product_of, ProductOf, 3);
-    op_impl_oa!(max_of, MaxOf, 3);
-    op_impl_oa!(hash_of, HashOf, 3);
+    op_impl_oa!(sum, SumFromEntries, 3);
+    op_impl_oa!(product, ProductFromEntries, 3);
+    op_impl_oa!(max, MaxFromEntries, 3);
+    op_impl_oa!(hash, HashFromEntries, 3);
     /// Creates a custom operation.
     ///
     /// `args` should contain the statements that are needed to prove the
@@ -224,7 +224,7 @@ impl Operation {
     op_impl_oa!(set_contains, SetContainsFromEntries, 2);
     op_impl_oa!(set_not_contains, SetNotContainsFromEntries, 2);
     op_impl_oa!(array_contains, ArrayContainsFromEntries, 3);
-    op_impl_oa!(public_key_of, PublicKeyOf, 2);
+    op_impl_oa!(public_key, PublicKeyFromEntries, 2);
     op_impl_oa!(dict_insert, DictInsertFromEntries, 4);
     op_impl_oa!(dict_update, DictUpdateFromEntries, 4);
     op_impl_oa!(dict_delete, DictDeleteFromEntries, 3);
@@ -260,7 +260,7 @@ impl Operation {
         sig: Signature,
     ) -> Self {
         Self(
-            OperationType::Native(NativeOperation::SignedBy),
+            OperationType::Native(NativeOperation::SignedByFromEntries),
             vec![msg.into(), pk.into()],
             OperationAux::Signature(sig),
         )

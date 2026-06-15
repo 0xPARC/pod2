@@ -270,7 +270,7 @@ pub(super) fn kahn_with_priority(input: &InputShape, prio_of: &[usize]) -> Optio
 
 /// Per-segment cap check for input-tree imports (chain slot + external
 /// slots) and input-pods. Tree imports are capped by
-/// `params.max_open_input_statements`; the chain slot counts as one
+/// `params.max_open_input_statement_ops`; the chain slot counts as one
 /// input-pod iff there are any prev-pod producers.
 fn tree_imports_ok(
     n_producers: usize,
@@ -278,7 +278,7 @@ fn tree_imports_ok(
     n_ext_pods: usize,
     params: &Params,
 ) -> bool {
-    n_producers + n_ext_imports <= params.max_open_input_statements
+    n_producers + n_ext_imports <= params.max_open_input_statement_ops
         && usize::from(n_producers > 0) + n_ext_pods <= params.max_input_pods
 }
 
@@ -803,7 +803,7 @@ fn segment_feasible_with(
         // busted there's no recovery. Saves the remaining statements'
         // worth of inserts on infeasible segments.
         if workspace.prev_pod_producers.len() + workspace.external_imports.len()
-            > params.max_open_input_statements
+            > params.max_open_input_statement_ops
         {
             return false;
         }
@@ -1148,7 +1148,7 @@ mod tests {
         // that drives K > 1 is the combined import cap.
         use super::super::cost::OperationCost;
         let params = Params::default();
-        let n = params.max_open_input_statements + 1;
+        let n = params.max_open_input_statement_ops + 1;
         let input = InputShape {
             costs: (0..n).map(|_| OperationCost::default()).collect(),
             dep_edges: (0..n)
@@ -1250,7 +1250,7 @@ mod tests {
                 Params {
                     max_statements: 8,
                     max_input_pods: 3,
-                    max_signed_by: 2,
+                    max_signed_by_ops: 2,
                     ..Params::default()
                 },
             ),

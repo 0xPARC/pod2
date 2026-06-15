@@ -7,7 +7,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -17,7 +17,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -27,7 +27,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -37,7 +37,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -47,7 +47,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 1,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": [
         "7837d85941cd48676e538bd06614999e032f3f050a3594100a9f6fda56757c22"
       ]
@@ -59,7 +59,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -69,7 +69,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -79,7 +79,7 @@
       "merkle_state_transitions_medium": 1,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -89,7 +89,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 1,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": [
         "eee2c2e2b033744635078b59029e0b6763c768f8eb531d1c6764192563e9d9df"
       ]
@@ -101,7 +101,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -111,7 +111,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 1,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": [
         "7837d85941cd48676e538bd06614999e032f3f050a3594100a9f6fda56757c22"
       ]
@@ -123,7 +123,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -133,7 +133,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -143,7 +143,7 @@
       "merkle_state_transitions_medium": 1,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -153,7 +153,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 1,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": [
         "51c45cbe38e0830172ceb847edfa0ecb145b18449e0d7a889bd56ed513973fa6"
       ]
@@ -165,7 +165,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -175,7 +175,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 1,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": [
         "7837d85941cd48676e538bd06614999e032f3f050a3594100a9f6fda56757c22"
       ]
@@ -187,7 +187,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -197,7 +197,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -207,7 +207,7 @@
       "merkle_state_transitions_medium": 1,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -217,7 +217,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 1,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": [
         "634238db6153889ac3cb9e0dced47a6f26a4bbd320ae08557c2625f5da42a01e"
       ]
@@ -229,7 +229,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 1,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": [
         "8018e74140f90219fde820c3ec8d1a48dc93f4721bb35bf093fc67bdcaab7885"
       ]
@@ -241,7 +241,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -251,7 +251,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -261,7 +261,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -271,7 +271,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -281,7 +281,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 1,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": [
         "9af6922fdfa8852bd6634761cc57356caecfc23e6fcccaedf01f11f1be12cc16"
       ]
@@ -293,7 +293,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -303,7 +303,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -313,7 +313,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -323,7 +323,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -333,7 +333,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 1,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": [
         "dc6d93b8a26db24e95dd7a75870354f34625ee5b46b6b86e2164ed1f23c7465f"
       ]
@@ -345,7 +345,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 1,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": [
         "a438bf8d731939cc9f1ac42aafbafd30a7707f02dfc9200371c6fdf5c3f4b15b"
       ]
@@ -357,7 +357,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 1,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": [
         "861f34b71740869f2adcaa69c50babef5eecaa3f6e13638912e89d844502d9df"
       ]
@@ -369,7 +369,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -379,7 +379,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -389,7 +389,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -399,7 +399,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 1,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": [
         "ae5c13d5a99affcc6ed06b0f94827dc6485399ffcdbf9596d394cd5e84fcbcab"
       ]
@@ -411,7 +411,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -421,7 +421,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -431,7 +431,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -441,7 +441,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 1,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": [
         "ae5c13d5a99affcc6ed06b0f94827dc6485399ffcdbf9596d394cd5e84fcbcab"
       ]
@@ -453,7 +453,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -463,7 +463,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -473,7 +473,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -483,7 +483,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 1,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": [
         "ac12d571c04f4f2120213b73db1e0c8a8841fffd0af43d6f30d90c227100be9e"
       ]
@@ -495,7 +495,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -505,7 +505,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -515,7 +515,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -525,7 +525,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 1,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": [
         "ac12d571c04f4f2120213b73db1e0c8a8841fffd0af43d6f30d90c227100be9e"
       ]
@@ -537,7 +537,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -547,7 +547,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -557,7 +557,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -567,7 +567,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 1,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": [
         "ac12d571c04f4f2120213b73db1e0c8a8841fffd0af43d6f30d90c227100be9e"
       ]
@@ -579,7 +579,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -589,7 +589,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -599,7 +599,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -609,7 +609,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 1,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": [
         "ac12d571c04f4f2120213b73db1e0c8a8841fffd0af43d6f30d90c227100be9e"
       ]
@@ -621,7 +621,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -631,7 +631,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -641,7 +641,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -651,7 +651,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 1,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": [
         "ac12d571c04f4f2120213b73db1e0c8a8841fffd0af43d6f30d90c227100be9e"
       ]
@@ -663,7 +663,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -673,7 +673,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -683,7 +683,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -693,7 +693,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 1,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": [
         "ac12d571c04f4f2120213b73db1e0c8a8841fffd0af43d6f30d90c227100be9e"
       ]
@@ -705,7 +705,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -715,7 +715,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -725,7 +725,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -735,7 +735,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 1,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": [
         "ac12d571c04f4f2120213b73db1e0c8a8841fffd0af43d6f30d90c227100be9e"
       ]
@@ -747,7 +747,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -757,7 +757,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -767,7 +767,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -777,7 +777,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 1,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": [
         "ac12d571c04f4f2120213b73db1e0c8a8841fffd0af43d6f30d90c227100be9e"
       ]
@@ -789,7 +789,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -799,7 +799,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -809,7 +809,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -819,7 +819,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 1,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": [
         "ac12d571c04f4f2120213b73db1e0c8a8841fffd0af43d6f30d90c227100be9e"
       ]
@@ -831,7 +831,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -841,7 +841,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -851,7 +851,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -861,7 +861,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 1,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": [
         "ac12d571c04f4f2120213b73db1e0c8a8841fffd0af43d6f30d90c227100be9e"
       ]
@@ -873,7 +873,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -883,7 +883,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -893,7 +893,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -903,7 +903,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -913,7 +913,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -923,7 +923,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -933,7 +933,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -943,7 +943,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -953,7 +953,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -963,7 +963,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -973,7 +973,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -983,7 +983,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -993,7 +993,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -1003,7 +1003,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -1013,7 +1013,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -1023,7 +1023,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -1033,7 +1033,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -1043,7 +1043,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -1053,7 +1053,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -1063,7 +1063,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -1073,7 +1073,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -1083,7 +1083,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -1093,7 +1093,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -1103,7 +1103,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -1113,7 +1113,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -1123,7 +1123,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -1133,7 +1133,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -1143,7 +1143,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -1153,7 +1153,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -1163,7 +1163,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -1173,7 +1173,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -1183,7 +1183,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -1193,7 +1193,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -1203,7 +1203,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -1213,7 +1213,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -1223,7 +1223,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -1233,7 +1233,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -1243,7 +1243,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -1253,7 +1253,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -1263,7 +1263,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -1273,7 +1273,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -1283,7 +1283,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -1293,7 +1293,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -1303,7 +1303,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -1313,7 +1313,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -1323,7 +1323,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -1333,7 +1333,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -1343,7 +1343,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -1353,7 +1353,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -1363,7 +1363,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 1,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": [
         "5e54bf71aa64b974501d41ac7fc936bc25ee8afc070bf4c55427baaa18f4ffa9"
       ]
@@ -1375,7 +1375,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 1,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": [
         "77ee2edbb143af3860e34ac1737969385085aa8953b5e7d0837786b90e3252ef"
       ]
@@ -1387,7 +1387,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 1,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": [
         "3ad2c11c099d66bce82a44be70e38d04c17f0ea1aa52f7c0e5d1ab4fee3445a4"
       ]
@@ -1399,7 +1399,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 1,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": [
         "6a36e937dbd42116f9362383d90cdb88397d310bda4b31f0d3b9873cad22abf2"
       ]
@@ -1411,7 +1411,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 1,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": [
         "70803ae56fbbd3489b06d5f6478206f04ae052795516d5f7b7f5ab0dc454294c"
       ]
@@ -1423,7 +1423,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 1,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": [
         "0ffd82e2015dccc5757477e9e19130c49acab9233bcafcc6600141a993a2a325"
       ]
@@ -1435,7 +1435,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 1,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": [
         "787973df9ce7b873d93498da635ae255cd47344f84cfb3636c357fb7fa6d9244"
       ]
@@ -1447,7 +1447,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 1,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": [
         "33d74034b66f46eedb39462a06f3562cc98598278e0612b23b0578d37e6aff7d"
       ]
@@ -1459,7 +1459,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 1,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": [
         "65cc38f52f407210fb7656e7c5165aa9f8c6a53976aca7230c0f1485b0d7798f"
       ]
@@ -1471,7 +1471,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 1,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": [
         "5e72bbf03da212fd1dd79eba315b3c4d6fc28bcb6f1ef8358c8a0474d8905a4a"
       ]
@@ -1483,7 +1483,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 1,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": [
         "10b73698426380c1e09911e333a53d05de83dae28e31d76e159adf26f2b0ca84"
       ]
@@ -1495,7 +1495,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 1,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": [
         "606b0df3ee8299144c79660d704b21d9983c0d18ce76a4ef8bcee40d1fc8a52f"
       ]
@@ -1507,7 +1507,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 1,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": [
         "1b9e8aaa97da92da1c70b8108e7cb3cbbb8e5de0fc0a21425cc14d80b479f2bb"
       ]
@@ -1519,7 +1519,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 1,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": [
         "7af8981855018bdd8627120667d76229626d9c1065562e759050e576a1cf78f2"
       ]
@@ -1531,7 +1531,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 1,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": [
         "1b9e8aaa97da92da1c70b8108e7cb3cbbb8e5de0fc0a21425cc14d80b479f2bb"
       ]
@@ -1543,7 +1543,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 1,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": [
         "3c6211b0c16f7db120251b60d4a69349f566233cb137c19eaa7f62ddab0edb3f"
       ]
@@ -1555,7 +1555,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 1,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": [
         "1b9e8aaa97da92da1c70b8108e7cb3cbbb8e5de0fc0a21425cc14d80b479f2bb"
       ]
@@ -1567,7 +1567,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 1,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": [
         "77eff21f683c442297e23c8da9577b01baf5f2ed6bbc836efa500ebf560a7fd4"
       ]
@@ -1579,7 +1579,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 1,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": [
         "1b9e8aaa97da92da1c70b8108e7cb3cbbb8e5de0fc0a21425cc14d80b479f2bb"
       ]
@@ -1591,7 +1591,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 1,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": [
         "92a3bda830abb23e714d6c3521f0052af239eb2edc3ac9bfc8ac84e0d6f4408f"
       ]
@@ -1603,7 +1603,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 1,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": [
         "1b9e8aaa97da92da1c70b8108e7cb3cbbb8e5de0fc0a21425cc14d80b479f2bb"
       ]
@@ -1615,7 +1615,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 1,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": [
         "5b59f9f89de58a788aff5c062d5fec298b1307c170c0afec7d3aabe38655d40a"
       ]
@@ -1627,7 +1627,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 1,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": [
         "32ca691a78d5ea7097a6e32646219b68218982a71fe7293e5d1b34fffb30c77e"
       ]
@@ -1639,7 +1639,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 1,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": [
         "098b336099071848bf570696da84b352662f880a83b2dd8813cb4e5631d1971f"
       ]
@@ -1651,7 +1651,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 1,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": [
         "32ca691a78d5ea7097a6e32646219b68218982a71fe7293e5d1b34fffb30c77e"
       ]
@@ -1663,7 +1663,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 1,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": [
         "2633d57982f3fb81475db9d1bca827dff91225e7c6e48b539a6802c609126edc"
       ]
@@ -1675,7 +1675,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 1,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": [
         "32ca691a78d5ea7097a6e32646219b68218982a71fe7293e5d1b34fffb30c77e"
       ]
@@ -1687,7 +1687,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 1,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": [
         "69c010b253666a0c34f5c4ea57a55a35700e2f8f711f560e9a176573c336a29f"
       ]
@@ -1699,7 +1699,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 1,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": [
         "6c171cb62849c6af69a805a6531a3174179d6d195e94580e4c31074d442af3eb"
       ]
@@ -1711,7 +1711,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 1,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": [
         "7887a7311f2c4aee574b517fdffeacf5a352c33bec326f5e6e256eeedbcfe0b3"
       ]
@@ -1723,7 +1723,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 1,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": [
         "6c171cb62849c6af69a805a6531a3174179d6d195e94580e4c31074d442af3eb"
       ]
@@ -1735,7 +1735,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -1745,7 +1745,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -1755,7 +1755,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -1765,7 +1765,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -1775,7 +1775,7 @@
       "merkle_state_transitions_medium": 1,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -1785,7 +1785,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -1795,7 +1795,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 1,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": [
         "ac2fd0e5a81b0ec8b71ba605a25d6a79c2ccf20de570de5a9f077deda1b227aa"
       ]
@@ -1807,7 +1807,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -1817,7 +1817,7 @@
       "merkle_state_transitions_medium": 1,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -1827,7 +1827,7 @@
       "merkle_state_transitions_medium": 1,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -1837,7 +1837,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -1847,7 +1847,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 1,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": [
         "233f81f9dbad862d8048af843c1561df6a5697b7bdbbbd986f92623ac5c8ed2f"
       ]
@@ -1859,7 +1859,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -1869,7 +1869,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -1879,7 +1879,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -1889,7 +1889,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 1,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": [
         "3ec2d6882072c09f63b463173bc5f585e8ab25b90bcd40145716386d4d0550ec"
       ]
@@ -1901,7 +1901,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 1,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": [
         "72d0fa8318a6c04862b7d529dd12eecaedd5077132dc4e59621919138564f85e"
       ]
@@ -1913,7 +1913,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 1,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": [
         "ea6d0bdb52151bbc2e11da6341de58e2ac131d4c920ae23a569ac4801ad99d61"
       ]
@@ -1925,7 +1925,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -1935,7 +1935,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -1945,7 +1945,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -1955,7 +1955,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -1965,7 +1965,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -1975,7 +1975,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -1985,7 +1985,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 1,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": [
         "7dad00b46a9ac29d3fd63c8aaeb39eade30df4dbe4711d84a56eeba3e9882671"
       ]
@@ -1997,7 +1997,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -2007,7 +2007,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -2017,7 +2017,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -2027,7 +2027,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -2037,7 +2037,7 @@
       "merkle_state_transitions_medium": 1,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -2047,7 +2047,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -2057,7 +2057,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 1,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": [
         "ac2fd0e5a81b0ec8b71ba605a25d6a79c2ccf20de570de5a9f077deda1b227aa"
       ]
@@ -2069,7 +2069,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -2079,7 +2079,7 @@
       "merkle_state_transitions_medium": 1,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -2089,7 +2089,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -2099,7 +2099,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -2109,7 +2109,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -2119,7 +2119,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -2129,7 +2129,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 1,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": [
         "39fa5b33853b4d9eab866588eff41f1f4263033fbc4496fafdd0a408686d054d"
       ]
@@ -2141,7 +2141,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -2151,7 +2151,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -2161,7 +2161,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -2171,7 +2171,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -2181,7 +2181,7 @@
       "merkle_state_transitions_medium": 1,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -2191,7 +2191,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -2201,7 +2201,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 1,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": [
         "ac2fd0e5a81b0ec8b71ba605a25d6a79c2ccf20de570de5a9f077deda1b227aa"
       ]
@@ -2213,7 +2213,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -2223,7 +2223,7 @@
       "merkle_state_transitions_medium": 1,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -2233,7 +2233,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -2243,7 +2243,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -2253,7 +2253,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -2263,7 +2263,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -2273,7 +2273,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 1,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": [
         "39fa5b33853b4d9eab866588eff41f1f4263033fbc4496fafdd0a408686d054d"
       ]
@@ -2285,7 +2285,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -2295,7 +2295,7 @@
       "merkle_state_transitions_medium": 1,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -2305,7 +2305,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -2315,7 +2315,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -2325,7 +2325,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -2335,7 +2335,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -2345,7 +2345,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 1,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": [
         "ca1befc6aad47263886b1da458823aa01e9191b552fee0b8dc2f1ac16d920e90"
       ]
@@ -2357,7 +2357,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 1,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": [
         "72d0fa8318a6c04862b7d529dd12eecaedd5077132dc4e59621919138564f85e"
       ]
@@ -2369,7 +2369,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 1,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": [
         "ea6d0bdb52151bbc2e11da6341de58e2ac131d4c920ae23a569ac4801ad99d61"
       ]
@@ -2381,7 +2381,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -2391,7 +2391,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -2401,7 +2401,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -2411,7 +2411,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -2421,7 +2421,7 @@
       "merkle_state_transitions_medium": 1,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -2431,7 +2431,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -2441,7 +2441,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -2451,7 +2451,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -2461,7 +2461,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -2471,7 +2471,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 1,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": [
         "9e87fca18bc2c42af7c961741fc57310eed3c6111ee072c699b7f7da3edb3eda"
       ]
@@ -2483,7 +2483,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 1,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": [
         "ea6d0bdb52151bbc2e11da6341de58e2ac131d4c920ae23a569ac4801ad99d61"
       ]
@@ -2495,7 +2495,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -2505,7 +2505,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -2515,7 +2515,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -2525,7 +2525,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -2535,7 +2535,7 @@
       "merkle_state_transitions_medium": 1,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -2545,7 +2545,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -2555,7 +2555,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -2565,7 +2565,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -2575,7 +2575,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -2585,7 +2585,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 1,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": [
         "9e87fca18bc2c42af7c961741fc57310eed3c6111ee072c699b7f7da3edb3eda"
       ]
@@ -2597,7 +2597,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 1,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": [
         "ea6d0bdb52151bbc2e11da6341de58e2ac131d4c920ae23a569ac4801ad99d61"
       ]
@@ -2609,7 +2609,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -2619,7 +2619,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -2629,7 +2629,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -2639,7 +2639,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -2649,7 +2649,7 @@
       "merkle_state_transitions_medium": 1,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -2659,7 +2659,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -2669,7 +2669,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -2679,7 +2679,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -2689,7 +2689,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -2699,7 +2699,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 1,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": [
         "9e87fca18bc2c42af7c961741fc57310eed3c6111ee072c699b7f7da3edb3eda"
       ]
@@ -2711,7 +2711,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 1,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": [
         "ea6d0bdb52151bbc2e11da6341de58e2ac131d4c920ae23a569ac4801ad99d61"
       ]
@@ -2723,7 +2723,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -2733,7 +2733,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -2743,7 +2743,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -2753,7 +2753,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -2763,7 +2763,7 @@
       "merkle_state_transitions_medium": 1,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -2773,7 +2773,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -2783,7 +2783,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -2793,7 +2793,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -2803,7 +2803,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -2813,7 +2813,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 1,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": [
         "9e87fca18bc2c42af7c961741fc57310eed3c6111ee072c699b7f7da3edb3eda"
       ]
@@ -2825,7 +2825,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 1,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": [
         "ea6d0bdb52151bbc2e11da6341de58e2ac131d4c920ae23a569ac4801ad99d61"
       ]
@@ -2837,7 +2837,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -2847,7 +2847,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -2857,7 +2857,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -2867,7 +2867,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -2877,7 +2877,7 @@
       "merkle_state_transitions_medium": 1,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -2887,7 +2887,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -2897,7 +2897,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -2907,7 +2907,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -2917,7 +2917,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -2927,7 +2927,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 1,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": [
         "9e87fca18bc2c42af7c961741fc57310eed3c6111ee072c699b7f7da3edb3eda"
       ]
@@ -2939,7 +2939,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 1,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": [
         "ea6d0bdb52151bbc2e11da6341de58e2ac131d4c920ae23a569ac4801ad99d61"
       ]
@@ -2951,7 +2951,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -2961,7 +2961,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -2971,7 +2971,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -2981,7 +2981,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -2991,7 +2991,7 @@
       "merkle_state_transitions_medium": 1,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -3001,7 +3001,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -3011,7 +3011,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -3021,7 +3021,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -3031,7 +3031,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -3041,7 +3041,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 1,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": [
         "9e87fca18bc2c42af7c961741fc57310eed3c6111ee072c699b7f7da3edb3eda"
       ]
@@ -3053,7 +3053,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 1,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": [
         "ea6d0bdb52151bbc2e11da6341de58e2ac131d4c920ae23a569ac4801ad99d61"
       ]
@@ -3065,7 +3065,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -3075,7 +3075,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -3085,7 +3085,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -3095,7 +3095,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -3105,7 +3105,7 @@
       "merkle_state_transitions_medium": 1,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -3115,7 +3115,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -3125,7 +3125,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -3135,7 +3135,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -3145,7 +3145,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -3155,7 +3155,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 1,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": [
         "9e87fca18bc2c42af7c961741fc57310eed3c6111ee072c699b7f7da3edb3eda"
       ]
@@ -3167,7 +3167,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 1,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": [
         "ea6d0bdb52151bbc2e11da6341de58e2ac131d4c920ae23a569ac4801ad99d61"
       ]
@@ -3179,7 +3179,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -3189,7 +3189,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -3199,7 +3199,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -3209,7 +3209,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -3219,7 +3219,7 @@
       "merkle_state_transitions_medium": 1,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -3229,7 +3229,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -3239,7 +3239,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -3249,7 +3249,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -3259,7 +3259,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -3269,7 +3269,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 1,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": [
         "9e87fca18bc2c42af7c961741fc57310eed3c6111ee072c699b7f7da3edb3eda"
       ]
@@ -3281,7 +3281,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 1,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": [
         "ea6d0bdb52151bbc2e11da6341de58e2ac131d4c920ae23a569ac4801ad99d61"
       ]
@@ -3293,7 +3293,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -3303,7 +3303,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -3313,7 +3313,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -3323,7 +3323,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -3333,7 +3333,7 @@
       "merkle_state_transitions_medium": 1,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -3343,7 +3343,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -3353,7 +3353,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -3363,7 +3363,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -3373,7 +3373,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -3383,7 +3383,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 1,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": [
         "9e87fca18bc2c42af7c961741fc57310eed3c6111ee072c699b7f7da3edb3eda"
       ]
@@ -3395,7 +3395,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 1,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": [
         "ea6d0bdb52151bbc2e11da6341de58e2ac131d4c920ae23a569ac4801ad99d61"
       ]
@@ -3407,7 +3407,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 1,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": [
         "50237dbe59f28583086e5d0edbcfacd15eccffc4caf40d109913f15ba67a2fbc"
       ]
@@ -3419,7 +3419,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 1,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": [
         "ea6d0bdb52151bbc2e11da6341de58e2ac131d4c920ae23a569ac4801ad99d61"
       ]
@@ -3431,7 +3431,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 1,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": [
         "50237dbe59f28583086e5d0edbcfacd15eccffc4caf40d109913f15ba67a2fbc"
       ]
@@ -3443,7 +3443,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 1,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": [
         "ea6d0bdb52151bbc2e11da6341de58e2ac131d4c920ae23a569ac4801ad99d61"
       ]
@@ -3455,7 +3455,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 1,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": [
         "e1282217ae8be0810d034b9f343c0e345f751191c9fcb3d48ee0a72be0c51fe2"
       ]
@@ -3467,7 +3467,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 1,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": [
         "ea6d0bdb52151bbc2e11da6341de58e2ac131d4c920ae23a569ac4801ad99d61"
       ]
@@ -3479,7 +3479,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -3489,7 +3489,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -3499,7 +3499,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -3509,7 +3509,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -3519,7 +3519,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -3529,7 +3529,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -3539,7 +3539,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 1,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": [
         "7dad00b46a9ac29d3fd63c8aaeb39eade30df4dbe4711d84a56eeba3e9882671"
       ]
@@ -3551,7 +3551,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 1,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": [
         "268876abe330a8597ca144bc22985ca0c874b76c2ea32f6e8de5c7a63fbd5f8b"
       ]
@@ -3563,7 +3563,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -3573,7 +3573,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -3583,7 +3583,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -3593,7 +3593,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -3603,7 +3603,7 @@
       "merkle_state_transitions_medium": 1,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -3613,7 +3613,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -3623,7 +3623,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 0,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": []
     },
     {
@@ -3633,7 +3633,7 @@
       "merkle_state_transitions_medium": 0,
       "custom_pred_verifications": 1,
       "signed_by": 0,
-      "public_key_of": 0,
+      "public_key": 0,
       "custom_predicates_ids": [
         "3d9b881808fa5f3a140a5c74b8077d1e32f39600fc42348a39fe53825d3aa1dc"
       ]
@@ -5539,16 +5539,16 @@
     "maxInputPods": 2,
     "maxStatements": 48,
     "maxPublicStatements": 20,
-    "maxOpenInputStatements": 20,
+    "maxOpenInputStatementOps": 20,
     "maxCustomPredicates": 8,
-    "maxCustomPredicateVerifications": 8,
+    "maxCustomPredicateVerificationOps": 8,
     "maxCustomPredicateWildcards": 8,
     "containers": {
-      "state": {
+      "stateOps": {
         "maxSmall": 22,
         "maxMedium": 8
       },
-      "transition": {
+      "transitionOps": {
         "maxSmall": 12,
         "maxMedium": 6
       },
@@ -5556,7 +5556,7 @@
       "maxDepthMedium": 32
     },
     "maxDepthMtVds": 6,
-    "maxPublicKeyOf": 2,
-    "maxSignedBy": 4
+    "maxPublicKeyOps": 2,
+    "maxSignedByOps": 4
   }
 }

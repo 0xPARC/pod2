@@ -277,55 +277,55 @@ impl MainPodBuilder {
             }),
             Native(GtToNotEqual) => Ok(Operation(Native(LtToNotEqual), op.1, op.2)),
             Native(DictInsertFromEntries) => {
-                <[_; 4]>::try_from(op.1).map(|[new_dict, old_dict, key, value]| {
+                <[_; 4]>::try_from(op.1).map(|[old_dict, key, value, new_dict]| {
                     Operation(
                         Native(ContainerInsertFromEntries),
-                        vec![new_dict, old_dict, key, value],
+                        vec![old_dict, key, value, new_dict],
                         op.2,
                     )
                 })
             }
             Native(DictUpdateFromEntries) => {
-                <[_; 4]>::try_from(op.1).map(|[new_dict, old_dict, key, value]| {
+                <[_; 4]>::try_from(op.1).map(|[old_dict, key, value, new_dict]| {
                     Operation(
                         Native(ContainerUpdateFromEntries),
-                        vec![new_dict, old_dict, key, value],
+                        vec![old_dict, key, value, new_dict],
                         op.2,
                     )
                 })
             }
             Native(DictDeleteFromEntries) => {
-                <[_; 3]>::try_from(op.1).map(|[new_dict, old_dict, key]| {
+                <[_; 3]>::try_from(op.1).map(|[old_dict, key, new_dict]| {
                     Operation(
                         Native(ContainerDeleteFromEntries),
-                        vec![new_dict, old_dict, key],
+                        vec![old_dict, key, new_dict],
                         op.2,
                     )
                 })
             }
             Native(SetInsertFromEntries) => {
-                <[_; 3]>::try_from(op.1).map(|[new_set, old_set, value]| {
+                <[_; 3]>::try_from(op.1).map(|[old_set, value, new_set]| {
                     Operation(
                         Native(ContainerInsertFromEntries),
-                        vec![new_set, old_set, value.clone(), value],
+                        vec![old_set, value.clone(), value, new_set],
                         op.2,
                     )
                 })
             }
             Native(SetDeleteFromEntries) => {
-                <[_; 3]>::try_from(op.1).map(|[new_set, old_set, value]| {
+                <[_; 3]>::try_from(op.1).map(|[old_set, value, new_set]| {
                     Operation(
                         Native(ContainerDeleteFromEntries),
-                        vec![new_set, old_set, value],
+                        vec![old_set, value, new_set],
                         op.2,
                     )
                 })
             }
             Native(ArrayUpdateFromEntries) => {
-                <[_; 4]>::try_from(op.1).map(|[new_arr, old_arr, i, value]| {
+                <[_; 4]>::try_from(op.1).map(|[old_arr, i, value, new_arr]| {
                     Operation(
                         Native(ContainerUpdateFromEntries),
-                        vec![new_arr, old_arr, i, value],
+                        vec![old_arr, i, value, new_arr],
                         op.2,
                     )
                 })
@@ -377,21 +377,21 @@ impl MainPodBuilder {
             | (Native(ContainerUpdateFromEntries), OpAux::None)
             | (Native(ContainerDeleteFromEntries), OpAux::None) => {
                 let old_container =
-                    op.1.get(1)
+                    op.1.get(0)
                         .and_then(|arg| arg.value())
                         .ok_or(Error::custom(format!(
                             "Invalid container argument for op {}.",
                             op
                         )))?;
                 let key =
-                    op.1.get(2)
+                    op.1.get(1)
                         .and_then(|arg| arg.value())
                         .ok_or(Error::custom(format!(
                             "Invalid key argument for op {}.",
                             op
                         )))?;
                 let value =
-                    op.1.get(3)
+                    op.1.get(2)
                         .and_then(|arg| arg.value())
                         .cloned()
                         .unwrap_or(Value::from(EMPTY_VALUE));
@@ -481,42 +481,42 @@ impl MainPodBuilder {
                     (LtToNotEqual, &[OperationArg::Statement(Statement::Lt(r1, r2))], _) => {
                         Statement::NotEqual(r1.clone(), r2.clone())
                     }
-                    (SumOf, &[a1, a2, a3], _) => {
+                    (SumFromEntries, &[a1, a2, a3], _) => {
                         let (r1, v1) = a1.value_and_ref().ok_or_else(native_arg_error)?;
                         let (r2, v2) = a2.value_and_ref().ok_or_else(native_arg_error)?;
                         let (r3, v3) = a3.value_and_ref().ok_or_else(native_arg_error)?;
                         if middleware::Operation::check_int_fn(v1, v2, v3, sum_op)? {
-                            Statement::SumOf(r1, r2, r3)
+                            Statement::Sum(r1, r2, r3)
                         } else {
                             return Err(native_arg_error());
                         }
                     }
-                    (ProductOf, &[a1, a2, a3], _) => {
+                    (ProductFromEntries, &[a1, a2, a3], _) => {
                         let (r1, v1) = a1.value_and_ref().ok_or_else(native_arg_error)?;
                         let (r2, v2) = a2.value_and_ref().ok_or_else(native_arg_error)?;
                         let (r3, v3) = a3.value_and_ref().ok_or_else(native_arg_error)?;
                         if middleware::Operation::check_int_fn(v1, v2, v3, prod_op)? {
-                            Statement::ProductOf(r1, r2, r3)
+                            Statement::Product(r1, r2, r3)
                         } else {
                             return Err(native_arg_error());
                         }
                     }
-                    (MaxOf, &[a1, a2, a3], _) => {
+                    (MaxFromEntries, &[a1, a2, a3], _) => {
                         let (r1, v1) = a1.value_and_ref().ok_or_else(native_arg_error)?;
                         let (r2, v2) = a2.value_and_ref().ok_or_else(native_arg_error)?;
                         let (r3, v3) = a3.value_and_ref().ok_or_else(native_arg_error)?;
                         if middleware::Operation::check_int_fn(v1, v2, v3, max_op)? {
-                            Statement::MaxOf(r1, r2, r3)
+                            Statement::Max(r1, r2, r3)
                         } else {
                             return Err(native_arg_error());
                         }
                     }
-                    (HashOf, &[a1, a2, a3], _) => {
+                    (HashFromEntries, &[a1, a2, a3], _) => {
                         let (r1, v1) = a1.value_and_ref().ok_or_else(native_arg_error)?;
                         let (r2, v2) = a2.value_and_ref().ok_or_else(native_arg_error)?;
                         let (r3, v3) = a3.value_and_ref().ok_or_else(native_arg_error)?;
-                        if v1 == &hash_op(v2.clone(), v3.clone()) {
-                            Statement::HashOf(r1, r2, r3)
+                        if v3 == &hash_op(v1.clone(), v2.clone()) {
+                            Statement::Hash(r1, r2, r3)
                         } else {
                             return Err(native_arg_error());
                         }
@@ -534,16 +534,16 @@ impl MainPodBuilder {
                         // TODO: validate proof
                         Statement::NotContains(r1, r2)
                     }
-                    (PublicKeyOf, &[a1, a2], _) => {
+                    (PublicKeyFromEntries, &[a1, a2], _) => {
                         let (r1, v1) = a1.value_and_ref().ok_or_else(native_arg_error)?;
                         let (r2, v2) = a2.value_and_ref().ok_or_else(native_arg_error)?;
                         if middleware::Operation::check_public_key(v1, v2)? {
-                            Statement::PublicKeyOf(r1, r2)
+                            Statement::PublicKey(r1, r2)
                         } else {
                             return Err(native_arg_error());
                         }
                     }
-                    (SignedBy, &[a1, a2], OperationAux::Signature(sig)) => {
+                    (SignedByFromEntries, &[a1, a2], OperationAux::Signature(sig)) => {
                         let (r1, v1) = a1.value_and_ref().ok_or_else(native_arg_error)?;
                         let (r2, v2) = a2.value_and_ref().ok_or_else(native_arg_error)?;
                         if middleware::Operation::check_signed_by(v1, v2, sig)? {
@@ -1040,7 +1040,7 @@ pub mod tests {
     fn test_ethdos_recursive() -> Result<()> {
         let params = Params {
             max_statements: 24,
-            max_open_input_statements: 8,
+            max_open_input_statement_ops: 8,
             ..Default::default()
         };
         let vd_set = &*MOCK_VD_SET;
@@ -1230,10 +1230,10 @@ pub mod tests {
         builder.pub_op(Operation(
             OperationType::Native(NativeOperation::DictInsertFromEntries),
             vec![
-                Value::from(new_dict.clone()).into(),
                 OperationArg::Statement(st0.clone()),
                 "d".into(),
                 4.into(),
+                Value::from(new_dict.clone()).into(),
             ],
             OperationAux::None,
         ))?;
@@ -1246,9 +1246,9 @@ pub mod tests {
         builder.pub_op(Operation(
             OperationType::Native(NativeOperation::DictDeleteFromEntries),
             vec![
-                OperationArg::Statement(st0.clone()),
                 Value::from(new_dict).into(),
                 "d".into(),
+                OperationArg::Statement(st0.clone()),
             ],
             OperationAux::None,
         ))?;
@@ -1258,10 +1258,10 @@ pub mod tests {
         builder.pub_op(Operation(
             OperationType::Native(NativeOperation::DictUpdateFromEntries),
             vec![
-                Value::from(new_old_dict).into(),
                 OperationArg::Statement(st0.clone()),
                 "c".into(),
                 55.into(),
+                Value::from(new_old_dict).into(),
             ],
             OperationAux::None,
         ))?;
@@ -1295,9 +1295,9 @@ pub mod tests {
             OperationType::Native(NativeOperation::SetInsertFromEntries),
             // Vec<OperationArg>
             vec![
-                Value::from(set1.clone()).into(),
                 Value::from(empty_set.clone()).into(),
                 1.into(),
+                Value::from(set1.clone()).into(),
             ],
             OperationAux::None,
         ))?;
@@ -1307,9 +1307,9 @@ pub mod tests {
             OperationType::Native(NativeOperation::SetDeleteFromEntries),
             // Vec<OperationArg>
             vec![
-                Value::from(empty_set.clone()).into(),
                 Value::from(set1.clone()).into(),
                 1.into(),
+                Value::from(empty_set.clone()).into(),
             ],
             OperationAux::None,
         ))?;
@@ -1338,10 +1338,10 @@ pub mod tests {
             OperationType::Native(NativeOperation::ArrayUpdateFromEntries),
             // Vec<OperationArg>
             vec![
-                Value::from(array2.clone()).into(),
                 Value::from(array1.clone()).into(),
                 0.into(),
                 5.into(),
+                Value::from(array2.clone()).into(),
             ],
             OperationAux::None,
         ))?;
@@ -1355,7 +1355,7 @@ pub mod tests {
     }
 
     #[test]
-    fn test_public_key_of() -> Result<()> {
+    fn test_public_key() -> Result<()> {
         let params = Params::default();
         let vd_set = &*MOCK_VD_SET;
 
@@ -1377,20 +1377,20 @@ pub mod tests {
             signed_dict.signature.clone(),
         ))?;
 
-        let st0 = builder.priv_op(Operation::dict_contains(
-            signed_dict.dict,
-            "owner",
-            Value::from(pk),
-        ))?;
         let local = dict!({ "known_secret" => sk.clone() });
-        let st1 = builder.priv_op(Operation::dict_contains(
+        let st0 = builder.priv_op(Operation::dict_contains(
             local,
             "known_secret",
             Value::from(sk),
         ))?;
+        let st1 = builder.priv_op(Operation::dict_contains(
+            signed_dict.dict,
+            "owner",
+            Value::from(pk),
+        ))?;
         builder
             .pub_op(Operation(
-                OperationType::Native(NativeOperation::PublicKeyOf),
+                OperationType::Native(NativeOperation::PublicKeyFromEntries),
                 vec![OperationArg::Statement(st0), OperationArg::Statement(st1)],
                 OperationAux::None,
             ))
@@ -1406,7 +1406,7 @@ pub mod tests {
     }
 
     #[test]
-    fn test_public_key_of_wrong_key() -> Result<()> {
+    fn test_public_key_wrong_key() -> Result<()> {
         let params = Params::default();
         let vd_set = &*MOCK_VD_SET;
 
@@ -1426,19 +1426,19 @@ pub mod tests {
         builder
             .pub_op(Operation::dict_signed_by(&signed_dict))
             .unwrap();
-        let st0 = signed_dict.get_statement("owner").unwrap();
         let local = dict!({"known_secret" => SecretKey(BigUint::from(123u32))});
-        let st1 = builder
+        let st0 = builder
             .op(
                 true,
                 vec![],
                 Operation::dict_contains(local, "known_secret", SecretKey(BigUint::from(123u32))),
             )
             .unwrap();
+        let st1 = signed_dict.get_statement("owner").unwrap();
         assert!(builder
             .pub_op(Operation(
                 // OperationType
-                OperationType::Native(NativeOperation::PublicKeyOf),
+                OperationType::Native(NativeOperation::PublicKeyFromEntries),
                 // Vec<OperationArg>
                 vec![OperationArg::Statement(st0), OperationArg::Statement(st1)],
                 OperationAux::None,
@@ -1449,7 +1449,7 @@ pub mod tests {
     }
 
     #[test]
-    fn test_public_key_of_wrong_type() -> Result<()> {
+    fn test_public_key_wrong_type() -> Result<()> {
         let params = Params::default();
         let vd_set = &*MOCK_VD_SET;
 
@@ -1463,9 +1463,9 @@ pub mod tests {
         assert!(builder
             .pub_op(Operation(
                 // OperationType
-                OperationType::Native(NativeOperation::PublicKeyOf),
+                OperationType::Native(NativeOperation::PublicKeyFromEntries),
                 // Vec<OperationArg>
-                vec![OperationArg::Literal(int2), OperationArg::Literal(sk),],
+                vec![OperationArg::Literal(sk), OperationArg::Literal(int2),],
                 OperationAux::None,
             ))
             .is_err());
@@ -1477,11 +1477,11 @@ pub mod tests {
         assert!(builder
             .pub_op(Operation(
                 // OperationType
-                OperationType::Native(NativeOperation::PublicKeyOf),
+                OperationType::Native(NativeOperation::PublicKeyFromEntries),
                 // Vec<OperationArg>
                 vec![
-                    OperationArg::Literal(pk.clone()),
                     OperationArg::Literal(int1),
+                    OperationArg::Literal(pk.clone()),
                 ],
                 OperationAux::None,
             ))

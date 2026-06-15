@@ -160,11 +160,11 @@ pub(crate) fn extract_custom_predicate_verifications(
         }
     }
 
-    if table.len() > params.max_custom_predicate_verifications {
+    if table.len() > params.max_custom_predicate_verification_ops {
         return Err(Error::custom(format!(
             "The number of required custom predicate verifications ({}) exceeds the maximum number ({}).",
             table.len(),
-            params.max_custom_predicate_verifications
+            params.max_custom_predicate_verification_ops
         )));
     }
     Ok(table)
@@ -210,7 +210,7 @@ pub(crate) fn extract_merkle_proofs(
         if pf.existence
             // TODO: Make sure there's no off-by-one error here
             && pf.siblings.len() <= params.containers.max_depth_small
-            && tables.small.len() < params.containers.state.max_small
+            && tables.small.len() < params.containers.state_ops.max_small
         {
             aux_list[i] = OperationAux::MerkleProofIndex(Size::Small, tables.small.len());
             tables.small.push(claim_proof);
@@ -219,11 +219,11 @@ pub(crate) fn extract_merkle_proofs(
             tables.medium.push(claim_proof);
         }
     }
-    if tables.medium.len() > params.containers.state.max_medium {
+    if tables.medium.len() > params.containers.state_ops.max_medium {
         return Err(Error::custom(format!(
             "The number of required Merkle proofs ({}) exceeds the maximum number ({}).",
             tables.medium.len(),
-            params.containers.state.max_medium
+            params.containers.state_ops.max_medium
         )));
     }
     Ok(tables)
@@ -252,7 +252,7 @@ pub(crate) fn extract_merkle_transition_proofs(
         if pf.op_proof.existence
             // TODO: Make sure there's no off-by-one error here
             && pf.siblings.len() <= params.containers.max_depth_small
-            && tables.small.len() < params.containers.transition.max_small
+            && tables.small.len() < params.containers.transition_ops.max_small
         {
             aux_list[i] = OperationAux::MerkleTransitionProofIndex(Size::Small, tables.small.len());
             tables.small.push(pf);
@@ -262,17 +262,17 @@ pub(crate) fn extract_merkle_transition_proofs(
             tables.medium.push(pf);
         }
     }
-    if tables.medium.len() > params.containers.transition.max_medium {
+    if tables.medium.len() > params.containers.transition_ops.max_medium {
         return Err(Error::custom(format!(
             "The number of required Merkle proofs ({}) exceeds the maximum number ({}).",
             tables.medium.len(),
-            params.containers.transition.max_medium
+            params.containers.transition_ops.max_medium
         )));
     }
     Ok(tables)
 }
 
-pub(crate) fn extract_public_key_of(
+pub(crate) fn extract_public_key(
     params: &Params,
     aux_list: &mut [OperationAux],
     operations: &[middleware::Operation],
@@ -281,8 +281,8 @@ pub(crate) fn extract_public_key_of(
     let mut table = Vec::new();
     for (i, (op, st)) in operations.iter().zip(statements.iter()).enumerate() {
         if let (
-            middleware::Operation::PublicKeyOf(_, sk_s),
-            middleware::Statement::PublicKeyOf(_, sk_ref),
+            middleware::Operation::PublicKeyFromEntries(sk_s, _),
+            middleware::Statement::PublicKey(sk_ref, _),
         ) = (op, st)
         {
             let deduction_err = || MiddlewareError::invalid_deduction(op.clone(), st.clone());
@@ -290,15 +290,15 @@ pub(crate) fn extract_public_key_of(
             let sk = value
                 .as_secret_key()
                 .ok_or_else(|| Error::custom("{value} not SecretKey"))?;
-            aux_list[i] = OperationAux::PublicKeyOfIndex(table.len());
+            aux_list[i] = OperationAux::PublicKeyIndex(table.len());
             table.push(sk);
         }
     }
-    if table.len() > params.max_public_key_of {
+    if table.len() > params.max_public_key_ops {
         return Err(Error::custom(format!(
             "The number of required PublicKeyOf verifications ({}) exceeds the maximum number ({}).",
             table.len(),
-            params.max_public_key_of
+            params.max_public_key_ops
         )));
     }
     Ok(table)
@@ -334,7 +334,7 @@ pub(crate) fn extract_signatures(
     for (i, (op, st)) in operations.iter().zip(statements.iter()).enumerate() {
         let deduction_err = || MiddlewareError::invalid_deduction(op.clone(), st.clone());
         if let (
-            middleware::Operation::SignedBy(msg_s, pk_s, sig),
+            middleware::Operation::SignedByFromEntries(msg_s, pk_s, sig),
             middleware::Statement::SignedBy(msg_ref, pk_ref),
         ) = (op, st)
         {
@@ -350,11 +350,11 @@ pub(crate) fn extract_signatures(
             });
         }
     }
-    if table.len() > params.max_signed_by {
+    if table.len() > params.max_signed_by_ops {
         return Err(Error::custom(format!(
             "The number of required signatures ({}) exceeds the maximum number ({}).",
             table.len(),
-            params.max_signed_by
+            params.max_signed_by_ops
         )));
     }
     Ok(table)
@@ -372,11 +372,11 @@ pub(crate) fn extract_open_input_statements(
             table.push(input_pod_open_statement.clone());
         }
     }
-    if table.len() > params.max_open_input_statements {
+    if table.len() > params.max_open_input_statement_ops {
         return Err(Error::custom(format!(
             "The number of required input openings ({}) exceeds the maximum number ({}).",
             table.len(),
-            params.max_open_input_statements
+            params.max_open_input_statement_ops
         )));
     }
     Ok(table)
@@ -564,8 +564,8 @@ impl MainPodProver for Prover {
         } else {
             None
         };
-        let public_key_of_sks =
-            extract_public_key_of(params, &mut aux_list, inputs.operations, &input_statements)?;
+        let public_key_sks =
+            extract_public_key(params, &mut aux_list, inputs.operations, &input_statements)?;
         let signed_bys =
             extract_signatures(params, &mut aux_list, inputs.operations, &input_statements)?;
 
@@ -617,7 +617,7 @@ impl MainPodProver for Prover {
             merkle_proofs,
             open_input_statements,
             pad_open_input_statement,
-            public_key_of_sks,
+            public_key_sks,
             signed_bys,
             merkle_transition_proofs,
         };
@@ -903,8 +903,8 @@ pub mod tests {
             // With max_input_main_pods=3 we need random access to a vector of length 73.
             max_input_pods: 0,
             max_custom_predicates: 0,
-            max_custom_predicate_verifications: 0,
-            max_open_input_statements: 0,
+            max_custom_predicate_verification_ops: 0,
+            max_open_input_statement_ops: 0,
             ..Default::default()
         };
         println!("{:#?}", params);
@@ -962,10 +962,10 @@ pub mod tests {
     #[test]
     fn test_mini_0() {
         let params = middleware::Params {
-            max_signed_by: 1,
+            max_signed_by_ops: 1,
             max_input_pods: 1,
             max_statements: 8,
-            max_open_input_statements: 4,
+            max_open_input_statement_ops: 4,
             ..Default::default()
         };
         let mut vds = DEFAULT_VD_LIST.clone();
@@ -1015,24 +1015,24 @@ pub mod tests {
     #[test]
     fn test_mini_1() {
         let params = middleware::Params {
-            max_signed_by: 0,
+            max_signed_by_ops: 0,
             max_input_pods: 0,
             max_statements: 2,
-            max_open_input_statements: 1,
+            max_open_input_statement_ops: 1,
             containers: middleware::ParamsContainers {
-                state: middleware::ParamsMerkleProofs {
+                state_ops: middleware::ParamsMerkleProofs {
                     max_small: 0,
                     max_medium: 0,
                 },
-                transition: middleware::ParamsMerkleProofs {
+                transition_ops: middleware::ParamsMerkleProofs {
                     max_small: 0,
                     max_medium: 0,
                 },
                 max_depth_small: 8,
                 max_depth_medium: 32,
             },
-            max_public_key_of: 0,
-            max_custom_predicate_verifications: 0,
+            max_public_key_ops: 0,
+            max_custom_predicate_verification_ops: 0,
             max_custom_predicates: 0,
             ..Default::default()
         };
@@ -1061,22 +1061,22 @@ pub mod tests {
     #[test]
     fn test_mainpod_small_empty() {
         let params = middleware::Params {
-            max_signed_by: 0,
+            max_signed_by_ops: 0,
             max_input_pods: 1,
             max_statements: 5,
             max_public_statements: 2,
-            max_open_input_statements: 2,
+            max_open_input_statement_ops: 2,
             max_custom_predicates: 2,
-            max_custom_predicate_verifications: 2,
+            max_custom_predicate_verification_ops: 2,
             max_custom_predicate_wildcards: 3,
-            max_public_key_of: 2,
+            max_public_key_ops: 2,
             max_depth_mt_vds: 6,
             containers: middleware::ParamsContainers {
-                state: middleware::ParamsMerkleProofs {
+                state_ops: middleware::ParamsMerkleProofs {
                     max_small: 2,
                     max_medium: 2,
                 },
-                transition: middleware::ParamsMerkleProofs {
+                transition_ops: middleware::ParamsMerkleProofs {
                     max_small: 2,
                     max_medium: 2,
                 },
@@ -1135,18 +1135,18 @@ pub mod tests {
     #[test]
     fn test_main_mini_custom_1() -> frontend::Result<()> {
         let params = Params {
-            max_signed_by: 0,
+            max_signed_by_ops: 0,
             max_input_pods: 0,
             max_statements: 9,
-            max_open_input_statements: 0,
+            max_open_input_statement_ops: 0,
             max_custom_predicate_wildcards: 4,
-            max_custom_predicate_verifications: 2,
+            max_custom_predicate_verification_ops: 2,
             containers: middleware::ParamsContainers {
-                state: middleware::ParamsMerkleProofs {
+                state_ops: middleware::ParamsMerkleProofs {
                     max_small: 0,
                     max_medium: 3,
                 },
-                transition: middleware::ParamsMerkleProofs {
+                transition_ops: middleware::ParamsMerkleProofs {
                     max_small: 0,
                     max_medium: 0,
                 },
@@ -1214,18 +1214,18 @@ pub mod tests {
         use frontend::BuilderArg;
 
         let params = Params {
-            max_signed_by: 0,
+            max_signed_by_ops: 0,
             max_input_pods: 0,
             max_statements: 6,
-            max_open_input_statements: 0,
+            max_open_input_statement_ops: 0,
             max_custom_predicate_wildcards: 4,
-            max_custom_predicate_verifications: 2,
+            max_custom_predicate_verification_ops: 2,
             containers: middleware::ParamsContainers {
-                state: middleware::ParamsMerkleProofs {
+                state_ops: middleware::ParamsMerkleProofs {
                     max_small: 0,
                     max_medium: 0,
                 },
-                transition: middleware::ParamsMerkleProofs {
+                transition_ops: middleware::ParamsMerkleProofs {
                     max_small: 0,
                     max_medium: 0,
                 },

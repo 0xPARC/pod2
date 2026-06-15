@@ -70,19 +70,15 @@ impl TryFrom<Statement> for middleware::Statement {
                     S::Contains(a1.try_into()?, a2.try_into()?, a3.try_into()?)
                 }
                 (NP::NotContains, &[a1, a2]) => S::NotContains(a1.try_into()?, a2.try_into()?),
-                (NP::SumOf, &[a1, a2, a3]) => {
-                    S::SumOf(a1.try_into()?, a2.try_into()?, a3.try_into()?)
+                (NP::Sum, &[a1, a2, a3]) => S::Sum(a1.try_into()?, a2.try_into()?, a3.try_into()?),
+                (NP::Product, &[a1, a2, a3]) => {
+                    S::Product(a1.try_into()?, a2.try_into()?, a3.try_into()?)
                 }
-                (NP::ProductOf, &[a1, a2, a3]) => {
-                    S::ProductOf(a1.try_into()?, a2.try_into()?, a3.try_into()?)
+                (NP::Max, &[a1, a2, a3]) => S::Max(a1.try_into()?, a2.try_into()?, a3.try_into()?),
+                (NP::Hash, &[a1, a2, a3]) => {
+                    S::Hash(a1.try_into()?, a2.try_into()?, a3.try_into()?)
                 }
-                (NP::MaxOf, &[a1, a2, a3]) => {
-                    S::MaxOf(a1.try_into()?, a2.try_into()?, a3.try_into()?)
-                }
-                (NP::HashOf, &[a1, a2, a3]) => {
-                    S::HashOf(a1.try_into()?, a2.try_into()?, a3.try_into()?)
-                }
-                (NP::PublicKeyOf, &[a1, a2]) => S::PublicKeyOf(a1.try_into()?, a2.try_into()?),
+                (NP::PublicKey, &[a1, a2]) => S::PublicKey(a1.try_into()?, a2.try_into()?),
                 (NP::SignedBy, &[a1, a2]) => S::SignedBy(a1.try_into()?, a2.try_into()?),
                 (NP::ContainerInsert, &[a1, a2, a3, a4]) => S::ContainerInsert(
                     a1.try_into()?,

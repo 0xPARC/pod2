@@ -60,7 +60,7 @@ pub enum OperationAux {
     MerkleTransitionProofIndex(Size, usize),
     OpenInputStatement(usize),
     CustomPredVerifyIndex(usize),
-    PublicKeyOfIndex(usize),
+    PublicKeyIndex(usize),
     SignedByIndex(usize),
 }
 
@@ -71,7 +71,7 @@ impl OperationAux {
             Size::Small => 1,
             Size::Medium => {
                 Self::table_offset_merkle_proof(params, Size::Small)
-                    + params.containers.state.max_small
+                    + params.containers.state_ops.max_small
             }
         }
     }
@@ -79,34 +79,34 @@ impl OperationAux {
         match size {
             Size::Small => {
                 Self::table_offset_merkle_proof(params, Size::min())
-                    + params.containers.state.max_total()
+                    + params.containers.state_ops.max_total()
             }
             Size::Medium => {
                 Self::table_offset_merkle_transition_proof(params, Size::Small)
-                    + params.containers.transition.max_small
+                    + params.containers.transition_ops.max_small
             }
         }
     }
     fn table_offset_open_input_statement(params: &Params) -> usize {
         Self::table_offset_merkle_transition_proof(params, Size::min())
-            + params.containers.transition.max_total()
+            + params.containers.transition_ops.max_total()
     }
     fn table_offset_custom_pred_verify(params: &Params) -> usize {
-        Self::table_offset_open_input_statement(params) + params.max_open_input_statements
+        Self::table_offset_open_input_statement(params) + params.max_open_input_statement_ops
     }
-    fn table_offset_public_key_of(params: &Params) -> usize {
-        Self::table_offset_custom_pred_verify(params) + params.max_custom_predicate_verifications
+    fn table_offset_public_key(params: &Params) -> usize {
+        Self::table_offset_custom_pred_verify(params) + params.max_custom_predicate_verification_ops
     }
     fn table_offset_signed_by(params: &Params) -> usize {
-        Self::table_offset_public_key_of(params) + params.max_public_key_of
+        Self::table_offset_public_key(params) + params.max_public_key_ops
     }
     pub(crate) fn table_size(params: &Params) -> usize {
-        1 + params.containers.state.max_total()
-            + params.containers.transition.max_total()
-            + params.max_open_input_statements
-            + params.max_custom_predicate_verifications
-            + params.max_public_key_of
-            + params.max_signed_by
+        1 + params.containers.state_ops.max_total()
+            + params.containers.transition_ops.max_total()
+            + params.max_open_input_statement_ops
+            + params.max_custom_predicate_verification_ops
+            + params.max_public_key_ops
+            + params.max_signed_by_ops
     }
     pub fn table_index(&self, params: &Params) -> usize {
         match self {
@@ -117,7 +117,7 @@ impl OperationAux {
             }
             Self::OpenInputStatement(i) => Self::table_offset_open_input_statement(params) + *i,
             Self::CustomPredVerifyIndex(i) => Self::table_offset_custom_pred_verify(params) + *i,
-            Self::PublicKeyOfIndex(i) => Self::table_offset_public_key_of(params) + *i,
+            Self::PublicKeyIndex(i) => Self::table_offset_public_key(params) + *i,
             Self::SignedByIndex(i) => Self::table_offset_signed_by(params) + *i,
         }
     }
@@ -205,7 +205,7 @@ impl Operation {
                     .sig
                     .clone(),
             ),
-            OperationAux::PublicKeyOfIndex(_) => crate::middleware::OperationAux::None,
+            OperationAux::PublicKeyIndex(_) => crate::middleware::OperationAux::None,
         };
         Ok(middleware::Operation::op(
             self.0.clone(),
@@ -236,7 +236,7 @@ impl fmt::Display for Operation {
             }
             OperationAux::CustomPredVerifyIndex(i) => write!(f, " custom_pred_verify_{:02}", i)?,
             OperationAux::OpenInputStatement(i) => write!(f, " open_input_statement_{:02}", i)?,
-            OperationAux::PublicKeyOfIndex(i) => write!(f, " public_key_of_{:02}", i)?,
+            OperationAux::PublicKeyIndex(i) => write!(f, " public_key_{:02}", i)?,
             OperationAux::SignedByIndex(i) => write!(f, " signed_by_{:02}", i)?,
             OperationAux::MerkleTransitionProofIndex(size, i) => {
                 write!(f, " {}_merkle_transition_proof_{:02}", size, i)?

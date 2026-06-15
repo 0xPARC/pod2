@@ -513,10 +513,10 @@ mod tests {
     fn test_round_trip_with_sum_and_hash_operations() {
         let input = r#"
             math_operations(A, B, C) = AND(
-                SumOf(A["value"], B["value"], C["total"])
-                ProductOf(A["factor"], B["factor"], C["product"])
-                MaxOf(A["score"], B["score"], C["max_score"])
-                HashOf(A["data"], B["salt"], C["hash"])
+                Sum(A["value"], B["value"], C["total"])
+                Product(A["factor"], B["factor"], C["product"])
+                Max(A["score"], B["score"], C["max_score"])
+                Hash(A["data"], B["salt"], C["hash"])
             )
         "#;
         assert_round_trip(input);

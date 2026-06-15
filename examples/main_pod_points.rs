@@ -81,7 +81,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         over_9000(player, private: points_lvl_1, points_lvl_2, points_total) = AND(
             has_points(player, 1, points_lvl_1)
             has_points(player, 2, points_lvl_2)
-            SumOf(points_total, points_lvl_1, points_lvl_2)
+            Sum(points_lvl_1, points_lvl_2, points_total)
             Gt(points_total, 9000)
         )
     "#,
@@ -151,7 +151,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut builder = MainPodBuilder::new(&params, vd_set);
     builder.add_pod(pod_alice_lvl_1_points)?;
     builder.add_pod(pod_alice_lvl_2_points)?;
-    let st_points_total = builder.priv_op(Operation::sum_of(3512 + 5771, 3512, 5771))?;
+    let st_points_total = builder.priv_op(Operation::sum(3512, 5771, 3512 + 5771))?;
     let st_gt_9000 = builder.priv_op(Operation::gt(3512 + 5771, 9000))?;
     let _st_over_9000 = builder.pub_op(Operation::custom(
         over_9000_pred,

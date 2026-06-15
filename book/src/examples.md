@@ -22,7 +22,7 @@ eth_dos_friend(src, dst, private: attestation_pod) = AND(
 eth_dos_distance(src, dst, distance, private: shorter_distance, intermed) = OR(
     AND(
         eth_dos_distance(src, intermed, shorter)
-        SumOf(distance, shorter_distance, 1)
+        Sum(shorter_distance, 1, distance)
         eth_friend(intermed, dst)
     )
     AND(
@@ -72,9 +72,9 @@ loan_check(receiver, private: gov_id, paystub, nullifier, sk, sk_pok) = AND(
     Equal(sk_pok[KEY_SIGNER], receiver)
     Equal(sk_pok[KEY_TYPE], SIGNATURE)
     Equal(sk_pok["auth"], "ZUKYC_V1_AUTH")
-    HashOf(, 0, sk)
+    Hash(, 0, sk)
     // Nullifier
-    HashOf(nullifier, "ZUKYC_V1_NULLIFIER", sk)
+    Hash("ZUKYC_V1_NULLIFIER", sk, nullifier)
 )
 ```
 

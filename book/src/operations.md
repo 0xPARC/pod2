@@ -8,7 +8,6 @@ The following table summarises the natively-supported operations:
 | Code | Identifier            | Args                | Condition                                                                                                             | Output                                                         |
 |------|-----------------------|---------------------|-----------------------------------------------------------------------------------------------------------------------|----------------------------------------------------------------|
 | 0    | `None`                |                     |                                                                                                                       | `None`                                                         |
-| 1    | `CopyStatement`       | `s`                 |                                                                                                                       |                                                                |
 | 2    | `EqualFromEntries`    | `s1`, `s2`          | `s1 = Contains(ak1..., value1)`, `s2 = Contains(ak2..., value2)`, `value1 = value2`                                   | `Equal(ak1, ak2)`                                              |
 | 3    | `NotEqualFromEntries` | `s1`, `s2`          | `s1 = Contains(ak1..., value1)`, `s2 = Contains(ak2..., value2)`, `value1 != value2`                                  | `NotEqual(ak1, ak2)`                                           |
 | 4    | `LtEqFromEntries`     | `s1`, `s2`          | `s1 = Contains(ak1..., value1)`, `s2 = Contains(ak2..., value2)`, `value1 <= value2`                                  | `LtEq(ak1, ak2)`                                               |
@@ -17,15 +16,17 @@ The following table summarises the natively-supported operations:
 | 7    | `LtToNotEqual`        | `s`                 | `s = Lt(ak1, ak2)`                                                                                                    | `NotEqual(ak1, ak2)`                                           |
 | 8   | `ContainsFromEntries`  | `s1`, `s2`, `s3`, `proof` | `s1 = Contains(ak1..., value1)`, `s2 = Contains(ak2..., value2)`, `s3 = Contains(ak3..., value3)`, `merkle_includes(value1, value2, value3, proof) = true`             | `Contains(ak1, ak2, ak3)` |
 | 9   | `NotContainsFromEntries` | `s1`, `s2`, `proof` | `s1 = Contains(ak1..., value1)`, `s2 = Contains(ak2..., value2)`, `merkle_excludes(value1, value2, proof) = true`   | `NotContains(ak1, ak2)`                                        |
-| 10   | `SumOf`               | `s1`, `s2`, `s3`    | `s1 = Contains(ak1..., value1)`, `s2 = Contains(ak2..., value2)`, `s3 = Contains(ak3..., value3)`, `value1 = value2 + value3`     | `SumOf(ak1, ak2, ak3)`                             |
-| 11   | `ProductOf`           | `s1`, `s2`, `s3`    | `s1 = Contains(ak1..., value1)`, `s2 = Contains(ak2..., value2)`, `s3 = Contains(ak3..., value3)`, `value1 = value2 * value3`     | `ProductOf(ak1, ak2, ak3)`                         |
-| 12   | `MaxOf`               | `s1`, `s2`, `s3`    | `s1 = Contains(ak1..., value1)`, `s2 = Contains(ak2..., value2)`, `s3 = Contains(ak3..., value3)`, `value1 = max(value2, value3)` | `MaxOf(ak1, ak2, ak3)`                             |
-| 13   | `HashOf`              | `s1`, `s2`, `s3`    | `s1 = Contains(ak1..., value1)`, `s2 = Contains(ak2..., value2)`, `s3 = Contains(ak3..., value3)`, `value1 = hash(value2, value3)`| `HashOf(ak1, ak2, ak3)`                            |
-| 14   | `PublicKeyOf`         | `s1`, `s2`          | `s1 = Contains(ak1..., value1)`, `s2 = Contains(ak2..., value2)`, `value1 = derive_public_key(value2)`                | `PublicKeyOf(ak1, ak2)`                                        |
-| 15   | `SignedBy`            | `s1`, `s2`, `sig`   | `s1 = Contains(ak1..., value1)`, `s2 = Contains(ak2..., value2)`, `verify_signature(msg: value1, pk: value2, sig) = true` | `SignedBy(ak1, ak2)`                                       |
+| 10   | `SumFromEntries`               | `s1`, `s2`, `s3`    | `s1 = Contains(ak1..., value1)`, `s2 = Contains(ak2..., value2)`, `s3 = Contains(ak3..., value3)`, `value1 + value2 = value3`     | `Sum(ak1, ak2, ak3)`                             |
+| 11   | `ProductFromEntries`           | `s1`, `s2`, `s3`    | `s1 = Contains(ak1..., value1)`, `s2 = Contains(ak2..., value2)`, `s3 = Contains(ak3..., value3)`, `value1 * value2 = value3`     | `Product(ak1, ak2, ak3)`                         |
+| 12   | `MaxFromEntries`               | `s1`, `s2`, `s3`    | `s1 = Contains(ak1..., value1)`, `s2 = Contains(ak2..., value2)`, `s3 = Contains(ak3..., value3)`, `max(value1, value2) = value3` | `Max(ak1, ak2, ak3)`                             |
+| 13   | `HashFromEntries`              | `s1`, `s2`, `s3`    | `s1 = Contains(ak1..., value1)`, `s2 = Contains(ak2..., value2)`, `s3 = Contains(ak3..., value3)`, `hash(value1, value2) = value3` | `Hash(ak1, ak2, ak3)`                            |
+| 14   | `PublicKeyFromEntries`         | `s1`, `s2`          | `s1 = Contains(ak1..., value1)`, `s2 = Contains(ak2..., value2)`, `derive_public_key(value1) = value2 `                | `PublicKey(ak1, ak2)`                                        |
+| 15   | `SignedByFromEntries`            | `s1`, `s2`, `sig`   | `s1 = Contains(ak1..., value1)`, `s2 = Contains(ak2..., value2)`, `verify_signature(msg: value1, pk: value2, sig) = true` | `SignedBy(ak1, ak2)`                                       |
 | 16   | `ContainerInsertFromEntries` | `s1`, `s2`, `s3`, `s4`, `proof` | `s1 = Contains(ak1..., value1)`, `s2 = Contains(ak2..., value2)`, `s3 = Contains(ak3..., value3)`, `s4 = Contains(ak4..., value4)`, `merkle_insert(value1, value2, value3, value4, proof) = true`    | `ContainerInsert(ak1, ak2, ak3, ak4)` |
 | 17   | `ContainerUpdateFromEntries` | `s1`, `s2`, `s3`, `s4`, `proof` | `s1 = Contains(ak1..., value1)`, `s2 = Contains(ak2..., value2)`, `s3 = Contains(ak3..., value3)`, `s4 = Contains(ak4..., value4)`, `merkle_update(value1, value2, value3, value4, proof) = true`    | `ContainerUpdate(ak1, ak2, ak3, ak4)` |
 | 18   | `ContainerDeleteFromEntries` | `s1`, `s2`, `s3`, `proof` | `s1 = Contains(ak1..., value1)`, `s2 = Contains(ak2..., value2)`, `s3 = Contains(ak3..., value3)`, `merkle_delete(value1, value2, value3, proof) = true`    | `ContainerDelete(ak1, ak2, ak3, ak4)` |
+| 19   | `ReplaceValueWithEntry` | `[args]` `s` | `args[i] = None \| Contains, s' = s with literal arguments replaced by entries following args`    | `s'` |
+| 20   | `OpenInputStatement` |  | `s = input pod statement at some index` | `s` |
 
 <br><br>
 
@@ -41,12 +42,12 @@ The following table summarizes "syntactic sugar" operations.  These operations a
 | 1006 | GtEqFromEntries | `GtEqFromEntries(s1, s2) -> LtEqFromEntries(s2, s1)` |
 | 1007 | GtFromEntries | `GtFromEntries(s1, s2) -> LtFromEntries(s2, s1)` |
 | 1008 | GtToNotEqual | `GtToNotEqual(s1, s2) -> LtToNotEqual(s1, s2)` |
-| 1009 | DictInsertFromEntries | `DictInsertFromEntries(new_dict_st, old_dict_st, key_st, value_st, proof) -> ContainerInsertFromEntries(new_dict_st, old_dict_st, key_st, value_st, proof)` |
-| 1010 | DictUpdateFromEntries | `DictInsertUpdateEntries(new_dict_st, old_dict_st, key_st, value_st, proof) -> ContainerUpdateFromEntries(new_dict_st, old_dict_st, key_st, value_st, proof)` |
-| 1011 | DictDeleteFromEntries | `DictInsertDeleteEntries(new_dict_st, old_dict_st, key_st, proof) -> ContainerDeleteFromEntries(new_dict_st, old_dict_st, key_st, value_st, proof)` |
-| 1009 | SetInsertFromEntries | `SetInsertFromEntries(new_set_st, old_set_st, value_st, proof) -> ContainerInsertFromEntries(new_set_st, old_set_st, value_st, value_st, proof)` |
-| 1011 | SetDeleteFromEntries | `SetInsertDeleteEntries(new_set_st, old_set_st, value_st, proof) -> ContainerDeleteFromEntries(new_set_st, old_set_st, value_st, value_st, proof)` |
-| 1010 | ArrayUpdateFromEntries | `ArrayInsertUpdateEntries(new_array_st, old_array_st, index_st, value_st, proof) -> ContainerUpdateFromEntries(new_array_st, old_array_st, index_st, value_st, proof)` |
+| 1009 | DictInsertFromEntries | `DictInsertFromEntries(old_dict_st, key_st, value_st, new_dict_st, proof) -> ContainerInsertFromEntries(old_dict_st, key_st, value_st, new_dict_st, proof)` |
+| 1010 | DictUpdateFromEntries | `DictInsertUpdateEntries(old_dict_st, key_st, value_st, new_dict_st, proof) -> ContainerUpdateFromEntries(old_dict_st, key_st, value_st, new_dict_st, proof)` |
+| 1011 | DictDeleteFromEntries | `DictInsertDeleteEntries(old_dict_st, key_st, new_dict_st, proof) -> ContainerDeleteFromEntries(old_dict_st, key_st, value_st, new_dict_st, proof)` |
+| 1009 | SetInsertFromEntries | `SetInsertFromEntries(old_set_st, value_st, new_set_st, proof) -> ContainerInsertFromEntries(old_set_st, value_st, value_st, new_set_st, proof)` |
+| 1011 | SetDeleteFromEntries | `SetInsertDeleteEntries(old_set_st, value_st, new_set_st, proof) -> ContainerDeleteFromEntries(old_set_st, value_st, value_st, new_set_st, proof)` |
+| 1010 | ArrayUpdateFromEntries | `ArrayInsertUpdateEntries(old_array_st, index_st, value_st, new_array_st, proof) -> ContainerUpdateFromEntries(old_array_st, index_st, value_st, new_array_st, proof)` |
 
 <br><br>
 

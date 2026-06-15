@@ -203,14 +203,14 @@ enum OperationAuxTableTag {
 
 fn max_operation_aux_entry_len(params: &Params) -> usize {
     [
-        (params.containers.state.max_total() > 0).then(|| MerkleClaimTarget::size(params)),
-        (params.containers.transition.max_total() > 0)
+        (params.containers.state_ops.max_total() > 0).then(|| MerkleClaimTarget::size(params)),
+        (params.containers.transition_ops.max_total() > 0)
             .then(|| MerkleTreeStateTransitionClaimTarget::size(params)),
-        (params.max_custom_predicate_verifications > 0)
+        (params.max_custom_predicate_verification_ops > 0)
             .then(|| CustomPredicateVerifyQueryTarget::size(params)),
-        (params.max_open_input_statements > 0).then(|| StatementTarget::size(params)),
-        (params.max_public_key_of > 0).then(|| PubKeySecKeyTarget::size(params)),
-        (params.max_signed_by > 0).then(|| MsgPubKeyTarget::size(params)),
+        (params.max_open_input_statement_ops > 0).then(|| StatementTarget::size(params)),
+        (params.max_public_key_ops > 0).then(|| SecKeyPubKeyTarget::size(params)),
+        (params.max_signed_by_ops > 0).then(|| MsgPubKeyTarget::size(params)),
     ]
     .into_iter()
     .flatten()
@@ -237,7 +237,7 @@ impl Flattenable for HashPairTarget {
     }
 }
 
-type PubKeySecKeyTarget = HashPairTarget; // (public_key, secret_key)
+type SecKeyPubKeyTarget = HashPairTarget; // (secret_key, public_key)
 type MsgPubKeyTarget = HashPairTarget; // (message, public_key)
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -361,7 +361,7 @@ fn append_open_input_statements_aux_table_circuit(
     }
     assert_eq!(params.max_input_pods, input_pod_table.len());
     assert_eq!(
-        params.max_open_input_statements,
+        params.max_open_input_statement_ops,
         open_input_statements.len()
     );
     for data in open_input_statements {
@@ -408,15 +408,15 @@ fn build_operation_aux_table_circuit(
 ) -> Result<MuxTableTarget> {
     let measure = measure_gates_begin!(builder, "BuildOpAuxTbl");
     assert_eq!(
-        params.max_custom_predicate_verifications,
+        params.max_custom_predicate_verification_ops,
         input.custom_predicate_verifications.len()
     );
     assert_eq!(
-        params.containers.state.max_small,
+        params.containers.state_ops.max_small,
         input.merkle_proofs.small.len()
     );
     assert_eq!(
-        params.containers.state.max_medium,
+        params.containers.state_ops.max_medium,
         input.merkle_proofs.medium.len()
     );
     let max_entry_len = max_operation_aux_entry_len(params);
@@ -477,8 +477,8 @@ fn build_operation_aux_table_circuit(
     // PublicKeyOf: verify the derivation from a Schnorr secret key to public key
     let invgenerator = builder.constant_point(Point::generator().inverse());
     let zero_bits: [BoolTarget; 320] = array::from_fn(|_| builder._false());
-    for sk in &input.public_key_of_sks {
-        let measure = measure_gates_begin!(builder, "PublicKeyOf");
+    for sk in &input.public_key_sks {
+        let measure = measure_gates_begin!(builder, "PublicKey");
         let group_orderm1 = &*GROUP_ORDER - BigUint::one();
         let group_orderm1target = builder.constant_biguint320(&group_orderm1);
         let compare_ok = list_le_circuit(
@@ -497,7 +497,7 @@ fn build_operation_aux_table_circuit(
             pk.x.components.into_iter().chain(pk.u.components).collect(),
         );
 
-        let entry: PubKeySecKeyTarget = HashPairTarget(pk_hash, sk_hash);
+        let entry: SecKeyPubKeyTarget = HashPairTarget(sk_hash, pk_hash);
 
         table.push(builder, OperationAuxTableTag::PublicKeyOf as u32, &entry);
         measure_gates_end!(builder, measure);
@@ -584,16 +584,16 @@ fn verify_operation_circuit(
             verify_lt_lteq_from_entries_circuit(builder, st, &op.op_type, &cache),
             verify_transitive_eq_circuit(params, builder, st, &op.op_type, &cache.op_args),
             verify_lt_to_neq_circuit(params, builder, st, &op.op_type, &cache.op_args),
-            verify_hash_of_circuit(params, builder, st, &op.op_type, &cache),
-            verify_sum_of_circuit(params, builder, st, &op.op_type, &cache),
-            verify_product_of_circuit(params, builder, st, &op.op_type, &cache),
-            verify_max_of_circuit(params, builder, st, &op.op_type, &cache),
+            verify_hash_from_entries_circuit(params, builder, st, &op.op_type, &cache),
+            verify_sum_from_entries_circuit(params, builder, st, &op.op_type, &cache),
+            verify_product_from_entries_circuit(params, builder, st, &op.op_type, &cache),
+            verify_max_from_entries_circuit(params, builder, st, &op.op_type, &cache),
             verify_replace_value_with_entry_circuit(params, builder, st, &op.op_type, &cache),
         ]);
     }
     // Skip these if there are no resolved aux entries
     if let Some(resolved_aux) = resolved_aux {
-        if params.containers.state.max_total() > 0 {
+        if params.containers.state_ops.max_total() > 0 {
             op_checks.extend_from_slice(&[
                 verify_contains_from_entries_circuit(
                     params,
@@ -613,8 +613,8 @@ fn verify_operation_circuit(
                 ),
             ]);
         }
-        if params.max_public_key_of > 0 {
-            op_checks.push(verify_public_key_of_circuit(
+        if params.max_public_key_ops > 0 {
+            op_checks.push(verify_public_key_from_entries_circuit(
                 params,
                 builder,
                 st,
@@ -623,7 +623,7 @@ fn verify_operation_circuit(
                 &cache,
             ));
         }
-        if params.max_signed_by > 0 {
+        if params.max_signed_by_ops > 0 {
             op_checks.push(verify_signed_by_circuit(
                 params,
                 builder,
@@ -633,7 +633,7 @@ fn verify_operation_circuit(
                 &cache,
             ));
         }
-        if params.containers.transition.max_total() > 0 {
+        if params.containers.transition_ops.max_total() > 0 {
             op_checks.extend_from_slice(&[
                 verify_merkle_insert_circuit(
                     params,
@@ -661,7 +661,7 @@ fn verify_operation_circuit(
                 ),
             ]);
         }
-        if params.max_custom_predicate_verifications > 0 {
+        if params.max_custom_predicate_verification_ops > 0 {
             op_checks.push(verify_custom_circuit(
                 builder,
                 st,
@@ -670,7 +670,7 @@ fn verify_operation_circuit(
                 &cache.op_args,
             ));
         }
-        if params.max_open_input_statements > 0 {
+        if params.max_open_input_statement_ops > 0 {
             op_checks.extend_from_slice(&[verify_open_input_statement_circuit(
                 builder,
                 st,
@@ -800,7 +800,7 @@ fn verify_merkle_insert_circuit(
         );
     let op_code_ok = op_type.has_native(builder, NativeOperation::ContainerInsertFromEntries);
 
-    let (arg_types_ok, [new_root_value, old_root_value, op_key_value, op_value_value]) =
+    let (arg_types_ok, [old_root_value, op_key_value, op_value_value, new_root_value]) =
         cache.first_n_args_as_values();
 
     let expected_merkle_op = builder.constant(F::from_canonical_u8(MerkleTreeOp::Insert as u8));
@@ -873,7 +873,7 @@ fn verify_merkle_update_circuit(
         );
     let op_code_ok = op_type.has_native(builder, NativeOperation::ContainerUpdateFromEntries);
 
-    let (arg_types_ok, [new_root_value, old_root_value, op_key_value, op_value_value]) =
+    let (arg_types_ok, [old_root_value, op_key_value, op_value_value, new_root_value]) =
         cache.first_n_args_as_values();
 
     let expected_merkle_op = builder.constant(F::from_canonical_u8(MerkleTreeOp::Update as u8));
@@ -946,7 +946,7 @@ fn verify_merkle_delete_circuit(
         );
     let op_code_ok = op_type.has_native(builder, NativeOperation::ContainerDeleteFromEntries);
 
-    let (arg_types_ok, [new_root_value, old_root_value, op_key_value]) =
+    let (arg_types_ok, [old_root_value, op_key_value, new_root_value]) =
         cache.first_n_args_as_values();
 
     let expected_merkle_op = builder.constant(F::from_canonical_u8(MerkleTreeOp::Delete as u8));
@@ -1157,21 +1157,21 @@ fn verify_lt_lteq_from_entries_circuit(
     ok
 }
 
-fn verify_hash_of_circuit(
+fn verify_hash_from_entries_circuit(
     params: &Params,
     builder: &mut CircuitBuilder,
     st: &StatementTarget,
     op_type: &OperationTypeTarget,
     cache: &StatementCachePriv,
 ) -> BoolTarget {
-    let measure = measure_gates_begin!(builder, "OpHashOf");
-    let op_code_ok = op_type.has_native(builder, NativeOperation::HashOf);
+    let measure = measure_gates_begin!(builder, "OpHash");
+    let op_code_ok = op_type.has_native(builder, NativeOperation::HashFromEntries);
 
     let (arg_types_ok, [arg1_value, arg2_value, arg3_value]) = cache.first_n_args_as_values();
 
-    let expected_hash_value = builder.hash_values(arg2_value, arg3_value);
+    let expected_hash_value = builder.hash_values(arg1_value, arg2_value);
 
-    let hash_value_ok = builder.is_equal_slice(&arg1_value.elements, &expected_hash_value.elements);
+    let hash_value_ok = builder.is_equal_slice(&arg3_value.elements, &expected_hash_value.elements);
 
     let arg1_expected = cache.equations[0].lhs.clone();
     let arg2_expected = cache.equations[1].lhs.clone();
@@ -1179,7 +1179,7 @@ fn verify_hash_of_circuit(
     let expected_statement = StatementTarget::new_native(
         builder,
         params,
-        NativePredicate::HashOf,
+        NativePredicate::Hash,
         &[arg1_expected, arg2_expected, arg3_expected],
     );
     let st_ok = builder.is_equal_flattenable(st, &expected_statement);
@@ -1189,7 +1189,7 @@ fn verify_hash_of_circuit(
     ok
 }
 
-fn verify_public_key_of_circuit(
+fn verify_public_key_from_entries_circuit(
     params: &Params,
     builder: &mut CircuitBuilder,
     st: &StatementTarget,
@@ -1197,25 +1197,24 @@ fn verify_public_key_of_circuit(
     aux: &TableEntryTarget,
     cache: &StatementCachePriv,
 ) -> BoolTarget {
-    let measure = measure_gates_begin!(builder, "OpPublicKeyOf");
-    let (aux_tag_ok, resolved_pk_sk) =
-        aux.as_type::<PubKeySecKeyTarget>(builder, OperationAuxTableTag::PublicKeyOf as u32);
+    let measure = measure_gates_begin!(builder, "OpPublicKey");
+    let (aux_tag_ok, resolved_sk_pk) =
+        aux.as_type::<SecKeyPubKeyTarget>(builder, OperationAuxTableTag::PublicKeyOf as u32);
 
-    let op_code_ok = op_type.has_native(builder, NativeOperation::PublicKeyOf);
+    let op_code_ok = op_type.has_native(builder, NativeOperation::PublicKeyFromEntries);
     let (arg_types_ok, [arg1_value, arg2_value]) = cache.first_n_args_as_values();
-    // inputting public_key, secret_key
-    let pk_hash = arg1_value;
-    let sk_hash = arg2_value;
+    let sk_hash = arg1_value;
+    let pk_hash = arg2_value;
 
-    let pk_ok = builder.is_equal_slice(&pk_hash.elements, &resolved_pk_sk.0.elements);
-    let sk_ok = builder.is_equal_slice(&sk_hash.elements, &resolved_pk_sk.1.elements);
+    let sk_ok = builder.is_equal_slice(&sk_hash.elements, &resolved_sk_pk.0.elements);
+    let pk_ok = builder.is_equal_slice(&pk_hash.elements, &resolved_sk_pk.1.elements);
 
     let arg1_expected = cache.equations[0].lhs.clone();
     let arg2_expected = cache.equations[1].lhs.clone();
     let expected_statement = StatementTarget::new_native(
         builder,
         params,
-        NativePredicate::PublicKeyOf,
+        NativePredicate::PublicKey,
         &[arg1_expected, arg2_expected],
     );
     let st_ok = builder.is_equal_flattenable(st, &expected_statement);
@@ -1237,7 +1236,7 @@ fn verify_signed_by_circuit(
     let (aux_tag_ok, resolved_msg_pk) =
         aux.as_type::<MsgPubKeyTarget>(builder, OperationAuxTableTag::SignedBy as u32);
 
-    let op_code_ok = op_type.has_native(builder, NativeOperation::SignedBy);
+    let op_code_ok = op_type.has_native(builder, NativeOperation::SignedByFromEntries);
     let (arg_types_ok, [arg1_value, arg2_value]) = cache.first_n_args_as_values();
     // inputting msg, pub_key
     let msg = arg1_value;
@@ -1261,27 +1260,27 @@ fn verify_signed_by_circuit(
     ok
 }
 
-fn verify_sum_of_circuit(
+fn verify_sum_from_entries_circuit(
     params: &Params,
     builder: &mut CircuitBuilder,
     st: &StatementTarget,
     op_type: &OperationTypeTarget,
     cache: &StatementCachePriv,
 ) -> BoolTarget {
-    let measure = measure_gates_begin!(builder, "OpSumOf");
+    let measure = measure_gates_begin!(builder, "OpSum");
     let value_zero = ValueTarget::zero(builder);
 
-    let op_code_ok = op_type.has_native(builder, NativeOperation::SumOf);
+    let op_code_ok = op_type.has_native(builder, NativeOperation::SumFromEntries);
 
     let (arg_types_ok, [arg1_value, arg2_value, arg3_value]) = cache.first_n_args_as_values();
 
     // Select to avoid overflow.
-    let summand1 = builder.select_value(op_code_ok, arg2_value, value_zero);
-    let summand2 = builder.select_value(op_code_ok, arg3_value, value_zero);
+    let summand1 = builder.select_value(op_code_ok, arg1_value, value_zero);
+    let summand2 = builder.select_value(op_code_ok, arg2_value, value_zero);
 
     let expected_sum = builder.i64_add(summand1, summand2);
 
-    let sum_ok = builder.is_equal_slice(&arg1_value.elements, &expected_sum.elements);
+    let sum_ok = builder.is_equal_slice(&arg3_value.elements, &expected_sum.elements);
 
     let arg1_expected = cache.equations[0].lhs.clone();
     let arg2_expected = cache.equations[1].lhs.clone();
@@ -1289,7 +1288,7 @@ fn verify_sum_of_circuit(
     let expected_statement = StatementTarget::new_native(
         builder,
         params,
-        NativePredicate::SumOf,
+        NativePredicate::Sum,
         &[arg1_expected, arg2_expected, arg3_expected],
     );
     let st_ok = builder.is_equal_flattenable(st, &expected_statement);
@@ -1299,27 +1298,27 @@ fn verify_sum_of_circuit(
     ok
 }
 
-fn verify_product_of_circuit(
+fn verify_product_from_entries_circuit(
     params: &Params,
     builder: &mut CircuitBuilder,
     st: &StatementTarget,
     op_type: &OperationTypeTarget,
     cache: &StatementCachePriv,
 ) -> BoolTarget {
-    let measure = measure_gates_begin!(builder, "OpProductOf");
+    let measure = measure_gates_begin!(builder, "OpProduct");
     let value_zero = ValueTarget::zero(builder);
 
-    let op_code_ok = op_type.has_native(builder, NativeOperation::ProductOf);
+    let op_code_ok = op_type.has_native(builder, NativeOperation::ProductFromEntries);
 
     let (arg_types_ok, [arg1_value, arg2_value, arg3_value]) = cache.first_n_args_as_values();
 
     // Select to avoid overflow.
-    let factor1 = builder.select_value(op_code_ok, arg2_value, value_zero);
-    let factor2 = builder.select_value(op_code_ok, arg3_value, value_zero);
+    let factor1 = builder.select_value(op_code_ok, arg1_value, value_zero);
+    let factor2 = builder.select_value(op_code_ok, arg2_value, value_zero);
 
     let expected_product = builder.i64_mul(factor1, factor2);
 
-    let product_ok = builder.is_equal_slice(&arg1_value.elements, &expected_product.elements);
+    let product_ok = builder.is_equal_slice(&arg3_value.elements, &expected_product.elements);
 
     let arg1_expected = cache.equations[0].lhs.clone();
     let arg2_expected = cache.equations[1].lhs.clone();
@@ -1327,7 +1326,7 @@ fn verify_product_of_circuit(
     let expected_statement = StatementTarget::new_native(
         builder,
         params,
-        NativePredicate::ProductOf,
+        NativePredicate::Product,
         &[arg1_expected, arg2_expected, arg3_expected],
     );
     let st_ok = builder.is_equal_flattenable(st, &expected_statement);
@@ -1337,34 +1336,34 @@ fn verify_product_of_circuit(
     ok
 }
 
-fn verify_max_of_circuit(
+fn verify_max_from_entries_circuit(
     params: &Params,
     builder: &mut CircuitBuilder,
     st: &StatementTarget,
     op_type: &OperationTypeTarget,
     cache: &StatementCachePriv,
 ) -> BoolTarget {
-    let measure = measure_gates_begin!(builder, "OpMaxOf");
-    let op_code_ok = op_type.has_native(builder, NativeOperation::MaxOf);
+    let measure = measure_gates_begin!(builder, "OpMax");
+    let op_code_ok = op_type.has_native(builder, NativeOperation::MaxFromEntries);
 
     let (arg_types_ok, [arg1_value, arg2_value, arg3_value]) = cache.first_n_args_as_values();
 
     // Check that arg1_value is equal to one of the other two
     // values.
-    let arg1_eq_arg2 = builder.is_equal_slice(&arg1_value.elements, &arg2_value.elements);
-    let arg1_eq_arg3 = builder.is_equal_slice(&arg1_value.elements, &arg3_value.elements);
+    let arg3_eq_arg1 = builder.is_equal_slice(&arg3_value.elements, &arg1_value.elements);
+    let arg3_eq_arg2 = builder.is_equal_slice(&arg3_value.elements, &arg2_value.elements);
 
-    let all_eq = builder.and(arg1_eq_arg2, arg1_eq_arg3);
+    let all_eq = builder.and(arg3_eq_arg1, arg3_eq_arg2);
     let not_all_eq = builder.not(all_eq);
 
-    let arg1_check = builder.or(arg1_eq_arg2, arg1_eq_arg3);
+    let arg1_check = builder.or(arg3_eq_arg1, arg3_eq_arg2);
 
     // If it is not equal to any of the other two values, it must be greater than it.
-    let lower_bound = builder.select_value(arg1_eq_arg2, arg3_value, arg2_value);
+    let lower_bound = builder.select_value(arg3_eq_arg1, arg2_value, arg1_value);
 
     // Only check lower bound if not all args are equal.
     let lt_check_enabled = builder.and(not_all_eq, op_code_ok);
-    builder.assert_i64_less_if(lt_check_enabled, lower_bound, arg1_value);
+    builder.assert_i64_less_if(lt_check_enabled, lower_bound, arg3_value);
 
     let arg1_expected = cache.equations[0].lhs.clone();
     let arg2_expected = cache.equations[1].lhs.clone();
@@ -1372,7 +1371,7 @@ fn verify_max_of_circuit(
     let expected_statement = StatementTarget::new_native(
         builder,
         params,
-        NativePredicate::MaxOf,
+        NativePredicate::Max,
         &[arg1_expected, arg2_expected, arg3_expected],
     );
     let st_ok = builder.is_equal_flattenable(st, &expected_statement);
@@ -1988,7 +1987,7 @@ pub struct MerkleProofsTarget {
 impl MerkleProofsTarget {
     pub fn new_virtual(params: &Params, builder: &mut CircuitBuilder) -> Self {
         Self {
-            small: (0..params.containers.state.max_small)
+            small: (0..params.containers.state_ops.max_small)
                 .map(|_| {
                     MerkleProofExistenceTarget::new_virtual(
                         params.containers.max_depth_small,
@@ -1996,7 +1995,7 @@ impl MerkleProofsTarget {
                     )
                 })
                 .collect(),
-            medium: (0..params.containers.state.max_medium)
+            medium: (0..params.containers.state_ops.max_medium)
                 .map(|_| {
                     MerkleClaimAndProofTarget::new_virtual(
                         params.containers.max_depth_medium,
@@ -2017,7 +2016,7 @@ pub struct MerkleTransitionProofsTarget {
 impl MerkleTransitionProofsTarget {
     pub fn new_virtual(params: &Params, builder: &mut CircuitBuilder) -> Self {
         Self {
-            small: (0..params.containers.transition.max_small)
+            small: (0..params.containers.transition_ops.max_small)
                 .map(|_| {
                     MerkleTreeStateTransitionProofTarget::new_virtual(
                         params.containers.max_depth_small,
@@ -2025,7 +2024,7 @@ impl MerkleTransitionProofsTarget {
                     )
                 })
                 .collect(),
-            medium: (0..params.containers.transition.max_medium)
+            medium: (0..params.containers.transition_ops.max_medium)
                 .map(|_| {
                     MerkleTreeStateTransitionProofTarget::new_virtual(
                         params.containers.max_depth_medium,
@@ -2042,7 +2041,7 @@ struct AuxTableInputTargets {
     merkle_proofs: MerkleProofsTarget,
     merkle_transition_proofs: MerkleTransitionProofsTarget,
     open_input_statements: Vec<OpenInputStatementTarget>,
-    public_key_of_sks: Vec<BigUInt320Target>,
+    public_key_sks: Vec<BigUInt320Target>,
     signed_bys: Vec<SignedByTarget>,
     custom_predicate_verifications: Vec<CustomPredicateVerifyEntryTarget>,
 }
@@ -2055,43 +2054,46 @@ impl AuxTableInputTargets {
         merkle_proofs: &MerkleProofs,
         merkle_transition_proofs: &MerkleTransitionProofs,
     ) -> Result<()> {
-        assert!(merkle_proofs.small.len() <= params.containers.state.max_small);
+        assert!(merkle_proofs.small.len() <= params.containers.state_ops.max_small);
         for (i, mp) in merkle_proofs.small.iter().enumerate() {
             self.merkle_proofs.small[i].set_targets(pw, mp)?;
         }
         // Padding
         let pad_mp = MerkleClaimAndProof::pad();
-        for i in merkle_proofs.small.len()..params.containers.state.max_small {
+        for i in merkle_proofs.small.len()..params.containers.state_ops.max_small {
             self.merkle_proofs.small[i].set_targets(pw, &pad_mp)?;
         }
 
-        assert!(merkle_proofs.medium.len() <= params.containers.state.max_medium);
+        assert!(merkle_proofs.medium.len() <= params.containers.state_ops.max_medium);
         for (i, mp) in merkle_proofs.medium.iter().enumerate() {
             self.merkle_proofs.medium[i].set_targets(pw, mp)?;
         }
         // Padding
         let pad_mp = MerkleClaimAndProof::pad();
-        for i in merkle_proofs.medium.len()..params.containers.state.max_medium {
+        for i in merkle_proofs.medium.len()..params.containers.state_ops.max_medium {
             self.merkle_proofs.medium[i].set_targets(pw, &pad_mp)?;
         }
 
-        assert!(merkle_transition_proofs.small.len() <= params.containers.transition.max_small);
+        assert!(merkle_transition_proofs.small.len() <= params.containers.transition_ops.max_small);
         for (i, mtp) in merkle_transition_proofs.small.iter().enumerate() {
             self.merkle_transition_proofs.small[i].set_targets(pw, mtp)?;
         }
         // Padding
         let pad_mtp = MerkleTreeStateTransitionProof::pad();
-        for i in merkle_transition_proofs.small.len()..params.containers.transition.max_small {
+        for i in merkle_transition_proofs.small.len()..params.containers.transition_ops.max_small {
             self.merkle_transition_proofs.small[i].set_targets(pw, &pad_mtp)?;
         }
 
-        assert!(merkle_transition_proofs.medium.len() <= params.containers.transition.max_medium);
+        assert!(
+            merkle_transition_proofs.medium.len() <= params.containers.transition_ops.max_medium
+        );
         for (i, mtp) in merkle_transition_proofs.medium.iter().enumerate() {
             self.merkle_transition_proofs.medium[i].set_targets(pw, mtp)?;
         }
         // Padding
         let pad_mtp = MerkleTreeStateTransitionProof::pad();
-        for i in merkle_transition_proofs.medium.len()..params.containers.transition.max_medium {
+        for i in merkle_transition_proofs.medium.len()..params.containers.transition_ops.max_medium
+        {
             self.merkle_transition_proofs.medium[i].set_targets(pw, &pad_mtp)?;
         }
 
@@ -2111,39 +2113,40 @@ impl AuxTableInputTargets {
             &input.merkle_transition_proofs,
         )?;
 
-        assert!(input.open_input_statements.len() <= params.max_open_input_statements);
+        assert!(input.open_input_statements.len() <= params.max_open_input_statement_ops);
         for (i, data) in input.open_input_statements.iter().enumerate() {
             self.open_input_statements[i].set_targets(pw, data)?;
         }
         // Padding
         if let Some(pad_data) = &input.pad_open_input_statement {
-            for i in input.open_input_statements.len()..params.max_open_input_statements {
+            for i in input.open_input_statements.len()..params.max_open_input_statement_ops {
                 self.open_input_statements[i].set_targets(pw, pad_data)?;
             }
         }
 
-        assert!(input.public_key_of_sks.len() <= params.max_public_key_of);
-        for (i, sk) in input.public_key_of_sks.iter().enumerate() {
-            pw.set_biguint320_target(&self.public_key_of_sks[i], &sk.0)?;
+        assert!(input.public_key_sks.len() <= params.max_public_key_ops);
+        for (i, sk) in input.public_key_sks.iter().enumerate() {
+            pw.set_biguint320_target(&self.public_key_sks[i], &sk.0)?;
         }
         // Padding
         let pad_sk = BigUint::ZERO;
-        for i in input.public_key_of_sks.len()..params.max_public_key_of {
-            pw.set_biguint320_target(&self.public_key_of_sks[i], &pad_sk)?;
+        for i in input.public_key_sks.len()..params.max_public_key_ops {
+            pw.set_biguint320_target(&self.public_key_sks[i], &pad_sk)?;
         }
 
-        assert!(input.signed_bys.len() <= params.max_signed_by);
+        assert!(input.signed_bys.len() <= params.max_signed_by_ops);
         for (i, signed_by) in input.signed_bys.iter().enumerate() {
             self.signed_bys[i].set_targets(pw, signed_by)?;
         }
         // Padding
         let pad_signed_by = SignedBy::dummy();
-        for i in input.signed_bys.len()..params.max_signed_by {
+        for i in input.signed_bys.len()..params.max_signed_by_ops {
             self.signed_bys[i].set_targets(pw, &pad_signed_by)?;
         }
 
         assert!(
-            input.custom_predicate_verifications.len() <= params.max_custom_predicate_verifications
+            input.custom_predicate_verifications.len()
+                <= params.max_custom_predicate_verification_ops
         );
         for (i, cpv) in input.custom_predicate_verifications.iter().enumerate() {
             self.custom_predicate_verifications[i].set_targets(pw, params, cpv)?;
@@ -2163,7 +2166,7 @@ impl AuxTableInputTargets {
             .first()
             .unwrap_or(&empty_cpv);
         for i in
-            input.custom_predicate_verifications.len()..params.max_custom_predicate_verifications
+            input.custom_predicate_verifications.len()..params.max_custom_predicate_verification_ops
         {
             self.custom_predicate_verifications[i].set_targets(pw, params, pad_cpv)?;
         }
@@ -2190,7 +2193,7 @@ pub struct MainPodVerifyTarget {
 impl MainPodVerifyTarget {
     pub fn new_virtual(params: &Params, builder: &mut CircuitBuilder) -> Self {
         // Params validation
-        if params.max_open_input_statements > 0 {
+        if params.max_open_input_statement_ops > 0 {
             assert!(params.max_input_pods > 0);
         }
         MainPodVerifyTarget {
@@ -2228,16 +2231,16 @@ impl MainPodVerifyTarget {
                 merkle_transition_proofs: MerkleTransitionProofsTarget::new_virtual(
                     params, builder,
                 ),
-                open_input_statements: (0..params.max_open_input_statements)
+                open_input_statements: (0..params.max_open_input_statement_ops)
                     .map(|_| OpenInputStatementTarget::new_virtual(builder))
                     .collect(),
-                public_key_of_sks: (0..params.max_public_key_of)
+                public_key_sks: (0..params.max_public_key_ops)
                     .map(|_| builder.add_virtual_biguint320_target())
                     .collect(),
-                signed_bys: (0..params.max_signed_by)
+                signed_bys: (0..params.max_signed_by_ops)
                     .map(|_| SignedByTarget::new_virtual(builder))
                     .collect(),
-                custom_predicate_verifications: (0..params.max_custom_predicate_verifications)
+                custom_predicate_verifications: (0..params.max_custom_predicate_verification_ops)
                     .map(|_| CustomPredicateVerifyEntryTarget::new_virtual(params, builder))
                     .collect(),
             },
@@ -2257,7 +2260,7 @@ pub struct AuxTableInput {
     pub merkle_transition_proofs: MerkleTransitionProofs,
     pub open_input_statements: Vec<InputPodOpenStatement>,
     pub pad_open_input_statement: Option<InputPodOpenStatement>,
-    pub public_key_of_sks: Vec<SecretKey>,
+    pub public_key_sks: Vec<SecretKey>,
     pub signed_bys: Vec<SignedBy>,
     pub custom_predicate_verifications: Vec<CustomPredicateVerification>,
 }

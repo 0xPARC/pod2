@@ -204,7 +204,7 @@ impl EthDosHelper {
         ))?;
 
         // distance = n + 1
-        let ethdos_sum = pod.priv_op(Operation::sum_of(n + 1, n, 1))?;
+        let ethdos_sum = pod.priv_op(Operation::sum(n, 1, n + 1))?;
         let eth_dos_src_to_dst_ind = pod.priv_op(Operation::custom(
             self.eth_dos_ind.clone(),
             [eth_dos_int_to_dst, ethdos_sum, ethfriends_int_dst],
@@ -294,7 +294,7 @@ pub fn great_boy_pod_builder(
 
 pub fn great_boy_pod_full_flow() -> Result<MainPodBuilder> {
     let params = Params {
-        max_signed_by: 6,
+        max_signed_by_ops: 6,
         max_input_pods: 0,
         max_statements: 100,
         ..Default::default()
@@ -399,15 +399,15 @@ pub fn tickets_pod_builder(
     // verifier to check pod ID on an anchored key to confirm statement wasn't
     // copied), but it's the simplest.
     let sk = TICKET_OWNER_SECRET_KEY;
-    builder.pub_op(Operation::public_key_of(
-        (signed_dict, "attendeePublicKey"),
+    builder.pub_op(Operation::public_key(
         sk.clone(),
+        (signed_dict, "attendeePublicKey"),
     ))?;
 
     // Nullifier calculation is public, but based on the private sk.
     let external_nullifier = "external nullifier";
     let nullifier = hash_values(&[TICKET_OWNER_SECRET_KEY.into(), external_nullifier.into()]);
-    builder.pub_op(Operation::hash_of(nullifier, sk, external_nullifier))?;
+    builder.pub_op(Operation::hash(sk, external_nullifier, nullifier))?;
 
     Ok(builder)
 }
