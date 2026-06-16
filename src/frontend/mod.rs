@@ -397,12 +397,12 @@ impl MainPodBuilder {
                         .unwrap_or(Value::from(EMPTY_VALUE));
                 let proof = match op_type {
                     Native(ContainerInsertFromEntries) => {
-                        as_container_or_err(old_container)?.insert(key.clone(), value)?
+                        as_container_or_err(old_container)?.insert_proof(key.clone(), value)?
                     }
                     Native(ContainerUpdateFromEntries) => {
-                        as_container_or_err(old_container)?.update(key.raw(), value)?
+                        as_container_or_err(old_container)?.update_proof(key.raw(), value)?
                     }
-                    _ => as_container_or_err(old_container)?.delete(key.raw())?,
+                    _ => as_container_or_err(old_container)?.delete_proof(key.raw())?,
                 };
                 Ok(Operation(
                     op_type.clone(),

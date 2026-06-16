@@ -1,4 +1,5 @@
 use super::*;
+use crate::middleware::TypedValue;
 
 /// MemDB implements the DB trait in a in-memory HashMap.
 #[derive(Clone, Debug, Default)]
@@ -39,17 +40,21 @@ impl DB for MemDB {
 
         Ok(values.get(&raw).cloned())
     }
-    fn store_value(&mut self, value: Value) -> anyhow::Result<()> {
+    fn store_value(&mut self, mut value: Value) -> anyhow::Result<()> {
         let mut values = self.values.write().expect("lock not poisoned");
         let value_raw = value.raw();
         if let Some(old_value) = values.get(&value_raw) {
-            let old_is_raw = old_value.is_raw();
-            // If we had a non-RawValue stored don't overwrite it (specially not with a
-            // RawValue).   Also skip redundant RawValue overwrite.
-            if !old_is_raw || value.is_raw() {
+            // Never overwrite an old value with a RawValue.
+            if value.is_raw() {
                 return Ok(());
             }
-        }
+            // If a container was previously stored, update the kind bitmask
+            if let (TypedValue::Container(old_c), TypedValue::Container(ref mut c)) =
+                (&old_value.typed, &mut value.typed)
+            {
+                c.kind.0 |= old_c.kind.0;
+            }
+        };
         values.insert(value_raw, value);
         Ok(())
     }

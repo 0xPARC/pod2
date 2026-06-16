@@ -24,8 +24,37 @@ use crate::{
 
 pub const EMPTY_MT_ROOT: Hash = EMPTY_HASH;
 
+/// Bitmask of container type.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+pub struct ContainerKind(pub(crate) u8);
+
+impl ContainerKind {
+    pub fn is_dictionary(&self) -> bool {
+        self.0 & (1 << 0) != 0
+    }
+    pub fn is_set(&self) -> bool {
+        self.0 & (1 << 1) != 0
+    }
+    pub fn is_array(&self) -> bool {
+        self.0 & (1 << 2) != 0
+    }
+    pub(crate) fn set_dictionary(&mut self) -> &mut Self {
+        self.0 |= 1 << 0;
+        self
+    }
+    pub(crate) fn set_set(&mut self) -> &mut Self {
+        self.0 |= 1 << 1;
+        self
+    }
+    pub(crate) fn set_array(&mut self) -> &mut Self {
+        self.0 |= 1 << 2;
+        self
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct Container {
+    pub(crate) kind: ContainerKind,
     root: Hash,
     db: Box<dyn DB>,
 }
@@ -187,14 +216,7 @@ fn store_container_mt(db: &mut dyn DB, container: &Container) -> Result<()> {
 
 fn store_value(db: &mut dyn DB, v: Value) -> Result<()> {
     match &v.typed {
-        TypedValue::Set(Set { inner })
-        | TypedValue::Dictionary(Dictionary { inner })
-        | TypedValue::Array(Array { inner }) => {
-            if db.is_persistent() {
-                store_container_mt(db, inner)?;
-            }
-            db.store_value(v).map_err(Error::Database)?
-        }
+        TypedValue::Container(inner) if db.is_persistent() => store_container_mt(db, inner)?,
         _ => db.store_value(v).map_err(Error::Database)?,
     }
     Ok(())
@@ -211,10 +233,13 @@ fn load_value(db: &dyn DB, value_raw: RawValue) -> Result<Value> {
 }
 
 impl Container {
-    fn mt(&self) -> MerkleTree {
+    pub fn kind(&self) -> ContainerKind {
+        self.kind
+    }
+    pub fn mt(&self) -> MerkleTree {
         MerkleTree::from_db(self.root, self.db.clone())
     }
-    pub fn new(kvs: HashMap<Value, Value>) -> Self {
+    fn new(kvs: HashMap<Value, Value>) -> Self {
         let db = Box::new(MemDB::new());
         let mut container = Self::empty_with_db(db);
         for (k, v) in kvs {
@@ -222,7 +247,7 @@ impl Container {
         }
         container
     }
-    pub fn empty_with_db(db: Box<dyn DB>) -> Self {
+    fn empty_with_db(db: Box<dyn DB>) -> Self {
         Self::from_db(EMPTY_HASH, db).expect("EMPTY_HASH exists implicitly")
     }
     pub fn from_db(root: Hash, db: Box<dyn DB>) -> Result<Self> {
@@ -247,7 +272,7 @@ impl Container {
     pub fn prove_nonexistence(&self, key_raw: RawValue) -> Result<MerkleProof> {
         Ok(self.mt().prove_nonexistence(&key_raw)?)
     }
-    pub fn insert(&mut self, key: Value, value: Value) -> Result<MerkleTreeStateTransitionProof> {
+    fn insert(&mut self, key: Value, value: Value) -> Result<MerkleTreeStateTransitionProof> {
         let (key_raw, value_raw) = (key.raw(), value.raw());
         store_value(self.db.as_mut(), key)?;
         store_value(self.db.as_mut(), value)?;
@@ -256,7 +281,11 @@ impl Container {
         self.root = mt.root();
         Ok(mtp)
     }
-    pub fn update(
+    pub fn insert_proof(&self, key: Value, value: Value) -> Result<MerkleTreeStateTransitionProof> {
+        let mut container = self.clone();
+        container.insert(key, value)
+    }
+    fn update(
         &mut self,
         key_raw: RawValue,
         value: Value,
@@ -268,11 +297,23 @@ impl Container {
         self.root = mt.root();
         Ok(mtp)
     }
-    pub fn delete(&mut self, key_raw: RawValue) -> Result<MerkleTreeStateTransitionProof> {
+    pub fn update_proof(
+        &self,
+        key_raw: RawValue,
+        value: Value,
+    ) -> Result<MerkleTreeStateTransitionProof> {
+        let mut container = self.clone();
+        container.update(key_raw, value)
+    }
+    fn delete(&mut self, key_raw: RawValue) -> Result<MerkleTreeStateTransitionProof> {
         let mut mt = self.mt();
         let mtp = mt.delete(&key_raw)?;
         self.root = mt.root();
         Ok(mtp)
+    }
+    pub fn delete_proof(&self, key_raw: RawValue) -> Result<MerkleTreeStateTransitionProof> {
+        let mut container = self.clone();
+        container.delete(key_raw)
     }
     pub fn verify(
         root: Hash,
@@ -299,6 +340,33 @@ impl Container {
     /// This is an expensive operation
     pub fn dump(&self) -> Result<HashMap<Value, Value>> {
         self.iter().collect()
+    }
+    pub fn as_dictionary(&self) -> Option<Dictionary> {
+        if self.kind.is_dictionary() {
+            Some(Dictionary {
+                inner: self.clone(),
+            })
+        } else {
+            None
+        }
+    }
+    pub fn as_set(&self) -> Option<Set> {
+        if self.kind.is_set() {
+            Some(Set {
+                inner: self.clone(),
+            })
+        } else {
+            None
+        }
+    }
+    pub fn as_array(&self) -> Option<Array> {
+        if self.kind.is_array() {
+            Some(Array {
+                inner: self.clone(),
+            })
+        } else {
+            None
+        }
     }
 }
 
@@ -760,5 +828,20 @@ mod tests {
         assert_eq!(EMPTY_MT_ROOT, Array::new(Vec::new()).commitment());
         assert_eq!(EMPTY_MT_ROOT, Set::new(HashSet::new()).commitment());
         assert_eq!(EMPTY_MT_ROOT, Dictionary::new(HashMap::new()).commitment());
+    }
+
+    #[test]
+    fn same_roots() {
+        let mut a = Dictionary::new(HashMap::new());
+        a.insert(&StrKey::new("a".to_string()), &Value::from("a".to_string()))
+            .unwrap();
+        let a = Value::from(a);
+        let mut b = Set::new(HashSet::new());
+        b.insert(&Value::from("a".to_string())).unwrap();
+        let b = Value::from(b);
+        println!("a: {}", serde_json::to_string(&a).unwrap());
+        println!("b: {}", serde_json::to_string(&b).unwrap());
+        let top = Array::new(vec![a, b]);
+        println!("top: {}", serde_json::to_string(&top).unwrap());
     }
 }

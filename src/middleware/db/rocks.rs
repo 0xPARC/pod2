@@ -64,6 +64,10 @@ impl merkletree::db::DB for RocksDB {
     }
 }
 
+pub struct RocksTx<'a> {
+    tx: rocksdb::Transaction<'a, rocksdb::TransactionDB>,
+}
+
 impl DB for RocksDB {
     fn load_value(&self, raw: RawValue) -> anyhow::Result<Option<Value>> {
         match self.db.get(value_key(raw))? {
@@ -77,15 +81,19 @@ impl DB for RocksDB {
             })),
         }
     }
-    fn store_value(&mut self, value: Value) -> anyhow::Result<()> {
+    fn store_value(&mut self, mut value: Value) -> anyhow::Result<()> {
         let value_key = value_key(value.raw());
         let tx = self.db.transaction();
         if let Some(old_value_bytes) = tx.get_for_update(&value_key, true)? {
-            let is_raw = old_value_bytes.is_empty();
-            // If we had a non-RawValue stored don't overwrite it (specially not with a
-            // RawValue).   Also skip redundant RawValue overwrite.
-            if !is_raw || (is_raw && value.is_raw()) {
+            // Never overwrite an old value with a RawValue.
+            if value.is_raw() {
                 return Ok(());
+            }
+            // If a container was previously stored, update the kind bitmask
+            if let (TypedValue::Container(old_c), TypedValue::Container(ref mut c)) =
+                (&old_value.typed, &mut value.typed)
+            {
+                c.kind.0 |= old_c.kind.0;
             }
         }
         let value_bytes = if value.is_raw() {
