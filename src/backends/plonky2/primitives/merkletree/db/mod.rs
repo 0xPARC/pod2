@@ -3,7 +3,7 @@
 use std::{
     collections::HashMap,
     fmt::Debug,
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, MutexGuard},
 };
 
 use anyhow::{anyhow, Result};
@@ -46,10 +46,7 @@ impl MemDB {
 
 impl Read for MemDB {
     fn load_node(&self, hash: Hash) -> Result<Option<Node>> {
-        let db = self
-            .inner
-            .lock()
-            .map_err(|e| anyhow!("failed to acquire memdb lock for read: {}", e))?;
+        let db = self.inner.lock().expect("not poisoned");
 
         if hash == EMPTY_HASH {
             return Ok(Some(Node::Intermediate(Intermediate::new(
@@ -62,16 +59,35 @@ impl Read for MemDB {
 
 impl DB for MemDB {
     fn tx<'a>(&'a self) -> Box<dyn TX + 'a> {
-        todo!()
+        Box::new(MemTx {
+            db: self.inner.lock().expect("not poisoned"),
+            tmp: HashMap::new(),
+        })
     }
-    // fn store_node(&mut self, node: Node) -> Result<()> {
-    //     let mut db = self
-    //         .inner
-    //         .lock()
-    //         .map_err(|e| anyhow!("failed to acquire memdb lock for write: {}", e))?;
-    //     db.insert(node.hash(), node);
-    //     Ok(())
-    // }
+}
+
+pub(crate) struct MemTx<'a> {
+    db: MutexGuard<'a, HashMap<Hash, Node>>,
+    tmp: HashMap<Hash, Node>,
+}
+
+impl<'a> Read for MemTx<'a> {
+    fn load_node(&self, hash: Hash) -> Result<Option<Node>> {
+        Ok(self.tmp.get(&hash).or_else(|| self.db.get(&hash)).cloned())
+    }
+}
+
+impl<'a> TX for MemTx<'a> {
+    fn store_node(&mut self, node: Node) -> Result<()> {
+        self.tmp.insert(node.hash(), node);
+        Ok(())
+    }
+    fn commit(mut self: Box<Self>) -> Result<()> {
+        for (k, v) in self.tmp {
+            self.db.insert(k, v);
+        }
+        Ok(())
+    }
 }
 
 #[cfg(test)]

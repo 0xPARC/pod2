@@ -267,7 +267,10 @@ impl Container {
     pub fn from_db(root: Hash, db: Box<dyn DB>) -> Result<Self> {
         // Make sure the root exists in the db
         let _ = merkletree::load_node(db.as_ref(), root)?;
-        let kind = db.load_kind(root).map_err(|e| Error::Database(e))?;
+        let kind = db
+            .load_kind(root)
+            .map_err(|e| Error::Database(e))?
+            .ok_or_else(|| Error::custom("container kind not found"))?;
         Ok(Self { kind, root, db })
     }
     pub fn commitment(&self) -> Hash {
@@ -364,27 +367,27 @@ impl Container {
     }
     pub fn as_dictionary(&self) -> Option<Dictionary> {
         if self.kind.is_dictionary() {
-            Some(Dictionary {
-                inner: self.clone(),
-            })
+            let mut inner = self.clone();
+            inner.kind = *ContainerKind::default().set_dictionary();
+            Some(Dictionary { inner })
         } else {
             None
         }
     }
     pub fn as_set(&self) -> Option<Set> {
         if self.kind.is_set() {
-            Some(Set {
-                inner: self.clone(),
-            })
+            let mut inner = self.clone();
+            inner.kind = *ContainerKind::default().set_set();
+            Some(Set { inner })
         } else {
             None
         }
     }
     pub fn as_array(&self) -> Option<Array> {
         if self.kind.is_array() {
-            Some(Array {
-                inner: self.clone(),
-            })
+            let mut inner = self.clone();
+            inner.kind = *ContainerKind::default().set_array();
+            Some(Array { inner })
         } else {
             None
         }
@@ -433,9 +436,9 @@ impl Dictionary {
         }
     }
     pub fn from_db(root: Hash, db: Box<dyn DB>) -> Result<Self> {
-        Ok(Self {
-            inner: Container::from_db(root, db)?,
-        })
+        Container::from_db(root, db)?
+            .as_dictionary()
+            .ok_or_else(|| Error::custom("not a dictionary"))
     }
     pub fn commitment(&self) -> Hash {
         self.inner.commitment()
@@ -520,9 +523,9 @@ impl Set {
         }
     }
     pub fn from_db(root: Hash, db: Box<dyn DB>) -> Result<Self> {
-        Ok(Self {
-            inner: Container::from_db(root, db)?,
-        })
+        Container::from_db(root, db)?
+            .as_set()
+            .ok_or_else(|| Error::custom("not a set"))
     }
     pub fn commitment(&self) -> Hash {
         self.inner.commitment()
@@ -606,9 +609,9 @@ impl Array {
         }
     }
     pub fn from_db(root: Hash, db: Box<dyn DB>) -> Result<Self> {
-        Ok(Self {
-            inner: Container::from_db(root, db)?,
-        })
+        Container::from_db(root, db)?
+            .as_set()
+            .ok_or_else(|| Error::custom("not an array"))
     }
     pub fn commitment(&self) -> Hash {
         self.inner.commitment()

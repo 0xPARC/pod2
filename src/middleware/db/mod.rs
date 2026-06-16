@@ -16,10 +16,13 @@ pub mod rocks;
 
 pub trait Read {
     fn load_value(&self, raw: RawValue) -> anyhow::Result<Option<Value>>;
-    fn load_kind(&self, root: Hash) -> anyhow::Result<ContainerKind>;
+    fn load_kind(&self, root: Hash) -> anyhow::Result<Option<ContainerKind>>;
 }
 
 pub trait TX: Read + merkletree::db::TX {
+    // If the value is RawValue and a previous non-RawValue exists, no store will overwrite it.
+    // If the value is non-RawValue and a previous RawValue exists, store should overwrite it,
+    // merging the kind field in case of a Container (unless the DB is persistent).
     fn store_value(&mut self, value: Value) -> anyhow::Result<()>;
     fn update_kind(&mut self, root: Hash, kind: ContainerKind) -> anyhow::Result<()>;
     fn is_persistent(&self) -> bool;
@@ -33,8 +36,6 @@ pub trait DB: Debug + DynClone + Sync + Send + Read + merkletree::db::DB {
     // If the DB is persistent, for containers only the root needs to be stored because the
     // Container type makes sure the underlying merkle tree is stored in the DB independently, so
     // that it can be recovered back just with the root and the DB.
-    // If the value is RawValue and a previous non-RawValue exists, no store will overwrite it.
-    // If the value is non-RawValue and a previous RawValue exists, store should overwrite it.
     fn is_persistent(&self) -> bool;
     fn clone_box(&self) -> Box<dyn DB>;
     fn tx<'a>(&'a self) -> Box<dyn TX + 'a>;
