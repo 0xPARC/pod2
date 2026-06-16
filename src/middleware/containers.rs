@@ -17,7 +17,7 @@ use crate::backends::plonky2::primitives::merkletree::{self, MerkleProof, Merkle
 use crate::{
     backends::plonky2::primitives::merkletree::MerkleTreeStateTransitionProof,
     middleware::{
-        db::{mem::MemDB, DB},
+        db::{self, mem::MemDB, DB, TX},
         Error, Hash, RawValue, Result, StrKey, TypedValue, Value, EMPTY_HASH,
     },
 };
@@ -198,31 +198,32 @@ impl PartialEq for Container {
 }
 impl Eq for Container {}
 
-fn store_container_mt(db: &mut dyn DB, container: &Container) -> Result<()> {
-    match db.load_node(container.root) {
+fn store_container_mt(tx: &mut dyn TX, container: &Container) -> Result<()> {
+    match tx.load_node(container.root) {
         Err(e) => return Err(Error::Database(e)),
         // Container already exists in the DB
         Ok(Some(_)) => return Ok(()),
         // Container not existing, we need to save it
         Ok(None) => {}
     };
-    let mut container_copy = Container::empty_with_db(db.clone_box());
+    let mut root = EMPTY_HASH;
     for kv_result in container.iter() {
         let (k, v) = kv_result?;
-        container_copy.insert(k, v)?;
+        let mtp = insert_tx(tx, root, k, v)?;
+        root = mtp.new_root;
     }
     Ok(())
 }
 
-fn store_value(db: &mut dyn DB, v: Value) -> Result<()> {
+fn store_value(tx: &mut dyn TX, v: Value) -> Result<()> {
     match &v.typed {
-        TypedValue::Container(inner) if db.is_persistent() => store_container_mt(db, inner)?,
-        _ => db.store_value(v).map_err(Error::Database)?,
+        TypedValue::Container(inner) if tx.is_persistent() => store_container_mt(tx, inner)?,
+        _ => tx.store_value(v).map_err(Error::Database)?,
     }
     Ok(())
 }
 
-fn load_value(db: &dyn DB, value_raw: RawValue) -> Result<Value> {
+fn load_value(db: &dyn db::Read, value_raw: RawValue) -> Result<Value> {
     match db.load_value(value_raw) {
         Err(e) => Err(Error::Database(e)),
         Ok(Some(v)) => Ok(v),
@@ -230,6 +231,19 @@ fn load_value(db: &dyn DB, value_raw: RawValue) -> Result<Value> {
             "Value from {value_raw} not found in DB"
         ))),
     }
+}
+
+fn insert_tx(
+    tx: &mut dyn TX,
+    root: Hash,
+    key: Value,
+    value: Value,
+) -> Result<MerkleTreeStateTransitionProof> {
+    let (key_raw, value_raw) = (key.raw(), value.raw());
+    store_value(tx, key)?;
+    store_value(tx, value)?;
+    let mtp = merkletree::insert_tx(tx, root, &key_raw, &value_raw)?;
+    Ok(mtp)
 }
 
 impl Container {
@@ -253,7 +267,8 @@ impl Container {
     pub fn from_db(root: Hash, db: Box<dyn DB>) -> Result<Self> {
         // Make sure the root exists in the db
         let _ = merkletree::load_node(db.as_ref(), root)?;
-        Ok(Self { root, db })
+        let kind = db.load_kind(root).map_err(|e| Error::Database(e))?;
+        Ok(Self { kind, root, db })
     }
     pub fn commitment(&self) -> Hash {
         self.root
@@ -273,12 +288,12 @@ impl Container {
         Ok(self.mt().prove_nonexistence(&key_raw)?)
     }
     fn insert(&mut self, key: Value, value: Value) -> Result<MerkleTreeStateTransitionProof> {
-        let (key_raw, value_raw) = (key.raw(), value.raw());
-        store_value(self.db.as_mut(), key)?;
-        store_value(self.db.as_mut(), value)?;
-        let mut mt = self.mt();
-        let mtp = mt.insert(&key_raw, &value_raw)?;
-        self.root = mt.root();
+        let mut tx = DB::tx(self.db.as_ref());
+        let mtp = insert_tx(tx.as_mut(), self.root, key, value)?;
+        tx.update_kind(mtp.new_root, self.kind)
+            .map_err(|e| Error::Database(e))?;
+        TX::commit(tx).map_err(|e| Error::Database(e))?;
+        self.root = mtp.new_root;
         Ok(mtp)
     }
     pub fn insert_proof(&self, key: Value, value: Value) -> Result<MerkleTreeStateTransitionProof> {
@@ -291,10 +306,13 @@ impl Container {
         value: Value,
     ) -> Result<MerkleTreeStateTransitionProof> {
         let value_raw = value.raw();
-        store_value(self.db.as_mut(), value)?;
-        let mut mt = self.mt();
-        let mtp = mt.update(&key_raw, &value_raw)?;
-        self.root = mt.root();
+        let mut tx = DB::tx(self.db.as_ref());
+        store_value(tx.as_mut(), value)?;
+        let mtp = merkletree::update_tx(tx.as_mut(), self.root, &key_raw, &value_raw)?;
+        tx.update_kind(mtp.new_root, self.kind)
+            .map_err(|e| Error::Database(e))?;
+        TX::commit(tx).map_err(|e| Error::Database(e))?;
+        self.root = mtp.new_root;
         Ok(mtp)
     }
     pub fn update_proof(
@@ -306,9 +324,12 @@ impl Container {
         container.update(key_raw, value)
     }
     fn delete(&mut self, key_raw: RawValue) -> Result<MerkleTreeStateTransitionProof> {
-        let mut mt = self.mt();
-        let mtp = mt.delete(&key_raw)?;
-        self.root = mt.root();
+        let mut tx = DB::tx(self.db.as_ref());
+        let mtp = merkletree::delete_tx(tx.as_mut(), self.root, &key_raw)?;
+        tx.update_kind(mtp.new_root, self.kind)
+            .map_err(|e| Error::Database(e))?;
+        TX::commit(tx).map_err(|e| Error::Database(e))?;
+        self.root = mtp.new_root;
         Ok(mtp)
     }
     pub fn delete_proof(&self, key_raw: RawValue) -> Result<MerkleTreeStateTransitionProof> {
@@ -321,13 +342,13 @@ impl Container {
         key_raw: RawValue,
         value_raw: RawValue,
     ) -> Result<()> {
-        Ok(MerkleTree::verify(root, proof, &key_raw, &value_raw)?)
+        Ok(merkletree::verify(root, proof, &key_raw, &value_raw)?)
     }
     pub fn verify_nonexistence(root: Hash, proof: &MerkleProof, key_raw: RawValue) -> Result<()> {
-        Ok(MerkleTree::verify_nonexistence(root, proof, &key_raw)?)
+        Ok(merkletree::verify_nonexistence(root, proof, &key_raw)?)
     }
     pub fn verify_state_transition(proof: &MerkleTreeStateTransitionProof) -> Result<()> {
-        MerkleTree::verify_state_transition(proof).map_err(|e| e.into())
+        merkletree::verify_state_transition(proof).map_err(|e| e.into())
     }
     pub fn iter(&self) -> impl Iterator<Item = Result<(Value, Value)>> {
         let db = self.db.clone();
@@ -795,8 +816,8 @@ mod tests {
         assert_eq!(kvs0, kvs1);
 
         match &kvs1["y"].typed {
-            TypedValue::Dictionary(d) => {
-                let nested_kvs1 = d.dump().unwrap();
+            TypedValue::Container(d) => {
+                let nested_kvs1 = d.as_dictionary().unwrap().dump().unwrap();
                 assert_eq!(nested_kvs0, nested_kvs1);
             }
             _ => unreachable!(),

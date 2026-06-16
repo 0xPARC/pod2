@@ -676,7 +676,7 @@ pub mod tests {
     use crate::{
         backends::plonky2::{
             basetypes::C,
-            primitives::merkletree::{keypath, kv_hash, MerkleProof, MerkleTree},
+            primitives::merkletree::{self, keypath, kv_hash, MerkleProof, MerkleTree},
         },
         middleware::{hash_value, RawValue},
     };
@@ -796,9 +796,9 @@ pub mod tests {
         assert_eq!(proof.existence, existence);
 
         if existence {
-            MerkleTree::verify(tree.root(), &proof, &key, &value)?;
+            merkletree::verify(tree.root(), &proof, &key, &value)?;
         } else {
-            MerkleTree::verify_nonexistence(tree.root(), &proof, &key)?;
+            merkletree::verify_nonexistence(tree.root(), &proof, &key)?;
         }
 
         // circuit
@@ -881,7 +881,7 @@ pub mod tests {
         assert_eq!(value, RawValue::from(5));
         assert!(proof.existence);
 
-        MerkleTree::verify(tree.root(), &proof, &key, &value)?;
+        merkletree::verify(tree.root(), &proof, &key, &value)?;
 
         // circuit
         let config = CircuitConfig::standard_recursion_config();
@@ -953,9 +953,9 @@ pub mod tests {
 
         // verify the proof (non circuit)
         if proof.existence {
-            MerkleTree::verify(tree.root(), &proof, &key, &value)?;
+            merkletree::verify(tree.root(), &proof, &key, &value)?;
         } else {
-            MerkleTree::verify_nonexistence(tree.root(), &proof, &key)?;
+            merkletree::verify_nonexistence(tree.root(), &proof, &key)?;
         }
 
         // circuit
@@ -995,9 +995,9 @@ pub mod tests {
         kvs.insert(RawValue::from(100), RawValue::from(100));
         let tree2 = MerkleTree::new(&kvs);
 
-        MerkleTree::verify(tree.root(), &proof, &key, &value)?;
+        merkletree::verify(tree.root(), &proof, &key, &value)?;
         assert_eq!(
-            MerkleTree::verify(tree2.root(), &proof, &key, &value)
+            merkletree::verify(tree2.root(), &proof, &key, &value)
                 .unwrap_err()
                 .inner()
                 .unwrap()
@@ -1031,10 +1031,10 @@ pub mod tests {
     ) -> Result<()> {
         // sanity check, run the out-circuit proof verification
         if expect_pass {
-            MerkleTree::verify_state_transition(state_transition_proof)?;
+            merkletree::verify_state_transition(state_transition_proof)?;
         } else {
             // expect out-circuit verification to fail
-            let _ = MerkleTree::verify_state_transition(state_transition_proof).is_err();
+            let _ = merkletree::verify_state_transition(state_transition_proof).is_err();
         }
 
         let config = CircuitConfig::standard_recursion_config();
@@ -1261,7 +1261,7 @@ pub mod tests {
         )
         .unwrap();
 
-        MerkleTree::verify_state_transition(&mtp0).unwrap();
+        merkletree::verify_state_transition(&mtp0).unwrap();
 
         let mut mt = MerkleTree::new(&HashMap::new());
         let v =

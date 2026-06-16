@@ -29,7 +29,7 @@ impl fmt::Debug for RocksDB {
     }
 }
 
-impl db::DB for RocksDB {
+impl db::Read for RocksDB {
     fn load_node(&self, hash: Hash) -> Result<Option<merkletree::Node>> {
         if hash == EMPTY_HASH {
             return Ok(Some(merkletree::Node::Intermediate(
@@ -46,10 +46,16 @@ impl db::DB for RocksDB {
             Some(bytes) => Ok(Some(merkletree::Node::decode(bytes.as_ref())?)),
         }
     }
+}
 
-    fn store_node(&mut self, node: merkletree::Node) -> Result<()> {
-        self.0
-            .put(RawValue::from(node.hash()).to_bytes(), node.encode()?)
-            .map_err(|e| anyhow!("rocksdb transaction put failed: {e}"))
+impl db::DB for RocksDB {
+    fn tx<'a>(&'a self) -> Box<dyn db::TX + 'a> {
+        todo!()
     }
+
+    // fn store_node(&mut self, node: merkletree::Node) -> Result<()> {
+    //     self.0
+    //         .put(RawValue::from(node.hash()).to_bytes(), node.encode()?)
+    //         .map_err(|e| anyhow!("rocksdb transaction put failed: {e}"))
+    // }
 }

@@ -15,7 +15,7 @@ use crate::{
     lang::parse_request,
     middleware::{
         self, containers::Set, hash_values, CustomPredicateRef, Params, Predicate, PublicKey,
-        Signer as _, Statement, StatementArg, TypedValue, VDSet, Value,
+        Signer as _, Statement, StatementArg, VDSet, Value,
     },
 };
 
@@ -383,7 +383,7 @@ pub fn tickets_pod_builder(
     expect_consumed: bool,
     blacklisted_emails: &Set,
 ) -> Result<MainPodBuilder> {
-    let blacklisted_email_set_value = Value::from(TypedValue::Set(blacklisted_emails.clone()));
+    let blacklisted_email_set_value = Value::from(blacklisted_emails.clone());
     // Create a main pod referencing this signed pod with some statements
     let mut builder = MainPodBuilder::new(params, vd_set);
     builder.pub_op(Operation::dict_signed_by(signed_dict))?;

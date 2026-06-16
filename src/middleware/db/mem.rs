@@ -1,5 +1,4 @@
 use super::*;
-use crate::middleware::TypedValue;
 
 /// MemDB implements the DB trait in a in-memory HashMap.
 #[derive(Clone, Debug, Default)]
@@ -14,7 +13,7 @@ impl MemDB {
     }
 }
 
-impl merkletree::db::DB for MemDB {
+impl merkletree::db::Read for MemDB {
     fn load_node(&self, hash: Hash) -> anyhow::Result<Option<merkletree::Node>> {
         let nodes = self.nodes.read().expect("lock not poisoned");
 
@@ -26,38 +25,53 @@ impl merkletree::db::DB for MemDB {
 
         Ok(nodes.get(&hash).cloned())
     }
-
-    fn store_node(&mut self, node: merkletree::Node) -> anyhow::Result<()> {
-        let mut nodes = self.nodes.write().expect("lock not poisoned");
-        nodes.insert(node.hash(), node);
-        Ok(())
-    }
 }
 
-impl DB for MemDB {
+impl merkletree::db::DB for MemDB {
+    fn tx<'a>(&'a self) -> Box<dyn merkletree::db::TX + 'a> {
+        todo!()
+    }
+
+    // fn store_node(&mut self, node: merkletree::Node) -> anyhow::Result<()> {
+    //     let mut nodes = self.nodes.write().expect("lock not poisoned");
+    //     nodes.insert(node.hash(), node);
+    //     Ok(())
+    // }
+}
+
+impl Read for MemDB {
     fn load_value(&self, raw: RawValue) -> anyhow::Result<Option<Value>> {
         let values = self.values.read().expect("lock not poisoned");
 
         Ok(values.get(&raw).cloned())
     }
-    fn store_value(&mut self, mut value: Value) -> anyhow::Result<()> {
-        let mut values = self.values.write().expect("lock not poisoned");
-        let value_raw = value.raw();
-        if let Some(old_value) = values.get(&value_raw) {
-            // Never overwrite an old value with a RawValue.
-            if value.is_raw() {
-                return Ok(());
-            }
-            // If a container was previously stored, update the kind bitmask
-            if let (TypedValue::Container(old_c), TypedValue::Container(ref mut c)) =
-                (&old_value.typed, &mut value.typed)
-            {
-                c.kind.0 |= old_c.kind.0;
-            }
-        };
-        values.insert(value_raw, value);
-        Ok(())
+    fn load_kind(&self, root: Hash) -> anyhow::Result<ContainerKind> {
+        todo!()
     }
+}
+
+impl DB for MemDB {
+    fn tx<'a>(&'a self) -> Box<dyn TX + 'a> {
+        todo!()
+    }
+    // fn store_value(&mut self, mut value: Value) -> anyhow::Result<()> {
+    //     let mut values = self.values.write().expect("lock not poisoned");
+    //     let value_raw = value.raw();
+    //     if let Some(old_value) = values.get(&value_raw) {
+    //         // Never overwrite an old value with a RawValue.
+    //         if value.is_raw() {
+    //             return Ok(());
+    //         }
+    //         // If a container was previously stored, update the kind bitmask
+    //         if let (TypedValue::Container(old_c), TypedValue::Container(ref mut c)) =
+    //             (&old_value.typed, &mut value.typed)
+    //         {
+    //             c.kind.0 |= old_c.kind.0;
+    //         }
+    //     };
+    //     values.insert(value_raw, value);
+    //     Ok(())
+    // }
     fn is_persistent(&self) -> bool {
         false
     }

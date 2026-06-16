@@ -17,10 +17,18 @@ use crate::{
 #[cfg(feature = "db_rocksdb")]
 pub mod rocks;
 
-pub trait DB: Debug + DynClone + Sync + Send {
+pub trait Read {
     /// Must always return the empty intermediate node when hash is EMPTY_HASH
     fn load_node(&self, hash: Hash) -> Result<Option<Node>>;
+}
+
+pub trait TX: Read {
     fn store_node(&mut self, node: Node) -> Result<()>;
+    fn commit(self: Box<Self>) -> Result<()>;
+}
+
+pub trait DB: Debug + DynClone + Sync + Send + Read {
+    fn tx<'a>(&'a self) -> Box<dyn TX + 'a>;
 }
 dyn_clone::clone_trait_object!(DB);
 
@@ -36,7 +44,7 @@ impl MemDB {
     }
 }
 
-impl DB for MemDB {
+impl Read for MemDB {
     fn load_node(&self, hash: Hash) -> Result<Option<Node>> {
         let db = self
             .inner
@@ -50,15 +58,20 @@ impl DB for MemDB {
         }
         Ok(db.get(&hash).cloned())
     }
+}
 
-    fn store_node(&mut self, node: Node) -> Result<()> {
-        let mut db = self
-            .inner
-            .lock()
-            .map_err(|e| anyhow!("failed to acquire memdb lock for write: {}", e))?;
-        db.insert(node.hash(), node);
-        Ok(())
+impl DB for MemDB {
+    fn tx<'a>(&'a self) -> Box<dyn TX + 'a> {
+        todo!()
     }
+    // fn store_node(&mut self, node: Node) -> Result<()> {
+    //     let mut db = self
+    //         .inner
+    //         .lock()
+    //         .map_err(|e| anyhow!("failed to acquire memdb lock for write: {}", e))?;
+    //     db.insert(node.hash(), node);
+    //     Ok(())
+    // }
 }
 
 #[cfg(test)]
@@ -83,7 +96,9 @@ pub mod tests {
 
     fn test_db_opt(db: &mut dyn DB) -> Result<()> {
         let node = Leaf::new(1.into(), 1.into());
-        db.store_node(Node::Leaf(node.clone()))?;
+        let mut tx = db.tx();
+        tx.store_node(Node::Leaf(node.clone()))?;
+        tx.commit().unwrap();
 
         let obtained_node = db.load_node(node.hash)?.unwrap();
         let leaf = match obtained_node {
