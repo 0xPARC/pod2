@@ -109,7 +109,7 @@ impl StatementTmplBuilder {
                 }
                 NativePredicate::DictInsert => NativePredicate::ContainerInsert,
                 NativePredicate::SetInsert => {
-                    self.args.push(self.args[2].clone());
+                    self.args.insert(2, self.args[1].clone());
                     NativePredicate::ContainerInsert
                 }
                 NativePredicate::DictUpdate | NativePredicate::ArrayUpdate => {
