@@ -1030,11 +1030,11 @@ impl Default for Params {
     fn default() -> Self {
         Self {
             max_input_pods: 2,
-            max_statements: 48,
+            max_statements: 52,
             max_public_statements: 20,
             max_open_input_statement_ops: 20,
-            max_custom_predicates: 10,
-            max_custom_predicate_verification_ops: 10,
+            max_custom_predicates: 16,
+            max_custom_predicate_verification_ops: 16,
             max_custom_predicate_wildcards: 8,
             containers: ParamsContainers::default(),
             max_depth_mt_vds: 6, // up to 64 (2^6) different pod circuits
