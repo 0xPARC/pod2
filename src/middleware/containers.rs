@@ -21,7 +21,30 @@ use crate::{
 
 pub const EMPTY_MT_ROOT: Hash = EMPTY_HASH;
 
-/// Bitmask of container type.
+/// Bitmask of container type.  We have three contianer types: Dictionary, Set and Array, and all
+/// of them are backed up by a MerkleTree.  The three container types internally map to a key-value
+/// where key is Value and value is Value, but they use different rules:
+/// - The Dictionary uses String (as a Value) for the key
+/// - The Array uses non-negative Int (as a Value) for the key
+/// - The Set uses key = value
+/// Because of this we can have containers that can be different types at the same time, for
+/// example:
+/// - Dict{"a": "a"} == Set{"a"}
+/// - Dict{"a": "a", "b": "b"} = Set{"a", "b"}
+/// - Array[0] == Set{0}
+/// - Array[0, 1] = Set{0, 1}
+/// - Dict{} == Array[] == Set{}
+///
+/// For this reason we use a bitmask for the generic Container to flag what kind of container type
+/// it can be used as.  Usually only one bit will be set, but in the case of an edge case like the
+/// ones above, multiple bits will be set.
+///
+/// When using a persistent database we store this container indexed by the root of the container,
+/// and we update it to store all the container types seen for each root by ORing the mask so that
+/// no information is lost.
+///
+/// The string encoding of this bitmask contains three characters which are `d,s,a` or `-`
+/// depending on whether the bit flag is set or not for each of Dictionary, Set and Array.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub struct ContainerKind(pub(crate) u8);
 
@@ -168,8 +191,26 @@ impl<'de> Deserialize<'de> for Container {
         D: serde::Deserializer<'de>,
     {
         let c = SerializedContainer::deserialize(deserializer)?;
+        let is_dictionary = c.kind.is_dictionary();
+        let is_set = c.kind.is_set();
+        let is_array = c.kind.is_array();
         let mut kvs = HashMap::<Value, Value>::new();
         for mut elem in c.kvs {
+            let Some(key) = elem.first() else {
+                return Err(D::Error::custom(format!(
+                    "invalid container: elem.length() = 0"
+                )));
+            };
+            // Type validation
+            if is_set && elem.len() != 1 {
+                return Err(D::Error::custom("not a set: elem.len != 1"));
+            }
+            if is_array && !matches!(&key.typed, TypedValue::Int(i) if *i >= 0) {
+                return Err(D::Error::custom("not an array: non-index key"));
+            }
+            if is_dictionary && !matches!(&key.typed, TypedValue::String(_)) {
+                return Err(D::Error::custom("not a dictionary: non-string key"));
+            }
             match elem.len() {
                 1 => {
                     let v = elem.pop().unwrap();
@@ -190,21 +231,18 @@ impl<'de> Deserialize<'de> for Container {
     }
 }
 
-// Enforce the same rules about key types and key-value relationships that
-// are enforced by Dictionary/Set/Array constructors.
+// Validate inner container type during deserialization.
 
 impl<'de> Deserialize<'de> for Set {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,
     {
-        let inner = Container::deserialize(deserializer)?;
-        for kv in inner.iter() {
-            let (key, value) = kv.map_err(D::Error::custom)?;
-            if key != value {
-                return Err(D::Error::custom("not a set: entry key != value"));
-            }
+        let mut inner = Container::deserialize(deserializer)?;
+        if !inner.kind.is_set() {
+            return Err(D::Error::custom("container not a set"));
         }
+        inner.kind = *ContainerKind::default().set_set();
         Ok(Set { inner })
     }
 }
@@ -214,13 +252,11 @@ impl<'de> Deserialize<'de> for Dictionary {
     where
         D: Deserializer<'de>,
     {
-        let inner = Container::deserialize(deserializer)?;
-        for kv in inner.iter() {
-            let (key, _) = kv.map_err(D::Error::custom)?;
-            if !matches!(&key.typed, TypedValue::String(_)) {
-                return Err(D::Error::custom("not a dictionary: non-string key"));
-            }
+        let mut inner = Container::deserialize(deserializer)?;
+        if !inner.kind.is_dictionary() {
+            return Err(D::Error::custom("container not a dictionary"));
         }
+        inner.kind = *ContainerKind::default().set_dictionary();
         Ok(Dictionary { inner })
     }
 }
@@ -230,13 +266,11 @@ impl<'de> Deserialize<'de> for Array {
     where
         D: Deserializer<'de>,
     {
-        let inner = Container::deserialize(deserializer)?;
-        for kv in inner.iter() {
-            let (key, _) = kv.map_err(D::Error::custom)?;
-            if !matches!(&key.typed, TypedValue::Int(i) if *i >= 0) {
-                return Err(D::Error::custom("not an array: non-index key"));
-            }
+        let mut inner = Container::deserialize(deserializer)?;
+        if !inner.kind.is_array() {
+            return Err(D::Error::custom("container not an array"));
         }
+        inner.kind = *ContainerKind::default().set_array();
         Ok(Array { inner })
     }
 }
@@ -426,6 +460,8 @@ impl Container {
     pub fn dump(&self) -> Result<HashMap<Value, Value>> {
         self.iter().collect()
     }
+    /// Casting methods narrow the kind in the container so that future write operations only
+    /// record future container roots as that particular kind.
     pub fn as_dictionary(&self) -> Option<Dictionary> {
         if self.kind.is_dictionary() {
             let mut inner = self.clone();
@@ -493,9 +529,9 @@ impl Dictionary {
         }
     }
     pub fn empty_with_db(db: Box<dyn DB>) -> Self {
-        Self {
-            inner: Container::empty_with_db(db),
-        }
+        Container::empty_with_db(db)
+            .as_dictionary()
+            .expect("empty container can be anything")
     }
     pub fn from_db(root: Hash, db: Box<dyn DB>) -> Result<Self> {
         Container::from_db(root, db)?
@@ -583,9 +619,9 @@ impl Set {
         }
     }
     pub fn empty_with_db(db: Box<dyn DB>) -> Self {
-        Self {
-            inner: Container::empty_with_db(db),
-        }
+        Container::empty_with_db(db)
+            .as_set()
+            .expect("empty container can be anything")
     }
     pub fn from_db(root: Hash, db: Box<dyn DB>) -> Result<Self> {
         Container::from_db(root, db)?
@@ -670,9 +706,9 @@ impl Array {
         }
     }
     pub fn empty_with_db(db: Box<dyn DB>) -> Self {
-        Self {
-            inner: Container::empty_with_db(db),
-        }
+        Container::empty_with_db(db)
+            .as_array()
+            .expect("empty container can be anything")
     }
     pub fn from_db(root: Hash, db: Box<dyn DB>) -> Result<Self> {
         Container::from_db(root, db)?
@@ -919,6 +955,66 @@ mod tests {
         println!("a: {}", serde_json::to_string(&a).unwrap());
         println!("b: {}", serde_json::to_string(&b).unwrap());
         let top = Array::new(vec![a, b]);
-        println!("top: {}", serde_json::to_string(&top).unwrap());
+        let top_json = serde_json::to_string(&top).unwrap();
+        println!("top: {}", top_json);
+        assert_eq!(
+            top_json,
+            r#"{"kind":"--a","kvs":[[{"Int":"0"},{"Container":{"kind":"ds-","kvs":[["a"]]}}],[{"Int":"1"},{"Container":{"kind":"ds-","kvs":[["a"]]}}]]}"#
+        );
+    }
+
+    fn _test_kind(db: Box<dyn DB>) {
+        let mut nested_dict = Dictionary::empty_with_db(db.clone());
+        nested_dict
+            .insert(&StrKey::from("a"), &Value::from("a"))
+            .unwrap();
+        nested_dict
+            .insert(&StrKey::from("b"), &Value::from("b"))
+            .unwrap();
+
+        assert!(nested_dict.inner.kind.is_dictionary());
+        assert!(!nested_dict.inner.kind.is_set());
+        assert!(!nested_dict.inner.kind.is_array());
+
+        // Only observed the container as a Dictionary, not a Set
+        assert!(Dictionary::from_db(nested_dict.commitment(), db.clone()).is_ok());
+        assert!(Set::from_db(nested_dict.commitment(), db.clone()).is_err());
+
+        let mut nested_set = Set::empty_with_db(db.clone());
+        nested_set.insert(&Value::from("a")).unwrap();
+        nested_set.insert(&Value::from("b")).unwrap();
+
+        // We intentionally made a collision
+        assert_eq!(nested_dict.commitment(), nested_set.commitment());
+
+        // Observed the container both as a Dictionary and a Set
+        assert!(Dictionary::from_db(nested_dict.commitment(), db.clone()).is_ok());
+        assert!(Set::from_db(nested_dict.commitment(), db.clone()).is_ok());
+
+        let mut dict0 = Dictionary::empty_with_db(db.clone());
+        dict0
+            .insert(&StrKey::from("x"), &Value::from(nested_dict))
+            .unwrap();
+        dict0
+            .insert(&StrKey::from("y"), &Value::from(nested_set.clone()))
+            .unwrap();
+
+        assert!(dict0
+            .get(&StrKey::from("x"))
+            .unwrap()
+            .unwrap()
+            .as_dictionary()
+            .is_some());
+        assert!(dict0
+            .get(&StrKey::from("y"))
+            .unwrap()
+            .unwrap()
+            .as_set()
+            .is_some());
+    }
+
+    #[test]
+    fn test_kind() {
+        test_databases(&_test_kind);
     }
 }
