@@ -205,8 +205,8 @@ enum OperationAuxTableTag {
 // This is distinct from `OperationAuxTableTag`: the table tag labels the physical
 // row segment, while this kind separates semantic query shapes that share a row tag,
 // such as `Contains`/`NotContains` or transition `Insert`/`Update`/`Delete`.
-// Custom verification uses `CustomPredicateVerifyQueryTarget::hash`; its row tag is
-// sufficient because its input shape is structurally unique among aux kinds.
+// Custom verification (see `hash_custom_predicate_verify_query`) carries no query kind; its row
+// tag is sufficient because its input shape is structurally unique among aux kinds.
 #[derive(Copy, Clone)]
 enum OperationAuxQueryKind {
     MerkleContains = 1,
@@ -314,6 +314,23 @@ fn hash_pair_query(
         kind,
         x.elements.into_iter().chain(y.elements).collect(),
     )
+}
+
+// Custom verification doesn't go through `operation_aux_query_hash`: its row tag is sufficient
+// because its input shape is structurally unique among aux kinds, so no query-kind prefix is
+// needed.
+fn hash_custom_predicate_verify_query(
+    builder: &mut CircuitBuilder,
+    statement: StatementTarget,
+    op_type: OperationTypeTarget,
+    op_args: Vec<StatementTarget>,
+) -> HashOutTarget {
+    CustomPredicateVerifyQueryTarget {
+        statement,
+        op_type,
+        op_args,
+    }
+    .hash(builder)
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -584,12 +601,12 @@ fn build_operation_aux_table_circuit(
         let out_query_hash = entry.custom_predicate.hash(builder);
         builder.connect_array(table_query_hash.elements, out_query_hash.elements);
 
-        let query = CustomPredicateVerifyQueryTarget {
-            statement,                      // output
-            op_type,                        // output
-            op_args: entry.op_args.clone(), // input
-        };
-        let query_hash = query.hash(builder);
+        let query_hash = hash_custom_predicate_verify_query(
+            builder,
+            statement,             // output
+            op_type,               // output
+            entry.op_args.clone(), // input
+        );
         table.push(
             builder,
             OperationAuxTableTag::CustomPredVerify as u32,
@@ -1048,12 +1065,12 @@ fn verify_custom_circuit(
     let (aux_tag_ok, resolved_query_hash) =
         aux.as_type::<HashOutTarget>(builder, OperationAuxTableTag::CustomPredVerify as u32);
 
-    let query = CustomPredicateVerifyQueryTarget {
-        statement: st.clone(),
-        op_type: op_type.clone(),
-        op_args: resolved_op_args.to_vec(),
-    };
-    let query_hash = query.hash(builder);
+    let query_hash = hash_custom_predicate_verify_query(
+        builder,
+        st.clone(),
+        op_type.clone(),
+        resolved_op_args.to_vec(),
+    );
     let query_ok = builder.is_equal_flattenable(&resolved_query_hash, &query_hash);
     let ok = builder.all([aux_tag_ok, query_ok]);
     measure_gates_end!(builder, measure);
