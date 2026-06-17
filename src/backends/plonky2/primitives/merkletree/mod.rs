@@ -519,7 +519,7 @@ impl MerkleTree {
             for (k, v) in kvs.iter() {
                 root = apply_op(tx.as_mut(), MerkleTreeOp::Insert, root, *k, Some(*v))?;
             }
-            tx.commit().map_err(|e| Error::Database(e))?;
+            tx.commit().map_err(Error::Database)?;
             root
         };
 
@@ -579,7 +579,7 @@ impl MerkleTree {
     ) -> Result<MerkleTreeStateTransitionProof> {
         let mut tx = self.db.tx();
         let proof = insert_tx(tx.as_mut(), self.root, key, value)?;
-        tx.commit().map_err(|e| Error::Database(e))?;
+        tx.commit().map_err(Error::Database)?;
         self.root = proof.new_root;
         Ok(proof)
     }
@@ -591,7 +591,7 @@ impl MerkleTree {
     ) -> Result<MerkleTreeStateTransitionProof> {
         let mut tx = self.db.tx();
         let proof = update_tx(tx.as_mut(), self.root, key, value)?;
-        tx.commit().map_err(|e| Error::Database(e))?;
+        tx.commit().map_err(Error::Database)?;
         self.root = proof.new_root;
         Ok(proof)
     }
@@ -599,7 +599,7 @@ impl MerkleTree {
     pub fn delete(&mut self, key: &RawValue) -> Result<MerkleTreeStateTransitionProof> {
         let mut tx = self.db.tx();
         let proof = delete_tx(tx.as_mut(), self.root, key)?;
-        tx.commit().map_err(|e| Error::Database(e))?;
+        tx.commit().map_err(Error::Database)?;
         self.root = proof.new_root;
         Ok(proof)
     }

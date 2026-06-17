@@ -159,7 +159,7 @@ impl<'a> TX for RocksTx<'a> {
             None => kind,
         };
         let kind_key = kind_key(root);
-        Ok(self.tx.put(&kind_key, &[kind.0])?)
+        Ok(self.tx.put(&kind_key, [kind.0])?)
     }
     fn is_persistent(&self) -> bool {
         true

@@ -4,6 +4,7 @@
 use std::{
     collections::{HashMap, HashSet},
     fmt::{self, Debug},
+    str::FromStr,
 };
 
 use schemars::JsonSchema;
@@ -27,6 +28,7 @@ pub const EMPTY_MT_ROOT: Hash = EMPTY_HASH;
 /// - The Dictionary uses String (as a Value) for the key
 /// - The Array uses non-negative Int (as a Value) for the key
 /// - The Set uses key = value
+///
 /// Because of this we can have containers that can be different types at the same time, for
 /// example:
 /// - Dict{"a": "a"} == Set{"a"}
@@ -70,28 +72,32 @@ impl ContainerKind {
         self.0 |= 1 << 2;
         self
     }
-    pub fn from_str(s: &str) -> Option<Self> {
+}
+
+impl FromStr for ContainerKind {
+    type Err = Error;
+    fn from_str(s: &str) -> Result<Self> {
         let s = s.as_bytes();
         if s.len() != 3 {
-            return None;
+            return Err(Error::custom("invalid length"));
         }
         let mut kind = Self::default();
         if s[0] == b'd' {
             kind.set_dictionary();
         } else if s[0] != b'-' {
-            return None;
+            return Err(Error::custom("invalid char at pos 0"));
         }
         if s[1] == b's' {
             kind.set_set();
         } else if s[1] != b'-' {
-            return None;
+            return Err(Error::custom("invalid char at pos 1"));
         }
         if s[2] == b'a' {
             kind.set_array();
         } else if s[2] != b'-' {
-            return None;
+            return Err(Error::custom("invalid char at pos 2"));
         }
-        Some(kind)
+        Ok(kind)
     }
 }
 
@@ -139,7 +145,7 @@ impl<'de> Deserialize<'de> for ContainerKind {
     {
         let s = String::deserialize(deserializer)?;
         ContainerKind::from_str(&s)
-            .ok_or_else(|| D::Error::custom("invalid encoding of ContainerKind"))
+            .map_err(|e| D::Error::custom(format!("invalid encoding of ContainerKind {e}")))
     }
 }
 
@@ -197,9 +203,9 @@ impl<'de> Deserialize<'de> for Container {
         let mut kvs = HashMap::<Value, Value>::new();
         for mut elem in c.kvs {
             let Some(key) = elem.first() else {
-                return Err(D::Error::custom(format!(
-                    "invalid container: elem.length() = 0"
-                )));
+                return Err(D::Error::custom(
+                    "invalid container: elem.length() = 0".to_string(),
+                ));
             };
             // Type validation
             if is_set && elem.len() != 1 {
@@ -315,9 +321,8 @@ fn load_value(db: &dyn db::DB, value_raw: RawValue) -> Result<Value> {
             // With a persistent DB we skip storing containers as values and instead store them as
             // merkle trees via the Container type.
             if db.is_persistent() {
-                match Container::from_db(Hash(value_raw.0), db.clone_box()) {
-                    Ok(c) => return Ok(Value::from(c)),
-                    _ => {}
+                if let Ok(c) = Container::from_db(Hash(value_raw.0), db.clone_box()) {
+                    return Ok(Value::from(c));
                 }
             }
             Err(Error::custom(format!(
@@ -364,7 +369,7 @@ impl Container {
         let _ = merkletree::load_node(db.as_ref(), root)?;
         let kind = db
             .load_kind(root)
-            .map_err(|e| Error::Database(e))?
+            .map_err(Error::Database)?
             .ok_or_else(|| Error::custom("container kind not found"))?;
         Ok(Self { kind, root, db })
     }
@@ -389,8 +394,8 @@ impl Container {
         let mut tx = DB::tx(self.db.as_ref());
         let mtp = insert_tx(tx.as_mut(), self.root, key, value)?;
         tx.update_kind(mtp.new_root, self.kind)
-            .map_err(|e| Error::Database(e))?;
-        TX::commit(tx).map_err(|e| Error::Database(e))?;
+            .map_err(Error::Database)?;
+        TX::commit(tx).map_err(Error::Database)?;
         self.root = mtp.new_root;
         Ok(mtp)
     }
@@ -408,8 +413,8 @@ impl Container {
         store_value(tx.as_mut(), value)?;
         let mtp = merkletree::update_tx(tx.as_mut(), self.root, &key_raw, &value_raw)?;
         tx.update_kind(mtp.new_root, self.kind)
-            .map_err(|e| Error::Database(e))?;
-        TX::commit(tx).map_err(|e| Error::Database(e))?;
+            .map_err(Error::Database)?;
+        TX::commit(tx).map_err(Error::Database)?;
         self.root = mtp.new_root;
         Ok(mtp)
     }
@@ -425,8 +430,8 @@ impl Container {
         let mut tx = DB::tx(self.db.as_ref());
         let mtp = merkletree::delete_tx(tx.as_mut(), self.root, &key_raw)?;
         tx.update_kind(mtp.new_root, self.kind)
-            .map_err(|e| Error::Database(e))?;
-        TX::commit(tx).map_err(|e| Error::Database(e))?;
+            .map_err(Error::Database)?;
+        TX::commit(tx).map_err(Error::Database)?;
         self.root = mtp.new_root;
         Ok(mtp)
     }
