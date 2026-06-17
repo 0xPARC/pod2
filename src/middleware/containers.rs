@@ -22,7 +22,7 @@ use crate::{
 
 pub const EMPTY_MT_ROOT: Hash = EMPTY_HASH;
 
-/// Bitmask of container type.  We have three contianer types: Dictionary, Set and Array, and all
+/// Bitmask of container type.  We have three container types: Dictionary, Set and Array, and all
 /// of them are backed up by a MerkleTree.  The three container types internally map to a key-value
 /// where key is Value and value is Value, but they use different rules:
 /// - The Dictionary uses String (as a Value) for the key
