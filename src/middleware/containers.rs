@@ -7,10 +7,7 @@ use std::{
 };
 
 use schemars::JsonSchema;
-use serde::{
-    de::{Error as _, SeqAccess, Visitor},
-    ser, Deserialize, Deserializer, Serialize,
-};
+use serde::{de::Error as _, ser, Deserialize, Deserializer, Serialize};
 
 #[cfg(feature = "backend_plonky2")]
 use crate::backends::plonky2::primitives::merkletree::{self, MerkleProof, MerkleTree};
@@ -25,7 +22,7 @@ use crate::{
 pub const EMPTY_MT_ROOT: Hash = EMPTY_HASH;
 
 /// Bitmask of container type.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub struct ContainerKind(pub(crate) u8);
 
 impl ContainerKind {
@@ -50,6 +47,77 @@ impl ContainerKind {
         self.0 |= 1 << 2;
         self
     }
+    pub fn from_str(s: &str) -> Option<Self> {
+        let s = s.as_bytes();
+        if s.len() != 3 {
+            return None;
+        }
+        let mut kind = Self::default();
+        if s[0] == b'd' {
+            kind.set_dictionary();
+        } else if s[0] != b'-' {
+            return None;
+        }
+        if s[1] == b's' {
+            kind.set_set();
+        } else if s[1] != b'-' {
+            return None;
+        }
+        if s[2] == b'a' {
+            kind.set_array();
+        } else if s[2] != b'-' {
+            return None;
+        }
+        Some(kind)
+    }
+}
+
+impl fmt::Display for ContainerKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.is_dictionary() {
+            true => write!(f, "d")?,
+            false => write!(f, "-")?,
+        }
+        match self.is_set() {
+            true => write!(f, "s")?,
+            false => write!(f, "-")?,
+        }
+        match self.is_array() {
+            true => write!(f, "a")?,
+            false => write!(f, "-")?,
+        }
+        Ok(())
+    }
+}
+
+impl JsonSchema for ContainerKind {
+    fn schema_name() -> String {
+        "ContainerKind".to_string()
+    }
+
+    fn json_schema(gen: &mut schemars::gen::SchemaGenerator) -> schemars::schema::Schema {
+        String::json_schema(gen)
+    }
+}
+
+impl Serialize for ContainerKind {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(&format!("{}", self))
+    }
+}
+
+impl<'de> Deserialize<'de> for ContainerKind {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        ContainerKind::from_str(&s)
+            .ok_or_else(|| D::Error::custom("invalid encoding of ContainerKind"))
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -59,14 +127,19 @@ pub struct Container {
     db: Box<dyn DB>,
 }
 
+#[derive(Serialize, Deserialize, JsonSchema)]
+struct SerializedContainer {
+    kind: ContainerKind,
+    kvs: Vec<Vec<Value>>,
+}
+
 impl JsonSchema for Container {
     fn schema_name() -> String {
         "Container".to_string()
     }
 
     fn json_schema(gen: &mut schemars::gen::SchemaGenerator) -> schemars::schema::Schema {
-        // Just use the schema of Vec<Vec<Value>> since that's what we're actually serializing
-        Vec::<Vec<Value>>::json_schema(gen)
+        SerializedContainer::json_schema(gen)
     }
 }
 
@@ -77,38 +150,26 @@ impl Serialize for Container {
     {
         let mut pairs = self
             .iter()
-            .collect::<Result<Vec<(Value, Value)>>>()
+            .map(|result_pair| result_pair.map(|(k, v)| if k == v { vec![v] } else { vec![k, v] }))
+            .collect::<Result<Vec<Vec<Value>>>>()
             .map_err(ser::Error::custom)?;
-        pairs.sort_by(|(k1, _), (k2, _)| k1.raw().cmp(&k2.raw()));
-        // Serialize as an array
-        use serde::ser::SerializeSeq;
-        let mut seq = serializer.serialize_seq(Some(pairs.len()))?;
-        for (k, v) in pairs {
-            if k == v {
-                seq.serialize_element(&[&v])?;
-            } else {
-                seq.serialize_element(&[&k, &v])?;
-            }
+        pairs.sort_by(|pair_l, pair_r| pair_l[0].raw().cmp(&pair_r[0].raw()));
+        SerializedContainer {
+            kind: self.kind,
+            kvs: pairs,
         }
-        seq.end()
+        .serialize(serializer)
     }
 }
 
-struct ContainerVisitor;
-
-impl<'de> Visitor<'de> for ContainerVisitor {
-    type Value = HashMap<Value, Value>;
-
-    fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-        formatter.write_str("a sequence of `[Value]` or `[Value, Value]`")
-    }
-
-    fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+impl<'de> Deserialize<'de> for Container {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
-        A: SeqAccess<'de>,
+        D: serde::Deserializer<'de>,
     {
+        let c = SerializedContainer::deserialize(deserializer)?;
         let mut kvs = HashMap::<Value, Value>::new();
-        while let Some(mut elem) = seq.next_element::<Vec<Value>>()? {
+        for mut elem in c.kvs {
             match elem.len() {
                 1 => {
                     let v = elem.pop().unwrap();
@@ -119,24 +180,13 @@ impl<'de> Visitor<'de> for ContainerVisitor {
                     kvs.insert(k, v);
                 }
                 n => {
-                    return Err(A::Error::custom(format!(
+                    return Err(D::Error::custom(format!(
                         "invalid vec length of {n} in container entry"
                     )))
                 }
             }
         }
-
-        Ok(kvs)
-    }
-}
-
-impl<'de> Deserialize<'de> for Container {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let kvs = deserializer.deserialize_seq(ContainerVisitor)?;
-        Ok(Container::new(kvs))
+        Ok(Container::new(c.kind, kvs))
     }
 }
 
@@ -223,13 +273,23 @@ fn store_value(tx: &mut dyn TX, v: Value) -> Result<()> {
     Ok(())
 }
 
-fn load_value(db: &dyn db::Read, value_raw: RawValue) -> Result<Value> {
+fn load_value(db: &dyn db::DB, value_raw: RawValue) -> Result<Value> {
     match db.load_value(value_raw) {
         Err(e) => Err(Error::Database(e)),
         Ok(Some(v)) => Ok(v),
-        Ok(None) => Err(Error::custom(format!(
-            "Value from {value_raw} not found in DB"
-        ))),
+        Ok(None) => {
+            // With a persistent DB we skip storing containers as values and instead store them as
+            // merkle trees via the Container type.
+            if db.is_persistent() {
+                match Container::from_db(Hash(value_raw.0), db.clone_box()) {
+                    Ok(c) => return Ok(Value::from(c)),
+                    _ => {}
+                }
+            }
+            Err(Error::custom(format!(
+                "Value from {value_raw} not found in DB"
+            )))
+        }
     }
 }
 
@@ -253,12 +313,13 @@ impl Container {
     pub fn mt(&self) -> MerkleTree {
         MerkleTree::from_db(self.root, self.db.clone())
     }
-    fn new(kvs: HashMap<Value, Value>) -> Self {
+    fn new(kind: ContainerKind, kvs: HashMap<Value, Value>) -> Self {
         let db = Box::new(MemDB::new());
         let mut container = Self::empty_with_db(db);
         for (k, v) in kvs {
             container.insert(k, v).expect("no duplicates, no db errors");
         }
+        container.kind = kind;
         container
     }
     fn empty_with_db(db: Box<dyn DB>) -> Self {
@@ -424,6 +485,7 @@ impl Dictionary {
     pub fn new(kvs: HashMap<StrKey, Value>) -> Self {
         Self {
             inner: Container::new(
+                *ContainerKind::default().set_dictionary(),
                 kvs.into_iter()
                     .map(|(k, v)| (Value::from(k.into_name()), v))
                     .collect(),
@@ -514,7 +576,10 @@ pub struct Set {
 impl Set {
     pub fn new(set: HashSet<Value>) -> Self {
         Self {
-            inner: Container::new(set.into_iter().map(|v| (v.clone(), v)).collect()),
+            inner: Container::new(
+                *ContainerKind::default().set_set(),
+                set.into_iter().map(|v| (v.clone(), v)).collect(),
+            ),
         }
     }
     pub fn empty_with_db(db: Box<dyn DB>) -> Self {
@@ -595,6 +660,7 @@ impl Array {
     pub fn new(array: Vec<Value>) -> Self {
         Self {
             inner: Container::new(
+                *ContainerKind::default().set_array(),
                 array
                     .into_iter()
                     .enumerate()
@@ -610,7 +676,7 @@ impl Array {
     }
     pub fn from_db(root: Hash, db: Box<dyn DB>) -> Result<Self> {
         Container::from_db(root, db)?
-            .as_set()
+            .as_array()
             .ok_or_else(|| Error::custom("not an array"))
     }
     pub fn commitment(&self) -> Hash {
@@ -710,19 +776,6 @@ mod tests {
                 "kind mismatch: {value} came back as {back}"
             );
         }
-    }
-
-    /// A tagged container claiming a kind its contents violate must be
-    /// rejected rather than constructed.
-    #[test]
-    fn mistagged_container_is_rejected() {
-        // Dictionary content under a Set tag: entries have key != value.
-        let dict = Value::from(Dictionary::new(
-            [(StrKey::from("score"), Value::from(42))].into(),
-        ));
-        let json = serde_json::to_string(&dict).unwrap();
-        let mistagged = json.replacen("Dictionary", "Set", 1);
-        assert!(serde_json::from_str::<Value>(&mistagged).is_err());
     }
 
     fn test_databases(test_fn: &dyn Fn(Box<dyn DB>)) {

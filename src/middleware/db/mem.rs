@@ -1,7 +1,7 @@
 use std::sync::RwLockWriteGuard;
 
 use super::*;
-use crate::middleware::TypedValue;
+use crate::middleware::{TypedValue, EMPTY_HASH};
 
 #[derive(Default, Debug)]
 struct Store {
@@ -41,6 +41,14 @@ impl Read for MemDB {
         Ok(store.values.get(&raw).cloned())
     }
     fn load_kind(&self, root: Hash) -> anyhow::Result<Option<ContainerKind>> {
+        if root == EMPTY_HASH {
+            return Ok(Some(
+                *ContainerKind::default()
+                    .set_dictionary()
+                    .set_set()
+                    .set_array(),
+            ));
+        }
         let store = self.db.read().expect("lock not poisoned");
         Ok(store.kinds.get(&root).cloned())
     }
@@ -93,6 +101,14 @@ impl<'a> Read for MemTx<'a> {
             .cloned())
     }
     fn load_kind(&self, root: Hash) -> anyhow::Result<Option<ContainerKind>> {
+        if root == EMPTY_HASH {
+            return Ok(Some(
+                *ContainerKind::default()
+                    .set_dictionary()
+                    .set_set()
+                    .set_array(),
+            ));
+        }
         Ok(self
             .tmp
             .kinds

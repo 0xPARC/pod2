@@ -339,20 +339,17 @@ impl JsonSchema for TypedValue {
             ..Default::default()
         };
 
-        let tagged = |tag: &str, inner: Schema| {
-            Schema::Object(SchemaObject {
-                instance_type: Some(SingleOrVec::Single(Box::new(InstanceType::Object))),
-                object: Some(Box::new(schemars::schema::ObjectValidation {
-                    properties: [(tag.to_string(), inner)].into_iter().collect(),
-                    required: [tag.to_string()].into_iter().collect(),
-                    ..Default::default()
-                })),
+        let container_schema = schemars::schema::SchemaObject {
+            instance_type: Some(SingleOrVec::Single(Box::new(InstanceType::Object))),
+            object: Some(Box::new(schemars::schema::ObjectValidation {
+                properties: [("Container".to_string(), gen.subschema_for::<Container>())]
+                    .into_iter()
+                    .collect(),
+                required: ["Container".to_string()].into_iter().collect(),
                 ..Default::default()
-            })
+            })),
+            ..Default::default()
         };
-        let set_schema = tagged("Set", gen.subschema_for::<Set>());
-        let dictionary_schema = tagged("Dictionary", gen.subschema_for::<Dictionary>());
-        let array_schema = tagged("Array", gen.subschema_for::<Array>());
 
         let untagged_string_schema = gen.subschema_for::<String>();
 
@@ -364,9 +361,7 @@ impl JsonSchema for TypedValue {
                     Schema::Object(raw_schema),
                     Schema::Object(public_key_schema),
                     Schema::Object(secret_key_schema),
-                    set_schema,
-                    dictionary_schema,
-                    array_schema,
+                    Schema::Object(container_schema),
                     untagged_string_schema,
                 ]),
                 ..Default::default()

@@ -8,7 +8,7 @@ use dyn_clone::DynClone;
 
 #[cfg(feature = "backend_plonky2")]
 use crate::backends::plonky2::primitives::merkletree::{self};
-use crate::middleware::{ContainerKind, Hash, RawValue, Value, EMPTY_HASH};
+use crate::middleware::{ContainerKind, Hash, RawValue, Value};
 
 pub mod mem;
 #[cfg(feature = "db_rocksdb")]

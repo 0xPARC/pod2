@@ -1,7 +1,7 @@
 use std::{fmt, path::Path, sync::Arc};
 
 use anyhow::{anyhow, Result};
-use rocksdb::{Options, Transaction, TransactionDB, TransactionDBOptions};
+use rocksdb::{DBAccess, Options, ReadOptions, Transaction, TransactionDB, TransactionDBOptions};
 
 use crate::{
     backends::plonky2::primitives::merkletree::{self, db},
@@ -29,7 +29,7 @@ impl fmt::Debug for RocksDB {
     }
 }
 
-pub(crate) fn load_node_db(db: &TransactionDB, hash: Hash) -> Result<Option<merkletree::Node>> {
+fn load_node_db(db: &impl DBAccess, hash: Hash) -> Result<Option<merkletree::Node>> {
     if hash == EMPTY_HASH {
         return Ok(Some(merkletree::Node::Intermediate(
             merkletree::Intermediate::new(EMPTY_HASH, EMPTY_HASH),
@@ -37,7 +37,7 @@ pub(crate) fn load_node_db(db: &TransactionDB, hash: Hash) -> Result<Option<merk
     }
 
     match db
-        .get(RawValue::from(hash).to_bytes())
+        .get_opt(RawValue::from(hash).to_bytes(), &ReadOptions::default())
         .map_err(|e| anyhow!("rocksdb: get failed: {e}"))?
     {
         None => Ok(None),
@@ -47,7 +47,7 @@ pub(crate) fn load_node_db(db: &TransactionDB, hash: Hash) -> Result<Option<merk
 
 impl db::Read for RocksDB {
     fn load_node(&self, hash: Hash) -> Result<Option<merkletree::Node>> {
-        load_node_db(&self.db, hash)
+        load_node_db(&*self.0, hash)
     }
 }
 
@@ -59,32 +59,13 @@ impl db::DB for RocksDB {
 
 pub(crate) struct RocksTx<'a>(pub(crate) Transaction<'a, TransactionDB>);
 
-pub(crate) fn load_node_tx<'a>(
-    tx: &Transaction<'a, TransactionDB>,
-    hash: Hash,
-) -> Result<Option<merkletree::Node>> {
-    if hash == EMPTY_HASH {
-        return Ok(Some(merkletree::Node::Intermediate(
-            merkletree::Intermediate::new(EMPTY_HASH, EMPTY_HASH),
-        )));
-    }
-
-    match tx
-        .get(RawValue::from(hash).to_bytes())
-        .map_err(|e| anyhow!("rocksdb: get failed: {e}"))?
-    {
-        None => Ok(None),
-        Some(bytes) => Ok(Some(merkletree::Node::decode(bytes.as_ref())?)),
-    }
-}
-
 impl<'a> db::Read for RocksTx<'a> {
     fn load_node(&self, hash: Hash) -> Result<Option<merkletree::Node>> {
-        load_node_tx(&self.0, hash)
+        load_node_db(&self.0, hash)
     }
 }
 
-pub(crate) fn store_node_tx(
+pub(crate) fn store_node_tx<'a>(
     tx: &Transaction<'a, TransactionDB>,
     node: merkletree::Node,
 ) -> Result<()> {
@@ -94,7 +75,7 @@ pub(crate) fn store_node_tx(
 
 impl<'a> db::TX for RocksTx<'a> {
     fn store_node(&mut self, node: merkletree::Node) -> Result<()> {
-        store_node_tx(&self.tx, node)
+        store_node_tx(&self.0, node)
     }
     fn commit(self: Box<Self>) -> Result<()> {
         self.0

@@ -6,7 +6,7 @@ use std::{
     sync::{Arc, Mutex, MutexGuard},
 };
 
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use dyn_clone::DynClone;
 
 use crate::{
