@@ -201,44 +201,137 @@ enum OperationAuxTableTag {
     SignedBy = 6,
 }
 
-fn max_operation_aux_entry_len(params: &Params) -> usize {
-    [
-        (params.containers.state_ops.max_total() > 0).then(|| MerkleClaimTarget::size(params)),
-        (params.containers.transition_ops.max_total() > 0)
-            .then(|| MerkleTreeStateTransitionClaimTarget::size(params)),
-        (params.max_custom_predicate_verification_ops > 0)
-            .then(|| CustomPredicateVerifyQueryTarget::size(params)),
-        (params.max_open_input_statement_ops > 0).then(|| StatementTarget::size(params)),
-        (params.max_public_key_ops > 0).then(|| SecKeyPubKeyTarget::size(params)),
-        (params.max_signed_by_ops > 0).then(|| MsgPubKeyTarget::size(params)),
-    ]
-    .into_iter()
-    .flatten()
-    .max()
-    .unwrap_or(0)
-}
-
+// Domain-separation tag prepended to the hashed query input for each aux kind.
+// This is distinct from `OperationAuxTableTag`: the table tag labels the physical
+// row segment, while this kind separates semantic query shapes that share a row tag,
+// such as `Contains`/`NotContains` or transition `Insert`/`Update`/`Delete`.
+// Custom verification (see `hash_custom_predicate_verify_query`) carries no query kind; its row
+// tag is sufficient because its input shape is structurally unique among aux kinds.
 #[derive(Copy, Clone)]
-struct HashPairTarget(HashOutTarget, HashOutTarget);
-
-impl Flattenable for HashPairTarget {
-    fn flatten(&self) -> Vec<Target> {
-        self.0.elements.into_iter().chain(self.1.elements).collect()
-    }
-    fn from_flattened(params: &Params, vs: &[Target]) -> Self {
-        assert_eq!(vs.len(), Self::size(params));
-        Self(
-            HashOutTarget::try_from(&vs[..4]).expect("len = 4"),
-            HashOutTarget::try_from(&vs[4..]).expect("len = 4"),
-        )
-    }
-    fn size(_params: &Params) -> usize {
-        8
-    }
+enum OperationAuxQueryKind {
+    MerkleContains = 1,
+    MerkleNotContains = 2,
+    MerkleTransition = 3,
+    MerkleDelete = 4,
+    OpenInputStatement = 5,
+    PublicKeyOf = 6,
+    SignedBy = 7,
 }
 
-type SecKeyPubKeyTarget = HashPairTarget; // (secret_key, public_key)
-type MsgPubKeyTarget = HashPairTarget; // (message, public_key)
+fn operation_aux_query_hash(
+    builder: &mut CircuitBuilder,
+    kind: OperationAuxQueryKind,
+    mut fields: Vec<Target>,
+) -> HashOutTarget {
+    fields.insert(0, builder.constant(F::from_canonical_u8(kind as u8)));
+    builder.hash_n_to_hash_no_pad::<PoseidonHash>(fields)
+}
+
+fn hash_merkle_contains_query(
+    builder: &mut CircuitBuilder,
+    root: HashOutTarget,
+    key: ValueTarget,
+    value: ValueTarget,
+) -> HashOutTarget {
+    operation_aux_query_hash(
+        builder,
+        OperationAuxQueryKind::MerkleContains,
+        root.elements
+            .into_iter()
+            .chain(key.elements)
+            .chain(value.elements)
+            .collect(),
+    )
+}
+
+fn hash_merkle_not_contains_query(
+    builder: &mut CircuitBuilder,
+    root: HashOutTarget,
+    key: ValueTarget,
+) -> HashOutTarget {
+    operation_aux_query_hash(
+        builder,
+        OperationAuxQueryKind::MerkleNotContains,
+        root.elements.into_iter().chain(key.elements).collect(),
+    )
+}
+
+fn hash_merkle_transition_query(
+    builder: &mut CircuitBuilder,
+    op: Target,
+    old_root: HashOutTarget,
+    new_root: HashOutTarget,
+    key: ValueTarget,
+    value: ValueTarget,
+) -> HashOutTarget {
+    operation_aux_query_hash(
+        builder,
+        OperationAuxQueryKind::MerkleTransition,
+        iter::once(op)
+            .chain(old_root.elements)
+            .chain(new_root.elements)
+            .chain(key.elements)
+            .chain(value.elements)
+            .collect(),
+    )
+}
+
+fn hash_merkle_delete_query(
+    builder: &mut CircuitBuilder,
+    old_root: HashOutTarget,
+    new_root: HashOutTarget,
+    key: ValueTarget,
+) -> HashOutTarget {
+    // Delete's value is constrained by the state-transition proof, not by the aux hash.
+    operation_aux_query_hash(
+        builder,
+        OperationAuxQueryKind::MerkleDelete,
+        old_root
+            .elements
+            .into_iter()
+            .chain(new_root.elements)
+            .chain(key.elements)
+            .collect(),
+    )
+}
+
+fn hash_statement_query(builder: &mut CircuitBuilder, st: &StatementTarget) -> HashOutTarget {
+    operation_aux_query_hash(
+        builder,
+        OperationAuxQueryKind::OpenInputStatement,
+        st.flatten(),
+    )
+}
+
+fn hash_pair_query(
+    builder: &mut CircuitBuilder,
+    kind: OperationAuxQueryKind,
+    x: HashOutTarget,
+    y: HashOutTarget,
+) -> HashOutTarget {
+    operation_aux_query_hash(
+        builder,
+        kind,
+        x.elements.into_iter().chain(y.elements).collect(),
+    )
+}
+
+// Custom verification doesn't go through `operation_aux_query_hash`: its row tag is sufficient
+// because its input shape is structurally unique among aux kinds, so no query-kind prefix is
+// needed.
+fn hash_custom_predicate_verify_query(
+    builder: &mut CircuitBuilder,
+    statement: StatementTarget,
+    op_type: OperationTypeTarget,
+    op_args: Vec<StatementTarget>,
+) -> HashOutTarget {
+    CustomPredicateVerifyQueryTarget {
+        statement,
+        op_type,
+        op_args,
+    }
+    .hash(builder)
+}
 
 #[derive(Clone, Serialize, Deserialize)]
 struct SignedByTarget {
@@ -305,6 +398,7 @@ impl OpenInputStatementTarget {
 }
 
 fn append_container_proofs_operation_aux_table_circuit(
+    params: &Params,
     builder: &mut CircuitBuilder,
     table: &mut MuxTableTarget,
     merkle_proofs: &MerkleProofsTarget,
@@ -314,37 +408,82 @@ fn append_container_proofs_operation_aux_table_circuit(
     for merkle_proof in &merkle_proofs.small {
         verify_merkle_proof_existence_circuit(builder, merkle_proof);
         let entry = MerkleClaimTarget::from_proof_existence(builder, merkle_proof.clone());
+        let query_hash = hash_merkle_contains_query(builder, entry.root, entry.key, entry.value);
 
-        table.push(builder, OperationAuxTableTag::MerkleProof as u32, &entry);
+        table.push(
+            builder,
+            OperationAuxTableTag::MerkleProof as u32,
+            &query_hash,
+        );
     }
     // Medium MerkleProofs: verify container merkle proofs (inclusion/non-inclusion)
     for merkle_proof in &merkle_proofs.medium {
         verify_merkle_proof_circuit(builder, merkle_proof);
         let entry = MerkleClaimTarget::from(merkle_proof.clone());
+        let contains_query_hash =
+            hash_merkle_contains_query(builder, entry.root, entry.key, entry.value);
+        let not_contains_query_hash =
+            hash_merkle_not_contains_query(builder, entry.root, entry.key);
+        let query_hash = builder.select_flattenable(
+            params,
+            entry.existence,
+            &contains_query_hash,
+            &not_contains_query_hash,
+        );
 
-        table.push(builder, OperationAuxTableTag::MerkleProof as u32, &entry);
+        table.push(
+            builder,
+            OperationAuxTableTag::MerkleProof as u32,
+            &query_hash,
+        );
     }
 
     // Small Merkle state transition proofs: verify op proof (only update)
     for merkle_transition_proof in &merkle_transition_proofs.small {
         verify_merkle_state_transition_circuit(builder, merkle_transition_proof);
         let entry = MerkleTreeStateTransitionClaimTarget::from(merkle_transition_proof.clone());
+        let query_hash = hash_merkle_transition_query(
+            builder,
+            entry.op,
+            entry.old_root,
+            entry.new_root,
+            entry.op_key,
+            entry.op_value,
+        );
 
         table.push(
             builder,
             OperationAuxTableTag::MerkleTransitionProof as u32,
-            &entry,
+            &query_hash,
         );
     }
     // Medium Merkle state transition proofs: verify op proof (insert/update/delete)
     for merkle_transition_proof in &merkle_transition_proofs.medium {
         verify_merkle_state_transition_circuit(builder, merkle_transition_proof);
         let entry = MerkleTreeStateTransitionClaimTarget::from(merkle_transition_proof.clone());
+        let transition_query_hash = hash_merkle_transition_query(
+            builder,
+            entry.op,
+            entry.old_root,
+            entry.new_root,
+            entry.op_key,
+            entry.op_value,
+        );
+        let delete_query_hash =
+            hash_merkle_delete_query(builder, entry.old_root, entry.new_root, entry.op_key);
+        let delete_op = builder.constant(F::from_canonical_u8(MerkleTreeOp::Delete as u8));
+        let is_delete = builder.is_equal(entry.op, delete_op);
+        let query_hash = builder.select_flattenable(
+            params,
+            is_delete,
+            &delete_query_hash,
+            &transition_query_hash,
+        );
 
         table.push(
             builder,
             OperationAuxTableTag::MerkleTransitionProof as u32,
-            &entry,
+            &query_hash,
         );
     }
 }
@@ -389,10 +528,11 @@ fn append_open_input_statements_aux_table_circuit(
             is_intro,
             &pod.vd_hash,
         );
+        let query_hash = hash_statement_query(builder, &st);
         table.push(
             builder,
             OperationAuxTableTag::OpenInputStatement as u32,
-            &st,
+            &query_hash,
         );
         measure_gates_end!(builder, measure);
     }
@@ -419,13 +559,13 @@ fn build_operation_aux_table_circuit(
         params.containers.state_ops.max_medium,
         input.merkle_proofs.medium.len()
     );
-    let max_entry_len = max_operation_aux_entry_len(params);
-    let mut table = MuxTableTarget::new(params, max_entry_len);
+    let mut table = MuxTableTarget::new(params, HashOutTarget::size(params));
 
     // None
     table.push_flattened(builder, OperationAuxTableTag::None as u32, &[]);
 
     append_container_proofs_operation_aux_table_circuit(
+        params,
         builder,
         &mut table,
         &input.merkle_proofs,
@@ -440,7 +580,7 @@ fn build_operation_aux_table_circuit(
         &input.open_input_statements,
     );
 
-    // CustomPredVerify: verify custom predicate statements verification against operations
+    // CustomPredVerify: store only the hash of the verification query in the aux table.
     for entry in &input.custom_predicate_verifications {
         let measure = measure_gates_begin!(builder, "CustomPredVerify");
         // Verify the custom predicate operation
@@ -461,15 +601,16 @@ fn build_operation_aux_table_circuit(
         let out_query_hash = entry.custom_predicate.hash(builder);
         builder.connect_array(table_query_hash.elements, out_query_hash.elements);
 
-        let query = CustomPredicateVerifyQueryTarget {
-            statement,                      // output
-            op_type,                        // output
-            op_args: entry.op_args.clone(), // input
-        };
+        let query_hash = hash_custom_predicate_verify_query(
+            builder,
+            statement,             // output
+            op_type,               // output
+            entry.op_args.clone(), // input
+        );
         table.push(
             builder,
             OperationAuxTableTag::CustomPredVerify as u32,
-            &query,
+            &query_hash,
         );
         measure_gates_end!(builder, measure);
     }
@@ -497,9 +638,18 @@ fn build_operation_aux_table_circuit(
             pk.x.components.into_iter().chain(pk.u.components).collect(),
         );
 
-        let entry: SecKeyPubKeyTarget = HashPairTarget(sk_hash, pk_hash);
+        let query_hash = hash_pair_query(
+            builder,
+            OperationAuxQueryKind::PublicKeyOf,
+            pk_hash,
+            sk_hash,
+        );
 
-        table.push(builder, OperationAuxTableTag::PublicKeyOf as u32, &entry);
+        table.push(
+            builder,
+            OperationAuxTableTag::PublicKeyOf as u32,
+            &query_hash,
+        );
         measure_gates_end!(builder, measure);
     }
 
@@ -525,11 +675,19 @@ fn build_operation_aux_table_circuit(
                 .chain(signed_by.pk.u.components)
                 .collect(),
         );
-        let entry: MsgPubKeyTarget = HashPairTarget(HashOutTarget::from(signed_by.msg), pk_hash);
+        let query_hash = hash_pair_query(
+            builder,
+            OperationAuxQueryKind::SignedBy,
+            HashOutTarget::from(signed_by.msg),
+            pk_hash,
+        );
 
-        table.push(builder, OperationAuxTableTag::SignedBy as u32, &entry);
+        table.push(builder, OperationAuxTableTag::SignedBy as u32, &query_hash);
         measure_gates_end!(builder, measure);
     }
+
+    let expected_table_size = mainpod::OperationAux::table_size(params);
+    assert_eq!(table.len(), expected_table_size);
 
     measure_gates_end!(builder, measure);
     Ok(table)
@@ -661,6 +819,14 @@ fn verify_operation_circuit(
                 ),
             ]);
         }
+        if params.max_open_input_statement_ops > 0 {
+            op_checks.extend_from_slice(&[verify_open_input_statement_circuit(
+                builder,
+                st,
+                &op.op_type,
+                &resolved_aux,
+            )]);
+        }
         if params.max_custom_predicate_verification_ops > 0 {
             op_checks.push(verify_custom_circuit(
                 builder,
@@ -669,14 +835,6 @@ fn verify_operation_circuit(
                 &resolved_aux,
                 &cache.op_args,
             ));
-        }
-        if params.max_open_input_statement_ops > 0 {
-            op_checks.extend_from_slice(&[verify_open_input_statement_circuit(
-                builder,
-                st,
-                &op.op_type,
-                &resolved_aux,
-            )]);
         }
     }
 
@@ -700,27 +858,19 @@ fn verify_contains_from_entries_circuit(
     cache: &StatementCachePriv,
 ) -> BoolTarget {
     let measure = measure_gates_begin!(builder, "OpContainsFromEntries");
-    let (aux_tag_ok, resolved_merkle_claim) =
-        aux.as_type::<MerkleClaimTarget>(builder, OperationAuxTableTag::MerkleProof as u32);
+    let (aux_tag_ok, resolved_query_hash) =
+        aux.as_type::<HashOutTarget>(builder, OperationAuxTableTag::MerkleProof as u32);
     let op_code_ok = op_type.has_native(builder, NativeOperation::ContainsFromEntries);
 
     let (arg_types_ok, [merkle_root_value, key_value, value_value]) =
         cache.first_n_args_as_values();
-
-    // Check Merkle proof (verified elsewhere) against op args.
-    let merkle_proof_checks = [
-        /* ...and it must be an existence proof. */
-        resolved_merkle_claim.existence,
-        /* ...for the root-key-value triple in the resolved op args. */
-        builder.is_equal_slice(
-            &merkle_root_value.elements,
-            &resolved_merkle_claim.root.elements,
-        ),
-        builder.is_equal_slice(&key_value.elements, &resolved_merkle_claim.key.elements),
-        builder.is_equal_slice(&value_value.elements, &resolved_merkle_claim.value.elements),
-    ];
-
-    let merkle_proof_ok = builder.all(merkle_proof_checks);
+    let expected_query_hash = hash_merkle_contains_query(
+        builder,
+        HashOutTarget::from(merkle_root_value),
+        key_value,
+        value_value,
+    );
+    let merkle_proof_ok = builder.is_equal_flattenable(&resolved_query_hash, &expected_query_hash);
 
     // Check output statement
     let arg1_expected = cache.equations[0].lhs.clone();
@@ -748,25 +898,14 @@ fn verify_not_contains_from_entries_circuit(
     cache: &StatementCachePriv,
 ) -> BoolTarget {
     let measure = measure_gates_begin!(builder, "OpNotContainsFromEntries");
-    let (aux_tag_ok, resolved_merkle_claim) =
-        aux.as_type::<MerkleClaimTarget>(builder, OperationAuxTableTag::MerkleProof as u32);
+    let (aux_tag_ok, resolved_query_hash) =
+        aux.as_type::<HashOutTarget>(builder, OperationAuxTableTag::MerkleProof as u32);
     let op_code_ok = op_type.has_native(builder, NativeOperation::NotContainsFromEntries);
 
     let (arg_types_ok, [merkle_root_value, key_value]) = cache.first_n_args_as_values();
-
-    // Check Merkle proof (verified elsewhere) against op args.
-    let merkle_proof_checks = [
-        /* ...and it must be a nonexistence proof. */
-        builder.not(resolved_merkle_claim.existence),
-        /* ...for the root-key pair in the resolved op args. */
-        builder.is_equal_slice(
-            &merkle_root_value.elements,
-            &resolved_merkle_claim.root.elements,
-        ),
-        builder.is_equal_slice(&key_value.elements, &resolved_merkle_claim.key.elements),
-    ];
-
-    let merkle_proof_ok = builder.all(merkle_proof_checks);
+    let expected_query_hash =
+        hash_merkle_not_contains_query(builder, HashOutTarget::from(merkle_root_value), key_value);
+    let merkle_proof_ok = builder.is_equal_flattenable(&resolved_query_hash, &expected_query_hash);
 
     // Check output statement
     let arg1_expected = cache.equations[0].lhs.clone();
@@ -793,51 +932,23 @@ fn verify_merkle_insert_circuit(
     cache: &StatementCachePriv,
 ) -> BoolTarget {
     let measure = measure_gates_begin!(builder, "MerkleInsertOp");
-    let (aux_tag_ok, resolved_merkle_tree_state_transition_claim) =
-        aux.as_type::<MerkleTreeStateTransitionClaimTarget>(
-            builder,
-            OperationAuxTableTag::MerkleTransitionProof as u32,
-        );
+    let (aux_tag_ok, resolved_query_hash) =
+        aux.as_type::<HashOutTarget>(builder, OperationAuxTableTag::MerkleTransitionProof as u32);
     let op_code_ok = op_type.has_native(builder, NativeOperation::ContainerInsertFromEntries);
 
     let (arg_types_ok, [old_root_value, op_key_value, op_value_value, new_root_value]) =
         cache.first_n_args_as_values();
 
     let expected_merkle_op = builder.constant(F::from_canonical_u8(MerkleTreeOp::Insert as u8));
-
-    // Check Merkle proof (verified elsewhere) against op args.
-    let merkle_proof_checks = [
-        /* ...and it must be an insertion proof. */
-        builder.is_equal(
-            resolved_merkle_tree_state_transition_claim.op,
-            expected_merkle_op,
-        ),
-        /* ...for the root-key-value combination in the resolved op args. */
-        builder.is_equal_slice(
-            &old_root_value.elements,
-            &resolved_merkle_tree_state_transition_claim
-                .old_root
-                .elements,
-        ),
-        builder.is_equal_slice(
-            &new_root_value.elements,
-            &resolved_merkle_tree_state_transition_claim
-                .new_root
-                .elements,
-        ),
-        builder.is_equal_slice(
-            &op_key_value.elements,
-            &resolved_merkle_tree_state_transition_claim.op_key.elements,
-        ),
-        builder.is_equal_slice(
-            &op_value_value.elements,
-            &resolved_merkle_tree_state_transition_claim
-                .op_value
-                .elements,
-        ),
-    ];
-
-    let merkle_proof_ok = builder.all(merkle_proof_checks);
+    let expected_query_hash = hash_merkle_transition_query(
+        builder,
+        expected_merkle_op,
+        HashOutTarget::from(old_root_value),
+        HashOutTarget::from(new_root_value),
+        op_key_value,
+        op_value_value,
+    );
+    let merkle_proof_ok = builder.is_equal_flattenable(&resolved_query_hash, &expected_query_hash);
 
     // Check output statement
     let arg1_expected = cache.equations[0].lhs.clone();
@@ -866,51 +977,23 @@ fn verify_merkle_update_circuit(
     cache: &StatementCachePriv,
 ) -> BoolTarget {
     let measure = measure_gates_begin!(builder, "MerkleUpdateOp");
-    let (aux_tag_ok, resolved_merkle_tree_state_transition_claim) =
-        aux.as_type::<MerkleTreeStateTransitionClaimTarget>(
-            builder,
-            OperationAuxTableTag::MerkleTransitionProof as u32,
-        );
+    let (aux_tag_ok, resolved_query_hash) =
+        aux.as_type::<HashOutTarget>(builder, OperationAuxTableTag::MerkleTransitionProof as u32);
     let op_code_ok = op_type.has_native(builder, NativeOperation::ContainerUpdateFromEntries);
 
     let (arg_types_ok, [old_root_value, op_key_value, op_value_value, new_root_value]) =
         cache.first_n_args_as_values();
 
     let expected_merkle_op = builder.constant(F::from_canonical_u8(MerkleTreeOp::Update as u8));
-
-    // Check Merkle proof (verified elsewhere) against op args.
-    let merkle_proof_checks = [
-        /* ...and it must be an update proof. */
-        builder.is_equal(
-            resolved_merkle_tree_state_transition_claim.op,
-            expected_merkle_op,
-        ),
-        /* ...for the root-key-value combination in the resolved op args. */
-        builder.is_equal_slice(
-            &old_root_value.elements,
-            &resolved_merkle_tree_state_transition_claim
-                .old_root
-                .elements,
-        ),
-        builder.is_equal_slice(
-            &new_root_value.elements,
-            &resolved_merkle_tree_state_transition_claim
-                .new_root
-                .elements,
-        ),
-        builder.is_equal_slice(
-            &op_key_value.elements,
-            &resolved_merkle_tree_state_transition_claim.op_key.elements,
-        ),
-        builder.is_equal_slice(
-            &op_value_value.elements,
-            &resolved_merkle_tree_state_transition_claim
-                .op_value
-                .elements,
-        ),
-    ];
-
-    let merkle_proof_ok = builder.all(merkle_proof_checks);
+    let expected_query_hash = hash_merkle_transition_query(
+        builder,
+        expected_merkle_op,
+        HashOutTarget::from(old_root_value),
+        HashOutTarget::from(new_root_value),
+        op_key_value,
+        op_value_value,
+    );
+    let merkle_proof_ok = builder.is_equal_flattenable(&resolved_query_hash, &expected_query_hash);
 
     // Check output statement
     let arg1_expected = cache.equations[0].lhs.clone();
@@ -939,45 +1022,20 @@ fn verify_merkle_delete_circuit(
     cache: &StatementCachePriv,
 ) -> BoolTarget {
     let measure = measure_gates_begin!(builder, "MerkleDeleteOp");
-    let (aux_tag_ok, resolved_merkle_tree_state_transition_claim) =
-        aux.as_type::<MerkleTreeStateTransitionClaimTarget>(
-            builder,
-            OperationAuxTableTag::MerkleTransitionProof as u32,
-        );
+    let (aux_tag_ok, resolved_query_hash) =
+        aux.as_type::<HashOutTarget>(builder, OperationAuxTableTag::MerkleTransitionProof as u32);
     let op_code_ok = op_type.has_native(builder, NativeOperation::ContainerDeleteFromEntries);
 
     let (arg_types_ok, [old_root_value, op_key_value, new_root_value]) =
         cache.first_n_args_as_values();
 
-    let expected_merkle_op = builder.constant(F::from_canonical_u8(MerkleTreeOp::Delete as u8));
-
-    // Check Merkle proof (verified elsewhere) against op args.
-    let merkle_proof_checks = [
-        /* ...and it must be a deletion proof. */
-        builder.is_equal(
-            resolved_merkle_tree_state_transition_claim.op,
-            expected_merkle_op,
-        ),
-        /* ...for the root-key combination in the resolved op args. */
-        builder.is_equal_slice(
-            &old_root_value.elements,
-            &resolved_merkle_tree_state_transition_claim
-                .old_root
-                .elements,
-        ),
-        builder.is_equal_slice(
-            &new_root_value.elements,
-            &resolved_merkle_tree_state_transition_claim
-                .new_root
-                .elements,
-        ),
-        builder.is_equal_slice(
-            &op_key_value.elements,
-            &resolved_merkle_tree_state_transition_claim.op_key.elements,
-        ),
-    ];
-
-    let merkle_proof_ok = builder.all(merkle_proof_checks);
+    let expected_query_hash = hash_merkle_delete_query(
+        builder,
+        HashOutTarget::from(old_root_value),
+        HashOutTarget::from(new_root_value),
+        op_key_value,
+    );
+    let merkle_proof_ok = builder.is_equal_flattenable(&resolved_query_hash, &expected_query_hash);
 
     // Check output statement
     let arg1_expected = cache.equations[0].lhs.clone();
@@ -1004,19 +1062,16 @@ fn verify_custom_circuit(
     resolved_op_args: &[StatementTarget],
 ) -> BoolTarget {
     let measure = measure_gates_begin!(builder, "OpCustom");
-    let (aux_tag_ok, resolved_query) = aux.as_type::<CustomPredicateVerifyQueryTarget>(
-        builder,
-        OperationAuxTableTag::CustomPredVerify as u32,
-    );
+    let (aux_tag_ok, resolved_query_hash) =
+        aux.as_type::<HashOutTarget>(builder, OperationAuxTableTag::CustomPredVerify as u32);
 
-    let query_ok = builder.is_equal_flattenable(
-        &resolved_query,
-        &CustomPredicateVerifyQueryTarget {
-            statement: st.clone(),
-            op_type: op_type.clone(),
-            op_args: resolved_op_args.to_vec(),
-        },
+    let query_hash = hash_custom_predicate_verify_query(
+        builder,
+        st.clone(),
+        op_type.clone(),
+        resolved_op_args.to_vec(),
     );
+    let query_ok = builder.is_equal_flattenable(&resolved_query_hash, &query_hash);
     let ok = builder.all([aux_tag_ok, query_ok]);
     measure_gates_end!(builder, measure);
     ok
@@ -1029,10 +1084,11 @@ fn verify_open_input_statement_circuit(
     aux: &TableEntryTarget,
 ) -> BoolTarget {
     let measure = measure_gates_begin!(builder, "OpOpenInputSt");
-    let (aux_tag_ok, resolved_statement) =
-        aux.as_type::<StatementTarget>(builder, OperationAuxTableTag::OpenInputStatement as u32);
+    let (aux_tag_ok, resolved_query_hash) =
+        aux.as_type::<HashOutTarget>(builder, OperationAuxTableTag::OpenInputStatement as u32);
     let op_code_ok = op_type.has_native(builder, NativeOperation::OpenInputStatement);
-    let query_ok = builder.is_equal_flattenable(&resolved_statement, st);
+    let expected_query_hash = hash_statement_query(builder, st);
+    let query_ok = builder.is_equal_flattenable(&resolved_query_hash, &expected_query_hash);
 
     let ok = builder.all([op_code_ok, aux_tag_ok, query_ok]);
     measure_gates_end!(builder, measure);
@@ -1198,16 +1254,21 @@ fn verify_public_key_from_entries_circuit(
     cache: &StatementCachePriv,
 ) -> BoolTarget {
     let measure = measure_gates_begin!(builder, "OpPublicKey");
-    let (aux_tag_ok, resolved_sk_pk) =
-        aux.as_type::<SecKeyPubKeyTarget>(builder, OperationAuxTableTag::PublicKeyOf as u32);
+    let (aux_tag_ok, resolved_query_hash) =
+        aux.as_type::<HashOutTarget>(builder, OperationAuxTableTag::PublicKeyOf as u32);
 
     let op_code_ok = op_type.has_native(builder, NativeOperation::PublicKeyFromEntries);
     let (arg_types_ok, [arg1_value, arg2_value]) = cache.first_n_args_as_values();
     let sk_hash = arg1_value;
     let pk_hash = arg2_value;
 
-    let sk_ok = builder.is_equal_slice(&sk_hash.elements, &resolved_sk_pk.0.elements);
-    let pk_ok = builder.is_equal_slice(&pk_hash.elements, &resolved_sk_pk.1.elements);
+    let expected_query_hash = hash_pair_query(
+        builder,
+        OperationAuxQueryKind::PublicKeyOf,
+        HashOutTarget::from(pk_hash),
+        HashOutTarget::from(sk_hash),
+    );
+    let query_ok = builder.is_equal_flattenable(&resolved_query_hash, &expected_query_hash);
 
     let arg1_expected = cache.equations[0].lhs.clone();
     let arg2_expected = cache.equations[1].lhs.clone();
@@ -1219,7 +1280,7 @@ fn verify_public_key_from_entries_circuit(
     );
     let st_ok = builder.is_equal_flattenable(st, &expected_statement);
 
-    let ok = builder.all([op_code_ok, aux_tag_ok, arg_types_ok, pk_ok, sk_ok, st_ok]);
+    let ok = builder.all([op_code_ok, aux_tag_ok, arg_types_ok, query_ok, st_ok]);
     measure_gates_end!(builder, measure);
     ok
 }
@@ -1233,8 +1294,8 @@ fn verify_signed_by_circuit(
     cache: &StatementCachePriv,
 ) -> BoolTarget {
     let measure = measure_gates_begin!(builder, "OpSignedBy");
-    let (aux_tag_ok, resolved_msg_pk) =
-        aux.as_type::<MsgPubKeyTarget>(builder, OperationAuxTableTag::SignedBy as u32);
+    let (aux_tag_ok, resolved_query_hash) =
+        aux.as_type::<HashOutTarget>(builder, OperationAuxTableTag::SignedBy as u32);
 
     let op_code_ok = op_type.has_native(builder, NativeOperation::SignedByFromEntries);
     let (arg_types_ok, [arg1_value, arg2_value]) = cache.first_n_args_as_values();
@@ -1242,8 +1303,13 @@ fn verify_signed_by_circuit(
     let msg = arg1_value;
     let pk_hash = arg2_value;
 
-    let msg_ok = builder.is_equal_slice(&msg.elements, &resolved_msg_pk.0.elements);
-    let pk_ok = builder.is_equal_slice(&pk_hash.elements, &resolved_msg_pk.1.elements);
+    let expected_query_hash = hash_pair_query(
+        builder,
+        OperationAuxQueryKind::SignedBy,
+        HashOutTarget::from(msg),
+        HashOutTarget::from(pk_hash),
+    );
+    let query_ok = builder.is_equal_flattenable(&resolved_query_hash, &expected_query_hash);
 
     let arg1_expected = cache.equations[0].lhs.clone();
     let arg2_expected = cache.equations[1].lhs.clone();
@@ -1255,7 +1321,7 @@ fn verify_signed_by_circuit(
     );
     let st_ok = builder.is_equal_flattenable(st, &expected_statement);
 
-    let ok = builder.all([op_code_ok, aux_tag_ok, arg_types_ok, msg_ok, pk_ok, st_ok]);
+    let ok = builder.all([op_code_ok, aux_tag_ok, arg_types_ok, query_ok, st_ok]);
     measure_gates_end!(builder, measure);
     ok
 }
@@ -1894,7 +1960,7 @@ fn verify_main_pod_circuit(
     let custom_predicate_table =
         build_custom_predicate_table_circuit(params, builder, &main_pod.custom_predicates)?;
 
-    let aux_table = build_operation_aux_table_circuit(
+    let aux_tables = build_operation_aux_table_circuit(
         params,
         builder,
         &custom_predicate_table,
@@ -1953,7 +2019,7 @@ fn verify_main_pod_circuit(
             op,
             prev_statement_flatteneds,
             prev_statement_hashes,
-            &aux_table,
+            &aux_tables,
         )?;
         let measure = measure_gates_begin!(builder, "PubSt");
         let st_hash = statement_hashes[i];
