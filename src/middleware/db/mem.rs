@@ -1,7 +1,7 @@
 use std::sync::RwLockWriteGuard;
 
 use super::*;
-use crate::middleware::{TypedValue, EMPTY_HASH};
+use crate::middleware::EMPTY_HASH;
 
 #[derive(Default, Debug)]
 struct Store {
@@ -62,9 +62,6 @@ impl DB for MemDB {
             tmp: Store::default(),
         })
     }
-    fn is_persistent(&self) -> bool {
-        false
-    }
     fn clone_box(&self) -> Box<dyn DB> {
         Box::new(self.clone())
     }
@@ -119,18 +116,13 @@ impl<'a> Read for MemTx<'a> {
 }
 
 impl<'a> TX for MemTx<'a> {
-    fn store_value(&mut self, mut value: Value) -> anyhow::Result<()> {
+    fn store_value(&mut self, value: Value) -> anyhow::Result<()> {
         let value_raw = value.raw();
         if let Some(old_value) = self.load_value(value_raw)? {
-            // Never overwrite an old value with a RawValue.
-            if value.is_raw() {
+            // Never overwrite an old value with a RawValue.  Skip overwrite if old value is
+            // already non-RawValue.
+            if value.is_raw() || !old_value.is_raw() {
                 return Ok(());
-            }
-            // If a container was previously stored, update the kind bitmask
-            if let (TypedValue::Container(old_c), TypedValue::Container(ref mut c)) =
-                (&old_value.typed, &mut value.typed)
-            {
-                c.kind.0 |= old_c.kind.0;
             }
         };
         self.tmp.values.insert(value_raw, value);
@@ -143,9 +135,6 @@ impl<'a> TX for MemTx<'a> {
         };
         self.tmp.kinds.insert(root, kind);
         Ok(())
-    }
-    fn is_persistent(&self) -> bool {
-        false
     }
     fn commit(mut self: Box<Self>) -> anyhow::Result<()> {
         self.mt_tx.commit()?;

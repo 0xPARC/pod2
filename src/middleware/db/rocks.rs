@@ -124,6 +124,9 @@ impl<'a> Read for RocksTx<'a> {
                     .set_array(),
             ));
         }
+        // We use `get_for_update` because this method is part of a transaction, and it will be
+        // used by `update_kind`, so we want and exclusive lock after the value is read to
+        // guarantee no data-races in the merge update.
         self.tx
             .get_for_update(kind_key(root), true)
             .map(|opt| {
@@ -139,13 +142,12 @@ impl<'a> Read for RocksTx<'a> {
 impl<'a> TX for RocksTx<'a> {
     fn store_value(&mut self, value: Value) -> anyhow::Result<()> {
         let value_key = value_key(value.raw());
-        if let Some(_old_value_bytes) = self.tx.get(&value_key)? {
-            // Never overwrite an old value with a RawValue.
-            if value.is_raw() {
+        if let Some(old_value_bytes) = self.tx.get(&value_key)? {
+            // Never overwrite an old value with a RawValue.  Skip overwrite if old value is
+            // already non-RawValue.
+            if value.is_raw() || !old_value_bytes.is_empty() {
                 return Ok(());
             }
-            // No need to update container kind bitmask because in persistent store we don't store
-            // containers as Value, their content is stored as merkle nodes via the MerkleTree
         };
         let value_bytes = if value.is_raw() {
             // For RawValue we store an empty vector because it's a duplicate of the key.
@@ -163,9 +165,6 @@ impl<'a> TX for RocksTx<'a> {
         };
         let kind_key = kind_key(root);
         Ok(self.tx.put(&kind_key, [kind.0])?)
-    }
-    fn is_persistent(&self) -> bool {
-        true
     }
     fn commit(self: Box<Self>) -> anyhow::Result<()> {
         Ok(self.tx.commit()?)
@@ -209,9 +208,6 @@ impl DB for RocksDB {
             tx: self.0.transaction(),
             db: self.clone(),
         })
-    }
-    fn is_persistent(&self) -> bool {
-        true
     }
     fn clone_box(&self) -> Box<dyn DB> {
         Box::new(self.clone())

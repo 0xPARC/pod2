@@ -289,6 +289,8 @@ impl PartialEq for Container {
 impl Eq for Container {}
 
 fn store_container_mt(tx: &mut dyn TX, container: &Container) -> Result<()> {
+    tx.update_kind(container.commitment(), container.kind)
+        .map_err(Error::Database)?;
     match tx.load_node(container.root) {
         Err(e) => return Err(Error::Database(e)),
         // Container already exists in the DB
@@ -305,9 +307,10 @@ fn store_container_mt(tx: &mut dyn TX, container: &Container) -> Result<()> {
     Ok(())
 }
 
+// Store a value into the database while flattening nested containers
 fn store_value(tx: &mut dyn TX, v: Value) -> Result<()> {
     match &v.typed {
-        TypedValue::Container(inner) if tx.is_persistent() => store_container_mt(tx, inner)?,
+        TypedValue::Container(inner) => store_container_mt(tx, inner)?,
         _ => tx.store_value(v).map_err(Error::Database)?,
     }
     Ok(())
@@ -318,16 +321,15 @@ fn load_value(db: &dyn db::DB, value_raw: RawValue) -> Result<Value> {
         Err(e) => Err(Error::Database(e)),
         Ok(Some(v)) => Ok(v),
         Ok(None) => {
-            // With a persistent DB we skip storing containers as values and instead store them as
+            // We skip storing containers as values and instead store them as
             // merkle trees via the Container type.
-            if db.is_persistent() {
-                if let Ok(c) = Container::from_db(Hash(value_raw.0), db.clone_box()) {
-                    return Ok(Value::from(c));
-                }
+            if let Ok(c) = Container::from_db(Hash(value_raw.0), db.clone_box()) {
+                Ok(Value::from(c))
+            } else {
+                Err(Error::custom(format!(
+                    "Value from {value_raw} not found in DB"
+                )))
             }
-            Err(Error::custom(format!(
-                "Value from {value_raw} not found in DB"
-            )))
         }
     }
 }
@@ -1021,5 +1023,51 @@ mod tests {
     #[test]
     fn test_kind() {
         test_databases(&_test_kind);
+    }
+
+    fn _test_mem_to_db(db: Box<dyn DB>) {
+        let nested_dict = Dictionary::new(
+            [
+                (StrKey::from("a"), Value::from("a")),
+                (StrKey::from("b"), Value::from("b")),
+            ]
+            .into_iter()
+            .collect(),
+        );
+
+        assert!(nested_dict.inner.kind.is_dictionary());
+        assert!(!nested_dict.inner.kind.is_set());
+        assert!(!nested_dict.inner.kind.is_array());
+
+        let nested_set = Set::new([Value::from("a"), Value::from("b")].into_iter().collect());
+
+        // We intentionally made a collision
+        assert_eq!(nested_dict.commitment(), nested_set.commitment());
+
+        let mut dict0 = Dictionary::empty_with_db(db.clone());
+        dict0
+            .insert(&StrKey::from("x"), &Value::from(nested_dict))
+            .unwrap();
+        dict0
+            .insert(&StrKey::from("y"), &Value::from(nested_set.clone()))
+            .unwrap();
+
+        assert!(dict0
+            .get(&StrKey::from("x"))
+            .unwrap()
+            .unwrap()
+            .as_dictionary()
+            .is_some());
+        assert!(dict0
+            .get(&StrKey::from("y"))
+            .unwrap()
+            .unwrap()
+            .as_set()
+            .is_some());
+    }
+
+    #[test]
+    fn test_mem_to_db() {
+        test_databases(&_test_mem_to_db);
     }
 }
