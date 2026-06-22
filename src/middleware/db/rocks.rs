@@ -124,12 +124,15 @@ impl<'a> Read for RocksTx<'a> {
                     .set_array(),
             ));
         }
-        Ok(self.tx.get_for_update(kind_key(root), true).map(|opt| {
-            opt.map(|bytes| {
-                assert_eq!(1, bytes.len());
-                ContainerKind(bytes[0])
-            })
-        })?)
+        self.tx
+            .get_for_update(kind_key(root), true)
+            .map(|opt| {
+                opt.map(|bytes| match bytes.len() {
+                    1 => Ok(ContainerKind(bytes[0])),
+                    l => Err(anyhow!("db: invalid kind len: {}", l)),
+                })
+            })?
+            .transpose()
     }
 }
 
