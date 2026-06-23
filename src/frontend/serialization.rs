@@ -87,7 +87,7 @@ mod tests {
             (Value::from(true), r#"{"Int":"1"}"#),
             (
                 Value::from(Array::new(vec![Value::from("foo"), Value::from(false)])),
-                r#"{"Array":[[{"Int":"0"},"foo"],[{"Int":"1"},{"Int":"0"}]]}"#,
+                r#"{"Container":{"kind":"--a","kvs":[[{"Int":"0"},"foo"],[{"Int":"1"},{"Int":"0"}]]}}"#,
             ),
             (
                 Value::from(Dictionary::new(HashMap::from([
@@ -104,11 +104,11 @@ mod tests {
                     // Keys can contain emojis
                     (("🥳".into()), "party time!".into()),
                 ]))),
-                r#"{"Dictionary":[["!@£$%^&&*()",""],["🥳","party time!"],["    hi",{"Int":"0"}],["foo",{"Int":"123"}],["\u0000",""],["","baz"]]}"#,
+                r#"{"Container":{"kind":"d--","kvs":[["!@£$%^&&*()",""],["🥳","party time!"],["    hi",{"Int":"0"}],["foo",{"Int":"123"}],["\u0000",""],["","baz"]]}}"#,
             ),
             (
                 Value::from(Set::new(HashSet::from(["foo".into(), "bar".into()]))),
-                r#"{"Set":[["bar"],["foo"]]}"#,
+                r#"{"Container":{"kind":"-s-","kvs":[["bar"],["foo"]]}}"#,
             ),
         ];
 

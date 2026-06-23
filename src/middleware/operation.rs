@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     backends::plonky2::primitives::{
         ec::{curve::GROUP_ORDER, schnorr::Signature},
-        merkletree::{MerkleProof, MerkleTree, MerkleTreeOp, MerkleTreeStateTransitionProof},
+        merkletree::{self, MerkleProof, MerkleTreeOp, MerkleTreeStateTransitionProof},
     },
     middleware::{
         hash_values, normalize_statement, AnchoredKey, CustomPredicate, CustomPredicateRef, Error,
@@ -536,13 +536,13 @@ impl Operation {
                 let root = val(root_v, root_s)?;
                 let key = val(key_v, key_s)?;
                 let value = val(val_v, val_s)?;
-                MerkleTree::verify(root.raw().into(), pf, &key.raw(), &value.raw())?;
+                merkletree::verify(root.raw().into(), pf, &key.raw(), &value.raw())?;
                 true
             }
             (Self::NotContainsFromEntries(root_s, key_s, pf), NotContains(root_v, key_v)) => {
                 let root = val(root_v, root_s)?;
                 let key = val(key_v, key_s)?;
-                MerkleTree::verify_nonexistence(root.raw().into(), pf, &key.raw())?;
+                merkletree::verify_nonexistence(root.raw().into(), pf, &key.raw())?;
                 true
             }
             (
@@ -585,7 +585,7 @@ impl Operation {
                 .ok_or(Error::custom(
                     "The provided Merkle tree state transition proof does not match the claim.",
                 ))?;
-                MerkleTree::verify_state_transition(pf)?;
+                merkletree::verify_state_transition(pf)?;
                 true
             }
             (
@@ -605,7 +605,7 @@ impl Operation {
                 .ok_or(Error::custom(
                     "The provided Merkle tree state transition proof does not match the claim.",
                 ))?;
-                MerkleTree::verify_state_transition(pf)?;
+                merkletree::verify_state_transition(pf)?;
                 true
             }
             (
@@ -623,7 +623,7 @@ impl Operation {
                 .ok_or(Error::custom(
                     "The provided Merkle tree state transition proof does not match the claim.",
                 ))?;
-                MerkleTree::verify_state_transition(pf)?;
+                merkletree::verify_state_transition(pf)?;
                 true
             }
             (Self::Custom(CustomPredicateRef { batch, index }, args), Custom(cpr, s_args))
@@ -649,7 +649,7 @@ impl Operation {
                     return Err(deduction_err());
                 }
                 let raw_st_hash = data.raw_statement.hash();
-                MerkleTree::verify(
+                merkletree::verify(
                     data.sts_root,
                     &data.proof,
                     &Value::from(data.st_index as i64).raw(),

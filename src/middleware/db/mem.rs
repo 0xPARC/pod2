@@ -1,10 +1,19 @@
+use std::sync::RwLockWriteGuard;
+
 use super::*;
+use crate::middleware::EMPTY_HASH;
+
+#[derive(Default, Debug)]
+struct Store {
+    values: HashMap<RawValue, Value>,
+    kinds: HashMap<Hash, ContainerKind>,
+}
 
 /// MemDB implements the DB trait in a in-memory HashMap.
 #[derive(Clone, Debug, Default)]
 pub struct MemDB {
-    nodes: Arc<RwLock<HashMap<Hash, merkletree::Node>>>,
-    values: Arc<RwLock<HashMap<RawValue, Value>>>,
+    mt_db: merkletree::db::MemDB,
+    db: Arc<RwLock<Store>>,
 }
 
 impl MemDB {
@@ -13,50 +22,128 @@ impl MemDB {
     }
 }
 
-impl merkletree::db::DB for MemDB {
+impl merkletree::db::Read for MemDB {
     fn load_node(&self, hash: Hash) -> anyhow::Result<Option<merkletree::Node>> {
-        let nodes = self.nodes.read().expect("lock not poisoned");
-
-        if hash == EMPTY_HASH {
-            return Ok(Some(merkletree::Node::Intermediate(
-                merkletree::Intermediate::new(EMPTY_HASH, EMPTY_HASH),
-            )));
-        }
-
-        Ok(nodes.get(&hash).cloned())
+        self.mt_db.load_node(hash)
     }
+}
 
-    fn store_node(&mut self, node: merkletree::Node) -> anyhow::Result<()> {
-        let mut nodes = self.nodes.write().expect("lock not poisoned");
-        nodes.insert(node.hash(), node);
-        Ok(())
+impl merkletree::db::DB for MemDB {
+    fn tx<'a>(&'a self) -> Box<dyn merkletree::db::TX + 'a> {
+        DB::tx(self)
+    }
+}
+
+impl Read for MemDB {
+    fn load_value(&self, raw: RawValue) -> anyhow::Result<Option<Value>> {
+        let store = self.db.read().expect("lock not poisoned");
+
+        Ok(store.values.get(&raw).cloned())
+    }
+    fn load_kind(&self, root: Hash) -> anyhow::Result<Option<ContainerKind>> {
+        if root == EMPTY_HASH {
+            return Ok(Some(
+                *ContainerKind::default()
+                    .set_dictionary()
+                    .set_set()
+                    .set_array(),
+            ));
+        }
+        let store = self.db.read().expect("lock not poisoned");
+        Ok(store.kinds.get(&root).cloned())
     }
 }
 
 impl DB for MemDB {
-    fn load_value(&self, raw: RawValue) -> anyhow::Result<Option<Value>> {
-        let values = self.values.read().expect("lock not poisoned");
-
-        Ok(values.get(&raw).cloned())
-    }
-    fn store_value(&mut self, value: Value) -> anyhow::Result<()> {
-        let mut values = self.values.write().expect("lock not poisoned");
-        let value_raw = value.raw();
-        if let Some(old_value) = values.get(&value_raw) {
-            let old_is_raw = old_value.is_raw();
-            // If we had a non-RawValue stored don't overwrite it (specially not with a
-            // RawValue).   Also skip redundant RawValue overwrite.
-            if !old_is_raw || value.is_raw() {
-                return Ok(());
-            }
-        }
-        values.insert(value_raw, value);
-        Ok(())
-    }
-    fn is_persistent(&self) -> bool {
-        false
+    fn tx<'a>(&'a self) -> Box<dyn TX + 'a> {
+        Box::new(MemTx {
+            mt_tx: merkletree::db::DB::tx(&self.mt_db),
+            db: self.db.write().expect("not poisoned"),
+            tmp: Store::default(),
+        })
     }
     fn clone_box(&self) -> Box<dyn DB> {
         Box::new(self.clone())
+    }
+}
+
+pub(crate) struct MemTx<'a> {
+    mt_tx: Box<dyn merkletree::db::TX + 'a>,
+    db: RwLockWriteGuard<'a, Store>,
+    tmp: Store,
+}
+
+impl<'a> merkletree::db::Read for MemTx<'a> {
+    fn load_node(&self, hash: Hash) -> anyhow::Result<Option<merkletree::Node>> {
+        self.mt_tx.load_node(hash)
+    }
+}
+
+impl<'a> merkletree::db::TX for MemTx<'a> {
+    fn store_node(&mut self, node: merkletree::Node) -> anyhow::Result<()> {
+        self.mt_tx.store_node(node)
+    }
+    fn commit(self: Box<Self>) -> anyhow::Result<()> {
+        panic!("use middleware::db::TX::commit")
+    }
+}
+
+impl<'a> Read for MemTx<'a> {
+    fn load_value(&self, raw: RawValue) -> anyhow::Result<Option<Value>> {
+        Ok(self
+            .tmp
+            .values
+            .get(&raw)
+            .or_else(|| self.db.values.get(&raw))
+            .cloned())
+    }
+    fn load_kind(&self, root: Hash) -> anyhow::Result<Option<ContainerKind>> {
+        if root == EMPTY_HASH {
+            return Ok(Some(
+                *ContainerKind::default()
+                    .set_dictionary()
+                    .set_set()
+                    .set_array(),
+            ));
+        }
+        Ok(self
+            .tmp
+            .kinds
+            .get(&root)
+            .or_else(|| self.db.kinds.get(&root))
+            .cloned())
+    }
+}
+
+impl<'a> TX for MemTx<'a> {
+    fn store_value(&mut self, value: Value) -> anyhow::Result<()> {
+        let value_raw = value.raw();
+        if let Some(old_value) = self.load_value(value_raw)? {
+            // Never overwrite an old value with a RawValue.  Skip overwrite if old value is
+            // already non-RawValue.
+            if value.is_raw() || !old_value.is_raw() {
+                return Ok(());
+            }
+        };
+        self.tmp.values.insert(value_raw, value);
+        Ok(())
+    }
+    fn update_kind(&mut self, root: Hash, kind: ContainerKind) -> anyhow::Result<()> {
+        let kind = match self.load_kind(root).expect("ok") {
+            Some(old_kind) => ContainerKind(old_kind.0 | kind.0),
+            None => kind,
+        };
+        self.tmp.kinds.insert(root, kind);
+        Ok(())
+    }
+    fn commit(mut self: Box<Self>) -> anyhow::Result<()> {
+        self.mt_tx.commit()?;
+        for (k, v) in self.tmp.values {
+            self.db.values.insert(k, v);
+        }
+        for (k, v) in self.tmp.kinds {
+            self.db.kinds.insert(k, v);
+        }
+        Ok(())
     }
 }

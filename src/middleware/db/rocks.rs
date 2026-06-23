@@ -1,9 +1,10 @@
 use std::{fmt, path::Path, sync::Arc};
 
 use anyhow::{anyhow, Result};
-use rocksdb::{Options, TransactionDB, TransactionDBOptions};
+use rocksdb::{DBAccess, Options, ReadOptions, Transaction, TransactionDB, TransactionDBOptions};
 
 use super::*;
+use crate::middleware::EMPTY_HASH;
 
 fn node_key(hash: Hash) -> Vec<u8> {
     let mut k = Vec::with_capacity(2 + 4);
@@ -19,14 +20,19 @@ fn value_key(raw: RawValue) -> Vec<u8> {
     k
 }
 
-#[derive(Clone)]
-pub struct RocksDB {
-    db: Arc<TransactionDB>,
+fn kind_key(root: Hash) -> Vec<u8> {
+    let mut k = Vec::with_capacity(2 + 4);
+    k.extend_from_slice(b"k/");
+    k.extend_from_slice(&RawValue(root.0).to_bytes());
+    k
 }
+
+#[derive(Clone)]
+pub struct RocksDB(Arc<TransactionDB>);
 
 impl fmt::Debug for RocksDB {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        writeln!(f, "RocksDB(path: {:?})", self.db.path())
+        writeln!(f, "RocksDB(path: {:?})", self.0.path())
     }
 }
 
@@ -37,36 +43,137 @@ impl RocksDB {
         let txn_options = TransactionDBOptions::default();
         let inner =
             TransactionDB::open(&options, &txn_options, path).map_err(|e| anyhow!("{e}"))?;
-        Ok(Self {
-            db: Arc::new(inner),
-        })
+        Ok(Self(Arc::new(inner)))
+    }
+}
+
+fn load_node_db(db: &impl DBAccess, hash: Hash) -> Result<Option<merkletree::Node>> {
+    if hash == EMPTY_HASH {
+        return Ok(Some(merkletree::Node::Intermediate(
+            merkletree::Intermediate::new(EMPTY_HASH, EMPTY_HASH),
+        )));
+    }
+
+    let node_key = node_key(hash);
+    match db
+        .get_opt(&node_key, &ReadOptions::default())
+        .map_err(|e| anyhow!("rocksdb: get failed: {e}"))?
+    {
+        None => Ok(None),
+        Some(bytes) => Ok(Some(merkletree::Node::decode(bytes.as_ref())?)),
+    }
+}
+
+fn store_node_tx<'a>(tx: &Transaction<'a, TransactionDB>, node: merkletree::Node) -> Result<()> {
+    let node_key = node_key(node.hash());
+    tx.put(&node_key, node.encode()?)
+        .map_err(|e| anyhow!("rocksdb transaction put failed: {e}"))
+}
+
+impl merkletree::db::Read for RocksDB {
+    fn load_node(&self, hash: Hash) -> Result<Option<merkletree::Node>> {
+        load_node_db(&*self.0, hash)
     }
 }
 
 impl merkletree::db::DB for RocksDB {
-    fn load_node(&self, hash: Hash) -> Result<Option<merkletree::Node>> {
-        if hash == EMPTY_HASH {
-            return Ok(Some(merkletree::Node::Intermediate(
-                merkletree::Intermediate::new(EMPTY_HASH, EMPTY_HASH),
-            )));
-        }
-
-        match self.db.get(node_key(hash))? {
-            None => Ok(None),
-            Some(bytes) => Ok(Some(merkletree::Node::decode(bytes.as_ref())?)),
-        }
-    }
-
-    fn store_node(&mut self, node: merkletree::Node) -> Result<()> {
-        self.db
-            .put(node_key(node.hash()), node.encode()?)
-            .map_err(|e| anyhow!("rocksdb transaction put failed: {e}"))
+    fn tx<'a>(&'a self) -> Box<dyn merkletree::db::TX + 'a> {
+        DB::tx(self)
     }
 }
 
-impl DB for RocksDB {
+pub(crate) struct RocksTx<'a> {
+    tx: rocksdb::Transaction<'a, rocksdb::TransactionDB>,
+    db: RocksDB,
+}
+
+impl<'a> merkletree::db::Read for RocksTx<'a> {
+    fn load_node(&self, hash: Hash) -> anyhow::Result<Option<merkletree::Node>> {
+        load_node_db(&self.tx, hash)
+    }
+}
+
+impl<'a> merkletree::db::TX for RocksTx<'a> {
+    fn store_node(&mut self, node: merkletree::Node) -> anyhow::Result<()> {
+        store_node_tx(&self.tx, node)
+    }
+    fn commit(self: Box<Self>) -> anyhow::Result<()> {
+        panic!("use middleware::db::TX::commit")
+    }
+}
+
+impl<'a> Read for RocksTx<'a> {
     fn load_value(&self, raw: RawValue) -> anyhow::Result<Option<Value>> {
-        match self.db.get(value_key(raw))? {
+        match self.tx.get(value_key(raw))? {
+            None => Ok(None),
+            Some(bytes) => Ok(Some({
+                if bytes.is_empty() {
+                    Value::from(raw)
+                } else {
+                    Value::from_bytes(bytes.as_ref(), self.db.clone_box())?
+                }
+            })),
+        }
+    }
+    fn load_kind(&self, root: Hash) -> anyhow::Result<Option<ContainerKind>> {
+        if root == EMPTY_HASH {
+            return Ok(Some(
+                *ContainerKind::default()
+                    .set_dictionary()
+                    .set_set()
+                    .set_array(),
+            ));
+        }
+        // We use `get_for_update` because this method is part of a transaction, and it will be
+        // used by `update_kind`, so we want and exclusive lock after the value is read to
+        // guarantee no data-races in the merge update.
+        self.tx
+            .get_for_update(kind_key(root), true)
+            .map(|opt| {
+                opt.map(|bytes| match bytes.len() {
+                    1 => Ok(ContainerKind(bytes[0])),
+                    l => Err(anyhow!("db: invalid kind len: {}", l)),
+                })
+            })?
+            .transpose()
+    }
+}
+
+impl<'a> TX for RocksTx<'a> {
+    fn store_value(&mut self, value: Value) -> anyhow::Result<()> {
+        let value_key = value_key(value.raw());
+        if let Some(old_value_bytes) = self.tx.get(&value_key)? {
+            // Never overwrite an old value with a RawValue.  Skip overwrite if old value is
+            // already non-RawValue.
+            if value.is_raw() || !old_value_bytes.is_empty() {
+                return Ok(());
+            }
+        };
+        let value_bytes = if value.is_raw() {
+            // For RawValue we store an empty vector because it's a duplicate of the key.
+            // This way we can easily check for RawValue without decoding.
+            vec![]
+        } else {
+            Value::to_bytes(&value)
+        };
+        Ok(self.tx.put(value_key, value_bytes)?)
+    }
+    fn update_kind(&mut self, root: Hash, kind: ContainerKind) -> anyhow::Result<()> {
+        let kind = match self.load_kind(root).expect("ok") {
+            Some(old_kind) => ContainerKind(old_kind.0 | kind.0),
+            None => kind,
+        };
+        let kind_key = kind_key(root);
+        Ok(self.tx.put(&kind_key, [kind.0])?)
+    }
+    fn commit(self: Box<Self>) -> anyhow::Result<()> {
+        Ok(self.tx.commit()?)
+    }
+}
+
+impl Read for RocksDB {
+    fn load_value(&self, raw: RawValue) -> anyhow::Result<Option<Value>> {
+        match self.0.get(value_key(raw))? {
             None => Ok(None),
             Some(bytes) => Ok(Some({
                 if bytes.is_empty() {
@@ -77,29 +184,30 @@ impl DB for RocksDB {
             })),
         }
     }
-    fn store_value(&mut self, value: Value) -> anyhow::Result<()> {
-        let value_key = value_key(value.raw());
-        let tx = self.db.transaction();
-        if let Some(old_value_bytes) = tx.get_for_update(&value_key, true)? {
-            let is_raw = old_value_bytes.is_empty();
-            // If we had a non-RawValue stored don't overwrite it (specially not with a
-            // RawValue).   Also skip redundant RawValue overwrite.
-            if !is_raw || (is_raw && value.is_raw()) {
-                return Ok(());
-            }
+    fn load_kind(&self, root: Hash) -> anyhow::Result<Option<ContainerKind>> {
+        if root == EMPTY_HASH {
+            return Ok(Some(
+                *ContainerKind::default()
+                    .set_dictionary()
+                    .set_set()
+                    .set_array(),
+            ));
         }
-        let value_bytes = if value.is_raw() {
-            // For RawValue we store an empty vector because it's a duplicate of the key.
-            // This way we can easily check for RawValue without decoding.
-            vec![]
-        } else {
-            Value::to_bytes(&value)
-        };
-        tx.put(value_key, value_bytes)?;
-        Ok(tx.commit()?)
+        Ok(self.0.get(kind_key(root)).map(|opt| {
+            opt.map(|bytes| {
+                assert_eq!(1, bytes.len());
+                ContainerKind(bytes[0])
+            })
+        })?)
     }
-    fn is_persistent(&self) -> bool {
-        true
+}
+
+impl DB for RocksDB {
+    fn tx<'a>(&'a self) -> Box<dyn TX + 'a> {
+        Box::new(RocksTx {
+            tx: self.0.transaction(),
+            db: self.clone(),
+        })
     }
     fn clone_box(&self) -> Box<dyn DB> {
         Box::new(self.clone())

@@ -29,6 +29,8 @@ pub use pod_deserialization::*;
 use serialization::*;
 pub use statement::*;
 
+use crate::middleware::containers::ContainerKind;
+
 // TODO: Move all value-related types to to `value.rs`
 #[derive(Clone, Debug, Serialize, Deserialize, Eq, PartialEq)]
 // TODO #[schemars(transform = serialization::transform_value_schema)]
@@ -57,12 +59,7 @@ pub(crate) enum TypedValue {
     SecretKey(SecretKey),
     // Predicate as a value
     Predicate(Predicate),
-    // Containers are tagged ({"Set": [...]}, {"Dictionary": [...]},
-    // {"Array": [...]}): all three serialize identically, so a tag is need to
-    // discriminate.
-    Set(Set),
-    Dictionary(Dictionary),
-    Array(Array),
+    Container(Container),
     // UNTAGGED TYPES:
     #[serde(untagged)]
     String(String),
@@ -120,21 +117,27 @@ impl From<Predicate> for TypedValue {
     }
 }
 
+impl From<Container> for TypedValue {
+    fn from(c: Container) -> Self {
+        TypedValue::Container(c)
+    }
+}
+
 impl From<Set> for TypedValue {
     fn from(s: Set) -> Self {
-        TypedValue::Set(s)
+        TypedValue::Container(s.inner)
     }
 }
 
 impl From<Dictionary> for TypedValue {
     fn from(d: Dictionary) -> Self {
-        TypedValue::Dictionary(d)
+        TypedValue::Container(d.inner)
     }
 }
 
 impl From<Array> for TypedValue {
     fn from(a: Array) -> Self {
-        TypedValue::Array(a)
+        TypedValue::Container(a.inner)
     }
 }
 
@@ -155,56 +158,75 @@ impl fmt::Display for TypedValue {
                     Err(_) => write!(f, "\"{}\"", s),
                 }
             }
-            TypedValue::Array(a) => {
-                write!(f, "[")?;
-                for (i, r) in a.iter().enumerate() {
-                    if i > 0 {
-                        write!(f, ", ")?;
+            TypedValue::Container(c) => {
+                if c.kind() == *ContainerKind::default().set_dictionary() {
+                    let d = c.clone().as_dictionary().expect("dictionary");
+                    write!(f, "{{ ")?;
+                    for (i, r) in d.iter().enumerate() {
+                        if i > 0 {
+                            write!(f, ", ")?;
+                        }
+                        if i == 8 {
+                            write!(f, "…")?;
+                            break;
+                        }
+                        match r {
+                            Ok((key, value)) => write!(f, "{}: {}", key, value)?,
+                            Err(e) => write!(f, "{e}")?,
+                        }
                     }
-                    if i == 8 {
-                        write!(f, "…")?;
-                        break;
+                    write!(f, " }}")
+                } else if c.kind() == *ContainerKind::default().set_set() {
+                    let s = c.clone().as_set().expect("set");
+                    write!(f, "#[")?;
+                    for (i, r) in s.iter().enumerate() {
+                        if i > 0 {
+                            write!(f, ", ")?;
+                        }
+                        if i == 8 {
+                            write!(f, "…")?;
+                            break;
+                        }
+                        match r {
+                            Ok(value) => write!(f, "{}", value)?,
+                            Err(e) => write!(f, "{e}")?,
+                        }
                     }
-                    match r {
-                        Ok((index, value)) => write!(f, "{}: {}", index, value)?,
-                        Err(e) => write!(f, "{e}")?,
+                    write!(f, "]")
+                } else if c.kind() == *ContainerKind::default().set_array() {
+                    let a = c.clone().as_array().expect("array");
+                    write!(f, "[")?;
+                    for (i, r) in a.iter().enumerate() {
+                        if i > 0 {
+                            write!(f, ", ")?;
+                        }
+                        if i == 8 {
+                            write!(f, "…")?;
+                            break;
+                        }
+                        match r {
+                            Ok((index, value)) => write!(f, "{}: {}", index, value)?,
+                            Err(e) => write!(f, "{e}")?,
+                        }
                     }
+                    write!(f, "]")
+                } else {
+                    write!(f, "{{ ")?;
+                    for (i, r) in c.iter().enumerate() {
+                        if i > 0 {
+                            write!(f, ", ")?;
+                        }
+                        if i == 8 {
+                            write!(f, "…")?;
+                            break;
+                        }
+                        match r {
+                            Ok((key, value)) => write!(f, "{}: {}", key, value)?,
+                            Err(e) => write!(f, "{e}")?,
+                        }
+                    }
+                    write!(f, " }}")
                 }
-                write!(f, "]")
-            }
-            TypedValue::Dictionary(d) => {
-                write!(f, "{{ ")?;
-                for (i, r) in d.iter().enumerate() {
-                    if i > 0 {
-                        write!(f, ", ")?;
-                    }
-                    if i == 8 {
-                        write!(f, "…")?;
-                        break;
-                    }
-                    match r {
-                        Ok((key, value)) => write!(f, "{}: {}", key, value)?,
-                        Err(e) => write!(f, "{e}")?,
-                    }
-                }
-                write!(f, " }}")
-            }
-            TypedValue::Set(s) => {
-                write!(f, "#[")?;
-                for (i, r) in s.iter().enumerate() {
-                    if i > 0 {
-                        write!(f, ", ")?;
-                    }
-                    if i == 8 {
-                        write!(f, "…")?;
-                        break;
-                    }
-                    match r {
-                        Ok(value) => write!(f, "{}", value)?,
-                        Err(e) => write!(f, "{e}")?,
-                    }
-                }
-                write!(f, "]")
             }
             TypedValue::PublicKey(p) => write!(f, "PublicKey({})", p),
             TypedValue::SecretKey(p) => write!(f, "SecretKey({})", p),
@@ -221,9 +243,7 @@ impl From<&TypedValue> for RawValue {
         match v {
             TypedValue::String(s) => RawValue::from(hash_str(s)),
             TypedValue::Int(v) => RawValue::from(*v),
-            TypedValue::Dictionary(d) => RawValue::from(d.commitment()),
-            TypedValue::Set(s) => RawValue::from(s.commitment()),
-            TypedValue::Array(a) => RawValue::from(a.commitment()),
+            TypedValue::Container(d) => RawValue::from(d.commitment()),
             TypedValue::Raw(v) => *v,
             TypedValue::PublicKey(p) => RawValue::from(hash_fields(&p.as_fields())),
             TypedValue::SecretKey(sk) => RawValue::from(hash_fields(&sk.to_limbs())),
@@ -319,20 +339,17 @@ impl JsonSchema for TypedValue {
             ..Default::default()
         };
 
-        let tagged = |tag: &str, inner: Schema| {
-            Schema::Object(SchemaObject {
-                instance_type: Some(SingleOrVec::Single(Box::new(InstanceType::Object))),
-                object: Some(Box::new(schemars::schema::ObjectValidation {
-                    properties: [(tag.to_string(), inner)].into_iter().collect(),
-                    required: [tag.to_string()].into_iter().collect(),
-                    ..Default::default()
-                })),
+        let container_schema = schemars::schema::SchemaObject {
+            instance_type: Some(SingleOrVec::Single(Box::new(InstanceType::Object))),
+            object: Some(Box::new(schemars::schema::ObjectValidation {
+                properties: [("Container".to_string(), gen.subschema_for::<Container>())]
+                    .into_iter()
+                    .collect(),
+                required: ["Container".to_string()].into_iter().collect(),
                 ..Default::default()
-            })
+            })),
+            ..Default::default()
         };
-        let set_schema = tagged("Set", gen.subschema_for::<Set>());
-        let dictionary_schema = tagged("Dictionary", gen.subschema_for::<Dictionary>());
-        let array_schema = tagged("Array", gen.subschema_for::<Array>());
 
         let untagged_string_schema = gen.subschema_for::<String>();
 
@@ -344,9 +361,7 @@ impl JsonSchema for TypedValue {
                     Schema::Object(raw_schema),
                     Schema::Object(public_key_schema),
                     Schema::Object(secret_key_schema),
-                    set_schema,
-                    dictionary_schema,
-                    array_schema,
+                    Schema::Object(container_schema),
                     untagged_string_schema,
                 ]),
                 ..Default::default()
@@ -407,9 +422,7 @@ enum TypedValueNoRec {
     PublicKey(PublicKey),
     SecretKey(SecretKey),
     Predicate(Predicate),
-    Set(Hash),
-    Dictionary(Hash),
-    Array(Hash),
+    Container(Hash),
     String(String),
 }
 
@@ -423,9 +436,7 @@ impl Value {
             TypedValue::PublicKey(v) => TypedValueNoRec::PublicKey(*v),
             TypedValue::SecretKey(v) => TypedValueNoRec::SecretKey(v.clone()),
             TypedValue::Predicate(v) => TypedValueNoRec::Predicate(v.clone()),
-            TypedValue::Set(v) => TypedValueNoRec::Set(v.commitment()),
-            TypedValue::Dictionary(v) => TypedValueNoRec::Dictionary(v.commitment()),
-            TypedValue::Array(v) => TypedValueNoRec::Array(v.commitment()),
+            TypedValue::Container(v) => TypedValueNoRec::Container(v.commitment()),
             TypedValue::String(v) => TypedValueNoRec::String(v.clone()),
         };
         serde_json::to_vec(&v).expect("json serialization succeeds")
@@ -438,9 +449,7 @@ impl Value {
             TypedValueNoRec::PublicKey(v) => Value::from(v),
             TypedValueNoRec::SecretKey(v) => Value::from(v),
             TypedValueNoRec::Predicate(v) => Value::from(v),
-            TypedValueNoRec::Set(v) => Value::from(Set::from_db(v, db)?),
-            TypedValueNoRec::Dictionary(v) => Value::from(Dictionary::from_db(v, db)?),
-            TypedValueNoRec::Array(v) => Value::from(Array::from_db(v, db)?),
+            TypedValueNoRec::Container(v) => Value::from(Container::from_db(v, db)?),
             TypedValueNoRec::String(v) => Value::from(v),
         })
     }
@@ -512,45 +521,25 @@ impl Value {
     }
     pub fn as_set(&self) -> Option<Set> {
         match &self.typed {
-            TypedValue::Set(s) => Some(s.clone()),
-            TypedValue::Dictionary(d) => Some(Set {
-                inner: d.inner.clone(),
-            }),
-            TypedValue::Array(a) => Some(Set {
-                inner: a.inner.clone(),
-            }),
+            TypedValue::Container(c) => c.as_set(),
             _ => None,
         }
     }
     pub fn as_container(&self) -> Option<Container> {
         match &self.typed {
-            TypedValue::Set(s) => Some(s.inner.clone()),
-            TypedValue::Dictionary(d) => Some(d.inner.clone()),
-            TypedValue::Array(a) => Some(a.inner.clone()),
+            TypedValue::Container(c) => Some(c.clone()),
             _ => None,
         }
     }
     pub fn as_dictionary(&self) -> Option<Dictionary> {
         match &self.typed {
-            TypedValue::Set(s) => Some(Dictionary {
-                inner: s.inner.clone(),
-            }),
-            TypedValue::Dictionary(d) => Some(d.clone()),
-            TypedValue::Array(a) => Some(Dictionary {
-                inner: a.inner.clone(),
-            }),
+            TypedValue::Container(c) => c.as_dictionary(),
             _ => None,
         }
     }
     pub fn as_array(&self) -> Option<Array> {
         match &self.typed {
-            TypedValue::Set(s) => Some(Array {
-                inner: s.inner.clone(),
-            }),
-            TypedValue::Dictionary(d) => Some(Array {
-                inner: d.inner.clone(),
-            }),
-            TypedValue::Array(a) => Some(a.clone()),
+            TypedValue::Container(c) => c.as_array(),
             _ => None,
         }
     }
