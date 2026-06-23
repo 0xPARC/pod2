@@ -212,9 +212,9 @@ enum OperationAuxQueryKind {
     MerkleTransition = 3,
     MerkleDelete = 4,
     OpenInputStatement = 5,
-    PublicKeyOf = 6,
-    SignedBy = 7,
-    CustomPredVerify = 8,
+    CustomPredVerify = 6,
+    PublicKeyOf = 7,
+    SignedBy = 8,
 }
 
 fn operation_aux_query_hash(
@@ -294,7 +294,10 @@ fn hash_merkle_delete_query(
     )
 }
 
-fn hash_statement_query(builder: &mut CircuitBuilder, st_hash: &HashOutTarget) -> HashOutTarget {
+fn hash_open_input_statement_query(
+    builder: &mut CircuitBuilder,
+    st_hash: &HashOutTarget,
+) -> HashOutTarget {
     operation_aux_query_hash(
         builder,
         OperationAuxQueryKind::OpenInputStatement,
@@ -517,7 +520,7 @@ fn append_open_input_statements_aux_table_circuit(
             &pod.vd_hash,
         );
         let st_hash = st.hash(builder);
-        let query_hash = hash_statement_query(builder, &st_hash);
+        let query_hash = hash_open_input_statement_query(builder, &st_hash);
         table.push(query_hash);
         measure_gates_end!(builder, measure);
     }
@@ -1049,7 +1052,7 @@ fn verify_open_input_statement_circuit(
 ) -> BoolTarget {
     let measure = measure_gates_begin!(builder, "OpOpenInputSt");
     let op_code_ok = op_type.has_native(builder, NativeOperation::OpenInputStatement);
-    let expected_query_hash = hash_statement_query(builder, st_hash);
+    let expected_query_hash = hash_open_input_statement_query(builder, st_hash);
     let query_ok = builder.is_equal_flattenable(&resolved_query_hash, &expected_query_hash);
 
     let ok = builder.all([op_code_ok, query_ok]);

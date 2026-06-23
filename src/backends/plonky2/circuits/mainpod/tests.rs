@@ -1799,7 +1799,7 @@ fn test_aux_query_kinds_are_pairwise_distinct() -> Result<()> {
         hash_merkle_not_contains_query(&mut builder, h_a, v_a),
         hash_merkle_transition_query(&mut builder, op, h_a, h_b, v_a, v_b),
         hash_merkle_delete_query(&mut builder, h_a, h_b, v_a),
-        hash_statement_query(&mut builder, &h_a),
+        hash_open_input_statement_query(&mut builder, &h_a),
         hash_pair_query(&mut builder, OperationAuxQueryKind::PublicKeyOf, h_a, h_b),
         hash_pair_query(&mut builder, OperationAuxQueryKind::SignedBy, h_a, h_b),
         hash_custom_predicate_verify_query(&mut builder, &h_a, &op_type, &op_arg_hashes),
