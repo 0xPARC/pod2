@@ -162,10 +162,14 @@ fn operation_verify(
     let aux_tables =
         build_operation_aux_table_circuit(&params, &mut builder, &[], &[], &aux_table_inputs)?;
 
+    let st_hash_target = st_target.hash(&mut builder);
     verify_operation_circuit(
         &params,
         &mut builder,
-        &st_target,
+        StatementWithHash {
+            statement: &st_target,
+            hash: st_hash_target,
+        },
         &op_target,
         &prev_statement_flatteneds_target,
         &prev_statement_hashes_target,
@@ -1638,30 +1642,20 @@ fn custom_pred_verify_hash_table_lookup(index: usize, expected_hash: HashOut) ->
     let config = CircuitConfig::standard_recursion_config();
     let mut builder = CircuitBuilder::new(config);
 
-    let mut custom_pred_verify_hashes = MuxTableTarget::new(&params, HashOutTarget::size(&params));
+    // `new` seeds the sentinel at index 0, so the two real rows land at indices 1 and 2.
+    let mut custom_pred_verify_hashes = MuxTableTarget::new(&mut builder, &params);
     let hash0 = builder.constant_hash(HashOut {
         elements: [F(11), F(12), F(13), F(14)],
     });
     let hash1 = builder.constant_hash(HashOut {
         elements: [F(21), F(22), F(23), F(24)],
     });
-    custom_pred_verify_hashes.push_flattened(
-        &mut builder,
-        OperationAuxTableTag::CustomPredVerify as u32,
-        &hash0.elements,
-    );
-    custom_pred_verify_hashes.push_flattened(
-        &mut builder,
-        OperationAuxTableTag::CustomPredVerify as u32,
-        &hash1.elements,
-    );
+    custom_pred_verify_hashes.push(hash0);
+    custom_pred_verify_hashes.push(hash1);
 
-    let index_target = IndexTarget::new_virtual(2, &mut builder);
-    let resolved_hash_entry = custom_pred_verify_hashes.get(&mut builder, &index_target);
-    let (aux_tag_ok, resolved_query_hash) = resolved_hash_entry
-        .as_type::<HashOutTarget>(&mut builder, OperationAuxTableTag::CustomPredVerify as u32);
+    let index_target = IndexTarget::new_virtual(3, &mut builder);
+    let resolved_query_hash = custom_pred_verify_hashes.get(&mut builder, &index_target);
     let expected_hash_target = builder.constant_hash(expected_hash);
-    builder.assert_one(aux_tag_ok.target);
     builder.connect_hashes(resolved_query_hash, expected_hash_target);
 
     let mut pw = PartialWitness::<F>::new();
@@ -1677,21 +1671,49 @@ fn test_custom_pred_verify_hash_table_index_selection() {
     let hash0 = HashOut {
         elements: [F(11), F(12), F(13), F(14)],
     };
-    custom_pred_verify_hash_table_lookup(0, hash0).unwrap();
-    assert!(custom_pred_verify_hash_table_lookup(1, hash0).is_err());
+    // hash0 sits at index 1 (index 0 is the sentinel); index 2 holds the other row.
+    custom_pred_verify_hash_table_lookup(1, hash0).unwrap();
+    assert!(custom_pred_verify_hash_table_lookup(2, hash0).is_err());
 }
 
-fn prove_connected_aux_query_hashes(
-    hash_pair: impl FnOnce(
-        &mut crate::backends::plonky2::basetypes::CircuitBuilder,
-    ) -> (HashOutTarget, HashOutTarget),
+/// Build a custom-verify query hash over fresh virtual targets for the given components and record
+/// their witness values, returning the query-hash target.
+fn build_custom_query_side(
+    builder: &mut crate::backends::plonky2::basetypes::CircuitBuilder,
+    pw: &mut PartialWitness<F>,
+    st: HashOut,
+    op: &OperationType,
+    op_args: &[HashOut],
+) -> Result<HashOutTarget> {
+    let st_target = builder.add_virtual_hash();
+    let op_target = builder.add_virtual_operation_type();
+    let arg_targets: Vec<_> = op_args.iter().map(|_| builder.add_virtual_hash()).collect();
+    let query_hash =
+        hash_custom_predicate_verify_query(builder, &st_target, &op_target, &arg_targets);
+
+    pw.set_hash_target(st_target, st)?;
+    op_target.set_targets(pw, op)?;
+    for (target, hash) in arg_targets.iter().zip(op_args) {
+        pw.set_hash_target(*target, *hash)?;
+    }
+    Ok(query_hash)
+}
+
+/// Build two custom-verify query hashes from full components and require them to be equal, so a
+/// mismatch surfaces as a prove failure. A test varies one component (statement hash, op type, or
+/// op args) across the two sides to check that component is bound into the query hash.
+fn custom_query_hashes_match(
+    lhs: (HashOut, &OperationType, &[HashOut]),
+    rhs: (HashOut, &OperationType, &[HashOut]),
 ) -> Result<()> {
     let config = CircuitConfig::standard_recursion_config();
-    let mut builder = crate::backends::plonky2::basetypes::CircuitBuilder::new(config);
-    let (left, right) = hash_pair(&mut builder);
-    builder.connect_hashes(left, right);
+    let mut builder = CircuitBuilder::new(config);
+    let mut pw = PartialWitness::<F>::new();
 
-    let pw = PartialWitness::<F>::new();
+    let lhs_query_hash = build_custom_query_side(&mut builder, &mut pw, lhs.0, lhs.1, lhs.2)?;
+    let rhs_query_hash = build_custom_query_side(&mut builder, &mut pw, rhs.0, rhs.1, rhs.2)?;
+    builder.connect_hashes(lhs_query_hash, rhs_query_hash);
+
     let data = builder.build::<C>();
     let proof = data.prove(pw)?;
     data.verify(proof)?;
@@ -1699,38 +1721,113 @@ fn prove_connected_aux_query_hashes(
 }
 
 #[test]
-fn test_aux_query_hash_distinguishes_contains_from_not_contains() {
-    assert!(prove_connected_aux_query_hashes(|builder| {
-        let root = builder.constant_hash(HashOut {
-            elements: [F(1), F(2), F(3), F(4)],
-        });
-        let key = builder.constant_value(RawValue::from(42));
-        let value = builder.constant_value(RawValue::from(0));
-        let contains_hash = hash_merkle_contains_query(builder, root, key, value);
-        let not_contains_hash = hash_merkle_not_contains_query(builder, root, key);
-        (contains_hash, not_contains_hash)
-    })
-    .is_err());
+fn test_custom_query_hash_is_sensitive_to_op_arg_order_and_content() {
+    let st = HashOut {
+        elements: [F(101), F(102), F(103), F(104)],
+    };
+    let op = OperationType::Native(NativeOperation::None);
+    let hash_a = HashOut {
+        elements: [F(1), F(2), F(3), F(4)],
+    };
+    let hash_b = HashOut {
+        elements: [F(5), F(6), F(7), F(8)],
+    };
+    let hash_c = HashOut {
+        elements: [F(9), F(10), F(11), F(12)],
+    };
+
+    custom_query_hashes_match((st, &op, &[hash_a, hash_b]), (st, &op, &[hash_a, hash_b])).unwrap();
+    assert!(
+        custom_query_hashes_match((st, &op, &[hash_a, hash_b]), (st, &op, &[hash_b, hash_a]))
+            .is_err()
+    );
+    assert!(
+        custom_query_hashes_match((st, &op, &[hash_a, hash_b]), (st, &op, &[hash_a, hash_c]))
+            .is_err()
+    );
 }
 
 #[test]
-fn test_aux_query_hash_distinguishes_transition_delete_from_delete_shape() {
-    assert!(prove_connected_aux_query_hashes(|builder| {
-        let old_root = builder.constant_hash(HashOut {
-            elements: [F(11), F(12), F(13), F(14)],
-        });
-        let new_root = builder.constant_hash(HashOut {
-            elements: [F(21), F(22), F(23), F(24)],
-        });
-        let key = builder.constant_value(RawValue::from(7));
-        let value = builder.constant_value(RawValue::from(0));
-        let delete_op = builder.constant(F::from_canonical_u8(MerkleTreeOp::Delete as u8));
-        let transition_hash =
-            hash_merkle_transition_query(builder, delete_op, old_root, new_root, key, value);
-        let delete_hash = hash_merkle_delete_query(builder, old_root, new_root, key);
-        (transition_hash, delete_hash)
-    })
-    .is_err());
+fn test_custom_query_hash_is_sensitive_to_statement_and_op_type() {
+    let st_a = HashOut {
+        elements: [F(1), F(2), F(3), F(4)],
+    };
+    let st_b = HashOut {
+        elements: [F(5), F(6), F(7), F(8)],
+    };
+    let op_arg = HashOut {
+        elements: [F(9), F(10), F(11), F(12)],
+    };
+    let op_a = OperationType::Native(NativeOperation::None);
+    let op_b = OperationType::Native(NativeOperation::ContainsFromEntries);
+
+    // Identical components agree.
+    custom_query_hashes_match((st_a, &op_a, &[op_arg]), (st_a, &op_a, &[op_arg])).unwrap();
+    // The statement hash is bound into the query.
+    assert!(custom_query_hashes_match((st_a, &op_a, &[op_arg]), (st_b, &op_a, &[op_arg])).is_err());
+    // The op type is bound into the query.
+    assert!(custom_query_hashes_match((st_a, &op_a, &[op_arg]), (st_a, &op_b, &[op_arg])).is_err());
+}
+
+/// Build one query of every aux kind over deliberately-overlapping field values, so only the kind
+/// (and field shape) separates them, and require all the resulting hashes to be pairwise distinct.
+/// Soundness rests on each kind folding a distinct prefix into its hash; this is the one place that
+/// exercises every kind at once, so a duplicate `OperationAuxQueryKind` value or a dropped prefix
+/// that let one kind's row satisfy another's verify circuit shows up as a collision here.
+#[test]
+fn test_aux_query_kinds_are_pairwise_distinct() -> Result<()> {
+    let config = CircuitConfig::standard_recursion_config();
+    let mut builder = CircuitBuilder::new(config);
+
+    // Reuse the same data across kinds so the kind, not the data, is what separates the hashes.
+    let h_a = builder.constant_hash(HashOut {
+        elements: [F(1), F(2), F(3), F(4)],
+    });
+    let h_b = builder.constant_hash(HashOut {
+        elements: [F(5), F(6), F(7), F(8)],
+    });
+    let v_a = builder.constant_value(RawValue::from(1));
+    let v_b = builder.constant_value(RawValue::from(2));
+    // Give the transition query the delete op: that is the worst case for a collision with the
+    // delete query (both describe a delete), so distinctness here means only the kind separates them.
+    let op = builder.constant(F::from_canonical_u8(MerkleTreeOp::Delete as u8));
+    let op_type = builder.add_virtual_operation_type();
+    let op_arg_hashes = vec![h_a, h_b];
+
+    let hashes = [
+        hash_merkle_contains_query(&mut builder, h_a, v_a, v_b),
+        hash_merkle_not_contains_query(&mut builder, h_a, v_a),
+        hash_merkle_transition_query(&mut builder, op, h_a, h_b, v_a, v_b),
+        hash_merkle_delete_query(&mut builder, h_a, h_b, v_a),
+        hash_open_input_statement_query(&mut builder, &h_a),
+        hash_pair_query(&mut builder, OperationAuxQueryKind::PublicKeyOf, h_a, h_b),
+        hash_pair_query(&mut builder, OperationAuxQueryKind::SignedBy, h_a, h_b),
+        hash_custom_predicate_verify_query(&mut builder, &h_a, &op_type, &op_arg_hashes),
+    ];
+    for hash in &hashes {
+        builder.register_public_inputs(&hash.elements);
+    }
+
+    let mut pw = PartialWitness::<F>::new();
+    op_type.set_targets(&mut pw, &OperationType::Native(NativeOperation::None))?;
+    let data = builder.build::<C>();
+    let proof = data.prove(pw)?;
+    let out: Vec<HashOut> = proof
+        .public_inputs
+        .chunks(4)
+        .map(|c| HashOut {
+            elements: [c[0], c[1], c[2], c[3]],
+        })
+        .collect();
+    data.verify(proof)?;
+
+    assert_eq!(out.len(), hashes.len());
+    for i in 0..out.len() {
+        for j in (i + 1)..out.len() {
+            assert_ne!(out[i], out[j], "aux query kinds {i} and {j} collide");
+        }
+    }
+    Ok(())
 }
 
 /// Drives `verify_custom_circuit` against an aux table whose only real entry stores
@@ -1767,35 +1864,40 @@ fn helper_verify_custom_mutation(
     let stored_op_args_target: Vec<_> = (0..BASE_PARAMS.max_operation_args)
         .map(|_| builder.add_virtual_statement(false))
         .collect();
-    let stored_hash = CustomPredicateVerifyQueryTarget {
-        statement: stored_st_target.clone(),
-        op_type: stored_op_type_target.clone(),
-        op_args: stored_op_args_target.clone(),
-    }
-    .hash(&mut builder);
-
-    let mut tbl = MuxTableTarget::new(&params, HashOutTarget::size(&params));
-    tbl.push_flattened(&mut builder, OperationAuxTableTag::None as u32, &[]);
-    tbl.push(
+    let stored_st_hash = stored_st_target.hash(&mut builder);
+    let stored_op_arg_hashes: Vec<_> = stored_op_args_target
+        .iter()
+        .map(|op_arg| op_arg.hash(&mut builder))
+        .collect();
+    let stored_hash = hash_custom_predicate_verify_query(
         &mut builder,
-        OperationAuxTableTag::CustomPredVerify as u32,
-        &stored_hash,
+        &stored_st_hash,
+        &stored_op_type_target,
+        &stored_op_arg_hashes,
     );
+
+    let mut tbl = MuxTableTarget::new(&mut builder, &params);
+    tbl.push(stored_hash);
 
     let verify_st_target = builder.add_virtual_statement(false);
     let verify_op_type_target = builder.add_virtual_operation_type();
     let verify_op_args_target: Vec<_> = (0..BASE_PARAMS.max_operation_args)
         .map(|_| builder.add_virtual_statement(false))
         .collect();
+    let verify_st_hash = verify_st_target.hash(&mut builder);
+    let verify_op_arg_hashes: Vec<_> = verify_op_args_target
+        .iter()
+        .map(|op_arg| op_arg.hash(&mut builder))
+        .collect();
     let aux_index = IndexTarget::new_virtual(2, &mut builder);
     let resolved_aux = tbl.get(&mut builder, &aux_index);
 
     let ok = verify_custom_circuit(
         &mut builder,
-        &verify_st_target,
+        &verify_st_hash,
         &verify_op_type_target,
-        &resolved_aux,
-        &verify_op_args_target,
+        resolved_aux,
+        &verify_op_arg_hashes,
     );
     builder.assert_one(ok.target);
 
@@ -1855,7 +1957,7 @@ fn test_verify_custom_circuit_hash_binding() -> frontend::Result<()> {
     // Positive: identical inputs at the real row.
     helper_verify_custom_mutation(&st, &op_type, &op_args, &st, &op_type, &op_args, 1).unwrap();
 
-    // aux_index points at the None row -> aux_tag_ok must fail.
+    // aux_index points at the sentinel row, whose zero hash can't match the query hash.
     assert!(
         helper_verify_custom_mutation(&st, &op_type, &op_args, &st, &op_type, &op_args, 0).is_err()
     );
@@ -1966,10 +2068,14 @@ fn helper_verify_operation_through_aux_table(
         &aux_table_input,
     )?;
 
+    let st_hash_target = st_target.hash(&mut builder);
     verify_operation_circuit(
         params,
         &mut builder,
-        &st_target,
+        StatementWithHash {
+            statement: &st_target,
+            hash: st_hash_target,
+        },
         &op_target,
         &prev_statement_flatteneds_target,
         &prev_statement_hashes_target,
@@ -2092,8 +2198,8 @@ fn test_verify_operation_custom_aux_index_binding() -> frontend::Result<()> {
     )
     .unwrap();
 
-    // Mutation: aux points at the leading None row (non-custom slot).
-    // The aux entry there has the None tag, so aux_tag_ok fails.
+    // Mutation: aux points at the leading sentinel row (non-custom slot), whose zero hash can't
+    // match the recomputed query hash.
     assert!(helper_verify_operation_through_aux_table(
         &params,
         &custom_predicates,
@@ -2106,8 +2212,8 @@ fn test_verify_operation_custom_aux_index_binding() -> frontend::Result<()> {
     )
     .is_err());
 
-    // Mutation: aux points at the other custom row, whose stored hash binds different op_args.
-    // aux_tag_ok passes, query_ok fails.
+    // Mutation: aux points at the other custom row, whose stored hash binds different op_args, so
+    // the recomputed query hash does not match.
     assert!(helper_verify_operation_through_aux_table(
         &params,
         &custom_predicates,

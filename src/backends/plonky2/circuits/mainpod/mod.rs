@@ -22,14 +22,13 @@ use crate::{
         circuits::{
             common::{
                 CircuitBuilderPod, CustomPredicateEntryTarget, CustomPredicateInBatchTarget,
-                CustomPredicateTarget, CustomPredicateVerifyEntryTarget,
-                CustomPredicateVerifyQueryTarget, Flattenable, InputPodEntryTarget,
-                MerkleClaimTarget, MerkleTreeStateTransitionClaimTarget, OperationTarget,
-                OperationTypeTarget, PredicateHashOrWildcardTarget, PredicateTarget,
-                StatementArgTarget, StatementTarget, StatementTmplArgTarget, StatementTmplTarget,
-                ValueTarget,
+                CustomPredicateTarget, CustomPredicateVerifyEntryTarget, Flattenable,
+                InputPodEntryTarget, MerkleClaimTarget, MerkleTreeStateTransitionClaimTarget,
+                OperationTarget, OperationTypeTarget, PredicateHashOrWildcardTarget,
+                PredicateTarget, StatementArgTarget, StatementTarget, StatementTmplArgTarget,
+                StatementTmplTarget, ValueTarget,
             },
-            mux_table::{MuxTableTarget, TableEntryTarget},
+            mux_table::MuxTableTarget,
         },
         error::Result,
         mainpod::{self, MerkleProofs, MerkleTransitionProofs, SignedBy},
@@ -90,6 +89,7 @@ struct StatementCache<const MAX_EQS: usize> {
     equations: [StatementArgCache; MAX_EQS],
     first_n_equations_valid: [BoolTarget; MAX_EQS],
     op_args: Vec<StatementTarget>,
+    op_arg_hashes: Vec<HashOutTarget>,
 }
 
 impl<const MAX_EQS: usize> StatementCache<MAX_EQS> {
@@ -102,26 +102,34 @@ impl<const MAX_EQS: usize> StatementCache<MAX_EQS> {
         prev_statement_flatteneds: &[Vec<Target>],
         prev_statement_hashes: &[HashOutTarget],
     ) -> Self {
-        let op_args = if prev_statement_flatteneds.is_empty() {
-            (0..max_operation_args)
-                .map(|_| StatementTarget::new_native(builder, params, NativePredicate::None, &[]))
-                .collect_vec()
-        } else {
-            // `op.args` is a vector of arrays of length 1, so `.flatten()` is just
-            // converting a length 1 array into a scalar.
-            op.args
-                .iter()
-                .take(max_operation_args)
-                .map(|i| {
-                    builder.vec_ref_projected(
-                        params,
-                        prev_statement_flatteneds,
-                        prev_statement_hashes,
-                        i,
-                    )
-                })
-                .collect::<Vec<_>>()
-        };
+        let (op_args, op_arg_hashes): (Vec<StatementTarget>, Vec<HashOutTarget>) =
+            if prev_statement_flatteneds.is_empty() {
+                let op_args = (0..max_operation_args)
+                    .map(|_| {
+                        StatementTarget::new_native(builder, params, NativePredicate::None, &[])
+                    })
+                    .collect_vec();
+                let op_arg_hashes = op_args
+                    .iter()
+                    .map(|op_arg| op_arg.hash(builder))
+                    .collect_vec();
+                (op_args, op_arg_hashes)
+            } else {
+                // `op.args` is a vector of arrays of length 1, so `.flatten()` is just
+                // converting a length 1 array into a scalar.
+                op.args
+                    .iter()
+                    .take(max_operation_args)
+                    .map(|i| {
+                        builder.vec_ref_projected::<StatementTarget>(
+                            params,
+                            prev_statement_flatteneds,
+                            prev_statement_hashes,
+                            i,
+                        )
+                    })
+                    .unzip()
+            };
         assert!(Params::max_statement_args() >= MAX_VALUE_ARGS);
         let equations = array::from_fn(|i| {
             let pred_is_none = op_args[i].has_native_type(builder, NativePredicate::None);
@@ -168,6 +176,7 @@ impl<const MAX_EQS: usize> StatementCache<MAX_EQS> {
             equations,
             first_n_equations_valid,
             op_args,
+            op_arg_hashes,
         }
     }
 
@@ -191,22 +200,11 @@ impl<const MAX_EQS: usize> StatementCache<MAX_EQS> {
 /// Statement cache for private statements
 type StatementCachePriv = StatementCache<MAX_VALUE_ARGS>;
 
-enum OperationAuxTableTag {
-    None = 0,
-    MerkleProof = 1,
-    MerkleTransitionProof = 2,
-    OpenInputStatement = 3,
-    CustomPredVerify = 4,
-    PublicKeyOf = 5,
-    SignedBy = 6,
-}
-
-// Domain-separation tag prepended to the hashed query input for each aux kind.
-// This is distinct from `OperationAuxTableTag`: the table tag labels the physical
-// row segment, while this kind separates semantic query shapes that share a row tag,
-// such as `Contains`/`NotContains` or transition `Insert`/`Update`/`Delete`.
-// Custom verification (see `hash_custom_predicate_verify_query`) carries no query kind; its row
-// tag is sufficient because its input shape is structurally unique among aux kinds.
+// Domain-separation prefix folded into every aux query hash. Each kind gets a distinct prefix so
+// a query hash built for one kind can never equal one built for another (e.g. `Contains` vs
+// `NotContains`, or transition `Insert`/`Update`/`Delete`). That is what lets a table lookup
+// return a bare hash: a verify circuit recomputes the hash for its own kind and compares, so
+// pointing at the wrong row simply fails to match. No separate physical row tag is needed.
 #[derive(Copy, Clone)]
 enum OperationAuxQueryKind {
     MerkleContains = 1,
@@ -214,8 +212,9 @@ enum OperationAuxQueryKind {
     MerkleTransition = 3,
     MerkleDelete = 4,
     OpenInputStatement = 5,
-    PublicKeyOf = 6,
-    SignedBy = 7,
+    CustomPredVerify = 6,
+    PublicKeyOf = 7,
+    SignedBy = 8,
 }
 
 fn operation_aux_query_hash(
@@ -295,11 +294,14 @@ fn hash_merkle_delete_query(
     )
 }
 
-fn hash_statement_query(builder: &mut CircuitBuilder, st: &StatementTarget) -> HashOutTarget {
+fn hash_open_input_statement_query(
+    builder: &mut CircuitBuilder,
+    st_hash: &HashOutTarget,
+) -> HashOutTarget {
     operation_aux_query_hash(
         builder,
         OperationAuxQueryKind::OpenInputStatement,
-        st.flatten(),
+        st_hash.elements.to_vec(),
     )
 }
 
@@ -316,21 +318,27 @@ fn hash_pair_query(
     )
 }
 
-// Custom verification doesn't go through `operation_aux_query_hash`: its row tag is sufficient
-// because its input shape is structurally unique among aux kinds, so no query-kind prefix is
-// needed.
+/// Hash of a custom predicate verification query over its pre-hashed components: the output
+/// statement's hash, the operation type, and one hash per operation argument. Working from
+/// component hashes keeps the hashed input at a fixed `HASH_SIZE + operation_type_size +
+/// N * HASH_SIZE` (4 + 6 + N*4) regardless of statement width.
 fn hash_custom_predicate_verify_query(
     builder: &mut CircuitBuilder,
-    statement: StatementTarget,
-    op_type: OperationTypeTarget,
-    op_args: Vec<StatementTarget>,
+    statement_hash: &HashOutTarget,
+    op_type: &OperationTypeTarget,
+    op_arg_hashes: &[HashOutTarget],
 ) -> HashOutTarget {
-    CustomPredicateVerifyQueryTarget {
-        statement,
-        op_type,
-        op_args,
-    }
-    .hash(builder)
+    operation_aux_query_hash(
+        builder,
+        OperationAuxQueryKind::CustomPredVerify,
+        statement_hash
+            .elements
+            .iter()
+            .chain(op_type.elements.iter())
+            .chain(op_arg_hashes.iter().flat_map(|h| h.elements.iter()))
+            .copied()
+            .collect(),
+    )
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -410,11 +418,7 @@ fn append_container_proofs_operation_aux_table_circuit(
         let entry = MerkleClaimTarget::from_proof_existence(builder, merkle_proof.clone());
         let query_hash = hash_merkle_contains_query(builder, entry.root, entry.key, entry.value);
 
-        table.push(
-            builder,
-            OperationAuxTableTag::MerkleProof as u32,
-            &query_hash,
-        );
+        table.push(query_hash);
     }
     // Medium MerkleProofs: verify container merkle proofs (inclusion/non-inclusion)
     for merkle_proof in &merkle_proofs.medium {
@@ -431,11 +435,7 @@ fn append_container_proofs_operation_aux_table_circuit(
             &not_contains_query_hash,
         );
 
-        table.push(
-            builder,
-            OperationAuxTableTag::MerkleProof as u32,
-            &query_hash,
-        );
+        table.push(query_hash);
     }
 
     // Small Merkle state transition proofs: verify op proof (only update)
@@ -451,11 +451,7 @@ fn append_container_proofs_operation_aux_table_circuit(
             entry.op_value,
         );
 
-        table.push(
-            builder,
-            OperationAuxTableTag::MerkleTransitionProof as u32,
-            &query_hash,
-        );
+        table.push(query_hash);
     }
     // Medium Merkle state transition proofs: verify op proof (insert/update/delete)
     for merkle_transition_proof in &merkle_transition_proofs.medium {
@@ -480,11 +476,7 @@ fn append_container_proofs_operation_aux_table_circuit(
             &transition_query_hash,
         );
 
-        table.push(
-            builder,
-            OperationAuxTableTag::MerkleTransitionProof as u32,
-            &query_hash,
-        );
+        table.push(query_hash);
     }
 }
 
@@ -507,8 +499,7 @@ fn append_open_input_statements_aux_table_circuit(
         let measure = measure_gates_begin!(builder, "OpenInputSt");
         let pod = builder.vec_ref_small(params, input_pod_table, data.input_pod_table_index);
         let key = ValueTarget::from_int_lo(builder, data.st_index);
-        let raw_st_hash =
-            builder.hash_n_to_hash_no_pad::<PoseidonHash>(data.raw_statement.flatten());
+        let raw_st_hash = data.raw_statement.hash(builder);
         let value = ValueTarget {
             elements: raw_st_hash.elements,
         };
@@ -528,12 +519,9 @@ fn append_open_input_statements_aux_table_circuit(
             is_intro,
             &pod.vd_hash,
         );
-        let query_hash = hash_statement_query(builder, &st);
-        table.push(
-            builder,
-            OperationAuxTableTag::OpenInputStatement as u32,
-            &query_hash,
-        );
+        let st_hash = st.hash(builder);
+        let query_hash = hash_open_input_statement_query(builder, &st_hash);
+        table.push(query_hash);
         measure_gates_end!(builder, measure);
     }
 }
@@ -559,10 +547,7 @@ fn build_operation_aux_table_circuit(
         params.containers.state_ops.max_medium,
         input.merkle_proofs.medium.len()
     );
-    let mut table = MuxTableTarget::new(params, HashOutTarget::size(params));
-
-    // None
-    table.push_flattened(builder, OperationAuxTableTag::None as u32, &[]);
+    let mut table = MuxTableTarget::new(builder, params);
 
     append_container_proofs_operation_aux_table_circuit(
         params,
@@ -601,17 +586,15 @@ fn build_operation_aux_table_circuit(
         let out_query_hash = entry.custom_predicate.hash(builder);
         builder.connect_array(table_query_hash.elements, out_query_hash.elements);
 
-        let query_hash = hash_custom_predicate_verify_query(
-            builder,
-            statement,             // output
-            op_type,               // output
-            entry.op_args.clone(), // input
-        );
-        table.push(
-            builder,
-            OperationAuxTableTag::CustomPredVerify as u32,
-            &query_hash,
-        );
+        let statement_hash = statement.hash(builder);
+        let op_arg_hashes = entry
+            .op_args
+            .iter()
+            .map(|op_arg| op_arg.hash(builder))
+            .collect_vec();
+        let query_hash =
+            hash_custom_predicate_verify_query(builder, &statement_hash, &op_type, &op_arg_hashes);
+        table.push(query_hash);
         measure_gates_end!(builder, measure);
     }
 
@@ -645,11 +628,7 @@ fn build_operation_aux_table_circuit(
             sk_hash,
         );
 
-        table.push(
-            builder,
-            OperationAuxTableTag::PublicKeyOf as u32,
-            &query_hash,
-        );
+        table.push(query_hash);
         measure_gates_end!(builder, measure);
     }
 
@@ -682,7 +661,7 @@ fn build_operation_aux_table_circuit(
             pk_hash,
         );
 
-        table.push(builder, OperationAuxTableTag::SignedBy as u32, &query_hash);
+        table.push(query_hash);
         measure_gates_end!(builder, measure);
     }
 
@@ -693,17 +672,25 @@ fn build_operation_aux_table_circuit(
     Ok(table)
 }
 
+#[derive(Copy, Clone)]
+struct StatementWithHash<'a> {
+    statement: &'a StatementTarget,
+    hash: HashOutTarget,
+}
+
 #[allow(clippy::too_many_arguments)]
 fn verify_operation_circuit(
     params: &Params,
     builder: &mut CircuitBuilder,
-    st: &StatementTarget,
+    st: StatementWithHash,
     op: &OperationTarget,
     prev_statement_flatteneds: &[Vec<Target>],
     prev_statement_hashes: &[HashOutTarget],
     aux_table: &MuxTableTarget,
 ) -> Result<()> {
     let measure = measure_gates_begin!(builder, "OpVerifyPriv");
+    let st_hash = &st.hash;
+    let st = st.statement;
     let _true = builder._true();
     let _false = builder._false();
 
@@ -726,9 +713,7 @@ fn verify_operation_circuit(
     // entries in a table (e.g.: Merkle proofs ). These entries have already been verified, so we
     // need only look up the claim.
 
-    // The aux table always has a fixed zero entry, so we check if there are more than 1 entries to
-    // trigger the unhashing.
-    let resolved_aux = (aux_table.len() > 1).then(|| aux_table.get(builder, &op.aux_index));
+    let resolved_aux = aux_table.lookup(builder, &op.aux_index);
 
     // Op checks to carry out. Each 'verify_X_circuit' should be thought of as operation check
     // restricted to the op of type X, where the returned target is `false` if the input targets
@@ -758,7 +743,7 @@ fn verify_operation_circuit(
                     builder,
                     st,
                     &op.op_type,
-                    &resolved_aux,
+                    resolved_aux,
                     &cache,
                 ),
                 verify_not_contains_from_entries_circuit(
@@ -766,7 +751,7 @@ fn verify_operation_circuit(
                     builder,
                     st,
                     &op.op_type,
-                    &resolved_aux,
+                    resolved_aux,
                     &cache,
                 ),
             ]);
@@ -777,7 +762,7 @@ fn verify_operation_circuit(
                 builder,
                 st,
                 &op.op_type,
-                &resolved_aux,
+                resolved_aux,
                 &cache,
             ));
         }
@@ -787,7 +772,7 @@ fn verify_operation_circuit(
                 builder,
                 st,
                 &op.op_type,
-                &resolved_aux,
+                resolved_aux,
                 &cache,
             ));
         }
@@ -798,7 +783,7 @@ fn verify_operation_circuit(
                     builder,
                     st,
                     &op.op_type,
-                    &resolved_aux,
+                    resolved_aux,
                     &cache,
                 ),
                 verify_merkle_update_circuit(
@@ -806,7 +791,7 @@ fn verify_operation_circuit(
                     builder,
                     st,
                     &op.op_type,
-                    &resolved_aux,
+                    resolved_aux,
                     &cache,
                 ),
                 verify_merkle_delete_circuit(
@@ -814,7 +799,7 @@ fn verify_operation_circuit(
                     builder,
                     st,
                     &op.op_type,
-                    &resolved_aux,
+                    resolved_aux,
                     &cache,
                 ),
             ]);
@@ -822,18 +807,18 @@ fn verify_operation_circuit(
         if params.max_open_input_statement_ops > 0 {
             op_checks.extend_from_slice(&[verify_open_input_statement_circuit(
                 builder,
-                st,
+                st_hash,
                 &op.op_type,
-                &resolved_aux,
+                resolved_aux,
             )]);
         }
         if params.max_custom_predicate_verification_ops > 0 {
             op_checks.push(verify_custom_circuit(
                 builder,
-                st,
+                st_hash,
                 &op.op_type,
-                &resolved_aux,
-                &cache.op_args,
+                resolved_aux,
+                &cache.op_arg_hashes,
             ));
         }
     }
@@ -854,12 +839,10 @@ fn verify_contains_from_entries_circuit(
     builder: &mut CircuitBuilder,
     st: &StatementTarget,
     op_type: &OperationTypeTarget,
-    aux: &TableEntryTarget,
+    resolved_query_hash: HashOutTarget,
     cache: &StatementCachePriv,
 ) -> BoolTarget {
     let measure = measure_gates_begin!(builder, "OpContainsFromEntries");
-    let (aux_tag_ok, resolved_query_hash) =
-        aux.as_type::<HashOutTarget>(builder, OperationAuxTableTag::MerkleProof as u32);
     let op_code_ok = op_type.has_native(builder, NativeOperation::ContainsFromEntries);
 
     let (arg_types_ok, [merkle_root_value, key_value, value_value]) =
@@ -884,7 +867,7 @@ fn verify_contains_from_entries_circuit(
     );
     let st_ok = builder.is_equal_flattenable(st, &expected_statement);
 
-    let ok = builder.all([op_code_ok, aux_tag_ok, arg_types_ok, merkle_proof_ok, st_ok]);
+    let ok = builder.all([op_code_ok, arg_types_ok, merkle_proof_ok, st_ok]);
     measure_gates_end!(builder, measure);
     ok
 }
@@ -894,12 +877,10 @@ fn verify_not_contains_from_entries_circuit(
     builder: &mut CircuitBuilder,
     st: &StatementTarget,
     op_type: &OperationTypeTarget,
-    aux: &TableEntryTarget,
+    resolved_query_hash: HashOutTarget,
     cache: &StatementCachePriv,
 ) -> BoolTarget {
     let measure = measure_gates_begin!(builder, "OpNotContainsFromEntries");
-    let (aux_tag_ok, resolved_query_hash) =
-        aux.as_type::<HashOutTarget>(builder, OperationAuxTableTag::MerkleProof as u32);
     let op_code_ok = op_type.has_native(builder, NativeOperation::NotContainsFromEntries);
 
     let (arg_types_ok, [merkle_root_value, key_value]) = cache.first_n_args_as_values();
@@ -918,7 +899,7 @@ fn verify_not_contains_from_entries_circuit(
     );
     let st_ok = builder.is_equal_flattenable(st, &expected_statement);
 
-    let ok = builder.all([op_code_ok, aux_tag_ok, arg_types_ok, merkle_proof_ok, st_ok]);
+    let ok = builder.all([op_code_ok, arg_types_ok, merkle_proof_ok, st_ok]);
     measure_gates_end!(builder, measure);
     ok
 }
@@ -928,12 +909,10 @@ fn verify_merkle_insert_circuit(
     builder: &mut CircuitBuilder,
     st: &StatementTarget,
     op_type: &OperationTypeTarget,
-    aux: &TableEntryTarget,
+    resolved_query_hash: HashOutTarget,
     cache: &StatementCachePriv,
 ) -> BoolTarget {
     let measure = measure_gates_begin!(builder, "MerkleInsertOp");
-    let (aux_tag_ok, resolved_query_hash) =
-        aux.as_type::<HashOutTarget>(builder, OperationAuxTableTag::MerkleTransitionProof as u32);
     let op_code_ok = op_type.has_native(builder, NativeOperation::ContainerInsertFromEntries);
 
     let (arg_types_ok, [old_root_value, op_key_value, op_value_value, new_root_value]) =
@@ -963,7 +942,7 @@ fn verify_merkle_insert_circuit(
     );
     let st_ok = builder.is_equal_flattenable(st, &expected_statement);
 
-    let ok = builder.all([op_code_ok, aux_tag_ok, arg_types_ok, merkle_proof_ok, st_ok]);
+    let ok = builder.all([op_code_ok, arg_types_ok, merkle_proof_ok, st_ok]);
     measure_gates_end!(builder, measure);
     ok
 }
@@ -973,12 +952,10 @@ fn verify_merkle_update_circuit(
     builder: &mut CircuitBuilder,
     st: &StatementTarget,
     op_type: &OperationTypeTarget,
-    aux: &TableEntryTarget,
+    resolved_query_hash: HashOutTarget,
     cache: &StatementCachePriv,
 ) -> BoolTarget {
     let measure = measure_gates_begin!(builder, "MerkleUpdateOp");
-    let (aux_tag_ok, resolved_query_hash) =
-        aux.as_type::<HashOutTarget>(builder, OperationAuxTableTag::MerkleTransitionProof as u32);
     let op_code_ok = op_type.has_native(builder, NativeOperation::ContainerUpdateFromEntries);
 
     let (arg_types_ok, [old_root_value, op_key_value, op_value_value, new_root_value]) =
@@ -1008,7 +985,7 @@ fn verify_merkle_update_circuit(
     );
     let st_ok = builder.is_equal_flattenable(st, &expected_statement);
 
-    let ok = builder.all([op_code_ok, aux_tag_ok, arg_types_ok, merkle_proof_ok, st_ok]);
+    let ok = builder.all([op_code_ok, arg_types_ok, merkle_proof_ok, st_ok]);
     measure_gates_end!(builder, measure);
     ok
 }
@@ -1018,12 +995,10 @@ fn verify_merkle_delete_circuit(
     builder: &mut CircuitBuilder,
     st: &StatementTarget,
     op_type: &OperationTypeTarget,
-    aux: &TableEntryTarget,
+    resolved_query_hash: HashOutTarget,
     cache: &StatementCachePriv,
 ) -> BoolTarget {
     let measure = measure_gates_begin!(builder, "MerkleDeleteOp");
-    let (aux_tag_ok, resolved_query_hash) =
-        aux.as_type::<HashOutTarget>(builder, OperationAuxTableTag::MerkleTransitionProof as u32);
     let op_code_ok = op_type.has_native(builder, NativeOperation::ContainerDeleteFromEntries);
 
     let (arg_types_ok, [old_root_value, op_key_value, new_root_value]) =
@@ -1049,48 +1024,38 @@ fn verify_merkle_delete_circuit(
     );
     let st_ok = builder.is_equal_flattenable(st, &expected_statement);
 
-    let ok = builder.all([op_code_ok, aux_tag_ok, arg_types_ok, merkle_proof_ok, st_ok]);
+    let ok = builder.all([op_code_ok, arg_types_ok, merkle_proof_ok, st_ok]);
     measure_gates_end!(builder, measure);
     ok
 }
 
 fn verify_custom_circuit(
     builder: &mut CircuitBuilder,
-    st: &StatementTarget,
+    st_hash: &HashOutTarget,
     op_type: &OperationTypeTarget,
-    aux: &TableEntryTarget,
-    resolved_op_args: &[StatementTarget],
+    resolved_query_hash: HashOutTarget,
+    resolved_op_arg_hashes: &[HashOutTarget],
 ) -> BoolTarget {
     let measure = measure_gates_begin!(builder, "OpCustom");
-    let (aux_tag_ok, resolved_query_hash) =
-        aux.as_type::<HashOutTarget>(builder, OperationAuxTableTag::CustomPredVerify as u32);
-
-    let query_hash = hash_custom_predicate_verify_query(
-        builder,
-        st.clone(),
-        op_type.clone(),
-        resolved_op_args.to_vec(),
-    );
+    let query_hash =
+        hash_custom_predicate_verify_query(builder, st_hash, op_type, resolved_op_arg_hashes);
     let query_ok = builder.is_equal_flattenable(&resolved_query_hash, &query_hash);
-    let ok = builder.all([aux_tag_ok, query_ok]);
     measure_gates_end!(builder, measure);
-    ok
+    query_ok
 }
 
 fn verify_open_input_statement_circuit(
     builder: &mut CircuitBuilder,
-    st: &StatementTarget,
+    st_hash: &HashOutTarget,
     op_type: &OperationTypeTarget,
-    aux: &TableEntryTarget,
+    resolved_query_hash: HashOutTarget,
 ) -> BoolTarget {
     let measure = measure_gates_begin!(builder, "OpOpenInputSt");
-    let (aux_tag_ok, resolved_query_hash) =
-        aux.as_type::<HashOutTarget>(builder, OperationAuxTableTag::OpenInputStatement as u32);
     let op_code_ok = op_type.has_native(builder, NativeOperation::OpenInputStatement);
-    let expected_query_hash = hash_statement_query(builder, st);
+    let expected_query_hash = hash_open_input_statement_query(builder, st_hash);
     let query_ok = builder.is_equal_flattenable(&resolved_query_hash, &expected_query_hash);
 
-    let ok = builder.all([op_code_ok, aux_tag_ok, query_ok]);
+    let ok = builder.all([op_code_ok, query_ok]);
     measure_gates_end!(builder, measure);
     ok
 }
@@ -1250,12 +1215,10 @@ fn verify_public_key_from_entries_circuit(
     builder: &mut CircuitBuilder,
     st: &StatementTarget,
     op_type: &OperationTypeTarget,
-    aux: &TableEntryTarget,
+    resolved_query_hash: HashOutTarget,
     cache: &StatementCachePriv,
 ) -> BoolTarget {
     let measure = measure_gates_begin!(builder, "OpPublicKey");
-    let (aux_tag_ok, resolved_query_hash) =
-        aux.as_type::<HashOutTarget>(builder, OperationAuxTableTag::PublicKeyOf as u32);
 
     let op_code_ok = op_type.has_native(builder, NativeOperation::PublicKeyFromEntries);
     let (arg_types_ok, [arg1_value, arg2_value]) = cache.first_n_args_as_values();
@@ -1280,7 +1243,7 @@ fn verify_public_key_from_entries_circuit(
     );
     let st_ok = builder.is_equal_flattenable(st, &expected_statement);
 
-    let ok = builder.all([op_code_ok, aux_tag_ok, arg_types_ok, query_ok, st_ok]);
+    let ok = builder.all([op_code_ok, arg_types_ok, query_ok, st_ok]);
     measure_gates_end!(builder, measure);
     ok
 }
@@ -1290,12 +1253,10 @@ fn verify_signed_by_circuit(
     builder: &mut CircuitBuilder,
     st: &StatementTarget,
     op_type: &OperationTypeTarget,
-    aux: &TableEntryTarget,
+    resolved_query_hash: HashOutTarget,
     cache: &StatementCachePriv,
 ) -> BoolTarget {
     let measure = measure_gates_begin!(builder, "OpSignedBy");
-    let (aux_tag_ok, resolved_query_hash) =
-        aux.as_type::<HashOutTarget>(builder, OperationAuxTableTag::SignedBy as u32);
 
     let op_code_ok = op_type.has_native(builder, NativeOperation::SignedByFromEntries);
     let (arg_types_ok, [arg1_value, arg2_value]) = cache.first_n_args_as_values();
@@ -1321,7 +1282,7 @@ fn verify_signed_by_circuit(
     );
     let st_ok = builder.is_equal_flattenable(st, &expected_statement);
 
-    let ok = builder.all([op_code_ok, aux_tag_ok, arg_types_ok, query_ok, st_ok]);
+    let ok = builder.all([op_code_ok, arg_types_ok, query_ok, st_ok]);
     measure_gates_end!(builder, measure);
     ok
 }
@@ -1999,12 +1960,17 @@ fn verify_main_pod_circuit(
         .iter()
         .map(|flat| builder.hash_n_to_hash_no_pad::<PoseidonHash>(flat.clone()))
         .collect_vec();
+    // Pair each statement with its hash here, where the two are known to correspond, so nothing
+    // downstream has to keep a statement and a loose hash aligned by hand.
+    let statements_with_hashes = statements
+        .zip(&statement_hashes)
+        .map(|(statement, &hash)| StatementWithHash { statement, hash })
+        .collect_vec();
 
     // 5. Verify statements
-    for (j, (is_pub, pub_insert_idx, st, op)) in izip!(
+    for (j, (is_pub, pub_insert_idx, op)) in izip!(
         &main_pod.statements_is_pub,
         &main_pod.pub_insert_idx,
-        &main_pod.statements,
         &main_pod.operations
     )
     .enumerate()
@@ -2012,6 +1978,7 @@ fn verify_main_pod_circuit(
         let i = j + 1; // Previous statement have a hardcoded None at index 0
         let prev_statement_flatteneds = &statement_flatteneds[..i];
         let prev_statement_hashes = &statement_hashes[..i];
+        let st = statements_with_hashes[i];
         verify_operation_circuit(
             params,
             builder,
@@ -2022,7 +1989,6 @@ fn verify_main_pod_circuit(
             &aux_tables,
         )?;
         let measure = measure_gates_begin!(builder, "PubSt");
-        let st_hash = statement_hashes[i];
         let sts_roots_entry = builder.vec_ref_small(params, &sts_roots_table, *pub_insert_idx);
         builder.conditional_assert_eq_flattenable(
             is_pub.target,
@@ -2032,7 +1998,7 @@ fn verify_main_pod_circuit(
         builder.conditional_assert_eq_flattenable(
             is_pub.target,
             &sts_roots_entry.st_hash,
-            &ValueTarget::from(st_hash),
+            &ValueTarget::from(st.hash),
         );
         let new_sts_root =
             builder.select_flattenable(params, *is_pub, &sts_roots_entry.new_root, &sts_root);
