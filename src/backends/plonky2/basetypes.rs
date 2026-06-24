@@ -94,7 +94,11 @@ impl PartialEq for VDSet {
 impl Eq for VDSet {}
 
 impl VDSet {
-    fn new_from_vds_hashes(mut vds_hashes: Vec<Hash>) -> Self {
+    /// Build a VDSet directly from verifier-identity hashes, bypassing plonky2
+    /// `VerifierOnlyCircuitData`. Used by non-circuit backends (e.g. a TEE backend whose
+    /// trust anchors are enclave measurements, not circuit verifier keys) to populate the
+    /// accepted set.
+    pub fn new_from_vds_hashes(mut vds_hashes: Vec<Hash>) -> Self {
         // If vds_hashes is empty we add an zero entry to be used as padding when verifying merkle
         // proofs of inclusion in the vds set.  This zero entry can't be abused because no circuit
         // exists with a vds_hash = 0.

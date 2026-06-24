@@ -46,6 +46,117 @@ use crate::{
     timed,
 };
 
+/// The laid-out, ready-to-check trace of a main pod: the statements and the operations
+/// that derive them, the witness tables those operations dereference against, and the
+/// input pods that open-input statements refer to. Held by reference so a backend can
+/// hand its own stored trace to the shared checker without copying.
+pub struct MainPodCheckInputs<'a> {
+    pub statements: &'a [Statement],
+    pub operations: &'a [Operation],
+    pub signatures: &'a [SignedBy],
+    pub merkle_proofs: &'a MerkleProofs,
+    pub merkle_transition_proofs: &'a MerkleTransitionProofs,
+    pub open_input_statements: &'a [InputPodOpenStatement],
+    pub input_pods: &'a [&'a dyn Pod],
+}
+
+/// Check that every statement is correctly derived by its operation, and that every
+/// input pod is acceptable under `verify_input_pod`.
+///
+/// This is the trusted derivation checker shared by the non-recursive backends (mock
+/// replay and the CCF/TEE receipt backend) so it has a single definition and cannot
+/// drift between them. Statement derivation, open-input binding, and the operation rules
+/// in `check_and_log` are identical regardless of how the pod is certified; what differs
+/// is how an input pod earns trust - the mock backend replays it and checks vd-set
+/// membership, a TEE backend checks its attestation receipt - so that policy is injected
+/// as `verify_input_pod`.
+pub fn check_main_pod_statements(
+    params: &Params,
+    trace: &MainPodCheckInputs,
+    verify_input_pod: &dyn Fn(&dyn Pod) -> Result<()>,
+) -> Result<()> {
+    for pod in trace.input_pods {
+        verify_input_pod(*pod)?;
+    }
+
+    // Each operation can only access previous statements.
+    let statement_check = trace
+        .statements
+        .iter()
+        .enumerate()
+        .map(|(i, s)| {
+            let op = trace.operations[i].deref(
+                trace.statements,
+                trace.signatures,
+                trace.merkle_proofs,
+                trace.merkle_transition_proofs,
+                trace.open_input_statements,
+            )?;
+            if let middleware::Operation::OpenInputStatement(op) = &op {
+                precheck_open_input_statement(trace.input_pods, op)?;
+            }
+            op.check_and_log(params, &s.clone().try_into()?)
+                .map_err(|e| e.into())
+        })
+        .collect::<Result<Vec<_>>>()?;
+    if !statement_check.iter().all(|b| *b) {
+        return Err(Error::statement_not_check());
+    }
+    Ok(())
+}
+
+/// Bind an `OpenInputStatement` operation to the input pod it references: the vd hash,
+/// statements root, and the specific raw statement must all match, and an introduction
+/// pod may only expose introduction statements.
+pub fn precheck_open_input_statement(
+    input_pods: &[&dyn Pod],
+    op: &InputPodOpenStatement,
+) -> Result<()> {
+    let InputPodOpenStatement {
+        pod_index,
+        vd_hash,
+        sts_root,
+        st_index,
+        raw_statement,
+        ..
+    } = op;
+    let pod = input_pods[*pod_index];
+    let vd_hash0 = pod.verifier_data_hash();
+    if vd_hash0 != *vd_hash {
+        return Err(Error::custom(format!(
+            "OpenInputStatement uses a vd_hash different than the input pod one: {} != {}",
+            vd_hash, vd_hash0
+        )));
+    }
+    let sts_root0 = pod.statements_root();
+    if sts_root0 != *sts_root {
+        return Err(Error::custom(format!(
+            "OpenInputStatement uses a statements root different than the input pod one: {} != {}",
+            sts_root, sts_root0
+        )));
+    }
+    let raw_statement0 = &pod.pub_raw_statements()[*st_index];
+    if raw_statement0 != raw_statement {
+        return Err(Error::custom(format!(
+            "OpenInputStatement uses a raw_statement different than the input pod one: {} != {}",
+            raw_statement0, raw_statement
+        )));
+    }
+    // Introduction pods can only have Introduction or None statements
+    if !pod.is_main() {
+        match raw_statement0 {
+            middleware::Statement::None | middleware::Statement::Intro(_, _) => {}
+            _ => {
+                return Err(Error::custom(format!(
+                    "Introduction Pod has a non-introduction statement: {}",
+                    raw_statement0,
+                )))
+            }
+        }
+    }
+    Ok(())
+}
+
 pub fn process_public_statements(
     params: &Params,
     inputs: &MainPodInputs,
@@ -177,7 +288,7 @@ pub struct MerkleProofs {
 }
 
 /// Extracts Merkle proofs from Contains/NotContains ops.
-pub(crate) fn extract_merkle_proofs(
+pub fn extract_merkle_proofs(
     params: &Params,
     aux_list: &mut [OperationAux],
     operations: &[middleware::Operation],
@@ -236,7 +347,7 @@ pub struct MerkleTransitionProofs {
 }
 
 /// Extracts Merkle state transition proofs from container update ops.
-pub(crate) fn extract_merkle_transition_proofs(
+pub fn extract_merkle_transition_proofs(
     params: &Params,
     aux_list: &mut [OperationAux],
     operations: &[middleware::Operation],
@@ -324,7 +435,7 @@ impl SignedBy {
 }
 
 /// Extracts Signatures verification data from SignedBy ops.
-pub(crate) fn extract_signatures(
+pub fn extract_signatures(
     params: &Params,
     aux_list: &mut [OperationAux],
     operations: &[middleware::Operation],
@@ -360,7 +471,7 @@ pub(crate) fn extract_signatures(
     Ok(table)
 }
 
-pub(crate) fn extract_open_input_statements(
+pub fn extract_open_input_statements(
     params: &Params,
     aux_list: &mut [OperationAux],
     operations: &[middleware::Operation],
@@ -417,7 +528,7 @@ fn pad_operation_args(args: &mut Vec<OperationArg>) {
 
 /// Returns the statements from the given MainPodInputs, padding to the respective max lengths
 /// defined at the given Params.
-pub(crate) fn layout_statements(
+pub fn layout_statements(
     params: &Params,
     inputs: &MainPodInputs,
 ) -> Result<(Vec<bool>, Vec<Statement>)> {
@@ -459,7 +570,7 @@ pub(crate) fn layout_statements(
     Ok((statements_is_pub, statements))
 }
 
-pub(crate) fn process_statements_operations(
+pub fn process_statements_operations(
     params: &Params,
     statements: &[Statement],
     aux_list: &[OperationAux],

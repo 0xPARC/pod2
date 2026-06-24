@@ -11,10 +11,10 @@ use crate::{
         basetypes::{Proof, VerifierOnlyCircuitData},
         error::{Error, Result},
         mainpod::{
-            extract_merkle_proofs, extract_merkle_transition_proofs, extract_open_input_statements,
-            extract_signatures, layout_statements, process_public_statements,
-            process_statements_operations, MerkleProofs, MerkleTransitionProofs, Operation,
-            OperationAux, SignedBy, Statement,
+            check_main_pod_statements, extract_merkle_proofs, extract_merkle_transition_proofs,
+            extract_open_input_statements, extract_signatures, layout_statements,
+            process_public_statements, process_statements_operations, MainPodCheckInputs,
+            MerkleProofs, MerkleTransitionProofs, Operation, OperationAux, SignedBy, Statement,
         },
         mock::emptypod::MockEmptyPod,
         recursion::hash_verifier_data,
@@ -162,46 +162,6 @@ impl MockMainPod {
     pub fn params(&self) -> &Params {
         &self.params
     }
-
-    fn precheck_open_input_statement(&self, op: &InputPodOpenStatement) -> Result<()> {
-        let InputPodOpenStatement {
-            pod_index,
-            vd_hash,
-            sts_root,
-            st_index,
-            raw_statement,
-            ..
-        } = op;
-        let pod = &self.input_pods[*pod_index];
-        let vd_hash0 = pod.verifier_data_hash();
-        if vd_hash0 != *vd_hash {
-            return Err(Error::custom(format!(
-                "OpenInputStatement uses a vd_hash different than the input pod one: {} != {}",
-                vd_hash, vd_hash0
-            )));
-        }
-        let sts_root0 = pod.statements_root();
-        if sts_root0 != *sts_root {
-            return Err(Error::custom(format!("OpenInputStatement uses a statements root different than the input pod one: {} != {}", sts_root, sts_root0)));
-        }
-        let raw_statement0 = &pod.pub_raw_statements()[*st_index];
-        if raw_statement0 != raw_statement {
-            return Err(Error::custom(format!("OpenInputStatement uses a raw_statement different than the input pod one: {} != {}", raw_statement0, raw_statement)));
-        }
-        // Introduction pods can only have Introduction or None statements
-        if !pod.is_main() {
-            match raw_statement0 {
-                middleware::Statement::None | middleware::Statement::Intro(_, _) => {}
-                _ => {
-                    return Err(Error::custom(format!(
-                        "Introduction Pod has a non-introduction statement: {}",
-                        raw_statement0,
-                    )))
-                }
-            }
-        }
-        Ok(())
-    }
 }
 
 impl Pod for MockMainPod {
@@ -216,7 +176,12 @@ impl Pod for MockMainPod {
     }
 
     fn verify(&self) -> Result<()> {
-        for pod in &self.input_pods {
+        // The mock backend's input-pod trust policy: an input pod is acceptable if it
+        // verifies (by replay), agrees on the vd set, and - when it is a non-mock
+        // MainPod - has its verifier data in the set. Introduction pods may only expose
+        // introduction statements. The statement derivation itself is checked by the
+        // shared `check_main_pod_statements`.
+        let verify_input_pod = |pod: &dyn Pod| -> Result<()> {
             pod.verify()?;
             if pod.vd_set().root() != self.vd_set.root() {
                 return Err(Error::custom(format!(
@@ -225,8 +190,6 @@ impl Pod for MockMainPod {
                     self.vd_set.root(),
                 )));
             }
-            // If the pod is not mock and main (MainPod family) check that its verifier data is in
-            // the set
             if !pod.is_mock() && pod.is_main() {
                 let verifier_data = pod.verifier_data();
                 let verifier_data_hash = hash_verifier_data(&verifier_data);
@@ -238,7 +201,6 @@ impl Pod for MockMainPod {
                     )));
                 }
             }
-            // Introduction pods can only have Introduction or None statements
             if !pod.is_main() {
                 for self_st in pod.pub_raw_statements() {
                     match self_st {
@@ -252,33 +214,23 @@ impl Pod for MockMainPod {
                     }
                 }
             }
-        }
+            Ok(())
+        };
 
-        // 5. verify that all `input_statements` are correctly generated
-        // by `self.operations` (where each operation can only access previous statements)
-        let statement_check = self
-            .statements
-            .iter()
-            .enumerate()
-            .map(|(i, s)| {
-                let op = self.operations[i].deref(
-                    &self.statements,
-                    &self.signatures,
-                    &self.merkle_proofs,
-                    &self.merkle_transition_proofs,
-                    &self.open_input_statements,
-                )?;
-                if let middleware::Operation::OpenInputStatement(op) = &op {
-                    self.precheck_open_input_statement(op)?;
-                }
-                op.check_and_log(&self.params, &s.clone().try_into()?)
-                    .map_err(|e| e.into())
-            })
-            .collect::<Result<Vec<_>>>()?;
-        if !statement_check.iter().all(|b| *b) {
-            return Err(Error::statement_not_check());
-        }
-        Ok(())
+        let input_pod_refs: Vec<&dyn Pod> = self.input_pods.iter().map(|p| p.as_ref()).collect();
+        check_main_pod_statements(
+            &self.params,
+            &MainPodCheckInputs {
+                statements: &self.statements,
+                operations: &self.operations,
+                signatures: &self.signatures,
+                merkle_proofs: &self.merkle_proofs,
+                merkle_transition_proofs: &self.merkle_transition_proofs,
+                open_input_statements: &self.open_input_statements,
+                input_pods: &input_pod_refs,
+            },
+            &verify_input_pod,
+        )
     }
 
     fn pod_type(&self) -> (usize, &'static str) {
