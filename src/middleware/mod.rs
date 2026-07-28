@@ -5,7 +5,11 @@ use hex::ToHex;
 use strum_macros::FromRepr;
 
 mod basetypes;
-use std::{cmp::PartialEq, hash};
+use std::{
+    cmp::PartialEq,
+    collections::{HashMap, HashSet},
+    hash,
+};
 
 use containers::{Array, Container, Dictionary, Set};
 use schemars::JsonSchema;
@@ -158,76 +162,7 @@ impl fmt::Display for TypedValue {
                     Err(_) => write!(f, "\"{}\"", s),
                 }
             }
-            TypedValue::Container(c) => {
-                if c.kind() == *ContainerKind::default().set_dictionary() {
-                    let d = c.clone().as_dictionary().expect("dictionary");
-                    write!(f, "{{ ")?;
-                    for (i, r) in d.iter().enumerate() {
-                        if i > 0 {
-                            write!(f, ", ")?;
-                        }
-                        if i == 8 {
-                            write!(f, "…")?;
-                            break;
-                        }
-                        match r {
-                            Ok((key, value)) => write!(f, "{}: {}", key, value)?,
-                            Err(e) => write!(f, "{e}")?,
-                        }
-                    }
-                    write!(f, " }}")
-                } else if c.kind() == *ContainerKind::default().set_set() {
-                    let s = c.clone().as_set().expect("set");
-                    write!(f, "#[")?;
-                    for (i, r) in s.iter().enumerate() {
-                        if i > 0 {
-                            write!(f, ", ")?;
-                        }
-                        if i == 8 {
-                            write!(f, "…")?;
-                            break;
-                        }
-                        match r {
-                            Ok(value) => write!(f, "{}", value)?,
-                            Err(e) => write!(f, "{e}")?,
-                        }
-                    }
-                    write!(f, "]")
-                } else if c.kind() == *ContainerKind::default().set_array() {
-                    let a = c.clone().as_array().expect("array");
-                    write!(f, "[")?;
-                    for (i, r) in a.iter().enumerate() {
-                        if i > 0 {
-                            write!(f, ", ")?;
-                        }
-                        if i == 8 {
-                            write!(f, "…")?;
-                            break;
-                        }
-                        match r {
-                            Ok((index, value)) => write!(f, "{}: {}", index, value)?,
-                            Err(e) => write!(f, "{e}")?,
-                        }
-                    }
-                    write!(f, "]")
-                } else {
-                    write!(f, "{{ ")?;
-                    for (i, r) in c.iter().enumerate() {
-                        if i > 0 {
-                            write!(f, ", ")?;
-                        }
-                        if i == 8 {
-                            write!(f, "…")?;
-                            break;
-                        }
-                        match r {
-                            Ok((key, value)) => write!(f, "{}: {}", key, value)?,
-                            Err(e) => write!(f, "{e}")?,
-                        }
-                    }
-                    write!(f, " }}")
-                }
-            }
+            TypedValue::Container(c) => c.fmt(f),
             TypedValue::PublicKey(p) => write!(f, "PublicKey({})", p),
             TypedValue::SecretKey(p) => write!(f, "SecretKey({})", p),
             TypedValue::Predicate(p) => write!(f, "Predicate({})", p),
@@ -521,24 +456,28 @@ impl Value {
     }
     pub fn as_set(&self) -> Option<Set> {
         match &self.typed {
+            TypedValue::Raw(v) if *v == EMPTY_VALUE => Some(Set::new(HashSet::new())),
             TypedValue::Container(c) => c.as_set(),
             _ => None,
         }
     }
     pub fn as_container(&self) -> Option<Container> {
         match &self.typed {
+            TypedValue::Raw(v) if *v == EMPTY_VALUE => Some(Container::empty()),
             TypedValue::Container(c) => Some(c.clone()),
             _ => None,
         }
     }
     pub fn as_dictionary(&self) -> Option<Dictionary> {
         match &self.typed {
+            TypedValue::Raw(v) if *v == EMPTY_VALUE => Some(Dictionary::new(HashMap::new())),
             TypedValue::Container(c) => c.as_dictionary(),
             _ => None,
         }
     }
     pub fn as_array(&self) -> Option<Array> {
         match &self.typed {
+            TypedValue::Raw(v) if *v == EMPTY_VALUE => Some(Array::new(Vec::new())),
             TypedValue::Container(c) => c.as_array(),
             _ => None,
         }
