@@ -48,7 +48,7 @@ pub const EMPTY_MT_ROOT: Hash = EMPTY_HASH;
 /// The string encoding of this bitmask contains three characters which are `d,s,a` or `-`
 /// depending on whether the bit flag is set or not for each of Dictionary, Set and Array.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
-pub struct ContainerKind(pub(crate) u8);
+pub struct ContainerKind(pub u8);
 
 impl ContainerKind {
     pub fn is_dictionary(&self) -> bool {
@@ -60,15 +60,15 @@ impl ContainerKind {
     pub fn is_array(&self) -> bool {
         self.0 & (1 << 2) != 0
     }
-    pub(crate) fn set_dictionary(&mut self) -> &mut Self {
+    pub fn set_dictionary(&mut self) -> &mut Self {
         self.0 |= 1 << 0;
         self
     }
-    pub(crate) fn set_set(&mut self) -> &mut Self {
+    pub fn set_set(&mut self) -> &mut Self {
         self.0 |= 1 << 1;
         self
     }
-    pub(crate) fn set_array(&mut self) -> &mut Self {
+    pub fn set_array(&mut self) -> &mut Self {
         self.0 |= 1 << 2;
         self
     }
