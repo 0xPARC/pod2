@@ -288,6 +288,79 @@ impl PartialEq for Container {
 }
 impl Eq for Container {}
 
+impl fmt::Display for Container {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.kind() == *ContainerKind::default().set_dictionary() {
+            let d = self.clone().as_dictionary().expect("dictionary");
+            write!(f, "{{ ")?;
+            for (i, r) in d.iter().enumerate() {
+                if i > 0 {
+                    write!(f, ", ")?;
+                }
+                if i == 8 {
+                    write!(f, "…")?;
+                    break;
+                }
+                match r {
+                    Ok((key, value)) => write!(f, "{}: {}", key, value)?,
+                    Err(e) => write!(f, "{e}")?,
+                }
+            }
+            write!(f, " }}")
+        } else if self.kind() == *ContainerKind::default().set_set() {
+            let s = self.clone().as_set().expect("set");
+            write!(f, "#[")?;
+            for (i, r) in s.iter().enumerate() {
+                if i > 0 {
+                    write!(f, ", ")?;
+                }
+                if i == 8 {
+                    write!(f, "…")?;
+                    break;
+                }
+                match r {
+                    Ok(value) => write!(f, "{}", value)?,
+                    Err(e) => write!(f, "{e}")?,
+                }
+            }
+            write!(f, "]")
+        } else if self.kind() == *ContainerKind::default().set_array() {
+            let a = self.clone().as_array().expect("array");
+            write!(f, "[")?;
+            for (i, r) in a.iter().enumerate() {
+                if i > 0 {
+                    write!(f, ", ")?;
+                }
+                if i == 8 {
+                    write!(f, "…")?;
+                    break;
+                }
+                match r {
+                    Ok((index, value)) => write!(f, "{}: {}", index, value)?,
+                    Err(e) => write!(f, "{e}")?,
+                }
+            }
+            write!(f, "]")
+        } else {
+            write!(f, "{{ ")?;
+            for (i, r) in self.iter().enumerate() {
+                if i > 0 {
+                    write!(f, ", ")?;
+                }
+                if i == 8 {
+                    write!(f, "…")?;
+                    break;
+                }
+                match r {
+                    Ok((key, value)) => write!(f, "{}: {}", key, value)?,
+                    Err(e) => write!(f, "{e}")?,
+                }
+            }
+            write!(f, " }}")
+        }
+    }
+}
+
 fn store_container_mt(tx: &mut dyn TX, container: &Container) -> Result<()> {
     tx.update_kind(container.commitment(), container.kind)
         .map_err(Error::Database)?;
@@ -362,6 +435,15 @@ impl Container {
         }
         container.kind = kind;
         container
+    }
+    pub(crate) fn empty() -> Self {
+        Self::new(
+            *ContainerKind::default()
+                .set_dictionary()
+                .set_set()
+                .set_array(),
+            HashMap::new(),
+        )
     }
     fn empty_with_db(db: Box<dyn DB>) -> Self {
         Self::from_db(EMPTY_HASH, db).expect("EMPTY_HASH exists implicitly")
@@ -545,6 +627,9 @@ impl Dictionary {
             .as_dictionary()
             .ok_or_else(|| Error::custom("not a dictionary"))
     }
+    pub fn inner(&self) -> &Container {
+        &self.inner
+    }
     pub fn commitment(&self) -> Hash {
         self.inner.commitment()
     }
@@ -635,6 +720,9 @@ impl Set {
             .as_set()
             .ok_or_else(|| Error::custom("not a set"))
     }
+    pub fn inner(&self) -> &Container {
+        &self.inner
+    }
     pub fn commitment(&self) -> Hash {
         self.inner.commitment()
     }
@@ -721,6 +809,9 @@ impl Array {
         Container::from_db(root, db)?
             .as_array()
             .ok_or_else(|| Error::custom("not an array"))
+    }
+    pub fn inner(&self) -> &Container {
+        &self.inner
     }
     pub fn commitment(&self) -> Hash {
         self.inner.commitment()
