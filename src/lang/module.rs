@@ -422,7 +422,7 @@ mod tests {
     use crate::{
         lang::{
             frontend_ast::parse::parse_document,
-            frontend_ast_split::split_predicate_if_needed,
+            frontend_ast_split::{split_predicate_if_needed, SplitSearchCache},
             frontend_ast_validate::{validate, ParseMode, ValidatedAST},
             load_module,
             parser::parse_podlang,
@@ -629,7 +629,8 @@ mod tests {
         // Split the predicate
         let mut split_results = Vec::new();
         for pred in predicates {
-            let result = split_predicate_if_needed(pred, &params).expect("Split failed");
+            let result = split_predicate_if_needed(pred, &params, &mut SplitSearchCache::default())
+                .expect("Split failed");
             split_results.push(result);
         }
 

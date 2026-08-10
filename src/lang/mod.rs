@@ -73,23 +73,31 @@ fn load_module_inner(
     params: &Params,
     available_modules: &[Arc<Module>],
 ) -> Result<Module, LangError> {
+    let started = std::time::Instant::now();
     let pairs = parse_podlang(source)?;
+    log::debug!("module {name}: parse: {:?}", started.elapsed());
     let document_pair = pairs
         .into_iter()
         .next()
         .expect("parse_podlang should always return at least one pair for a valid document");
+    let started = std::time::Instant::now();
     let document = frontend_ast::parse::parse_document(document_pair)?;
+    log::debug!("module {name}: ast build: {:?}", started.elapsed());
     let available_modules_map = available_modules
         .iter()
         .map(|m| (m.id(), m.clone()))
         .collect();
+    let started = std::time::Instant::now();
     let validated = frontend_ast_validate::validate(
         document,
         &available_modules_map,
         params,
         frontend_ast_validate::ParseMode::Module,
     )?;
+    log::debug!("module {name}: validate: {:?}", started.elapsed());
+    let started = std::time::Instant::now();
     let module = frontend_ast_lower::lower_module(validated, params, name)?;
+    log::debug!("module {name}: lower: {:?}", started.elapsed());
     Ok(module)
 }
 

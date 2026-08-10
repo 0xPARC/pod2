@@ -96,10 +96,13 @@ pub(super) fn validate_predicate_is_splittable(
     Ok(())
 }
 
-/// Split a predicate into a chain if it exceeds statement limit
+/// Split a predicate into a chain if it exceeds statement limit. Callers
+/// splitting many predicates under one `Params` (module lowering) share one
+/// cache so same-shape predicates search only once.
 pub fn split_predicate_if_needed(
     pred: CustomPredicateDef,
     params: &Params,
+    search_cache: &mut SplitSearchCache,
 ) -> Result<SplitResult, SplittingError> {
     // Early validation
     validate_predicate_is_splittable(&pred)?;
@@ -113,7 +116,7 @@ pub fn split_predicate_if_needed(
     }
 
     // Need to split - execute the splitting algorithm
-    let (predicates, chain_info) = split_into_chain(&pred, params)?;
+    let (predicates, chain_info) = split_into_chain(&pred, params, search_cache)?;
 
     Ok(SplitResult {
         predicates,
@@ -310,26 +313,34 @@ fn ordering_excess_cost(
         }
     }
 
-    let mut total: usize = 0;
-    for boundary in 1..num_statements {
-        let mut crossing_count: usize = 0;
-        for wildcard in 0..num_wildcards {
-            if first_position[wildcard] == usize::MAX {
-                continue;
-            }
-            // Public args are alive from position 0 (declared on the predicate
-            // signature regardless of where they're first referenced), so they
-            // cross `boundary` iff they're used at or after it. Private
-            // wildcards only count once they've actually appeared.
-            if is_original_public[wildcard] {
-                if last_position[wildcard] >= boundary {
-                    crossing_count += 1;
-                }
-            } else if first_position[wildcard] < boundary && last_position[wildcard] >= boundary {
-                crossing_count += 1;
-            }
+    // Each wildcard crosses a contiguous range of boundaries, so we can count
+    // crossings for all boundaries at once with a difference array instead of
+    // a boundary x wildcard sweep. Public args are alive from position 0
+    // (declared on the predicate signature regardless of where they're first
+    // referenced), so they cross every boundary up to their last use. Private
+    // wildcards only count once they've actually appeared.
+    let mut crossing_delta = vec![0isize; num_statements + 1];
+    for wildcard in 0..num_wildcards {
+        if first_position[wildcard] == usize::MAX {
+            continue;
         }
-        total += crossing_count.saturating_sub(max_args);
+        let first_crossed = if is_original_public[wildcard] {
+            1
+        } else {
+            first_position[wildcard] + 1
+        };
+        let end_crossed = last_position[wildcard] + 1;
+        if first_crossed < end_crossed {
+            crossing_delta[first_crossed] += 1;
+            crossing_delta[end_crossed] -= 1;
+        }
+    }
+
+    let mut total: usize = 0;
+    let mut crossing_count: isize = 0;
+    for boundary in 1..num_statements {
+        crossing_count += crossing_delta[boundary];
+        total += (crossing_count as usize).saturating_sub(max_args);
     }
     total
 }
@@ -567,6 +578,58 @@ fn try_partition(
 /// indices placed in link i, in original order.
 pub(super) type LinkAssignment = Vec<Vec<usize>>;
 
+/// Memo for the ordering search, keyed on [`SplitShape`]. Scope one cache
+/// to one `Params` value (a module load): the search outcome also depends on
+/// the params-derived caps, which the key deliberately omits.
+#[derive(Default)]
+pub struct SplitSearchCache {
+    assignments: HashMap<SplitShape, LinkAssignment>,
+}
+
+/// Run the full ordering search for one shape: candidate generation (with
+/// its shortcuts), then the DP partition loop over the candidates.
+fn search_link_assignment(
+    original_name: &str,
+    input: &SplitInput,
+    params: &Params,
+) -> Result<LinkAssignment, SplittingError> {
+    let orderings = match candidate_orderings(input, params) {
+        CandidateSearch::Found(assignment) => return Ok(assignment),
+        CandidateSearch::Explore(orderings) => orderings,
+    };
+
+    let min_link_count = compute_min_links(input.shape.num_statements);
+    let mut found: Option<(usize, LinkAssignment)> = None;
+    for ordering in &orderings {
+        let Some((link_count, assignment)) = input.try_partition(ordering, params) else {
+            continue;
+        };
+        if found
+            .as_ref()
+            .is_none_or(|(best_link_count, _)| link_count < *best_link_count)
+        {
+            found = Some((link_count, assignment));
+            // `min_link_count` is the arity-only lower bound; no ordering can
+            // beat it, so stop the moment any candidate hits it.
+            if link_count <= min_link_count {
+                break;
+            }
+        }
+    }
+
+    match found {
+        Some((_, assignment)) => Ok(assignment),
+        None => {
+            // Lowest-cost ordering is at orderings[0] by construction;
+            // candidate_orderings always produces at least the source order.
+            let chosen = orderings
+                .first()
+                .expect("candidate_orderings always returns >= 1 ordering");
+            Err(diagnose_dp_failure(original_name, input, chosen, params))
+        }
+    }
+}
+
 /// Convert a link assignment into [`ChainLink`]s, computing each link's
 /// public/private/promoted wildcards from the assignment plus the original
 /// public-args list.
@@ -648,19 +711,64 @@ fn build_chain_links_from_assignment(
     result
 }
 
-/// Numeric encoding of a predicate's wildcard graph, ready for the DP
-/// partitioner.
-pub(super) struct SplitInput {
+/// The ordering-search inputs that fully determine a link assignment:
+/// statement count, which statements use each wildcard, and each wildcard's
+/// public/private flag. Two predicates with equal shapes get equal
+/// assignments, whatever their names, keys, and literals.
+#[derive(Clone, PartialEq, Eq, Hash)]
+pub(super) struct SplitShape {
     /// Number of statements in the predicate being split.
     pub(super) num_statements: usize,
-    wildcard_names: Vec<String>,
-    /// For each wildcard (by index into `wildcard_names`), the list of
-    /// statement indices that reference it.
+    /// For each wildcard (by index into `SplitInput::wildcard_names`), the
+    /// list of statement indices that reference it.
     pub(super) statements_using: Vec<Vec<usize>>,
     /// For each wildcard, whether it was declared as a public arg on the
     /// original predicate.
     pub(super) is_original_public: Vec<bool>,
+}
+
+/// Numeric encoding of a predicate's wildcard graph, ready for the DP
+/// partitioner.
+pub(super) struct SplitInput {
+    pub(super) shape: SplitShape,
+    wildcard_names: Vec<String>,
     original_public_args: Vec<String>,
+}
+
+impl SplitInput {
+    fn excess_cost(&self, ordering: &[usize]) -> usize {
+        ordering_excess_cost(
+            ordering,
+            &self.shape.statements_using,
+            &self.shape.is_original_public,
+            Params::max_statement_args(),
+        )
+    }
+
+    fn try_partition(
+        &self,
+        ordering: &[usize],
+        params: &Params,
+    ) -> Option<(usize, LinkAssignment)> {
+        try_partition(
+            ordering,
+            &self.shape.statements_using,
+            &self.shape.is_original_public,
+            params,
+        )
+    }
+
+    /// Partition `ordering`, accepting only an assignment at the arity-only
+    /// lower bound, which no other ordering can beat.
+    fn partition_at_lower_bound(
+        &self,
+        ordering: &[usize],
+        params: &Params,
+    ) -> Option<LinkAssignment> {
+        let min_link_count = compute_min_links(self.shape.num_statements);
+        let (link_count, assignment) = self.try_partition(ordering, params)?;
+        (link_count <= min_link_count).then_some(assignment)
+    }
 }
 
 pub(super) fn prepare_split_input(pred: &CustomPredicateDef) -> SplitInput {
@@ -707,12 +815,22 @@ pub(super) fn prepare_split_input(pred: &CustomPredicateDef) -> SplitInput {
     }
 
     SplitInput {
-        num_statements: pred.statements.len(),
+        shape: SplitShape {
+            num_statements: pred.statements.len(),
+            statements_using,
+            is_original_public,
+        },
         wildcard_names,
-        statements_using,
-        is_original_public,
         original_public_args,
     }
+}
+
+/// Outcome of the candidate-ordering search: either an assignment already
+/// proven optimal (a cost-0 refined ordering that partitions at the arity
+/// lower bound), or the ordered candidate list for the full partition loop.
+enum CandidateSearch {
+    Found(LinkAssignment),
+    Explore(Vec<Vec<usize>>),
 }
 
 /// Build the priority-ordered list of orderings the DP partitioner will try.
@@ -723,24 +841,30 @@ pub(super) fn prepare_split_input(pred: &CustomPredicateDef) -> SplitInput {
 /// public-args cap but not the total-wildcards cap, so an unrefined seed can
 /// still be the one that satisfies both caps where its refined descendants
 /// don't.
-fn candidate_orderings(input: &SplitInput) -> Vec<Vec<usize>> {
+///
+/// Two shortcuts return an assignment directly without changing the winner.
+/// If the source order already has zero excess cost and partitions at the
+/// arity lower bound, it wins before the RCM sweep even starts (it would be
+/// the first candidate). Failing that, the first cost-0 refinement is
+/// partitioned right away: it is the ordering the partition loop would try
+/// first (the stable sort keeps seed order among ties), so if it partitions
+/// at the bound the remaining seeds are skipped.
+fn candidate_orderings(input: &SplitInput, params: &Params) -> CandidateSearch {
     use rand::{seq::SliceRandom, SeedableRng};
     use rand_chacha::ChaCha20Rng;
 
-    let num_statements = input.num_statements;
+    let num_statements = input.shape.num_statements;
     let max_args = Params::max_statement_args();
 
-    let cost = |ordering: &[usize]| -> usize {
-        ordering_excess_cost(
-            ordering,
-            &input.statements_using,
-            &input.is_original_public,
-            max_args,
-        )
-    };
+    let identity: Vec<usize> = (0..num_statements).collect();
+    if input.excess_cost(&identity) == 0 {
+        if let Some(assignment) = input.partition_at_lower_bound(&identity, params) {
+            return CandidateSearch::Found(assignment);
+        }
+    }
 
-    let baseline: Vec<Vec<usize>> = std::iter::once((0..num_statements).collect())
-        .chain(rcm_orderings(num_statements, &input.statements_using))
+    let baseline: Vec<Vec<usize>> = std::iter::once(identity.clone())
+        .chain(rcm_orderings(num_statements, &input.shape.statements_using))
         .collect();
 
     // Refinement seeds: top REFINE_STARTS lowest-cost baseline orderings plus
@@ -748,10 +872,9 @@ fn candidate_orderings(input: &SplitInput) -> Vec<Vec<usize>> {
     // dense private wildcard pool > max_arity) have narrow feasibility basins
     // that a single refinement from the RCM optimum routinely misses.
     let mut refinement_seeds: Vec<Vec<usize>> = baseline.clone();
-    refinement_seeds.sort_by_key(|ordering| cost(ordering));
+    refinement_seeds.sort_by_key(|ordering| input.excess_cost(ordering));
     refinement_seeds.truncate(REFINE_STARTS);
 
-    let identity: Vec<usize> = (0..num_statements).collect();
     let mut shuffle_rng = ChaCha20Rng::seed_from_u64(seed_from_ordering(&identity));
     for _ in 0..REFINE_RANDOM_STARTS {
         let mut shuffled: Vec<usize> = (0..num_statements).collect();
@@ -759,20 +882,27 @@ fn candidate_orderings(input: &SplitInput) -> Vec<Vec<usize>> {
         refinement_seeds.push(shuffled);
     }
 
-    let mut refined: Vec<(Vec<usize>, usize)> = refinement_seeds
-        .into_iter()
-        .map(|seed| {
-            let result = refine_ordering(
-                seed,
-                &input.statements_using,
-                &input.is_original_public,
-                max_args,
-                REFINE_ITERATIONS,
-            );
-            let result_cost = cost(&result);
-            (result, result_cost)
-        })
-        .collect();
+    let mut refined: Vec<(Vec<usize>, usize)> = Vec::new();
+    let mut shortcut_attempted = false;
+    for seed in refinement_seeds {
+        let result = refine_ordering(
+            seed,
+            &input.shape.statements_using,
+            &input.shape.is_original_public,
+            max_args,
+            REFINE_ITERATIONS,
+        );
+        let result_cost = input.excess_cost(&result);
+        if result_cost == 0 && !shortcut_attempted {
+            shortcut_attempted = true;
+            if let Some(assignment) = input.partition_at_lower_bound(&result, params) {
+                return CandidateSearch::Found(assignment);
+            }
+            // A cost-0 ordering that still needs extra links: refine the
+            // remaining seeds and let the full partition loop decide.
+        }
+        refined.push((result, result_cost));
+    }
     refined.sort_by_key(|(_, refined_cost)| *refined_cost);
 
     let mut seen: HashSet<Vec<usize>> = HashSet::new();
@@ -788,7 +918,7 @@ fn candidate_orderings(input: &SplitInput) -> Vec<Vec<usize>> {
         }
     }
 
-    orderings
+    CandidateSearch::Explore(orderings)
 }
 
 /// Split a predicate into a chain via DP partitioning. Tries every K from
@@ -799,49 +929,27 @@ fn candidate_orderings(input: &SplitInput) -> Vec<Vec<usize>> {
 fn split_into_chain(
     pred: &CustomPredicateDef,
     params: &Params,
+    search_cache: &mut SplitSearchCache,
 ) -> Result<(Vec<CustomPredicateDef>, SplitChainInfo), SplittingError> {
     let original_name = pred.name.name.clone();
     let conjunction = pred.conjunction_type;
     let real_statement_count = pred.statements.len();
 
     let input = prepare_split_input(pred);
-    let num_statements = input.num_statements;
-    let min_link_count = compute_min_links(num_statements);
-    let orderings = candidate_orderings(&input);
+    let num_statements = input.shape.num_statements;
 
-    let mut found: Option<(usize, LinkAssignment)> = None;
-    for ordering in &orderings {
-        let Some((link_count, assignment)) = try_partition(
-            ordering,
-            &input.statements_using,
-            &input.is_original_public,
-            params,
-        ) else {
-            continue;
-        };
-        if found
-            .as_ref()
-            .is_none_or(|(best_link_count, _)| link_count < *best_link_count)
-        {
-            found = Some((link_count, assignment));
-            // `min_link_count` is the arity-only lower bound; no ordering can
-            // beat it, so stop the moment any candidate hits it.
-            if link_count <= min_link_count {
-                break;
-            }
-        }
-    }
-
-    let assignment = match found {
-        Some((_, a)) => a,
-        None => {
-            // Lowest-cost ordering is at orderings[0] by construction;
-            // candidate_orderings always produces at least the source order.
-            let chosen = orderings
-                .first()
-                .expect("candidate_orderings always returns >= 1 ordering");
-            return Err(diagnose_dp_failure(&original_name, &input, chosen, params));
-        }
+    // The link assignment depends only on the statement/wildcard usage shape
+    // (plus `params`, fixed for the cache's lifetime), and modules routinely
+    // repeat one shape across whole families of same-structure predicates,
+    // so the ordering search is memoized on the shape.
+    let assignment = if let Some(assignment) = search_cache.assignments.get(&input.shape) {
+        assignment.clone()
+    } else {
+        let assignment = search_link_assignment(&original_name, &input, params)?;
+        search_cache
+            .assignments
+            .insert(input.shape.clone(), assignment.clone());
+        assignment
     };
 
     // Reorder map: original index -> position in flattened chain.
@@ -1169,8 +1277,8 @@ fn first_cap_violation(
 /// inverse of `SplitInput::statements_using`; resolving names once up front
 /// is cheaper than `stmts.contains(&s)` scans inside the ordering loop.
 fn wildcards_per_statement(input: &SplitInput) -> Vec<HashSet<String>> {
-    let mut out: Vec<HashSet<String>> = vec![HashSet::new(); input.num_statements];
-    for (wildcard, statements) in input.statements_using.iter().enumerate() {
+    let mut out: Vec<HashSet<String>> = vec![HashSet::new(); input.shape.num_statements];
+    for (wildcard, statements) in input.shape.statements_using.iter().enumerate() {
         for &statement in statements {
             out[statement].insert(input.wildcard_names[wildcard].clone());
         }
@@ -1363,6 +1471,12 @@ mod tests {
     use super::*;
     use crate::lang::{frontend_ast::parse::parse_document, parser::parse_podlang};
 
+    /// One-shot split with a throwaway cache; tests exercise single
+    /// predicates, so there is nothing to share.
+    fn split(pred: CustomPredicateDef, params: &Params) -> Result<SplitResult, SplittingError> {
+        split_predicate_if_needed(pred, params, &mut SplitSearchCache::default())
+    }
+
     fn parse_predicate(input: &str) -> CustomPredicateDef {
         let parsed = parse_podlang(input).expect("Failed to parse");
         let document = parse_document(parsed.into_iter().next().unwrap()).expect("Failed to parse");
@@ -1405,7 +1519,7 @@ mod tests {
         let pred = parse_predicate(input);
         let params = Params::default();
 
-        let result = split_predicate_if_needed(pred, &params);
+        let result = split(pred, &params);
         assert!(result.is_ok());
 
         let split_result = result.unwrap();
@@ -1429,7 +1543,7 @@ mod tests {
         let pred = parse_predicate(input);
         let params = Params::default(); // max_custom_predicate_arity = 5
 
-        let result = split_predicate_if_needed(pred, &params);
+        let result = split(pred, &params);
         assert!(result.is_ok());
 
         let split_result = result.unwrap();
@@ -1478,7 +1592,7 @@ mod tests {
         let pred = parse_predicate(input);
         let params = Params::default(); // max_custom_predicate_arity = 5
 
-        let result = split_predicate_if_needed(pred, &params);
+        let result = split(pred, &params);
         assert!(result.is_ok());
 
         let split_result = result.unwrap();
@@ -1527,7 +1641,7 @@ mod tests {
         let pred = parse_predicate(input);
         let params = Params::default();
 
-        let result = split_predicate_if_needed(pred, &params);
+        let result = split(pred, &params);
         assert!(result.is_ok());
 
         let split_result = result.unwrap();
@@ -1581,7 +1695,7 @@ mod tests {
         let pred = parse_predicate(input);
         let params = Params::default();
 
-        let result = split_predicate_if_needed(pred, &params);
+        let result = split(pred, &params);
         assert!(
             result.is_ok(),
             "Should find a valid split with <=1 crossing wildcard, got: {:?}",
@@ -1610,7 +1724,7 @@ mod tests {
         let pred = parse_predicate(input);
         let params = Params::default();
 
-        let result = split_predicate_if_needed(pred, &params).unwrap();
+        let result = split(pred, &params).unwrap();
         // chain[0] is the continuation (_1 suffix), chain[1] is the original
         let continuation = result
             .predicates
@@ -1656,7 +1770,7 @@ mod tests {
         );
         let params = Params::default();
 
-        let result = split_predicate_if_needed(pred, &params);
+        let result = split(pred, &params);
         assert!(
             result.is_ok(),
             "splitter rejected a known-feasible input: {}",
@@ -1686,7 +1800,7 @@ mod tests {
         );
         let params = Params::default();
 
-        let err = split_predicate_if_needed(pred, &params).expect_err("splitter should fail");
+        let err = split(pred, &params).expect_err("splitter should fail");
         match err {
             SplittingError::TooManyTotalArgsInChainLink {
                 predicate,
@@ -1920,7 +2034,7 @@ mod tests {
             ],
         );
         let params = Params::default();
-        let result = split_predicate_if_needed(pred, &params);
+        let result = split(pred, &params);
         assert!(result.is_ok(), "split failed: {:?}", result.err());
     }
 }
