@@ -317,7 +317,7 @@ mod tests {
     use crate::{
         lang::frontend_ast_split::{
             build_pred, compute_min_links, prepare_split_input, split_predicate_if_needed,
-            validate_predicate_is_splittable,
+            validate_predicate_is_splittable, SplitSearchCache,
         },
         middleware::Params,
     };
@@ -394,15 +394,15 @@ mod tests {
                         checked += 1;
 
                         let input = prepare_split_input(&pred);
-                        let num_statements = input.num_statements;
+                        let num_statements = input.shape.num_statements;
                         let milp_start = std::time::Instant::now();
                         let mut milp_ok = false;
                         for num_links in compute_min_links(num_statements)..=num_statements {
                             if solve_milp_for_k(
                                 num_statements,
                                 num_links,
-                                &input.statements_using,
-                                &input.is_original_public,
+                                &input.shape.statements_using,
+                                &input.shape.is_original_public,
                                 &params,
                             )
                             .is_some()
@@ -418,7 +418,11 @@ mod tests {
                         }
 
                         let dp_start = std::time::Instant::now();
-                        let dp_result = split_predicate_if_needed(pred, &params);
+                        let dp_result = split_predicate_if_needed(
+                            pred,
+                            &params,
+                            &mut SplitSearchCache::default(),
+                        );
                         let dp_elapsed = dp_start.elapsed();
                         dp_total += dp_elapsed;
                         if dp_elapsed > dp_max {

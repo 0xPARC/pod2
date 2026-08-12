@@ -550,13 +550,26 @@ impl<'a> Lowerer<'a> {
 
         // Apply splitting to each predicate as needed. The typed-key rewrite
         // happens before splitting so split chain pieces inherit `Index` keys
-        // unchanged.
+        // unchanged. The search cache is shared across the module: modules
+        // routinely contain families of same-shape predicates, which then
+        // pay for the ordering search once.
+        let split_started = std::time::Instant::now();
+        let mut search_cache = frontend_ast_split::SplitSearchCache::default();
         let mut split_results = Vec::new();
         for mut pred in predicates {
             self.rewrite_typed_dot_access(&mut pred);
-            let result = frontend_ast_split::split_predicate_if_needed(pred, self.params)?;
+            let result = frontend_ast_split::split_predicate_if_needed(
+                pred,
+                self.params,
+                &mut search_cache,
+            )?;
             split_results.push(result);
         }
+        log::debug!(
+            "predicate splitting: {:?} ({} predicates)",
+            split_started.elapsed(),
+            split_results.len(),
+        );
 
         Ok(split_results)
     }
