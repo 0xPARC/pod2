@@ -76,6 +76,16 @@ pub struct SplitResult {
     pub chain_info: Option<SplitChainInfo>,
 }
 
+impl SplitResult {
+    /// A predicate passed through unsplit.
+    fn whole(pred: CustomPredicateDef) -> Self {
+        Self {
+            predicates: vec![pred],
+            chain_info: None,
+        }
+    }
+}
+
 /// Early validation: Check if predicate is fundamentally splittable
 pub(super) fn validate_predicate_is_splittable(
     pred: &CustomPredicateDef,
@@ -97,8 +107,9 @@ pub(super) fn validate_predicate_is_splittable(
 }
 
 /// Split a predicate into a chain if it exceeds statement limit. Callers
-/// splitting many predicates under one `Params` (module lowering) share one
-/// cache so same-shape predicates search only once.
+/// splitting many predicates under one `Params` share one cache so same-shape
+/// predicates search only once; whole-module callers should prefer
+/// [`split_predicates_if_needed`], which also parallelizes the searches.
 pub fn split_predicate_if_needed(
     pred: CustomPredicateDef,
     params: &Params,
@@ -107,21 +118,92 @@ pub fn split_predicate_if_needed(
     // Early validation
     validate_predicate_is_splittable(&pred)?;
 
-    // If within limits, no splitting needed
-    if pred.statements.len() <= Params::max_custom_predicate_arity() {
-        return Ok(SplitResult {
-            predicates: vec![pred],
-            chain_info: None,
-        });
+    if !needs_split(&pred) {
+        return Ok(SplitResult::whole(pred));
     }
 
-    // Need to split - execute the splitting algorithm
     let (predicates, chain_info) = split_into_chain(&pred, params, search_cache)?;
 
     Ok(SplitResult {
         predicates,
         chain_info: Some(chain_info),
     })
+}
+
+/// True iff a predicate's statement count exceeds what one custom predicate
+/// can hold, so it must be split into a chain.
+fn needs_split(pred: &CustomPredicateDef) -> bool {
+    pred.statements.len() > Params::max_custom_predicate_arity()
+}
+
+/// Split a whole module's predicates. The link assignment is a pure function
+/// of a predicate's statement/wildcard shape, so each distinct shape is
+/// searched once and the searches run in parallel across shapes.
+pub fn split_predicates_if_needed(
+    predicates: Vec<CustomPredicateDef>,
+    params: &Params,
+) -> Result<Vec<SplitResult>, SplittingError> {
+    use rayon::prelude::*;
+
+    for pred in &predicates {
+        validate_predicate_is_splittable(pred)?;
+    }
+
+    // Typical modules have no predicate over the statement cap; skip the
+    // rayon dispatch entirely for them.
+    if !predicates.iter().any(needs_split) {
+        return Ok(predicates.into_iter().map(SplitResult::whole).collect());
+    }
+
+    // Predicates over the statement cap get a prepared split input; the rest
+    // pass through whole.
+    let inputs: Vec<Option<SplitInput>> = predicates
+        .par_iter()
+        .map(|pred| needs_split(pred).then(|| prepare_split_input(pred)))
+        .collect();
+
+    // One representative per distinct shape, in first-encounter order so a
+    // search failure surfaces the same predicate the sequential loop would
+    // have blamed. `rep_of_pred` points each splitting predicate at its
+    // shape's slot in `representatives`.
+    let mut rep_of_shape: HashMap<&SplitShape, usize> = HashMap::new();
+    let mut representatives: Vec<(&str, &SplitInput)> = Vec::new();
+    let mut rep_of_pred: Vec<Option<usize>> = Vec::with_capacity(predicates.len());
+    for (pred, input) in predicates.iter().zip(&inputs) {
+        rep_of_pred.push(input.as_ref().map(|input| {
+            *rep_of_shape.entry(&input.shape).or_insert_with(|| {
+                representatives.push((pred.name.name.as_str(), input));
+                representatives.len() - 1
+            })
+        }));
+    }
+
+    let searched: Vec<Result<LinkAssignment, SplittingError>> = representatives
+        .par_iter()
+        .map(|(name, input)| search_link_assignment(name, input, params))
+        .collect();
+    let assignments: Vec<LinkAssignment> = searched.into_iter().collect::<Result<_, _>>()?;
+
+    let results: Vec<Result<SplitResult, SplittingError>> = predicates
+        .into_par_iter()
+        .zip(&inputs)
+        .zip(&rep_of_pred)
+        .map(|((pred, input), rep)| match rep {
+            None => Ok(SplitResult::whole(pred)),
+            Some(rep) => {
+                let input = input
+                    .as_ref()
+                    .expect("rep_of_pred is set only for predicates with a prepared input");
+                let (chain_predicates, chain_info) =
+                    build_chain_from_assignment(&pred, input, assignments[*rep].clone(), params)?;
+                Ok(SplitResult {
+                    predicates: chain_predicates,
+                    chain_info: Some(chain_info),
+                })
+            }
+        })
+        .collect();
+    results.into_iter().collect()
 }
 
 fn collect_wildcards_from_statement(stmt: &StatementTmpl) -> HashSet<String> {
@@ -277,6 +359,27 @@ fn wildcard_lifetimes(ordering: &[usize], statements_using: &[Vec<usize>]) -> Wi
     }
 }
 
+/// Reusable buffers for `ordering_excess_cost`. The local-search loop in
+/// `refine_ordering` evaluates thousands of orderings of the same shape, so
+/// the buffers are allocated once per search and refilled per evaluation.
+struct CostScratch {
+    position_of_statement: Vec<usize>,
+    first_position: Vec<usize>,
+    last_position: Vec<usize>,
+    crossing_delta: Vec<isize>,
+}
+
+impl CostScratch {
+    fn new(num_statements: usize, num_wildcards: usize) -> Self {
+        Self {
+            position_of_statement: vec![usize::MAX; num_statements],
+            first_position: vec![usize::MAX; num_wildcards],
+            last_position: vec![0usize; num_wildcards],
+            crossing_delta: vec![0isize; num_statements + 1],
+        }
+    }
+}
+
 /// Sum of "bandwidth excess" over an ordering: for each potential boundary
 /// position, how many wildcards beyond `max_args` would cross it. Lower is
 /// better for the DP partitioner: when this drops to 0, every position
@@ -287,20 +390,31 @@ fn ordering_excess_cost(
     statements_using: &[Vec<usize>],
     is_original_public: &[bool],
     max_args: usize,
+    scratch: &mut CostScratch,
 ) -> usize {
     let num_statements = ordering.len();
     let num_wildcards = is_original_public.len();
     debug_assert_eq!(statements_using.len(), num_wildcards);
 
-    let mut position_of_statement = vec![usize::MAX; num_statements];
+    let CostScratch {
+        position_of_statement,
+        first_position,
+        last_position,
+        crossing_delta,
+    } = scratch;
+    assert_eq!(position_of_statement.len(), num_statements);
+    assert_eq!(first_position.len(), num_wildcards);
+
+    // `ordering` is a permutation, so every entry is overwritten; no reset
+    // needed for this buffer.
     for (position, &statement) in ordering.iter().enumerate() {
         position_of_statement[statement] = position;
     }
 
     // Represent each wildcard by just the first and last position at which it
     // appears in the ordering.
-    let mut first_position = vec![usize::MAX; num_wildcards];
-    let mut last_position = vec![0usize; num_wildcards];
+    first_position.fill(usize::MAX);
+    last_position.fill(0);
     for (wildcard, statements) in statements_using.iter().enumerate() {
         for &statement in statements {
             let position = position_of_statement[statement];
@@ -319,7 +433,7 @@ fn ordering_excess_cost(
     // (declared on the predicate signature regardless of where they're first
     // referenced), so they cross every boundary up to their last use. Private
     // wildcards only count once they've actually appeared.
-    let mut crossing_delta = vec![0isize; num_statements + 1];
+    crossing_delta.fill(0);
     for wildcard in 0..num_wildcards {
         if first_position[wildcard] == usize::MAX {
             continue;
@@ -388,9 +502,15 @@ fn refine_ordering(
     if n < 2 {
         return initial;
     }
+    let mut scratch = CostScratch::new(n, is_original_public.len());
     let mut current = initial.clone();
-    let mut current_cost =
-        ordering_excess_cost(&current, statements_using, is_original_public, max_args);
+    let mut current_cost = ordering_excess_cost(
+        &current,
+        statements_using,
+        is_original_public,
+        max_args,
+        &mut scratch,
+    );
     if current_cost == 0 {
         return current;
     }
@@ -404,7 +524,13 @@ fn refine_ordering(
             continue;
         }
         current.swap(i, j);
-        let cand = ordering_excess_cost(&current, statements_using, is_original_public, max_args);
+        let cand = ordering_excess_cost(
+            &current,
+            statements_using,
+            is_original_public,
+            max_args,
+            &mut scratch,
+        );
         // Accept equal-cost swaps too: sideways moves let us escape plateaus
         // toward a swap that finally reduces cost.
         if cand <= current_cost {
@@ -737,11 +863,16 @@ pub(super) struct SplitInput {
 
 impl SplitInput {
     fn excess_cost(&self, ordering: &[usize]) -> usize {
+        let mut scratch = CostScratch::new(
+            self.shape.num_statements,
+            self.shape.is_original_public.len(),
+        );
         ordering_excess_cost(
             ordering,
             &self.shape.statements_using,
             &self.shape.is_original_public,
             Params::max_statement_args(),
+            &mut scratch,
         )
     }
 
@@ -852,6 +983,7 @@ enum CandidateSearch {
 fn candidate_orderings(input: &SplitInput, params: &Params) -> CandidateSearch {
     use rand::{seq::SliceRandom, SeedableRng};
     use rand_chacha::ChaCha20Rng;
+    use rayon::prelude::*;
 
     let num_statements = input.shape.num_statements;
     let max_args = Params::max_statement_args();
@@ -882,9 +1014,7 @@ fn candidate_orderings(input: &SplitInput, params: &Params) -> CandidateSearch {
         refinement_seeds.push(shuffled);
     }
 
-    let mut refined: Vec<(Vec<usize>, usize)> = Vec::new();
-    let mut shortcut_attempted = false;
-    for seed in refinement_seeds {
+    let refine_and_cost = |seed: Vec<usize>| {
         let result = refine_ordering(
             seed,
             &input.shape.statements_using,
@@ -893,15 +1023,41 @@ fn candidate_orderings(input: &SplitInput, params: &Params) -> CandidateSearch {
             REFINE_ITERATIONS,
         );
         let result_cost = input.excess_cost(&result);
-        if result_cost == 0 && !shortcut_attempted {
-            shortcut_attempted = true;
-            if let Some(assignment) = input.partition_at_lower_bound(&result, params) {
+        (result, result_cost)
+    };
+
+    // The first cost-0 refinement in seed order gets one shortcut attempt: the
+    // stable sort below keeps seed order among ties, so it is the ordering the
+    // partition loop would try first anyway. A cost-0 ordering that still
+    // needs extra links falls through to the full partition loop.
+    //
+    // The first seed (the lowest-cost RCM ordering) usually takes that
+    // shortcut, so it refines alone first; the remaining seeds fan out in
+    // parallel only if it doesn't return.
+    let mut seeds = refinement_seeds.into_iter();
+    let first = refine_and_cost(seeds.next().expect("baseline is never empty"));
+    let first_took_shortcut = first.1 == 0;
+    if first_took_shortcut {
+        if let Some(assignment) = input.partition_at_lower_bound(&first.0, params) {
+            return CandidateSearch::Found(assignment);
+        }
+    }
+
+    // Each refinement depends only on its seed, so the seeds run in parallel.
+    let rest: Vec<(Vec<usize>, usize)> = seeds
+        .collect::<Vec<_>>()
+        .into_par_iter()
+        .map(refine_and_cost)
+        .collect();
+    let mut refined = vec![first];
+    refined.extend(rest);
+
+    if !first_took_shortcut {
+        if let Some((zero_cost_ordering, _)) = refined.iter().find(|(_, cost)| *cost == 0) {
+            if let Some(assignment) = input.partition_at_lower_bound(zero_cost_ordering, params) {
                 return CandidateSearch::Found(assignment);
             }
-            // A cost-0 ordering that still needs extra links: refine the
-            // remaining seeds and let the full partition loop decide.
         }
-        refined.push((result, result_cost));
     }
     refined.sort_by_key(|(_, refined_cost)| *refined_cost);
 
@@ -931,12 +1087,7 @@ fn split_into_chain(
     params: &Params,
     search_cache: &mut SplitSearchCache,
 ) -> Result<(Vec<CustomPredicateDef>, SplitChainInfo), SplittingError> {
-    let original_name = pred.name.name.clone();
-    let conjunction = pred.conjunction_type;
-    let real_statement_count = pred.statements.len();
-
     let input = prepare_split_input(pred);
-    let num_statements = input.shape.num_statements;
 
     // The link assignment depends only on the statement/wildcard usage shape
     // (plus `params`, fixed for the cache's lifetime), and modules routinely
@@ -945,12 +1096,29 @@ fn split_into_chain(
     let assignment = if let Some(assignment) = search_cache.assignments.get(&input.shape) {
         assignment.clone()
     } else {
-        let assignment = search_link_assignment(&original_name, &input, params)?;
+        let assignment = search_link_assignment(&pred.name.name, &input, params)?;
         search_cache
             .assignments
             .insert(input.shape.clone(), assignment.clone());
         assignment
     };
+
+    build_chain_from_assignment(pred, &input, assignment, params)
+}
+
+/// Everything downstream of the ordering search: reorder the statements per
+/// the assignment, derive each link's argument lists, and emit the chain's
+/// predicate definitions plus [`SplitChainInfo`].
+fn build_chain_from_assignment(
+    pred: &CustomPredicateDef,
+    input: &SplitInput,
+    assignment: LinkAssignment,
+    params: &Params,
+) -> Result<(Vec<CustomPredicateDef>, SplitChainInfo), SplittingError> {
+    let original_name = pred.name.name.clone();
+    let conjunction = pred.conjunction_type;
+    let real_statement_count = pred.statements.len();
+    let num_statements = input.shape.num_statements;
 
     // Reorder map: original index -> position in flattened chain.
     let mut reorder_map = vec![0usize; num_statements];

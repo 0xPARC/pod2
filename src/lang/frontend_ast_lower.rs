@@ -539,7 +539,7 @@ impl<'a> Lowerer<'a> {
         &self,
     ) -> Result<Vec<frontend_ast_split::SplitResult>, LoweringError> {
         let doc = self.validated.document();
-        let predicates: Vec<CustomPredicateDef> = doc
+        let mut predicates: Vec<CustomPredicateDef> = doc
             .items
             .iter()
             .filter_map(|item| match item {
@@ -548,23 +548,15 @@ impl<'a> Lowerer<'a> {
             })
             .collect();
 
-        // Apply splitting to each predicate as needed. The typed-key rewrite
-        // happens before splitting so split chain pieces inherit `Index` keys
-        // unchanged. The search cache is shared across the module: modules
-        // routinely contain families of same-shape predicates, which then
-        // pay for the ordering search once.
-        let split_started = std::time::Instant::now();
-        let mut search_cache = frontend_ast_split::SplitSearchCache::default();
-        let mut split_results = Vec::new();
-        for mut pred in predicates {
-            self.rewrite_typed_dot_access(&mut pred);
-            let result = frontend_ast_split::split_predicate_if_needed(
-                pred,
-                self.params,
-                &mut search_cache,
-            )?;
-            split_results.push(result);
+        // The typed-key rewrite happens before splitting so split chain
+        // pieces inherit `Index` keys unchanged.
+        for pred in &mut predicates {
+            self.rewrite_typed_dot_access(pred);
         }
+
+        let split_started = std::time::Instant::now();
+        let split_results =
+            frontend_ast_split::split_predicates_if_needed(predicates, self.params)?;
         log::debug!(
             "predicate splitting: {:?} ({} predicates)",
             split_started.elapsed(),

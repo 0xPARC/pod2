@@ -1574,7 +1574,7 @@ fn test_normalize_st_tmpl_self_predicate_hash() -> Result<()> {
         vec!["x".to_string()],
     )
     .unwrap();
-    cpb.predicates.push(pred_b);
+    cpb.push_predicate(pred_b);
     let batch = cpb.finish().unwrap();
 
     // Compute the expected resolved hash of pred_A
