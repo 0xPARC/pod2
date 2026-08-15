@@ -14,7 +14,7 @@ use crate::{
         frontend_ast_lower::{
             lower_statement_arg_with_context, resolve_predicate_ref, ResolutionContext,
         },
-        frontend_ast_split::{SplitChainInfo, SplitResult},
+        frontend_ast_split::{SplitInfo, SplitResult, SplitTreeInfo},
         frontend_ast_validate::SymbolTable,
     },
     middleware::{CustomPredicateBatch, CustomPredicateRef, Hash, Params, Statement},
@@ -26,8 +26,13 @@ pub enum MultiOperationError {
     #[error("Predicate not found: {0}")]
     PredicateNotFound(String),
 
-    #[error("Chain piece not found: {0}")]
+    #[error("Split predicate piece not found: {0}")]
     ChainPieceNotFound(String),
+
+    #[error(
+        "Split disjunction '{predicate}' takes exactly one non-None statement, got {provided}"
+    )]
+    DisjunctionBranchCount { predicate: String, provided: usize },
 
     #[error(
         "Wrong statement count for predicate '{predicate}': expected {expected}, got {actual}"
@@ -51,8 +56,8 @@ pub struct Module {
     /// Map from predicate name to index in batch
     pub predicate_index: HashMap<String, usize>,
 
-    /// Split chain info for predicates that were split
-    pub split_chains: HashMap<String, SplitChainInfo>,
+    /// Split metadata (chain or tree) for predicates that were split
+    pub splits: HashMap<String, SplitInfo>,
 
     /// Records declared locally in this module's source: name → ordered entry
     /// list. Frontend metadata only — the middleware batch knows nothing
@@ -63,17 +68,14 @@ pub struct Module {
 
 impl Module {
     /// Create a new Module from a batch, building the predicate_index automatically
-    pub fn new(
-        batch: Arc<CustomPredicateBatch>,
-        split_chains: HashMap<String, SplitChainInfo>,
-    ) -> Self {
-        Self::with_records(batch, split_chains, HashMap::new())
+    pub fn new(batch: Arc<CustomPredicateBatch>, splits: HashMap<String, SplitInfo>) -> Self {
+        Self::with_records(batch, splits, HashMap::new())
     }
 
     /// Like `new`, but seeds the module's locally-declared records.
     pub fn with_records(
         batch: Arc<CustomPredicateBatch>,
-        split_chains: HashMap<String, SplitChainInfo>,
+        splits: HashMap<String, SplitInfo>,
         records: HashMap<String, Vec<String>>,
     ) -> Self {
         let predicate_index = batch
@@ -85,7 +87,7 @@ impl Module {
         Self {
             batch,
             predicate_index,
-            split_chains,
+            splits,
             records,
         }
     }
@@ -164,16 +166,16 @@ impl Module {
 
         for step in steps {
             let op = if let Some(prev) = prev_result {
-                // Replace the last Statement::None arg with the previous result.
+                // Replace the placeholder arg with the previous result.
+                let slot = step
+                    .prev_result_slot
+                    .expect("non-first step should have a placeholder slot");
                 let mut args = step.operation.1;
-                let last = args
-                    .last_mut()
-                    .expect("chain statement should include placeholder arg");
                 assert!(
-                    matches!(last, OperationArg::Statement(Statement::None)),
-                    "expected last arg to be a Statement::None placeholder"
+                    matches!(args[slot], OperationArg::Statement(Statement::None)),
+                    "expected a Statement::None placeholder at the linked slot"
                 );
-                *last = OperationArg::Statement(prev);
+                args[slot] = OperationArg::Statement(prev);
                 Operation(step.operation.0, args, step.operation.2)
             } else {
                 step.operation
@@ -192,9 +194,11 @@ impl Module {
         statements: Vec<Statement>,
         public: bool,
     ) -> Result<Vec<OperationStep>, MultiOperationError> {
-        // Check if this predicate was split
-        let chain_info = match self.split_chains.get(predicate_name) {
-            Some(info) => info,
+        let chain_info = match self.splits.get(predicate_name) {
+            Some(SplitInfo::Tree(tree_info)) => {
+                return self.build_tree_steps(tree_info, statements, public);
+            }
+            Some(SplitInfo::Chain(chain_info)) => chain_info,
             None => {
                 // Not split - single operation with all statements
                 let pred_ref = self.predicate_ref_by_name(predicate_name).ok_or_else(|| {
@@ -204,6 +208,7 @@ impl Module {
                 return Ok(vec![OperationStep {
                     operation: Operation::custom(pred_ref, statements),
                     public,
+                    prev_result_slot: None,
                 }]);
             }
         };
@@ -215,6 +220,22 @@ impl Module {
                 expected: chain_info.real_statement_count,
                 actual: statements.len(),
             });
+        }
+
+        // A split disjunction discharges through exactly one branch,
+        // whichever topology it lowered to.
+        if self
+            .split_piece_ref(&chain_info.chain_pieces[0].name)?
+            .predicate()
+            .is_disjunction()
+        {
+            let provided = statements.iter().filter(|s| !s.is_none()).count();
+            if provided != 1 {
+                return Err(MultiOperationError::DisjunctionBranchCount {
+                    predicate: predicate_name.to_string(),
+                    provided,
+                });
+            }
         }
 
         // Reorder statements from original order to split order
@@ -239,9 +260,7 @@ impl Module {
         for (piece_idx, piece) in chain_info.chain_pieces.iter().enumerate() {
             let is_final = piece_idx == num_pieces - 1;
 
-            let piece_ref = self
-                .predicate_ref_by_name(&piece.name)
-                .ok_or_else(|| MultiOperationError::ChainPieceNotFound(piece.name.clone()))?;
+            let piece_ref = self.split_piece_ref(&piece.name)?;
 
             let start = piece_offsets[piece_idx];
             let end = start + piece.real_statement_count;
@@ -258,17 +277,87 @@ impl Module {
             }
 
             let mut args: Vec<Statement> = real_args.to_vec();
+            let mut prev_result_slot = None;
             if piece.has_chain_call {
+                prev_result_slot = Some(args.len());
                 args.push(Statement::None);
             }
 
             steps.push(OperationStep {
                 operation: Operation::custom(piece_ref, args),
                 public: public && is_final,
+                prev_result_slot,
             });
         }
 
         Ok(steps)
+    }
+
+    /// Build operation steps for a split disjunction tree: the leaf holding
+    /// the provided branch, then each ancestor up to the root, each step
+    /// linking the previous statement into the matching disjunct slot.
+    fn build_tree_steps(
+        &self,
+        tree_info: &SplitTreeInfo,
+        statements: Vec<Statement>,
+        public: bool,
+    ) -> Result<Vec<OperationStep>, MultiOperationError> {
+        if statements.len() != tree_info.real_statement_count() {
+            return Err(MultiOperationError::WrongStatementCount {
+                predicate: tree_info.original_name.clone(),
+                expected: tree_info.real_statement_count(),
+                actual: statements.len(),
+            });
+        }
+
+        let mut provided = statements
+            .into_iter()
+            .enumerate()
+            .filter(|(_, statement)| !statement.is_none());
+        let branch = provided.next();
+        let extra_branches = provided.count();
+        let Some((statement_index, branch_statement)) = branch else {
+            return Err(MultiOperationError::DisjunctionBranchCount {
+                predicate: tree_info.original_name.clone(),
+                provided: 0,
+            });
+        };
+        if extra_branches > 0 {
+            return Err(MultiOperationError::DisjunctionBranchCount {
+                predicate: tree_info.original_name.clone(),
+                provided: 1 + extra_branches,
+            });
+        }
+
+        let leaf_slot = tree_info.statement_slot[statement_index];
+        let leaf = &tree_info.nodes[leaf_slot.node_index];
+        let mut args = vec![Statement::None; leaf.statement_count];
+        args[leaf_slot.slot] = branch_statement;
+        let mut steps = vec![OperationStep {
+            operation: Operation::custom(self.split_piece_ref(&leaf.name)?, args),
+            public: public && leaf.parent.is_none(),
+            prev_result_slot: None,
+        }];
+
+        let mut node = leaf;
+        while let Some(parent_slot) = node.parent {
+            let parent = &tree_info.nodes[parent_slot.parent_index];
+            let args = vec![Statement::None; parent.statement_count];
+            steps.push(OperationStep {
+                operation: Operation::custom(self.split_piece_ref(&parent.name)?, args),
+                public: public && parent.parent.is_none(),
+                prev_result_slot: Some(parent_slot.slot),
+            });
+            node = parent;
+        }
+
+        Ok(steps)
+    }
+
+    /// Look up a generated split piece (chain link or tree node) by name.
+    fn split_piece_ref(&self, name: &str) -> Result<CustomPredicateRef, MultiOperationError> {
+        self.predicate_ref_by_name(name)
+            .ok_or_else(|| MultiOperationError::ChainPieceNotFound(name.to_string()))
     }
 }
 
@@ -276,13 +365,17 @@ impl Module {
 struct OperationStep {
     operation: Operation,
     public: bool,
+    /// Arg slot where the previous step's statement gets linked in: the
+    /// tail chain call for chain pieces, the matching disjunct slot for
+    /// tree nodes. None on steps that stand alone.
+    prev_result_slot: Option<usize>,
 }
 
 /// Build a single Module from split predicate results.
 ///
-/// Takes a list of split results (containing predicates and optional chain info)
-/// and builds a single Module. With Merkle tree backing supporting up to 65536
-/// predicates, all predicates from a document fit in one module.
+/// Takes a list of split results (containing predicates and optional split
+/// metadata) and builds a single Module. With Merkle tree backing supporting
+/// up to 65536 predicates, all predicates from a document fit in one module.
 ///
 /// `symbols` provides the symbol table for resolving predicate references,
 /// including imported predicates from other modules and intro predicates.
@@ -293,14 +386,13 @@ pub fn build_module(
     symbols: &SymbolTable,
     records: HashMap<String, Vec<String>>,
 ) -> Result<Module, BatchingError> {
-    // Extract predicates and collect split chains
+    // Extract predicates and collect split metadata
     let mut predicates = Vec::new();
-    let mut split_chains = HashMap::new();
+    let mut splits = HashMap::new();
 
     for result in split_results {
-        // Collect chain info if present
-        if let Some(chain_info) = result.chain_info {
-            split_chains.insert(chain_info.original_name.clone(), chain_info);
+        if let Some(split) = result.split {
+            splits.insert(split.original_name().to_string(), split);
         }
         // Flatten predicates
         predicates.extend(result.predicates);
@@ -309,7 +401,7 @@ pub fn build_module(
     if predicates.is_empty() {
         // Return an empty module
         let empty_batch = CustomPredicateBatch::new(module_name.to_string(), vec![]);
-        return Ok(Module::with_records(empty_batch, split_chains, records));
+        return Ok(Module::with_records(empty_batch, splits, records));
     }
 
     // Build reference map: name -> index
@@ -322,7 +414,7 @@ pub fn build_module(
     // Build the batch
     let batch = build_single_batch(&predicates, &reference_map, symbols, params, module_name)?;
 
-    Ok(Module::with_records(batch, split_chains, records))
+    Ok(Module::with_records(batch, splits, records))
 }
 
 /// Build a batch with properly resolved references
@@ -440,12 +532,13 @@ mod tests {
     use crate::{
         lang::{
             frontend_ast::parse::parse_document,
+            frontend_ast_split,
             frontend_ast_split::{split_predicate_if_needed, SplitSearchCache},
             frontend_ast_validate::{validate, ParseMode, ValidatedAST},
             load_module,
             parser::parse_podlang,
         },
-        middleware::{CustomPredicateRef, Predicate, PredicateOrWildcard},
+        middleware::{CustomPredicateRef, Predicate, PredicateOrWildcard, Value},
     };
 
     /// Helper: parse and validate input, returning predicates and symbol table
@@ -479,7 +572,7 @@ mod tests {
             .into_iter()
             .map(|pred| SplitResult {
                 predicates: vec![pred],
-                chain_info: None,
+                split: None,
             })
             .collect()
     }
@@ -655,7 +748,7 @@ mod tests {
         // Should split into 2 pieces
         assert_eq!(split_results.len(), 1);
         assert_eq!(split_results[0].predicates.len(), 2);
-        assert!(split_results[0].chain_info.is_some());
+        assert!(split_results[0].chain_info().is_some());
 
         let module = build_module(
             split_results,
@@ -667,9 +760,90 @@ mod tests {
         .unwrap();
 
         // Verify chain info is preserved
-        let chain_info = module.split_chains.get("large_pred").unwrap();
+        let Some(SplitInfo::Chain(chain_info)) = module.splits.get("large_pred") else {
+            panic!("expected a chain split for large_pred");
+        };
         assert_eq!(chain_info.chain_pieces.len(), 2);
         assert_eq!(chain_info.real_statement_count, 6);
+    }
+
+    #[test]
+    fn test_tree_split_predicate_steps() {
+        // 30 disjuncts split into a tree: 6 leaves, 2 internal nodes, root.
+        let branches: String = (0..30)
+            .map(|i| format!("Equal(A[\"k{}\"], {})\n", i, i))
+            .collect();
+        let input = format!("big_or(A) = OR(\n{})", branches);
+
+        let (predicates, validated) = parse_and_validate(&input);
+        let params = Params::default();
+
+        let split_results =
+            frontend_ast_split::split_predicates_if_needed(predicates, &params).unwrap();
+        let module = build_module(
+            split_results,
+            &params,
+            "TestModule",
+            validated.symbols(),
+            HashMap::new(),
+        )
+        .unwrap();
+
+        let Some(SplitInfo::Tree(tree_info)) = module.splits.get("big_or") else {
+            panic!("expected a tree split for big_or");
+        };
+        assert_eq!(tree_info.nodes.len(), 9);
+        assert_eq!(tree_info.real_statement_count(), 30);
+        assert_eq!(module.batch.predicates().len(), 9);
+
+        // Discharging one branch walks leaf -> internal -> root, with only
+        // the root public.
+        let branch = Statement::equal(Value::from(17), Value::from(17));
+        let mut statements = vec![Statement::None; 30];
+        statements[17] = branch;
+        let mut public_flags = Vec::new();
+        module
+            .apply_predicate_with(
+                "big_or",
+                statements,
+                true,
+                |is_public, _op| -> Result<Statement, MultiOperationError> {
+                    public_flags.push(is_public);
+                    Ok(Statement::None)
+                },
+            )
+            .unwrap();
+        assert_eq!(public_flags, [false, false, true]);
+
+        // A split disjunction takes exactly one branch statement.
+        let err = module
+            .apply_predicate_with(
+                "big_or",
+                vec![Statement::None; 30],
+                true,
+                |_, _| -> Result<Statement, MultiOperationError> { Ok(Statement::None) },
+            )
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            MultiOperationError::DisjunctionBranchCount { provided: 0, .. }
+        ));
+
+        let mut two_branches = vec![Statement::None; 30];
+        two_branches[3] = Statement::equal(Value::from(3), Value::from(3));
+        two_branches[21] = Statement::equal(Value::from(21), Value::from(21));
+        let err = module
+            .apply_predicate_with(
+                "big_or",
+                two_branches,
+                true,
+                |_, _| -> Result<Statement, MultiOperationError> { Ok(Statement::None) },
+            )
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            MultiOperationError::DisjunctionBranchCount { provided: 2, .. }
+        ));
     }
 
     #[test]

@@ -391,6 +391,14 @@ pub enum SplittingError {
         max_allowed: usize,
         suggestion: Option<Box<RefactorSuggestion>>,
     },
+
+    #[error("Disjunct {statement_index} of predicate '{predicate}' references {total_count} wildcards on its own (exceeds max of {max_allowed})")]
+    TooManyWildcardsInDisjunct {
+        predicate: String,
+        statement_index: usize,
+        total_count: usize,
+        max_allowed: usize,
+    },
 }
 
 impl From<ParseError> for LangError {

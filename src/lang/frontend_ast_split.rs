@@ -1,20 +1,36 @@
 //! Predicate splitting for frontend AST
 //!
 //! Predicates whose statement count exceeds the middleware's
-//! `max_custom_predicate_arity` are split into a chain of smaller predicates,
-//! each calling the next via a tail-position chain call. Private wildcards
-//! that span a split boundary are promoted to public arguments on the
-//! continuation, since they need the same binding on both sides.
+//! `max_custom_predicate_arity` are split by conjunction type.
 //!
-//! Each link in the resulting chain satisfies three caps: statement count
+//! Conjunctions become a chain of smaller predicates, each calling the next
+//! via a tail-position chain call. Every statement must be discharged anyway,
+//! so a chain is as good as any topology; the work is in choosing a statement
+//! order that keeps boundary-crossing wildcards under the caps. Private
+//! wildcards that span a split boundary are promoted to public arguments on
+//! the continuation, since they need the same binding on both sides.
+//!
+//! Disjunctions with at least `2 * max_custom_predicate_arity` disjuncts
+//! become a balanced tree instead: statements pack into leaf predicates, and
+//! internal nodes disjoin calls to their children. Proving a disjunction
+//! discharges only the path from one leaf to the root, so tree depth
+//! (logarithmic in the disjunct count) bounds the operation count where a
+//! chain would cost the disjunct's position in the chain. Disjuncts never
+//! share bindings, so no wildcard crosses a boundary and no ordering search
+//! is needed; statements keep their source order. Smaller disjunctions keep
+//! the chain split: a 2-link chain already matches the tree's depth while
+//! discharging head-link disjuncts in one operation.
+//!
+//! Each generated predicate satisfies three caps: statement count
 //! (`max_custom_predicate_arity`, minus a slot for the chain call on non-last
-//! links), public-args-in (`max_statement_args`), and total declared wildcards
-//! (`max_custom_predicate_wildcards`). When no partition fits, the splitter
-//! returns a [`SplittingError`] pointing at the first cap that overflows, with
-//! an actionable [`RefactorSuggestion`] when one applies.
+//! chain links), public-args-in (`max_statement_args`), and total declared
+//! wildcards (`max_custom_predicate_wildcards`). When no chain partition
+//! fits, the splitter returns a [`SplittingError`] pointing at the first cap
+//! that overflows, with an actionable [`RefactorSuggestion`] when one
+//! applies.
 //!
-//! Splits are deterministic: the same predicate always produces the same chain
-//! across clients and platforms.
+//! Splits are deterministic: the same predicate always produces the same
+//! chain or tree across clients and platforms.
 
 #![allow(clippy::needless_range_loop)]
 
@@ -67,13 +83,30 @@ pub struct SplitChainInfo {
     pub reorder_map: Vec<usize>,
 }
 
+/// Topology-tagged metadata about how a predicate was split.
+#[derive(Debug, Clone)]
+pub enum SplitInfo {
+    Chain(SplitChainInfo),
+    Tree(SplitTreeInfo),
+}
+
+impl SplitInfo {
+    /// Original predicate name, whatever the topology.
+    pub fn original_name(&self) -> &str {
+        match self {
+            SplitInfo::Chain(info) => &info.original_name,
+            SplitInfo::Tree(info) => &info.original_name,
+        }
+    }
+}
+
 /// Result of splitting a predicate
 #[derive(Debug, Clone)]
 pub struct SplitResult {
-    /// The predicates (continuations first, original last if split)
+    /// The predicates (continuations/children first, original last if split)
     pub predicates: Vec<CustomPredicateDef>,
-    /// Split chain info, if splitting occurred (None for non-split)
-    pub chain_info: Option<SplitChainInfo>,
+    /// How the predicate was split, if it was
+    pub split: Option<SplitInfo>,
 }
 
 impl SplitResult {
@@ -81,8 +114,89 @@ impl SplitResult {
     fn whole(pred: CustomPredicateDef) -> Self {
         Self {
             predicates: vec![pred],
-            chain_info: None,
+            split: None,
         }
+    }
+
+    fn chain((predicates, chain_info): (Vec<CustomPredicateDef>, SplitChainInfo)) -> Self {
+        Self {
+            predicates,
+            split: Some(SplitInfo::Chain(chain_info)),
+        }
+    }
+
+    fn tree((predicates, tree_info): (Vec<CustomPredicateDef>, SplitTreeInfo)) -> Self {
+        Self {
+            predicates,
+            split: Some(SplitInfo::Tree(tree_info)),
+        }
+    }
+
+    /// Chain metadata, if this predicate split into a chain.
+    pub fn chain_info(&self) -> Option<&SplitChainInfo> {
+        match &self.split {
+            Some(SplitInfo::Chain(info)) => Some(info),
+            _ => None,
+        }
+    }
+
+    /// Tree metadata, if this predicate split into a disjunction tree.
+    pub fn tree_info(&self) -> Option<&SplitTreeInfo> {
+        match &self.split {
+            Some(SplitInfo::Tree(info)) => Some(info),
+            _ => None,
+        }
+    }
+}
+
+/// The parent hookup of a non-root tree node: which node calls it, and at
+/// which of that node's statement slots the call sits.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct TreeParentSlot {
+    /// Index of the parent node in [`SplitTreeInfo::nodes`].
+    pub(crate) parent_index: usize,
+    /// Position of this node's call among the parent's statements.
+    pub(crate) slot: usize,
+}
+
+/// One node of a split disjunction tree.
+#[derive(Debug, Clone)]
+pub(crate) struct TreeNode {
+    /// Predicate name of this node (the original name at the root).
+    pub(crate) name: String,
+    /// Number of statement slots: real disjuncts for a leaf, child calls for
+    /// an internal node.
+    pub(crate) statement_count: usize,
+    /// Where this node hangs off its parent; `None` at the root.
+    pub(crate) parent: Option<TreeParentSlot>,
+}
+
+/// Which leaf holds an original disjunct, and at which slot.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct StatementSlot {
+    /// Index of the leaf node in [`SplitTreeInfo::nodes`].
+    pub(crate) node_index: usize,
+    /// Position among that leaf's statements.
+    pub(crate) slot: usize,
+}
+
+/// Metadata about a split disjunction tree. The node layout is an internal
+/// lowering detail; discharge goes through `Module::apply_predicate`.
+#[derive(Debug, Clone)]
+pub struct SplitTreeInfo {
+    /// Original predicate name (also the root node's name)
+    pub(crate) original_name: String,
+    /// All nodes, leaves first and the root last
+    pub(crate) nodes: Vec<TreeNode>,
+    /// For each original statement index, the leaf slot holding it.
+    /// Disjuncts keep their source order, so this is monotone.
+    pub(crate) statement_slot: Vec<StatementSlot>,
+}
+
+impl SplitTreeInfo {
+    /// Total number of original disjuncts.
+    pub fn real_statement_count(&self) -> usize {
+        self.statement_slot.len()
     }
 }
 
@@ -122,18 +236,31 @@ pub fn split_predicate_if_needed(
         return Ok(SplitResult::whole(pred));
     }
 
-    let (predicates, chain_info) = split_into_chain(&pred, params, search_cache)?;
+    if needs_tree_split(&pred) {
+        return Ok(SplitResult::tree(split_into_tree(pred, params)?));
+    }
 
-    Ok(SplitResult {
-        predicates,
-        chain_info: Some(chain_info),
-    })
+    Ok(SplitResult::chain(split_into_chain(
+        &pred,
+        params,
+        search_cache,
+    )?))
 }
 
 /// True iff a predicate's statement count exceeds what one custom predicate
 /// can hold, so it must be split into a chain.
 fn needs_split(pred: &CustomPredicateDef) -> bool {
     pred.statements.len() > Params::max_custom_predicate_arity()
+}
+
+/// True iff a splitting disjunction should become a tree rather than a chain.
+/// Below `2 * max_arity` disjuncts, a 2-link chain matches the tree's
+/// worst-case depth of 2 while discharging the head link's disjuncts in a
+/// single operation, so small disjunctions keep the chain split.
+fn needs_tree_split(pred: &CustomPredicateDef) -> bool {
+    needs_split(pred)
+        && pred.conjunction_type == ConjunctionType::Or
+        && pred.statements.len() >= 2 * Params::max_custom_predicate_arity()
 }
 
 /// Split a whole module's predicates. The link assignment is a pure function
@@ -151,13 +278,16 @@ pub fn split_predicates_if_needed(
         .iter()
         .try_for_each(validate_predicate_is_splittable)?;
 
-    // Predicates over the statement cap get a prepared split input; the rest
-    // pass through whole. Typical modules have none, so skip the rayon
-    // dispatch entirely for them.
-    let inputs: Vec<Option<SplitInput>> = if predicates.iter().any(needs_split) {
+    // Chain-splitting predicates get a prepared split input for the ordering
+    // search; tree-splitting disjunctions need no search, and the rest pass
+    // through whole. Typical modules have nothing to chain-split, so skip the
+    // rayon dispatch entirely for them.
+    let needs_chain_split =
+        |pred: &CustomPredicateDef| needs_split(pred) && !needs_tree_split(pred);
+    let inputs: Vec<Option<SplitInput>> = if predicates.iter().any(needs_chain_split) {
         predicates
             .par_iter()
-            .map(|pred| needs_split(pred).then(|| prepare_split_input(pred)))
+            .map(|pred| needs_chain_split(pred).then(|| prepare_split_input(pred)))
             .collect()
     } else {
         predicates.iter().map(|_| None).collect()
@@ -190,17 +320,20 @@ pub fn split_predicates_if_needed(
         .zip(&inputs)
         .zip(&rep_of_pred)
         .map(|((pred, input), rep)| match rep {
+            None if needs_tree_split(&pred) => {
+                Ok(SplitResult::tree(split_into_tree(pred, params)?))
+            }
             None => Ok(SplitResult::whole(pred)),
             Some(rep) => {
                 let input = input
                     .as_ref()
                     .expect("rep_of_pred is set only for predicates with a prepared input");
-                let (chain_predicates, chain_info) =
-                    build_chain_from_assignment(&pred, input, assignments[*rep].clone(), params)?;
-                Ok(SplitResult {
-                    predicates: chain_predicates,
-                    chain_info: Some(chain_info),
-                })
+                Ok(SplitResult::chain(build_chain_from_assignment(
+                    &pred,
+                    input,
+                    assignments[*rep].clone(),
+                    params,
+                )?))
             }
         })
         .collect();
@@ -1167,12 +1300,41 @@ fn build_chain_from_assignment(
     let mut chain_predicates =
         generate_chain_predicates(&original_name, chain_links, conjunction, params)?;
 
-    validate_chain(&chain_predicates, params);
+    validate_generated_predicates(&chain_predicates, params);
 
     // Reverse so continuations come before callers in declaration order.
     chain_predicates.reverse();
 
     Ok((chain_predicates, chain_info))
+}
+
+/// Identifier with no source span, for generated predicates.
+fn generated_identifier(name: String) -> Identifier {
+    Identifier { name, span: None }
+}
+
+/// Signature args (untyped, no span) for generated predicates.
+fn generated_typed_args(names: Vec<String>) -> Vec<TypedArg> {
+    names
+        .into_iter()
+        .map(|name| TypedArg {
+            name,
+            type_name: None,
+            span: None,
+        })
+        .collect()
+}
+
+/// Call template to a generated local predicate, passing wildcards by name.
+fn generated_call_template(callee: String, arg_names: &[String]) -> StatementTmpl {
+    StatementTmpl {
+        predicate: PredicateRef::Local(generated_identifier(callee)),
+        args: arg_names
+            .iter()
+            .map(|name| StatementTmplArg::Wildcard(generated_identifier(name.clone())))
+            .collect(),
+        span: None,
+    }
 }
 
 /// Build the chain's [`CustomPredicateDef`]s from the per-link metadata,
@@ -1187,59 +1349,23 @@ fn generate_chain_predicates(
 
     for (i, link) in chain_links.iter().enumerate() {
         let pred_name = if i == 0 {
-            Identifier {
-                name: original_name.to_string(),
-                span: None,
-            }
+            original_name.to_string()
         } else {
-            Identifier {
-                name: format!("{}_{}", original_name, i),
-                span: None,
-            }
+            format!("{}_{}", original_name, i)
         };
 
         let is_last = i == chain_links.len() - 1;
         let mut statements = link.statements.clone();
 
         if !is_last {
-            let next_pred_name = Identifier {
-                name: format!("{}_{}", original_name, i + 1),
-                span: None,
-            };
-
             let next_link = &chain_links[i + 1];
-            let chain_call_args: Vec<StatementTmplArg> = next_link
-                .public_args_in
-                .iter()
-                .map(|arg_name| {
-                    StatementTmplArg::Wildcard(Identifier {
-                        name: arg_name.clone(),
-                        span: None,
-                    })
-                })
-                .collect();
-
-            let chain_call = StatementTmpl {
-                predicate: PredicateRef::Local(next_pred_name),
-                args: chain_call_args,
-                span: None,
-            };
-
-            statements.push(chain_call);
+            statements.push(generated_call_template(
+                format!("{}_{}", original_name, i + 1),
+                &next_link.public_args_in,
+            ));
         }
 
-        // Build public args (incoming).
-        let public_args: Vec<TypedArg> = link
-            .public_args_in
-            .iter()
-            .map(|name| TypedArg {
-                name: name.clone(),
-                type_name: None,
-                span: None,
-            })
-            .collect();
-
-        // Build private args: segment-local private wildcards, plus any wildcards being
+        // Private args: segment-local private wildcards, plus any wildcards being
         // promoted to public for the next link (they must be declared here so the solver
         // can bind them before passing them as public args to the continuation).
         let mut private_arg_names = link.private_args.clone();
@@ -1247,26 +1373,12 @@ fn generate_chain_predicates(
             private_arg_names.extend(link.promoted_wildcards.iter().cloned());
         }
 
-        let private_args = if private_arg_names.is_empty() {
-            None
-        } else {
-            Some(
-                private_arg_names
-                    .into_iter()
-                    .map(|name| TypedArg {
-                        name,
-                        type_name: None,
-                        span: None,
-                    })
-                    .collect(),
-            )
-        };
-
         predicates.push(CustomPredicateDef {
-            name: pred_name,
+            name: generated_identifier(pred_name),
             args: ArgSection {
-                public_args,
-                private_args,
+                public_args: generated_typed_args(link.public_args_in.clone()),
+                private_args: (!private_arg_names.is_empty())
+                    .then(|| generated_typed_args(private_arg_names)),
                 span: None,
             },
             conjunction_type: conjunction,
@@ -1278,20 +1390,21 @@ fn generate_chain_predicates(
     Ok(predicates)
 }
 
-/// Sanity-check the generated chain. All three constraints are enforced as proper errors
-/// earlier in `split_into_chain`, so violations here indicate a bug in the algorithm.
-fn validate_chain(chain: &[CustomPredicateDef], params: &Params) {
-    for pred in chain {
+/// Sanity-check the generated chain or tree predicates. All three constraints
+/// are enforced as proper errors earlier in the split, so violations here
+/// indicate a bug in the algorithm.
+fn validate_generated_predicates(generated: &[CustomPredicateDef], params: &Params) {
+    for pred in generated {
         assert!(
             pred.statements.len() <= Params::max_custom_predicate_arity(),
-            "chain link '{}' has {} statements, exceeds max {}",
+            "split piece '{}' has {} statements, exceeds max {}",
             pred.name.name,
             pred.statements.len(),
             Params::max_custom_predicate_arity(),
         );
         assert!(
             pred.args.public_args.len() <= Params::max_statement_args(),
-            "chain link '{}' has {} public args, exceeds max {}",
+            "split piece '{}' has {} public args, exceeds max {}",
             pred.name.name,
             pred.args.public_args.len(),
             Params::max_statement_args(),
@@ -1300,12 +1413,223 @@ fn validate_chain(chain: &[CustomPredicateDef], params: &Params) {
             pred.args.public_args.len() + pred.args.private_args.as_ref().map_or(0, |v| v.len());
         assert!(
             total <= params.max_custom_predicate_wildcards,
-            "chain link '{}' has {} total args, exceeds max {}",
+            "split piece '{}' has {} total args, exceeds max {}",
             pred.name.name,
             total,
             params.max_custom_predicate_wildcards,
         );
     }
+}
+
+/// Split a disjunction into a balanced tree. Disjuncts pack into leaf
+/// predicates in source order; internal nodes disjoin calls to their
+/// children. Each node's public args are pruned to the original public args
+/// its subtree actually references, except the root, which keeps the full
+/// user-declared signature. Disjuncts never share bindings across branches,
+/// so nothing is promoted and no ordering search runs.
+fn split_into_tree(
+    pred: CustomPredicateDef,
+    params: &Params,
+) -> Result<(Vec<CustomPredicateDef>, SplitTreeInfo), SplittingError> {
+    let max_arity = Params::max_custom_predicate_arity();
+    let max_wildcards = params.max_custom_predicate_wildcards;
+
+    let original_name = pred.name.name;
+    let original_public_args: Vec<String> = pred
+        .args
+        .public_args
+        .iter()
+        .map(|arg| arg.name.clone())
+        .collect();
+    let public_set: HashSet<&str> = original_public_args.iter().map(String::as_str).collect();
+
+    // Greedy leaf packing in source order under the arity and total-wildcards
+    // caps. A leaf's wildcards are the public args its disjuncts reference
+    // plus their private wildcards.
+    #[derive(Default)]
+    struct LeafBuild {
+        statements: Vec<StatementTmpl>,
+        wildcards: HashSet<String>,
+    }
+    let mut leaves: Vec<LeafBuild> = Vec::new();
+    let mut current = LeafBuild::default();
+    let mut statement_slot = Vec::with_capacity(pred.statements.len());
+    for (statement_index, statement) in pred.statements.into_iter().enumerate() {
+        let own_wildcards = collect_wildcards_from_statement(&statement);
+        if own_wildcards.len() > max_wildcards {
+            return Err(SplittingError::TooManyWildcardsInDisjunct {
+                predicate: original_name,
+                statement_index,
+                total_count: own_wildcards.len(),
+                max_allowed: max_wildcards,
+            });
+        }
+
+        let fresh_wildcards = own_wildcards
+            .iter()
+            .filter(|wildcard| !current.wildcards.contains(*wildcard))
+            .count();
+        if !current.statements.is_empty()
+            && (current.statements.len() == max_arity
+                || current.wildcards.len() + fresh_wildcards > max_wildcards)
+        {
+            leaves.push(std::mem::take(&mut current));
+        }
+        statement_slot.push(StatementSlot {
+            node_index: leaves.len(),
+            slot: current.statements.len(),
+        });
+        current.wildcards.extend(own_wildcards);
+        current.statements.push(statement);
+    }
+    leaves.push(current);
+
+    // Node layout: leaves first, then internal levels bottom-up, root last.
+    // Public args per node are pruned to the subtree's usage, kept in the
+    // original declaration order so parent call args line up deterministically.
+    struct TreeNodeBuild {
+        public_args: Vec<String>,
+        parent: Option<TreeParentSlot>,
+        kind: TreeNodeKind,
+    }
+    enum TreeNodeKind {
+        Leaf {
+            statements: Vec<StatementTmpl>,
+            private_args: Vec<String>,
+        },
+        Internal {
+            children: Vec<usize>,
+        },
+    }
+
+    let mut nodes: Vec<TreeNodeBuild> = Vec::new();
+    for leaf in leaves {
+        let public_args: Vec<String> = original_public_args
+            .iter()
+            .filter(|name| leaf.wildcards.contains(*name))
+            .cloned()
+            .collect();
+        let mut private_args: Vec<String> = leaf
+            .wildcards
+            .iter()
+            .filter(|wildcard| !public_set.contains(wildcard.as_str()))
+            .cloned()
+            .collect();
+        private_args.sort();
+        nodes.push(TreeNodeBuild {
+            public_args,
+            parent: None,
+            kind: TreeNodeKind::Leaf {
+                statements: leaf.statements,
+                private_args,
+            },
+        });
+    }
+
+    let mut level: Vec<usize> = (0..nodes.len()).collect();
+    while level.len() > 1 {
+        let mut next_level = Vec::with_capacity(level.len().div_ceil(max_arity));
+        for children in level.chunks(max_arity) {
+            let parent_index = nodes.len();
+            let used: HashSet<&String> = children
+                .iter()
+                .flat_map(|&child| &nodes[child].public_args)
+                .collect();
+            let public_args: Vec<String> = original_public_args
+                .iter()
+                .filter(|name| used.contains(name))
+                .cloned()
+                .collect();
+            for (slot, &child) in children.iter().enumerate() {
+                nodes[child].parent = Some(TreeParentSlot { parent_index, slot });
+            }
+            nodes.push(TreeNodeBuild {
+                public_args,
+                parent: None,
+                kind: TreeNodeKind::Internal {
+                    children: children.to_vec(),
+                },
+            });
+            next_level.push(parent_index);
+        }
+        level = next_level;
+    }
+
+    // The root is the original predicate's interface: its name and its full
+    // declared public signature, unused args included.
+    let root_index = nodes.len() - 1;
+    nodes[root_index].public_args = original_public_args;
+
+    let node_name = |index: usize| {
+        if index == root_index {
+            original_name.clone()
+        } else {
+            format!("{}_{}", original_name, index + 1)
+        }
+    };
+
+    // Internal-node call templates are built up front while the child
+    // signatures can still be borrowed, so the emission loop below can
+    // consume the nodes and move leaf statements without cloning them.
+    let internal_statements: Vec<Option<Vec<StatementTmpl>>> = nodes
+        .iter()
+        .map(|node| match &node.kind {
+            TreeNodeKind::Internal { children } => Some(
+                children
+                    .iter()
+                    .map(|&child| {
+                        generated_call_template(node_name(child), &nodes[child].public_args)
+                    })
+                    .collect(),
+            ),
+            TreeNodeKind::Leaf { .. } => None,
+        })
+        .collect();
+
+    let mut tree_nodes = Vec::with_capacity(nodes.len());
+    let mut predicates = Vec::with_capacity(nodes.len());
+    for ((index, node), prebuilt_calls) in nodes.into_iter().enumerate().zip(internal_statements) {
+        let (statements, private_args) = match node.kind {
+            TreeNodeKind::Leaf {
+                statements,
+                private_args,
+            } => (statements, private_args),
+            TreeNodeKind::Internal { .. } => (
+                prebuilt_calls.expect("internal nodes have prebuilt call templates"),
+                Vec::new(),
+            ),
+        };
+
+        tree_nodes.push(TreeNode {
+            name: node_name(index),
+            statement_count: statements.len(),
+            parent: node.parent,
+        });
+
+        predicates.push(CustomPredicateDef {
+            name: generated_identifier(node_name(index)),
+            args: ArgSection {
+                public_args: generated_typed_args(node.public_args),
+                private_args: (!private_args.is_empty())
+                    .then(|| generated_typed_args(private_args)),
+                span: None,
+            },
+            conjunction_type: ConjunctionType::Or,
+            statements,
+            span: None,
+        });
+    }
+
+    validate_generated_predicates(&predicates, params);
+
+    Ok((
+        predicates,
+        SplitTreeInfo {
+            original_name,
+            nodes: tree_nodes,
+            statement_slot,
+        },
+    ))
 }
 
 // ============================================================================
@@ -1693,7 +2017,7 @@ mod tests {
 
         let split_result = result.unwrap();
         assert_eq!(split_result.predicates.len(), 1); // No split needed
-        assert!(split_result.chain_info.is_none()); // No chain info for non-split
+        assert!(split_result.chain_info().is_none()); // No chain info for non-split
     }
 
     #[test]
@@ -1729,7 +2053,7 @@ mod tests {
         assert_eq!(chain[0].name.name, "my_pred_1");
 
         // Verify chain_info is present
-        let chain_info = split_result.chain_info.as_ref().unwrap();
+        let chain_info = split_result.chain_info().unwrap();
         assert_eq!(chain_info.original_name, "my_pred");
         assert_eq!(chain_info.real_statement_count, 6);
         assert_eq!(chain_info.chain_pieces.len(), 2);
@@ -1780,7 +2104,7 @@ mod tests {
         assert_eq!(chain[2].name.name, "large_pred");
 
         // Verify chain_info
-        let chain_info = split_result.chain_info.as_ref().unwrap();
+        let chain_info = split_result.chain_info().unwrap();
         assert_eq!(chain_info.real_statement_count, 11);
         assert_eq!(chain_info.chain_pieces.len(), 3);
         // Execution order: innermost first
@@ -2242,5 +2566,199 @@ mod tests {
         let params = Params::default();
         let result = split(pred, &params);
         assert!(result.is_ok(), "split failed: {:?}", result.err());
+    }
+
+    /// Disjunction variant of `build_pred`.
+    fn build_or_pred(
+        name: &str,
+        public_args: &[&str],
+        private_args: &[&str],
+        stmt_wildcards: &[&[&str]],
+    ) -> CustomPredicateDef {
+        let mut pred = build_pred(name, public_args, private_args, stmt_wildcards);
+        pred.conjunction_type = ConjunctionType::Or;
+        pred
+    }
+
+    #[test]
+    fn or_split_builds_balanced_tree() {
+        // 30 disjuncts over two public args: 6 full leaves, an internal
+        // level of 2, and the root. Every disjunct sits at depth 3.
+        let branches: Vec<&[&str]> = (0..30).map(|_| ["a", "b"].as_slice()).collect();
+        let pred = build_or_pred("big", &["a", "b"], &[], &branches);
+        let params = Params::default();
+
+        let result = split(pred, &params).expect("split failed");
+        assert!(result.chain_info().is_none());
+        let tree = result.tree_info().expect("expected a tree split");
+
+        assert_eq!(tree.real_statement_count(), 30);
+        assert_eq!(tree.nodes.len(), 9);
+        assert_eq!(result.predicates.len(), 9);
+
+        // Root is last, carries the original name, and has no parent.
+        let root = tree.nodes.last().unwrap();
+        assert_eq!(root.name, "big");
+        assert!(root.parent.is_none());
+        assert_eq!(root.statement_count, 2);
+
+        // Leaves hold 5 disjuncts each in source order.
+        assert_eq!(tree.statement_slot[0].node_index, 0);
+        assert_eq!(tree.statement_slot[0].slot, 0);
+        assert_eq!(tree.statement_slot[29].node_index, 5);
+        assert_eq!(tree.statement_slot[29].slot, 4);
+
+        // Every disjunct discharges through leaf -> internal -> root.
+        for slot in &tree.statement_slot {
+            let mut depth = 1;
+            let mut node = &tree.nodes[slot.node_index];
+            while let Some(parent_slot) = node.parent {
+                node = &tree.nodes[parent_slot.parent_index];
+                depth += 1;
+            }
+            assert_eq!(depth, 3);
+        }
+
+        // All generated predicates stay disjunctions under the arity cap.
+        for pred in &result.predicates {
+            assert_eq!(pred.conjunction_type, ConjunctionType::Or);
+            assert!(pred.statements.len() <= Params::max_custom_predicate_arity());
+        }
+
+        // The whole-module entry point takes the same path.
+        let pred = build_or_pred("big", &["a", "b"], &[], &branches);
+        let batch_results = split_predicates_if_needed(vec![pred], &params).expect("split failed");
+        assert!(batch_results[0].tree_info().is_some());
+        assert_eq!(batch_results[0].predicates.len(), 9);
+    }
+
+    #[test]
+    fn or_tree_prunes_public_args_per_subtree() {
+        let mut branches: Vec<&[&str]> = Vec::new();
+        branches.extend((0..5).map(|_| ["a"].as_slice()));
+        branches.extend((0..5).map(|_| ["b"].as_slice()));
+        branches.extend((0..2).map(|_| ["c", "d"].as_slice()));
+        let pred = build_or_pred("routed", &["a", "b", "c", "d", "unused"], &[], &branches);
+        let params = Params::default();
+
+        let result = split(pred, &params).expect("split failed");
+        let tree = result.tree_info().expect("expected a tree split");
+
+        // 3 leaves calling straight into the root.
+        assert_eq!(tree.nodes.len(), 4);
+
+        let leaf_publics: Vec<Vec<String>> = result.predicates[..3]
+            .iter()
+            .map(|p| p.args.public_args.iter().map(|a| a.name.clone()).collect())
+            .collect();
+        assert_eq!(leaf_publics[0], ["a"]);
+        assert_eq!(leaf_publics[1], ["b"]);
+        assert_eq!(leaf_publics[2], ["c", "d"]);
+
+        // The root keeps the full declared signature, unused args included.
+        let root_pred = result.predicates.last().unwrap();
+        assert_eq!(root_pred.name.name, "routed");
+        assert_eq!(root_pred.args.public_args.len(), 5);
+
+        // Root call args line up with each child's pruned signature.
+        let root_call_arg_counts: Vec<usize> =
+            root_pred.statements.iter().map(|s| s.args.len()).collect();
+        assert_eq!(root_call_arg_counts, [1, 1, 2]);
+    }
+
+    #[test]
+    fn or_tree_leaf_packing_respects_wildcard_cap() {
+        // Each disjunct brings 3 fresh private wildcards next to one public
+        // arg, so a leaf saturates the total-wildcards cap at 2 disjuncts
+        // (1 public + 6 privates = 7; a third disjunct would make 10).
+        let branch_wildcards: Vec<Vec<String>> = (0..12)
+            .map(|i| {
+                vec![
+                    "a".to_string(),
+                    format!("p{}_1", i),
+                    format!("p{}_2", i),
+                    format!("p{}_3", i),
+                ]
+            })
+            .collect();
+        let branches: Vec<Vec<&str>> = branch_wildcards
+            .iter()
+            .map(|wcs| wcs.iter().map(String::as_str).collect())
+            .collect();
+        let branch_slices: Vec<&[&str]> = branches.iter().map(Vec::as_slice).collect();
+        let privates: Vec<&str> = branch_wildcards
+            .iter()
+            .flat_map(|wcs| wcs[1..].iter().map(String::as_str))
+            .collect();
+        let pred = build_or_pred("packed", &["a"], &privates, &branch_slices);
+        let params = Params::default();
+
+        let result = split(pred, &params).expect("split failed");
+        let tree = result.tree_info().expect("expected a tree split");
+
+        // 6 leaves of 2 disjuncts each, an internal level of 2, then the root.
+        assert_eq!(tree.nodes.len(), 9);
+        for leaf in &tree.nodes[..6] {
+            assert_eq!(leaf.statement_count, 2);
+        }
+        for leaf_pred in &result.predicates[..6] {
+            let private_count = leaf_pred.args.private_args.as_ref().unwrap().len();
+            assert_eq!(private_count, 6);
+        }
+    }
+
+    #[test]
+    fn or_single_disjunct_over_wildcard_cap_errors() {
+        let over_cap: Vec<String> = std::iter::once("a".to_string())
+            .chain((0..8).map(|i| format!("q{}", i)))
+            .collect();
+        let over_cap_refs: Vec<&str> = over_cap.iter().map(String::as_str).collect();
+        let mut branches: Vec<&[&str]> = (0..10).map(|_| ["a"].as_slice()).collect();
+        branches.push(&over_cap_refs);
+        let privates: Vec<&str> = over_cap_refs[1..].to_vec();
+        let pred = build_or_pred("hot", &["a"], &privates, &branches);
+        let params = Params::default();
+
+        let err = split(pred, &params).expect_err("expected a cap error");
+        match err {
+            SplittingError::TooManyWildcardsInDisjunct {
+                predicate,
+                statement_index,
+                total_count,
+                max_allowed,
+            } => {
+                assert_eq!(predicate, "hot");
+                assert_eq!(statement_index, 10);
+                assert_eq!(total_count, 9);
+                assert_eq!(max_allowed, params.max_custom_predicate_wildcards);
+            }
+            other => panic!("unexpected error: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn small_or_keeps_chain_split() {
+        // Up to 2 * max_arity - 1 disjuncts, a 2-link chain matches the
+        // tree's worst-case depth and beats it on the head link, so the
+        // chain split stays.
+        let params = Params::default();
+        let max_arity = Params::max_custom_predicate_arity();
+
+        let at_chain_limit: Vec<&[&str]> = (0..2 * max_arity - 1)
+            .map(|_| ["a", "b"].as_slice())
+            .collect();
+        let pred = build_or_pred("small", &["a", "b"], &[], &at_chain_limit);
+        let result = split(pred, &params).expect("split failed");
+        assert!(result.tree_info().is_none());
+        let chain = result.chain_info().expect("expected a chain split");
+        assert_eq!(chain.chain_pieces.len(), 2);
+
+        // One more disjunct crosses the threshold into a tree.
+        let at_tree_threshold: Vec<&[&str]> =
+            (0..2 * max_arity).map(|_| ["a", "b"].as_slice()).collect();
+        let pred = build_or_pred("small", &["a", "b"], &[], &at_tree_threshold);
+        let result = split(pred, &params).expect("split failed");
+        assert!(result.chain_info().is_none());
+        assert!(result.tree_info().is_some());
     }
 }

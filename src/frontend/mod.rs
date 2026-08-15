@@ -975,7 +975,7 @@ pub mod tests {
             tickets_pod_full_flow, zu_kyc_pod_builder, zu_kyc_pod_request,
             zu_kyc_sign_dict_builders, EthDosHelper, MOCK_VD_SET,
         },
-        lang::load_module,
+        lang::{load_module, SplitInfo},
         middleware::{
             containers::{Array, Set},
             Signer as _, Value,
@@ -1656,8 +1656,9 @@ pub mod tests {
         let module = load_module(input, "test", &params, &[])?;
 
         // Verify it was split
-        assert!(module.split_chains.contains_key("large_pred"));
-        let chain_info = module.split_chains.get("large_pred").unwrap();
+        let Some(SplitInfo::Chain(chain_info)) = module.splits.get("large_pred") else {
+            panic!("expected a chain split for large_pred");
+        };
         assert_eq!(chain_info.chain_pieces.len(), 2);
         assert_eq!(chain_info.real_statement_count, 6);
 
@@ -1705,6 +1706,69 @@ pub mod tests {
         let pod = builder.prove(&prover)?;
 
         // Verify the pod
+        pod.pod.verify()?;
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_apply_tree_split_disjunction_e2e() -> Result<()> {
+        // A 30-branch disjunction splits into a tree (6 leaves, 2 internal
+        // nodes, root); discharging one branch costs 3 operations instead of
+        // walking a chain to the branch's position.
+        let params = Params::default();
+        let vd_set = &*MOCK_VD_SET;
+
+        let branches: String = (0..30)
+            .map(|i| format!("Equal(A[\"k{}\"], {})\n", i, i))
+            .collect();
+        let input = format!("big_or(A) = OR(\n{})", branches);
+
+        let module = load_module(&input, "test", &params, &[])?;
+
+        let Some(SplitInfo::Tree(tree_info)) = module.splits.get("big_or") else {
+            panic!("expected a tree split for big_or");
+        };
+        assert_eq!(tree_info.nodes.len(), 9);
+        assert_eq!(tree_info.real_statement_count(), 30);
+
+        // Prove branch 17 only.
+        let mut signed_builder = SignedDictBuilder::new(&params);
+        signed_builder.insert("k17", 17);
+        let signer = Signer(SecretKey(1u32.into()));
+        let signed_dict = signed_builder.sign(&signer)?;
+
+        let mut builder = MainPodBuilder::new(&params, vd_set);
+        builder.pub_op(Operation::dict_signed_by(&signed_dict))?;
+        let st_branch = builder.priv_op(Operation::eq((&signed_dict, "k17"), 17))?;
+
+        let mut statements = vec![Statement::None; 30];
+        statements[17] = st_branch;
+
+        let mut op_count = 0;
+        let result = module.apply_predicate_with(
+            "big_or",
+            statements,
+            true,
+            |is_public, op| -> Result<Statement> {
+                op_count += 1;
+                if is_public {
+                    builder.pub_op(op)
+                } else {
+                    builder.priv_op(op)
+                }
+            },
+        )?;
+        assert_eq!(op_count, 3);
+
+        let predicate = module.predicate_ref_by_name("big_or").unwrap();
+        match &result {
+            Statement::Custom(pred_ref, _) => assert_eq!(pred_ref, &predicate),
+            _ => panic!("Expected Statement::Custom, got {:?}", result),
+        }
+
+        let prover = MockProver {};
+        let pod = builder.prove(&prover)?;
         pod.pod.verify()?;
 
         Ok(())
