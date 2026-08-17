@@ -88,6 +88,11 @@ struct StatementArgCache {
 struct StatementCache<const MAX_EQS: usize> {
     equations: [StatementArgCache; MAX_EQS],
     first_n_equations_valid: [BoolTarget; MAX_EQS],
+    // args_shape_ok[k] is true iff the output statement's first k args equal the corresponding
+    // equation lhs and every arg from k onwards is None.  Almost every native-op checker expects
+    // exactly this shape (for its own k), so we compute the per-position match bits once and each
+    // checker just picks its prefix length instead of re-comparing the whole statement.
+    args_shape_ok: Vec<BoolTarget>,
     op_args: Vec<StatementTarget>,
     op_arg_hashes: Vec<HashOutTarget>,
 }
@@ -172,9 +177,35 @@ impl<const MAX_EQS: usize> StatementCache<MAX_EQS> {
             first_n_equations_valid[i] =
                 builder.and(equations[i].valid, first_n_equations_valid[i - 1]);
         }
+
+        assert!(MAX_EQS <= st.args.len());
+        let st_arg_none = StatementArgTarget::none(builder);
+        let arg_matches: Vec<BoolTarget> = (0..MAX_EQS)
+            .map(|i| builder.is_equal_flattenable(&st.args[i], &equations[i].lhs))
+            .collect();
+        let arg_is_none: Vec<BoolTarget> = st
+            .args
+            .iter()
+            .map(|arg| builder.is_equal_flattenable(arg, &st_arg_none))
+            .collect();
+        // none_suffix[k]: every arg from position k onwards is None
+        let mut none_suffix = vec![builder._true(); st.args.len() + 1];
+        for k in (0..st.args.len()).rev() {
+            none_suffix[k] = builder.and(arg_is_none[k], none_suffix[k + 1]);
+        }
+        let mut args_shape_ok = Vec::with_capacity(MAX_EQS + 1);
+        let mut match_prefix = builder._true();
+        for k in 0..=MAX_EQS {
+            args_shape_ok.push(builder.and(match_prefix, none_suffix[k]));
+            if k < MAX_EQS {
+                match_prefix = builder.and(match_prefix, arg_matches[k]);
+            }
+        }
+
         StatementCache {
             equations,
             first_n_equations_valid,
+            args_shape_ok,
             op_args,
             op_arg_hashes,
         }
@@ -194,6 +225,18 @@ impl<const MAX_EQS: usize> StatementCache<MAX_EQS> {
             self.first_n_equations_valid[N - 1],
             array::from_fn(|i| self.equations[i].rhs),
         )
+    }
+
+    /// Checks that the output statement is `native_predicate` applied to the first
+    /// `native_predicate.arity()` equation lhs values, with None padding afterwards.
+    fn output_statement_ok(
+        &self,
+        builder: &mut CircuitBuilder,
+        st: &StatementTarget,
+        native_predicate: NativePredicate,
+    ) -> BoolTarget {
+        let pred_ok = st.has_native_type(builder, native_predicate);
+        builder.and(pred_ok, self.args_shape_ok[native_predicate.arity()])
     }
 }
 
@@ -719,7 +762,7 @@ fn verify_operation_circuit(
     // restricted to the op of type X, where the returned target is `false` if the input targets
     // lie outside of the domain.
     let mut op_checks = Vec::new();
-    op_checks.extend_from_slice(&[verify_none_circuit(params, builder, st, &op.op_type)]);
+    op_checks.extend_from_slice(&[verify_none_circuit(builder, st, &op.op_type, &cache)]);
     // Skip these if there are no resolved op args
     if !cache.op_args.is_empty() {
         op_checks.extend_from_slice(&[
@@ -727,10 +770,10 @@ fn verify_operation_circuit(
             verify_lt_lteq_from_entries_circuit(builder, st, &op.op_type, &cache),
             verify_transitive_eq_circuit(params, builder, st, &op.op_type, &cache.op_args),
             verify_lt_to_neq_circuit(params, builder, st, &op.op_type, &cache.op_args),
-            verify_hash_from_entries_circuit(params, builder, st, &op.op_type, &cache),
-            verify_sum_from_entries_circuit(params, builder, st, &op.op_type, &cache),
-            verify_product_from_entries_circuit(params, builder, st, &op.op_type, &cache),
-            verify_max_from_entries_circuit(params, builder, st, &op.op_type, &cache),
+            verify_hash_from_entries_circuit(builder, st, &op.op_type, &cache),
+            verify_sum_from_entries_circuit(builder, st, &op.op_type, &cache),
+            verify_product_from_entries_circuit(builder, st, &op.op_type, &cache),
+            verify_max_from_entries_circuit(builder, st, &op.op_type, &cache),
             verify_replace_value_with_entry_circuit(params, builder, st, &op.op_type, &cache),
         ]);
     }
@@ -739,7 +782,6 @@ fn verify_operation_circuit(
         if params.containers.state_ops.max_total() > 0 {
             op_checks.extend_from_slice(&[
                 verify_contains_from_entries_circuit(
-                    params,
                     builder,
                     st,
                     &op.op_type,
@@ -747,7 +789,6 @@ fn verify_operation_circuit(
                     &cache,
                 ),
                 verify_not_contains_from_entries_circuit(
-                    params,
                     builder,
                     st,
                     &op.op_type,
@@ -758,7 +799,6 @@ fn verify_operation_circuit(
         }
         if params.max_public_key_ops > 0 {
             op_checks.push(verify_public_key_from_entries_circuit(
-                params,
                 builder,
                 st,
                 &op.op_type,
@@ -768,7 +808,6 @@ fn verify_operation_circuit(
         }
         if params.max_signed_by_ops > 0 {
             op_checks.push(verify_signed_by_circuit(
-                params,
                 builder,
                 st,
                 &op.op_type,
@@ -778,30 +817,9 @@ fn verify_operation_circuit(
         }
         if params.containers.transition_ops.max_total() > 0 {
             op_checks.extend_from_slice(&[
-                verify_merkle_insert_circuit(
-                    params,
-                    builder,
-                    st,
-                    &op.op_type,
-                    resolved_aux,
-                    &cache,
-                ),
-                verify_merkle_update_circuit(
-                    params,
-                    builder,
-                    st,
-                    &op.op_type,
-                    resolved_aux,
-                    &cache,
-                ),
-                verify_merkle_delete_circuit(
-                    params,
-                    builder,
-                    st,
-                    &op.op_type,
-                    resolved_aux,
-                    &cache,
-                ),
+                verify_merkle_insert_circuit(builder, st, &op.op_type, resolved_aux, &cache),
+                verify_merkle_update_circuit(builder, st, &op.op_type, resolved_aux, &cache),
+                verify_merkle_delete_circuit(builder, st, &op.op_type, resolved_aux, &cache),
             ]);
         }
         if params.max_open_input_statement_ops > 0 {
@@ -835,7 +853,6 @@ fn verify_operation_circuit(
 //
 
 fn verify_contains_from_entries_circuit(
-    params: &Params,
     builder: &mut CircuitBuilder,
     st: &StatementTarget,
     op_type: &OperationTypeTarget,
@@ -855,17 +872,7 @@ fn verify_contains_from_entries_circuit(
     );
     let merkle_proof_ok = builder.is_equal_flattenable(&resolved_query_hash, &expected_query_hash);
 
-    // Check output statement
-    let arg1_expected = cache.equations[0].lhs.clone();
-    let arg2_expected = cache.equations[1].lhs.clone();
-    let arg3_expected = cache.equations[2].lhs.clone();
-    let expected_statement = StatementTarget::new_native(
-        builder,
-        params,
-        NativePredicate::Contains,
-        &[arg1_expected, arg2_expected, arg3_expected],
-    );
-    let st_ok = builder.is_equal_flattenable(st, &expected_statement);
+    let st_ok = cache.output_statement_ok(builder, st, NativePredicate::Contains);
 
     let ok = builder.all([op_code_ok, arg_types_ok, merkle_proof_ok, st_ok]);
     measure_gates_end!(builder, measure);
@@ -873,7 +880,6 @@ fn verify_contains_from_entries_circuit(
 }
 
 fn verify_not_contains_from_entries_circuit(
-    params: &Params,
     builder: &mut CircuitBuilder,
     st: &StatementTarget,
     op_type: &OperationTypeTarget,
@@ -888,16 +894,7 @@ fn verify_not_contains_from_entries_circuit(
         hash_merkle_not_contains_query(builder, HashOutTarget::from(merkle_root_value), key_value);
     let merkle_proof_ok = builder.is_equal_flattenable(&resolved_query_hash, &expected_query_hash);
 
-    // Check output statement
-    let arg1_expected = cache.equations[0].lhs.clone();
-    let arg2_expected = cache.equations[1].lhs.clone();
-    let expected_statement = StatementTarget::new_native(
-        builder,
-        params,
-        NativePredicate::NotContains,
-        &[arg1_expected, arg2_expected],
-    );
-    let st_ok = builder.is_equal_flattenable(st, &expected_statement);
+    let st_ok = cache.output_statement_ok(builder, st, NativePredicate::NotContains);
 
     let ok = builder.all([op_code_ok, arg_types_ok, merkle_proof_ok, st_ok]);
     measure_gates_end!(builder, measure);
@@ -905,7 +902,6 @@ fn verify_not_contains_from_entries_circuit(
 }
 
 fn verify_merkle_insert_circuit(
-    params: &Params,
     builder: &mut CircuitBuilder,
     st: &StatementTarget,
     op_type: &OperationTypeTarget,
@@ -929,18 +925,7 @@ fn verify_merkle_insert_circuit(
     );
     let merkle_proof_ok = builder.is_equal_flattenable(&resolved_query_hash, &expected_query_hash);
 
-    // Check output statement
-    let arg1_expected = cache.equations[0].lhs.clone();
-    let arg2_expected = cache.equations[1].lhs.clone();
-    let arg3_expected = cache.equations[2].lhs.clone();
-    let arg4_expected = cache.equations[3].lhs.clone();
-    let expected_statement = StatementTarget::new_native(
-        builder,
-        params,
-        NativePredicate::ContainerInsert,
-        &[arg1_expected, arg2_expected, arg3_expected, arg4_expected],
-    );
-    let st_ok = builder.is_equal_flattenable(st, &expected_statement);
+    let st_ok = cache.output_statement_ok(builder, st, NativePredicate::ContainerInsert);
 
     let ok = builder.all([op_code_ok, arg_types_ok, merkle_proof_ok, st_ok]);
     measure_gates_end!(builder, measure);
@@ -948,7 +933,6 @@ fn verify_merkle_insert_circuit(
 }
 
 fn verify_merkle_update_circuit(
-    params: &Params,
     builder: &mut CircuitBuilder,
     st: &StatementTarget,
     op_type: &OperationTypeTarget,
@@ -972,18 +956,7 @@ fn verify_merkle_update_circuit(
     );
     let merkle_proof_ok = builder.is_equal_flattenable(&resolved_query_hash, &expected_query_hash);
 
-    // Check output statement
-    let arg1_expected = cache.equations[0].lhs.clone();
-    let arg2_expected = cache.equations[1].lhs.clone();
-    let arg3_expected = cache.equations[2].lhs.clone();
-    let arg4_expected = cache.equations[3].lhs.clone();
-    let expected_statement = StatementTarget::new_native(
-        builder,
-        params,
-        NativePredicate::ContainerUpdate,
-        &[arg1_expected, arg2_expected, arg3_expected, arg4_expected],
-    );
-    let st_ok = builder.is_equal_flattenable(st, &expected_statement);
+    let st_ok = cache.output_statement_ok(builder, st, NativePredicate::ContainerUpdate);
 
     let ok = builder.all([op_code_ok, arg_types_ok, merkle_proof_ok, st_ok]);
     measure_gates_end!(builder, measure);
@@ -991,7 +964,6 @@ fn verify_merkle_update_circuit(
 }
 
 fn verify_merkle_delete_circuit(
-    params: &Params,
     builder: &mut CircuitBuilder,
     st: &StatementTarget,
     op_type: &OperationTypeTarget,
@@ -1012,17 +984,7 @@ fn verify_merkle_delete_circuit(
     );
     let merkle_proof_ok = builder.is_equal_flattenable(&resolved_query_hash, &expected_query_hash);
 
-    // Check output statement
-    let arg1_expected = cache.equations[0].lhs.clone();
-    let arg2_expected = cache.equations[1].lhs.clone();
-    let arg3_expected = cache.equations[2].lhs.clone();
-    let expected_statement = StatementTarget::new_native(
-        builder,
-        params,
-        NativePredicate::ContainerDelete,
-        &[arg1_expected, arg2_expected, arg3_expected],
-    );
-    let st_ok = builder.is_equal_flattenable(st, &expected_statement);
+    let st_ok = cache.output_statement_ok(builder, st, NativePredicate::ContainerDelete);
 
     let ok = builder.all([op_code_ok, arg_types_ok, merkle_proof_ok, st_ok]);
     measure_gates_end!(builder, measure);
@@ -1086,23 +1048,7 @@ fn verify_eq_neq_from_entries_circuit(
     let op_args_eq = builder.is_equal_slice(&arg1_value.elements, &arg2_value.elements);
     let op_args_ok = builder.is_equal(op_args_eq.target, eq_op_st_code_ok.target);
 
-    let arg1_expected = cache.equations[0].lhs.clone();
-    let arg2_expected = cache.equations[1].lhs.clone();
-
-    let expected_st_args: Vec<_> = [arg1_expected, arg2_expected]
-        .into_iter()
-        .chain(std::iter::repeat_with(|| StatementArgTarget::none(builder)))
-        .take(Params::max_statement_args())
-        .flat_map(|arg| arg.elements)
-        .collect();
-
-    let st_args_ok = builder.is_equal_slice(
-        &expected_st_args,
-        &st.args
-            .iter()
-            .flat_map(|arg| arg.elements)
-            .collect::<Vec<_>>(),
-    );
+    let st_args_ok = cache.args_shape_ok[2];
 
     let ok = builder.all([op_st_code_ok, arg_types_ok, op_args_ok, st_args_ok]);
     measure_gates_end!(builder, measure);
@@ -1155,23 +1101,7 @@ fn verify_lt_lteq_from_entries_circuit(
     };
     builder.assert_i64_less_if(lt_check_flag, value1, value2);
 
-    let arg1_expected = cache.equations[0].lhs.clone();
-    let arg2_expected = cache.equations[1].lhs.clone();
-
-    let expected_st_args: Vec<_> = [arg1_expected, arg2_expected]
-        .into_iter()
-        .chain(std::iter::repeat_with(|| StatementArgTarget::none(builder)))
-        .take(Params::max_statement_args())
-        .flat_map(|arg| arg.elements)
-        .collect();
-
-    let st_args_ok = builder.is_equal_slice(
-        &expected_st_args,
-        &st.args
-            .iter()
-            .flat_map(|arg| arg.elements)
-            .collect::<Vec<_>>(),
-    );
+    let st_args_ok = cache.args_shape_ok[2];
 
     let ok = builder.all([op_st_code_ok, arg_types_ok, st_args_ok]);
     measure_gates_end!(builder, measure);
@@ -1179,7 +1109,6 @@ fn verify_lt_lteq_from_entries_circuit(
 }
 
 fn verify_hash_from_entries_circuit(
-    params: &Params,
     builder: &mut CircuitBuilder,
     st: &StatementTarget,
     op_type: &OperationTypeTarget,
@@ -1194,16 +1123,7 @@ fn verify_hash_from_entries_circuit(
 
     let hash_value_ok = builder.is_equal_slice(&arg3_value.elements, &expected_hash_value.elements);
 
-    let arg1_expected = cache.equations[0].lhs.clone();
-    let arg2_expected = cache.equations[1].lhs.clone();
-    let arg3_expected = cache.equations[2].lhs.clone();
-    let expected_statement = StatementTarget::new_native(
-        builder,
-        params,
-        NativePredicate::Hash,
-        &[arg1_expected, arg2_expected, arg3_expected],
-    );
-    let st_ok = builder.is_equal_flattenable(st, &expected_statement);
+    let st_ok = cache.output_statement_ok(builder, st, NativePredicate::Hash);
 
     let ok = builder.all([op_code_ok, arg_types_ok, hash_value_ok, st_ok]);
     measure_gates_end!(builder, measure);
@@ -1211,7 +1131,6 @@ fn verify_hash_from_entries_circuit(
 }
 
 fn verify_public_key_from_entries_circuit(
-    params: &Params,
     builder: &mut CircuitBuilder,
     st: &StatementTarget,
     op_type: &OperationTypeTarget,
@@ -1233,15 +1152,7 @@ fn verify_public_key_from_entries_circuit(
     );
     let query_ok = builder.is_equal_flattenable(&resolved_query_hash, &expected_query_hash);
 
-    let arg1_expected = cache.equations[0].lhs.clone();
-    let arg2_expected = cache.equations[1].lhs.clone();
-    let expected_statement = StatementTarget::new_native(
-        builder,
-        params,
-        NativePredicate::PublicKey,
-        &[arg1_expected, arg2_expected],
-    );
-    let st_ok = builder.is_equal_flattenable(st, &expected_statement);
+    let st_ok = cache.output_statement_ok(builder, st, NativePredicate::PublicKey);
 
     let ok = builder.all([op_code_ok, arg_types_ok, query_ok, st_ok]);
     measure_gates_end!(builder, measure);
@@ -1249,7 +1160,6 @@ fn verify_public_key_from_entries_circuit(
 }
 
 fn verify_signed_by_circuit(
-    params: &Params,
     builder: &mut CircuitBuilder,
     st: &StatementTarget,
     op_type: &OperationTypeTarget,
@@ -1272,15 +1182,7 @@ fn verify_signed_by_circuit(
     );
     let query_ok = builder.is_equal_flattenable(&resolved_query_hash, &expected_query_hash);
 
-    let arg1_expected = cache.equations[0].lhs.clone();
-    let arg2_expected = cache.equations[1].lhs.clone();
-    let expected_statement = StatementTarget::new_native(
-        builder,
-        params,
-        NativePredicate::SignedBy,
-        &[arg1_expected, arg2_expected],
-    );
-    let st_ok = builder.is_equal_flattenable(st, &expected_statement);
+    let st_ok = cache.output_statement_ok(builder, st, NativePredicate::SignedBy);
 
     let ok = builder.all([op_code_ok, arg_types_ok, query_ok, st_ok]);
     measure_gates_end!(builder, measure);
@@ -1288,7 +1190,6 @@ fn verify_signed_by_circuit(
 }
 
 fn verify_sum_from_entries_circuit(
-    params: &Params,
     builder: &mut CircuitBuilder,
     st: &StatementTarget,
     op_type: &OperationTypeTarget,
@@ -1309,16 +1210,7 @@ fn verify_sum_from_entries_circuit(
 
     let sum_ok = builder.is_equal_slice(&arg3_value.elements, &expected_sum.elements);
 
-    let arg1_expected = cache.equations[0].lhs.clone();
-    let arg2_expected = cache.equations[1].lhs.clone();
-    let arg3_expected = cache.equations[2].lhs.clone();
-    let expected_statement = StatementTarget::new_native(
-        builder,
-        params,
-        NativePredicate::Sum,
-        &[arg1_expected, arg2_expected, arg3_expected],
-    );
-    let st_ok = builder.is_equal_flattenable(st, &expected_statement);
+    let st_ok = cache.output_statement_ok(builder, st, NativePredicate::Sum);
 
     let ok = builder.all([op_code_ok, arg_types_ok, sum_ok, st_ok]);
     measure_gates_end!(builder, measure);
@@ -1326,7 +1218,6 @@ fn verify_sum_from_entries_circuit(
 }
 
 fn verify_product_from_entries_circuit(
-    params: &Params,
     builder: &mut CircuitBuilder,
     st: &StatementTarget,
     op_type: &OperationTypeTarget,
@@ -1347,16 +1238,7 @@ fn verify_product_from_entries_circuit(
 
     let product_ok = builder.is_equal_slice(&arg3_value.elements, &expected_product.elements);
 
-    let arg1_expected = cache.equations[0].lhs.clone();
-    let arg2_expected = cache.equations[1].lhs.clone();
-    let arg3_expected = cache.equations[2].lhs.clone();
-    let expected_statement = StatementTarget::new_native(
-        builder,
-        params,
-        NativePredicate::Product,
-        &[arg1_expected, arg2_expected, arg3_expected],
-    );
-    let st_ok = builder.is_equal_flattenable(st, &expected_statement);
+    let st_ok = cache.output_statement_ok(builder, st, NativePredicate::Product);
 
     let ok = builder.all([op_code_ok, arg_types_ok, product_ok, st_ok]);
     measure_gates_end!(builder, measure);
@@ -1364,7 +1246,6 @@ fn verify_product_from_entries_circuit(
 }
 
 fn verify_max_from_entries_circuit(
-    params: &Params,
     builder: &mut CircuitBuilder,
     st: &StatementTarget,
     op_type: &OperationTypeTarget,
@@ -1392,16 +1273,7 @@ fn verify_max_from_entries_circuit(
     let lt_check_enabled = builder.and(not_all_eq, op_code_ok);
     builder.assert_i64_less_if(lt_check_enabled, lower_bound, arg3_value);
 
-    let arg1_expected = cache.equations[0].lhs.clone();
-    let arg2_expected = cache.equations[1].lhs.clone();
-    let arg3_expected = cache.equations[2].lhs.clone();
-    let expected_statement = StatementTarget::new_native(
-        builder,
-        params,
-        NativePredicate::Max,
-        &[arg1_expected, arg2_expected, arg3_expected],
-    );
-    let st_ok = builder.is_equal_flattenable(st, &expected_statement);
+    let st_ok = cache.output_statement_ok(builder, st, NativePredicate::Max);
 
     let ok = builder.all([op_code_ok, arg_types_ok, arg1_check, st_ok]);
     measure_gates_end!(builder, measure);
@@ -1484,17 +1356,15 @@ fn verify_transitive_eq_circuit(
 }
 
 fn verify_none_circuit(
-    params: &Params,
     builder: &mut CircuitBuilder,
     st: &StatementTarget,
     op_type: &OperationTypeTarget,
+    cache: &StatementCachePriv,
 ) -> BoolTarget {
     let measure = measure_gates_begin!(builder, "OpNone");
     let op_code_ok = op_type.has_native(builder, NativeOperation::None);
 
-    let expected_statement =
-        StatementTarget::new_native(builder, params, NativePredicate::None, &[]);
-    let st_ok = builder.is_equal_flattenable(st, &expected_statement);
+    let st_ok = cache.output_statement_ok(builder, st, NativePredicate::None);
 
     let ok = builder.all([op_code_ok, st_ok]);
     measure_gates_end!(builder, measure);

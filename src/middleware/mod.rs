@@ -916,12 +916,12 @@ impl Default for ParamsContainers {
     fn default() -> Self {
         Self {
             state_ops: ParamsMerkleProofs {
-                max_small: 22,
-                max_medium: 8,
+                max_small: 32,
+                max_medium: 10,
             },
             transition_ops: ParamsMerkleProofs {
-                max_small: 12,
-                max_medium: 6,
+                max_small: 16,
+                max_medium: 8,
             },
             max_depth_small: 8,
             max_depth_medium: 32,
@@ -958,16 +958,16 @@ impl Default for Params {
     fn default() -> Self {
         Self {
             max_input_pods: 2,
-            max_statements: 52,
-            max_public_statements: 20,
-            max_open_input_statement_ops: 20,
-            max_custom_predicates: 16,
-            max_custom_predicate_verification_ops: 16,
+            max_statements: 64,
+            max_public_statements: 24,
+            max_open_input_statement_ops: 24,
+            max_custom_predicates: 20,
+            max_custom_predicate_verification_ops: 20,
             max_custom_predicate_wildcards: 8,
             containers: ParamsContainers::default(),
             max_depth_mt_vds: 6, // up to 64 (2^6) different pod circuits
-            max_public_key_ops: 2,
-            max_signed_by_ops: 4,
+            max_public_key_ops: 3,
+            max_signed_by_ops: 5,
         }
     }
 }
