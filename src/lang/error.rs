@@ -3,7 +3,6 @@ use std::{fmt, ops::Deref};
 use thiserror::Error;
 
 use crate::{
-    frontend,
     lang::{frontend_ast::Span, parser::ParseError},
     middleware,
 };
@@ -16,17 +15,11 @@ pub enum LangErrorKind {
     #[error("Middleware error during processing: {0}")]
     Middleware(Box<middleware::Error>),
 
-    #[error("Frontend error: {0}")]
-    Frontend(Box<frontend::Error>),
-
     #[error("Validation error: {0}")]
     Validation(Box<ValidationError>),
 
     #[error("Lowering error: {0}")]
     Lowering(Box<LoweringError>),
-
-    #[error("Batching error: {0}")]
-    Batching(Box<BatchingError>),
 }
 
 /// Top-level error type for the Podlang pipeline.
@@ -94,9 +87,6 @@ impl std::error::Error for LangError {
 /// Validation errors from frontend AST validation
 #[derive(Debug, thiserror::Error)]
 pub enum ValidationError {
-    #[error("Invalid hash: {hash}")]
-    InvalidHash { hash: String, span: Option<Span> },
-
     #[error("Duplicate predicate definition: {name}")]
     DuplicatePredicate {
         name: String,
@@ -106,13 +96,6 @@ pub enum ValidationError {
 
     #[error("Duplicate import name: {name}")]
     DuplicateImport { name: String, span: Option<Span> },
-
-    #[error("Import arity mismatch: expected {expected} predicates, found {found}")]
-    ImportArityMismatch {
-        expected: usize,
-        found: usize,
-        span: Option<Span>,
-    },
 
     #[error("Module not found: {name}")]
     ModuleNotFound { name: String, span: Option<Span> },
@@ -215,28 +198,11 @@ pub enum ValidationError {
 /// Lowering errors from frontend AST lowering to middleware
 #[derive(Debug, thiserror::Error)]
 pub enum LoweringError {
-    #[error("Too many statements in predicate '{predicate}': {count} exceeds limit of {max}")]
-    TooManyStatements {
-        predicate: String,
-        count: usize,
-        max: usize,
-    },
-
-    #[error("Too many wildcards in predicate '{predicate}': {count} exceeds limit of {max}")]
-    TooManyWildcards {
-        predicate: String,
-        count: usize,
-        max: usize,
-    },
-
     #[error("Too many arguments in statement template: {count} exceeds limit of {max}")]
     TooManyStatementArgs { count: usize, max: usize },
 
     #[error("Predicate '{name}' not found in symbol table")]
     PredicateNotFound { name: String },
-
-    #[error("Invalid argument type in statement template")]
-    InvalidArgumentType,
 
     #[error("Middleware error: {0}")]
     Middleware(#[from] middleware::Error),
@@ -391,6 +357,14 @@ pub enum SplittingError {
         max_allowed: usize,
         suggestion: Option<Box<RefactorSuggestion>>,
     },
+
+    #[error("Disjunct {statement_index} of predicate '{predicate}' references {total_count} wildcards on its own (exceeds max of {max_allowed})")]
+    TooManyWildcardsInDisjunct {
+        predicate: String,
+        statement_index: usize,
+        total_count: usize,
+        max_allowed: usize,
+    },
 }
 
 impl From<ParseError> for LangError {
@@ -414,11 +388,5 @@ impl From<ValidationError> for LangError {
 impl From<LoweringError> for LangError {
     fn from(err: LoweringError) -> Self {
         LangError::new(LangErrorKind::Lowering(Box::new(err)))
-    }
-}
-
-impl From<BatchingError> for LangError {
-    fn from(err: BatchingError) -> Self {
-        LangError::new(LangErrorKind::Batching(Box::new(err)))
     }
 }

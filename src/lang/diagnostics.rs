@@ -23,10 +23,9 @@ pub fn render_error(source: &str, path: Option<&str>, error: &LangError) -> Stri
     match &error.kind {
         LangErrorKind::Validation(e) => render_validation_error(&renderer, source, path, e),
         LangErrorKind::Parse(e) => render_parse_error(&renderer, source, path, e),
-        LangErrorKind::Lowering(_)
-        | LangErrorKind::Batching(_)
-        | LangErrorKind::Middleware(_)
-        | LangErrorKind::Frontend(_) => render_title_only(&renderer, &error.kind.to_string()),
+        LangErrorKind::Lowering(_) | LangErrorKind::Middleware(_) => {
+            render_title_only(&renderer, &error.kind.to_string())
+        }
     }
 }
 
@@ -217,18 +216,6 @@ fn render_validation_error(
             )
         }
 
-        ValidationError::InvalidHash { hash, span } => {
-            let title = format!("invalid hash: {}", hash);
-            render_with_optional_span(
-                renderer,
-                source,
-                path,
-                &title,
-                span.as_ref(),
-                "invalid hash",
-            )
-        }
-
         ValidationError::DuplicateImport { name, span } => {
             let title = format!("duplicate import name: {}", name);
             render_with_optional_span(
@@ -239,16 +226,6 @@ fn render_validation_error(
                 span.as_ref(),
                 "already imported",
             )
-        }
-
-        ValidationError::ImportArityMismatch {
-            expected,
-            found,
-            span,
-        } => {
-            let title = "import arity mismatch".to_string();
-            let label = format!("expected {}, found {}", expected, found);
-            render_with_optional_span(renderer, source, path, &title, span.as_ref(), &label)
         }
 
         ValidationError::ModuleNotFound { name, span } => {
@@ -485,7 +462,7 @@ fn format_pest_label<R: std::fmt::Debug>(error: &pest::error::Error<R>) -> Strin
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::lang::error::BatchingError;
+    use crate::lang::error::{BatchingError, LoweringError};
 
     /// Load a module from source and extract the error, or panic.
     fn module_err(source: &str) -> LangError {
@@ -647,9 +624,9 @@ REQUEST(
 
     #[test]
     fn test_error_without_span() {
-        let error = LangError::from(BatchingError::Internal {
+        let error = LangError::from(LoweringError::Batching(BatchingError::Internal {
             message: "something went wrong".to_string(),
-        });
+        }));
         let rendered = render_error("", None, &error);
 
         assert!(
