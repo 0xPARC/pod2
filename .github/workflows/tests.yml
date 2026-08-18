@@ -16,10 +16,22 @@ jobs:
     - uses: actions/checkout@v3
     - name: Set up Rust
       uses: actions-rust-lang/setup-rust-toolchain@v1
+      with:
+        # Must differ from the key build.yml uses: rust-cache derives its key
+        # from the job id, both workflows call the job "test", and they run
+        # concurrently on the same commit. They then race to save one cache
+        # entry, and whoever wins locks the key out for the other. build.yml
+        # usually wins with debug artifacts, so the release build here starts
+        # from nothing every time.
+        cache-shared-key: tests-release
+        # Caches written from a PR branch are only visible to that branch, so
+        # saving from PRs just burns into the repo's 10 GB cache budget and can
+        # evict the one entry every PR actually restores from.
+        cache-save-if: ${{ github.ref == 'refs/heads/main' }}
     - name: Run tests
       # RocksDB is disabled by default but we still want to test it.
       run: cargo test --release --features db_rocksdb
     - name: Run example 1
-      run: cargo run --release --example main_pod_points -- --mock
+      run: cargo run --release --features db_rocksdb --example main_pod_points -- --mock
     - name: Run example 2
-      run: cargo run --release --example signed_dict
+      run: cargo run --release --features db_rocksdb --example signed_dict
