@@ -540,13 +540,17 @@ impl Validator {
         pred_def: &CustomPredicateDef,
     ) -> Result<(), ValidationError> {
         let pred_name = pred_def.name.name.clone();
+        let wildcard_scope = self
+            .symbols
+            .wildcard_scopes
+            .get(&pred_name)
+            .expect("Wildcard scope should exist after pass 1");
+
+        // The collision check depends only on the scope, so it runs once per
+        // predicate rather than once per statement.
+        self.validate_wildcard_names(wildcard_scope)?;
 
         for stmt in &pred_def.statements {
-            let wildcard_scope = self
-                .symbols
-                .wildcard_scopes
-                .get(&pred_name)
-                .expect("Wildcard scope should exist after pass 1");
             self.validate_statement(stmt, Some((&pred_name, wildcard_scope)))?;
         }
 
@@ -571,14 +575,11 @@ impl Validator {
 
     /// Validate that no wildcard name collides with a predicate name to avoid ambiguity when using
     /// wildcard predicates.
-    fn validate_wildcard_names(&self, names: &HashSet<&String>) -> Result<(), ValidationError> {
-        for name in names {
-            if NativePredicate::from_str(name).is_ok()
-                || self.symbols.predicates.contains_key(*name)
+    fn validate_wildcard_names(&self, scope: &WildcardScope) -> Result<(), ValidationError> {
+        for name in scope.wildcards.keys() {
+            if NativePredicate::from_str(name).is_ok() || self.symbols.predicates.contains_key(name)
             {
-                return Err(ValidationError::WildcardPredicateNameCollision {
-                    name: (*name).clone(),
-                });
+                return Err(ValidationError::WildcardPredicateNameCollision { name: name.clone() });
             }
         }
         Ok(())
@@ -591,12 +592,6 @@ impl Validator {
     ) -> Result<(), ValidationError> {
         let pred_name = stmt.predicate.predicate_name();
         let pred_span = stmt.predicate.span();
-
-        let wc_names = match wildcard_context {
-            Some((_, wc_scope)) => wc_scope.wildcards.keys().collect(),
-            None => HashSet::new(),
-        };
-        self.validate_wildcard_names(&wc_names)?;
 
         // Check if predicate exists
         let pred_info = match &stmt.predicate {
@@ -642,7 +637,9 @@ impl Validator {
                 } else if let Some(info) = self.symbols.predicates.get(pred_name) {
                     // Custom or imported predicate
                     Some(info.clone())
-                } else if wc_names.contains(&pred_name.to_string()) {
+                } else if wildcard_context
+                    .is_some_and(|(_, scope)| scope.wildcards.contains_key(pred_name))
+                {
                     None
                 } else {
                     return Err(ValidationError::UndefinedPredicate {

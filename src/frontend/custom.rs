@@ -131,7 +131,12 @@ impl StatementTmplBuilder {
 pub struct CustomPredicateBatchBuilder {
     params: Params,
     pub name: String,
-    pub predicates: Vec<CustomPredicate>,
+    /// Private so every insertion goes through `predicate()` or
+    /// `push_predicate()`, which keep the name index in step.
+    predicates: Vec<CustomPredicate>,
+    /// Name -> index over `predicates`, so name lookups don't rescan the
+    /// whole batch.
+    predicate_index_by_name: HashMap<String, usize>,
     /// Forward references to resolve in finish(): (predicate_idx, statement_idx, arg_idx, name)
     pending_self_pred_hashes: Vec<(usize, usize, usize, String)>,
 }
@@ -142,8 +147,30 @@ impl CustomPredicateBatchBuilder {
             params,
             name,
             predicates: Vec::new(),
+            predicate_index_by_name: HashMap::new(),
             pending_self_pred_hashes: Vec::new(),
         }
+    }
+
+    pub fn predicates(&self) -> &[CustomPredicate] {
+        &self.predicates
+    }
+
+    /// Append a prebuilt predicate, skipping the checks `predicate()`
+    /// performs except for name uniqueness: duplicate names would make
+    /// name lookups (and `finish()`'s forward-reference resolution) bind
+    /// silently to the first occurrence.
+    pub fn push_predicate(&mut self, predicate: CustomPredicate) -> Result<()> {
+        if self.predicate_index_by_name.contains_key(&predicate.name) {
+            return Err(Error::custom(format!(
+                "Duplicate predicate name '{}' in batch",
+                predicate.name
+            )));
+        }
+        self.predicate_index_by_name
+            .insert(predicate.name.clone(), self.predicates.len());
+        self.predicates.push(predicate);
+        Ok(())
     }
 
     pub fn predicate_and(
@@ -176,7 +203,7 @@ impl CustomPredicateBatchBuilder {
         priv_args: &[&str],
         sts: &[StatementTmplBuilder],
     ) -> Result<Predicate> {
-        if self.predicates.iter().any(|p| p.name == name) {
+        if self.predicate_index_by_name.contains_key(name) {
             return Err(Error::custom(format!(
                 "Duplicate predicate name '{}' in batch",
                 name
@@ -228,8 +255,8 @@ impl CustomPredicateBatchBuilder {
                             }
                             BuilderArg::SelfPredicateHash(pred_name) => {
                                 // Try backward reference first
-                                match self.predicates.iter().position(|p| p.name == *pred_name) {
-                                    Some(index) => StatementTmplArg::SelfPredicateHash(index),
+                                match self.predicate_index_by_name.get(pred_name) {
+                                    Some(&index) => StatementTmplArg::SelfPredicateHash(index),
                                     None => {
                                         // Forward reference - placeholder, resolved in finish()
                                         pending.push((
@@ -270,7 +297,7 @@ impl CustomPredicateBatchBuilder {
                 .map(|s| s.to_string())
                 .collect(),
         )?;
-        self.predicates.push(custom_predicate);
+        self.push_predicate(custom_predicate)?;
         self.pending_self_pred_hashes.extend(pending);
         Ok(Predicate::BatchSelf(self.predicates.len() - 1))
     }
@@ -278,16 +305,12 @@ impl CustomPredicateBatchBuilder {
     pub fn finish(mut self) -> Result<Arc<CustomPredicateBatch>> {
         // Resolve forward references for SelfPredicateHash
         for (pred_idx, stmt_idx, arg_idx, ref name) in &self.pending_self_pred_hashes {
-            let target_idx = self
-                .predicates
-                .iter()
-                .position(|p| p.name == *name)
-                .ok_or_else(|| {
-                    Error::custom(format!(
-                        "SelfPredicateHash references unknown predicate '{}'",
-                        name
-                    ))
-                })?;
+            let target_idx = *self.predicate_index_by_name.get(name).ok_or_else(|| {
+                Error::custom(format!(
+                    "SelfPredicateHash references unknown predicate '{}'",
+                    name
+                ))
+            })?;
             self.predicates[*pred_idx].statements[*stmt_idx].args[*arg_idx] =
                 StatementTmplArg::SelfPredicateHash(target_idx);
         }

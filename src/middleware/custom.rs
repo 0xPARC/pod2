@@ -466,14 +466,20 @@ impl fmt::Debug for CustomPredicateBatchData {
 // TODO: Rename Batch for Module everywhere in the code base
 impl CustomPredicateBatchData {
     fn new_full(predicates: Vec<CustomPredicate>) -> Self {
-        let kvs: HashMap<RawValue, RawValue> = predicates
-            .iter()
-            .enumerate()
-            .map(|(index, pred)| {
-                let cp_hash = hash_fields(&pred.to_fields());
-                (Value::from(index as i64).raw(), Value::from(cp_hash).raw())
-            })
-            .collect();
+        use rayon::prelude::*;
+        // Batches are usually a handful of predicates (and this also runs on
+        // every deserialization), so parallel hashing only pays off on large
+        // module batches.
+        const PARALLEL_HASH_MIN_PREDICATES: usize = 8;
+        let hash_entry = |(index, pred): (usize, &CustomPredicate)| {
+            let cp_hash = hash_fields(&pred.to_fields());
+            (Value::from(index as i64).raw(), Value::from(cp_hash).raw())
+        };
+        let kvs: HashMap<RawValue, RawValue> = if predicates.len() >= PARALLEL_HASH_MIN_PREDICATES {
+            predicates.par_iter().enumerate().map(hash_entry).collect()
+        } else {
+            predicates.iter().enumerate().map(hash_entry).collect()
+        };
         let mt = MerkleTree::new(&kvs);
         Self::Full { mt, predicates }
     }

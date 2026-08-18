@@ -333,9 +333,34 @@ fn build_single_batch(
     params: &Params,
     batch_name: &str,
 ) -> Result<Arc<CustomPredicateBatch>, BatchingError> {
+    use rayon::prelude::*;
+
     let mut builder = CustomPredicateBatchBuilder::new(params.clone(), batch_name.to_string());
 
-    for pred in predicates {
+    // Statement-template construction is a pure function of the symbol table
+    // and reference map, so it runs in parallel; only the batch insertion
+    // below stays sequential. Errors resolve in the sequential loop so the
+    // first predicate in declaration order gets blamed, whatever the thread
+    // scheduling.
+    let prepared: Vec<Result<Vec<StatementTmplBuilder>, BatchingError>> = predicates
+        .par_iter()
+        .map(|pred| {
+            pred.statements
+                .iter()
+                .map(|stmt| {
+                    build_statement_with_resolved_refs(
+                        stmt,
+                        reference_map,
+                        &pred.name.name,
+                        symbols,
+                    )
+                })
+                .collect::<Result<_, _>>()
+        })
+        .collect();
+
+    for (pred, statement_builders) in predicates.iter().zip(prepared) {
+        let statement_builders = statement_builders?;
         let name = &pred.name.name;
 
         // Collect argument names
@@ -352,13 +377,6 @@ fn build_single_batch(
             .as_ref()
             .map(|args| args.iter().map(|a| a.name.as_str()).collect())
             .unwrap_or_default();
-
-        // Build statement templates with resolved predicates
-        let statement_builders: Vec<StatementTmplBuilder> = pred
-            .statements
-            .iter()
-            .map(|stmt| build_statement_with_resolved_refs(stmt, reference_map, name, symbols))
-            .collect::<Result<_, _>>()?;
 
         let conjunction = pred.conjunction_type == ConjunctionType::And;
 
