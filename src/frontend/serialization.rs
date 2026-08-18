@@ -61,7 +61,7 @@ mod tests {
     use super::*;
     use crate::{
         backends::plonky2::{
-            mainpod::{rec_main_pod_circuit_data, Prover},
+            mainpod::{cache_get_rec_main_pod_verifier_circuit_data, Prover},
             mock::mainpod::MockProver,
             primitives::ec::schnorr::SecretKey,
             signer::Signer,
@@ -199,7 +199,11 @@ mod tests {
             ..Default::default()
         };
         let mut vds = DEFAULT_VD_LIST.clone();
-        vds.push(rec_main_pod_circuit_data(&params).1.verifier_only.clone());
+        vds.push(
+            cache_get_rec_main_pod_verifier_circuit_data(&params)
+                .verifier_only
+                .clone(),
+        );
         let vd_set = VDSet::new(&vds);
 
         let (gov_id_builder, pay_stub_builder) = zu_kyc_sign_dict_builders(&params);
