@@ -909,7 +909,11 @@ pub mod tests {
         };
         println!("{:#?}", params);
         let mut vds = DEFAULT_VD_LIST.clone();
-        vds.push(rec_main_pod_circuit_data(&params).1.verifier_only.clone());
+        vds.push(
+            cache_get_rec_main_pod_verifier_circuit_data(&params)
+                .verifier_only
+                .clone(),
+        );
         let vd_set = VDSet::new(&vds);
 
         let (gov_id_builder, pay_stub_builder) = zu_kyc_sign_dict_builders(&params);
@@ -969,7 +973,11 @@ pub mod tests {
             ..Default::default()
         };
         let mut vds = DEFAULT_VD_LIST.clone();
-        vds.push(rec_main_pod_circuit_data(&params).1.verifier_only.clone());
+        vds.push(
+            cache_get_rec_main_pod_verifier_circuit_data(&params)
+                .verifier_only
+                .clone(),
+        );
         let vd_set = VDSet::new(&vds);
 
         let mut gov_id_builder = frontend::SignedDictBuilder::new(&params);
@@ -1037,7 +1045,11 @@ pub mod tests {
             ..Default::default()
         };
         let mut vds = DEFAULT_VD_LIST.clone();
-        vds.push(rec_main_pod_circuit_data(&params).1.verifier_only.clone());
+        vds.push(
+            cache_get_rec_main_pod_verifier_circuit_data(&params)
+                .verifier_only
+                .clone(),
+        );
         let vd_set = VDSet::new(&vds);
 
         let builder = frontend::MainPodBuilder::new(&params, &vd_set);
@@ -1085,7 +1097,11 @@ pub mod tests {
             },
         };
         let mut vds = DEFAULT_VD_LIST.clone();
-        vds.push(rec_main_pod_circuit_data(&params).1.verifier_only.clone());
+        vds.push(
+            cache_get_rec_main_pod_verifier_circuit_data(&params)
+                .verifier_only
+                .clone(),
+        );
         let vd_set = VDSet::new(&vds);
 
         let pod_builder = frontend::MainPodBuilder::new(&params, &vd_set);
@@ -1157,7 +1173,11 @@ pub mod tests {
         };
         println!("{:#?}", params);
         let mut vds = DEFAULT_VD_LIST.clone();
-        vds.push(rec_main_pod_circuit_data(&params).1.verifier_only.clone());
+        vds.push(
+            cache_get_rec_main_pod_verifier_circuit_data(&params)
+                .verifier_only
+                .clone(),
+        );
         let vd_set = VDSet::new(&vds);
 
         let mut cpb_builder = CustomPredicateBatchBuilder::new(params.clone(), "cpb".into());
@@ -1235,7 +1255,11 @@ pub mod tests {
             ..Default::default()
         };
         let mut vds = DEFAULT_VD_LIST.clone();
-        vds.push(rec_main_pod_circuit_data(&params).1.verifier_only.clone());
+        vds.push(
+            cache_get_rec_main_pod_verifier_circuit_data(&params)
+                .verifier_only
+                .clone(),
+        );
         let vd_set = VDSet::new(&vds);
 
         // Build a batch: pred_A references pred_B's hash, pred_B references pred_A's hash
@@ -1380,7 +1404,11 @@ pub mod tests {
         let arr = middleware::containers::Array::new(vec![Value::from(7i64), Value::from(13i64)]);
 
         let mut vds = DEFAULT_VD_LIST.clone();
-        vds.push(rec_main_pod_circuit_data(&params).1.verifier_only.clone());
+        vds.push(
+            cache_get_rec_main_pod_verifier_circuit_data(&params)
+                .verifier_only
+                .clone(),
+        );
         let vd_set = VDSet::new(&vds);
 
         let mut builder = MainPodBuilder::new(&params, &vd_set);
