@@ -135,8 +135,7 @@ pub struct CustomPredicateBatchBuilder {
     /// `push_predicate()`, which keep the name index in step.
     predicates: Vec<CustomPredicate>,
     /// Name -> index over `predicates`, so name lookups don't rescan the
-    /// whole batch. On a duplicate name the first index wins, matching a
-    /// front-to-back scan.
+    /// whole batch.
     predicate_index_by_name: HashMap<String, usize>,
     /// Forward references to resolve in finish(): (predicate_idx, statement_idx, arg_idx, name)
     pending_self_pred_hashes: Vec<(usize, usize, usize, String)>,
@@ -158,12 +157,20 @@ impl CustomPredicateBatchBuilder {
     }
 
     /// Append a prebuilt predicate, skipping the checks `predicate()`
-    /// performs.
-    pub fn push_predicate(&mut self, predicate: CustomPredicate) {
+    /// performs except for name uniqueness: duplicate names would make
+    /// name lookups (and `finish()`'s forward-reference resolution) bind
+    /// silently to the first occurrence.
+    pub fn push_predicate(&mut self, predicate: CustomPredicate) -> Result<()> {
+        if self.predicate_index_by_name.contains_key(&predicate.name) {
+            return Err(Error::custom(format!(
+                "Duplicate predicate name '{}' in batch",
+                predicate.name
+            )));
+        }
         self.predicate_index_by_name
-            .entry(predicate.name.clone())
-            .or_insert(self.predicates.len());
+            .insert(predicate.name.clone(), self.predicates.len());
         self.predicates.push(predicate);
+        Ok(())
     }
 
     pub fn predicate_and(
@@ -290,7 +297,7 @@ impl CustomPredicateBatchBuilder {
                 .map(|s| s.to_string())
                 .collect(),
         )?;
-        self.push_predicate(custom_predicate);
+        self.push_predicate(custom_predicate)?;
         self.pending_self_pred_hashes.extend(pending);
         Ok(Predicate::BatchSelf(self.predicates.len() - 1))
     }

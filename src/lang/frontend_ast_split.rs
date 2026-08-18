@@ -145,39 +145,32 @@ pub fn split_predicates_if_needed(
 ) -> Result<Vec<SplitResult>, SplittingError> {
     use rayon::prelude::*;
 
-    // The sequential path validates and splits one predicate at a time, so
-    // when a module has several bad predicates the first one declared is the
-    // one blamed. Only the predicates ahead of the first validation failure
-    // get searched here, which keeps that ordering.
-    let validation_failure = predicates.iter().enumerate().find_map(|(index, pred)| {
-        validate_predicate_is_splittable(pred)
-            .err()
-            .map(|err| (index, err))
-    });
-    let searchable = &predicates[..validation_failure
-        .as_ref()
-        .map_or(predicates.len(), |(index, _)| *index)];
+    // Validation failures win over search failures; within each kind the
+    // first predicate declared is the one blamed.
+    predicates
+        .iter()
+        .try_for_each(validate_predicate_is_splittable)?;
 
     // Predicates over the statement cap get a prepared split input; the rest
     // pass through whole. Typical modules have none, so skip the rayon
     // dispatch entirely for them.
-    let inputs: Vec<Option<SplitInput>> = if searchable.iter().any(needs_split) {
-        searchable
+    let inputs: Vec<Option<SplitInput>> = if predicates.iter().any(needs_split) {
+        predicates
             .par_iter()
             .map(|pred| needs_split(pred).then(|| prepare_split_input(pred)))
             .collect()
     } else {
-        searchable.iter().map(|_| None).collect()
+        predicates.iter().map(|_| None).collect()
     };
 
     // One representative per distinct shape, in first-encounter order so a
-    // search failure surfaces the same predicate the sequential loop would
-    // have blamed. `rep_of_pred` points each splitting predicate at its
-    // shape's slot in `representatives`.
+    // search failure blames the first predicate declared with that shape.
+    // `rep_of_pred` points each splitting predicate at its shape's slot in
+    // `representatives`.
     let mut rep_of_shape: HashMap<&SplitShape, usize> = HashMap::new();
     let mut representatives: Vec<(&str, &SplitInput)> = Vec::new();
-    let mut rep_of_pred: Vec<Option<usize>> = Vec::with_capacity(searchable.len());
-    for (pred, input) in searchable.iter().zip(&inputs) {
+    let mut rep_of_pred: Vec<Option<usize>> = Vec::with_capacity(predicates.len());
+    for (pred, input) in predicates.iter().zip(&inputs) {
         rep_of_pred.push(input.as_ref().map(|input| {
             *rep_of_shape.entry(&input.shape).or_insert_with(|| {
                 representatives.push((pred.name.name.as_str(), input));
@@ -191,12 +184,6 @@ pub fn split_predicates_if_needed(
         .map(|(name, input)| search_link_assignment(name, input, params))
         .collect();
     let assignments: Vec<LinkAssignment> = searched.into_iter().collect::<Result<_, _>>()?;
-
-    // Past this point every predicate was validated, so `inputs` and
-    // `rep_of_pred` have an entry for each of them.
-    if let Some((_, err)) = validation_failure {
-        return Err(err);
-    }
 
     let results: Vec<Result<SplitResult, SplittingError>> = predicates
         .into_par_iter()
@@ -2010,11 +1997,11 @@ mod tests {
         }
     }
 
-    /// When a module has a predicate whose split search fails ahead of one
-    /// that fails validation, the first one declared is the one blamed, just
-    /// as when the predicates are split one at a time.
+    /// When a module has both a predicate whose split search fails and one
+    /// that fails validation, the validation failure is the one blamed, even
+    /// if the search failure comes first in declaration order.
     #[test]
-    fn test_module_split_blames_first_failing_predicate() {
+    fn test_module_split_blames_validation_failure_first() {
         let dense = build_pred(
             "dense",
             &["A"],
@@ -2040,10 +2027,10 @@ mod tests {
         let err = split_predicates_if_needed(vec![dense, wide], &params)
             .expect_err("splitter should fail");
         match err {
-            SplittingError::TooManyTotalArgsInChainLink { predicate, .. } => {
-                assert_eq!(predicate, "dense");
+            SplittingError::TooManyPublicArgs { predicate, .. } => {
+                assert_eq!(predicate, "wide");
             }
-            other => panic!("expected TooManyTotalArgsInChainLink, got: {:?}", other),
+            other => panic!("expected TooManyPublicArgs, got: {:?}", other),
         }
     }
 
