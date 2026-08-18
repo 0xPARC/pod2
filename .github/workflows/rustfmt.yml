@@ -17,5 +17,7 @@ jobs:
       - uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           components: rustfmt
+          # Nothing is compiled here, so there is nothing worth caching.
+          cache: false
       - name: Check formatting
         uses: actions-rust-lang/rustfmt@v1
