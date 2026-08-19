@@ -37,7 +37,15 @@ jobs:
         # built on a different host, and this fleet mixes hosts with and
         # without AVX-512, so `native` would bake in instructions the next
         # runner may not have. AVX2 alone is safe on any x86 runner.
-        rustflags: "-D warnings -C target-feature=+avx2"
+        #
+        # `+pclmulqdq` is not optional. Build scripts see these features via
+        # CARGO_CFG_TARGET_FEATURE, and librocksdb-sys passes `-mavx2` to its
+        # C++ compiler when it sees avx2, which switches rocksdb onto a
+        # PCLMUL-based CRC32 path. It only passes `-mpclmul` when it also sees
+        # `pclmulqdq`, so avx2 alone fails to compile crc32c.cc. Note that
+        # `-C target-cpu=x86-64-v3` does NOT imply pclmulqdq and hits the same
+        # wall. PCLMULQDQ predates AVX2 in hardware, so this adds no floor.
+        rustflags: "-D warnings -C target-feature=+avx2,+pclmulqdq"
     - name: Check the runner has AVX2
       # plonky2 has no runtime fallback, so a runner without AVX2 would die
       # with SIGILL somewhere inside a proof. Fail here with a readable reason.
