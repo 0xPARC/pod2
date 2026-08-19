@@ -28,10 +28,37 @@ jobs:
         # saving from PRs just burns into the repo's 10 GB cache budget and can
         # evict the one entry every PR actually restores from.
         cache-save-if: ${{ github.ref == 'refs/heads/main' }}
+        # Proving is field-arithmetic heavy and plonky2 picks its Goldilocks
+        # packing at compile time, so without this every run uses the scalar
+        # 1-wide path. Measured at roughly -9% on MainPod::prove, reproduced on
+        # both Intel and AMD runners.
+        #
+        # A fixed feature, never `target-cpu=native`: rust-cache restores rlibs
+        # built on a different host, and this fleet mixes hosts with and
+        # without AVX-512, so `native` would bake in instructions the next
+        # runner may not have. AVX2 alone is safe on any x86 runner.
+        rustflags: "-D warnings -C target-feature=+avx2"
+    - name: Check the runner has AVX2
+      # plonky2 has no runtime fallback, so a runner without AVX2 would die
+      # with SIGILL somewhere inside a proof. Fail here with a readable reason.
+      run: |
+        grep -qm1 avx2 /proc/cpuinfo || {
+          echo "::error::runner lacks AVX2; drop +avx2 from rustflags in this workflow"
+          exit 1
+        }
     - name: Run tests
       # RocksDB is disabled by default but we still want to test it.
-      run: cargo test --release --features db_rocksdb
+      #
+      # mimalloc is CI-only, via a feature rather than a default: proving
+      # allocates heavily and this measured about -5% here (more on machines
+      # with more cores). pod2 must not impose an allocator on the programs
+      # that depend on it, so the hook is `cfg(test)` gated and applications
+      # that want it set their own `#[global_allocator]`.
+      #
+      # The example steps below must use the same feature set, or pod2 gets
+      # rebuilt between the steps.
+      run: cargo test --release --features db_rocksdb,mimalloc
     - name: Run example 1
-      run: cargo run --release --features db_rocksdb --example main_pod_points -- --mock
+      run: cargo run --release --features db_rocksdb,mimalloc --example main_pod_points -- --mock
     - name: Run example 2
-      run: cargo run --release --features db_rocksdb --example signed_dict
+      run: cargo run --release --features db_rocksdb,mimalloc --example signed_dict

@@ -3,11 +3,6 @@ name: Test timings
 # Manual only: this exists to answer "what is CI actually spending its time on",
 # not to gate anything. It costs nothing until someone runs it.
 on:
-  # TEMPORARY: remove before merging. workflow_dispatch only registers from the
-  # default branch, so this is the only way to exercise the workflow before it
-  # lands on main.
-  push:
-    branches: [test-timings]
   workflow_dispatch:
     inputs:
       filter:
