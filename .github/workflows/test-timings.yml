@@ -3,6 +3,11 @@ name: Test timings
 # Manual only: this exists to answer "what is CI actually spending its time on",
 # not to gate anything. It costs nothing until someone runs it.
 on:
+  # TEMPORARY: remove before merging. workflow_dispatch only registers from the
+  # default branch, so this is the only way to exercise the workflow before it
+  # lands on main.
+  push:
+    branches: [test-timings]
   workflow_dispatch:
     inputs:
       filter:
@@ -29,9 +34,15 @@ jobs:
       # timings silently vanish. Tests still run in parallel, so samples
       # interleave and cannot be attributed to an individual test; the totals
       # are what this job is for.
+      #
+      # The filter goes through env rather than being interpolated into the
+      # script: a dispatch input pasted straight into `run:` would let anyone
+      # who can trigger the workflow run arbitrary commands.
+      env:
+        FILTER: ${{ inputs.filter || '' }}
       run: |
         set -o pipefail
-        cargo test --release --features time,db_rocksdb ${{ inputs.filter }} \
+        cargo test --release --features time,db_rocksdb ${FILTER:+"$FILTER"} \
           -- --nocapture 2>&1 | tee timings.log
     - name: Summarise
       if: always()
