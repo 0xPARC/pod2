@@ -51,6 +51,13 @@ good_lp = { version = "1.8", default-features = false, features = [
 annotate-snippets = "0.11"
 rocksdb = { version = "0.24.0", optional = true } # keyvalue database for merkletree
 
+# Alternative global allocators, for the experiment in #398. Proving is
+# allocation-heavy, so the allocator is worth measuring. These are only ever
+# installed by pod2's own test harness and examples, never by pod2 as a
+# dependency (see the `cfg(test)` gate in src/lib.rs).
+mimalloc = { version = "0.1.52", optional = true }
+tikv-jemallocator = { version = "0.7.0", optional = true }
+
 # Uncomment for debugging with https://github.com/ed255/plonky2/ at branch `feat/debug`.  The repo directory needs to be checked out next to the pod2 repo directory.
 # [patch."https://github.com/0xPARC/plonky2"]
 # plonky2 = { path = "../plonky2/plonky2" }
@@ -84,6 +91,10 @@ db_rocksdb = ["rocksdb"]
 # dependency out of slim builds; on for the test target unconditionally via
 # `[dev-dependencies] good_lp` so the parity sweep always builds.
 milp = ["dep:good_lp"]
+# Swap the global allocator in the test harness and examples. Mutually
+# exclusive, and diagnostic only.
+mimalloc = ["dep:mimalloc"]
+jemalloc = ["dep:tikv-jemallocator"]
 
 # Uncomment in order to enable debug information in the release builds.  This allows getting panic backtraces with a performance similar to regular release.
 # [profile.release]

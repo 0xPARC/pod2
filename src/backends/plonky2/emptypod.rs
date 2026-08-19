@@ -130,7 +130,10 @@ impl EmptyPod {
 
         let mut pw = PartialWitness::<F>::new();
         empty_pod_verify_target.set_targets(&mut pw, vd_set.root())?;
-        let proof = timed!("EmptyPod prove", data.prove(pw)?);
+        let proof = timed!(
+            "EmptyPod prove",
+            crate::backends::plonky2::prove_with_timing("EmptyPod prove", data, pw)?
+        );
         let common_hash = hash_common_data(&data.common).expect("hash ok");
         Ok(EmptyPod {
             params: Params::default(),

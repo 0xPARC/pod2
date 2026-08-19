@@ -39,6 +39,51 @@ use crate::{
     timed,
 };
 
+/// Prove `circuit_data`, and under the `time` feature also report plonky2's own
+/// breakdown of the proof: witness generation, wire polynomials and their
+/// commitment, partial products, quotient polynomials and the opening proofs.
+///
+/// `CircuitData::prove` hands plonky2 a throwaway `TimingTree` and discards all
+/// of that, which leaves a proof as a single opaque number. Since proving
+/// dominates the test suite, that is the number worth splitting up.
+pub(crate) fn prove_with_timing(
+    name: &str,
+    circuit_data: &basetypes::CircuitData,
+    pw: plonky2::iop::witness::PartialWitness<F>,
+) -> anyhow::Result<basetypes::ProofWithPublicInputs> {
+    #[cfg(not(feature = "time"))]
+    {
+        let _ = name;
+        circuit_data.prove(pw)
+    }
+    #[cfg(feature = "time")]
+    {
+        use plonky2::{plonk::prover::prove, util::timing::TimingTree};
+
+        // plonky2 reports the tree through the `log` crate, so with no logger
+        // installed the timings vanish without a trace. Installing one from
+        // library code is only tolerable because this is behind `time`, a
+        // diagnostic-only feature. RUST_LOG still wins if it is set.
+        static LOGGER: std::sync::Once = std::sync::Once::new();
+        LOGGER.call_once(|| {
+            let _ = env_logger::Builder::from_env(
+                env_logger::Env::default().default_filter_or("debug"),
+            )
+            .try_init();
+        });
+
+        let mut timing = TimingTree::new(name, log::Level::Debug);
+        let proof = prove(
+            &circuit_data.prover_only,
+            &circuit_data.common,
+            pw,
+            &mut timing,
+        )?;
+        timing.print();
+        Ok(proof)
+    }
+}
+
 pub fn cache_get_standard_rec_main_pod_common_circuit_data(
 ) -> CacheEntry<CommonCircuitDataSerializer> {
     let params = Params::default();
