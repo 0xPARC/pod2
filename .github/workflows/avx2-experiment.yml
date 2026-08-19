@@ -1,0 +1,98 @@
+name: AVX2 experiment
+
+# Does compiling with AVX2 speed up proving? plonky2 selects its Goldilocks
+# packing at compile time (field/src/packable.rs), and nothing in this repo sets
+# a target feature, so every build today uses the scalar 1-wide path even on
+# hardware with a 4-wide implementation sitting in the tree.
+#
+# Both variants are built and run in ONE job on ONE runner deliberately.
+# Splitting them across jobs would reintroduce host-to-host variance, which is
+# large enough here (suite wall clock has ranged 563s-988s on identical code) to
+# swamp the effect being measured.
+on:
+  workflow_dispatch:
+    inputs:
+      test:
+        description: "Test to measure (one test, run serially)"
+        required: false
+        default: "backends::plonky2::mainpod::tests::test_main_zu_kyc"
+      repeats:
+        description: "Alternating measurements per variant"
+        required: false
+        default: "3"
+
+jobs:
+  avx2:
+    name: AVX2 experiment
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: Set up Rust
+      uses: actions-rust-lang/setup-rust-toolchain@v1
+      with:
+        # RUSTFLAGS is set per step below, so stop the action from imposing its
+        # own. Caching is off: each variant needs its own full build anyway,
+        # and this job must not touch the entry that PRs restore from.
+        rustflags: ""
+        cache: false
+
+    - name: Record the CPU
+      # If the runner lacks AVX2 the second binary would die with SIGILL, since
+      # plonky2 has no runtime fallback. Fail here with something readable.
+      run: |
+        grep -m1 "model name" /proc/cpuinfo
+        if grep -qm1 avx2 /proc/cpuinfo; then
+          echo "avx2: present"
+        else
+          echo "::error::this runner has no AVX2; rerun to get a different host"
+          exit 1
+        fi
+        grep -qm1 avx512f /proc/cpuinfo && echo "note: avx512 also present (not used)" || true
+
+    - name: Build baseline
+      env:
+        CARGO_TARGET_DIR: target-base
+        RUSTFLAGS: ""
+      run: cargo test --release --features time --no-run
+
+    - name: Build with AVX2
+      env:
+        CARGO_TARGET_DIR: target-avx2
+        RUSTFLAGS: "-C target-feature=+avx2"
+      run: cargo test --release --features time --no-run
+
+    - name: Measure
+      # Alternate the variants so any thermal or noisy-neighbour drift over the
+      # job's lifetime is shared between them rather than landing on whichever
+      # ran second.
+      run: |
+        set -o pipefail
+        : > base.log
+        : > avx2.log
+        for i in $(seq 1 ${{ inputs.repeats }}); do
+          echo "=== round $i ==="
+          CARGO_TARGET_DIR=target-base RUSTFLAGS="" \
+            cargo test --release --features time '${{ inputs.test }}' \
+            -- --exact --nocapture --test-threads=1 2>&1 | tee -a base.log
+          CARGO_TARGET_DIR=target-avx2 RUSTFLAGS="-C target-feature=+avx2" \
+            cargo test --release --features time '${{ inputs.test }}' \
+            -- --exact --nocapture --test-threads=1 2>&1 | tee -a avx2.log
+        done
+
+    - name: Compare
+      if: always()
+      # Read the per-scope deltas, not just the total. AVX2 should move
+      # "build Merkle tree", "compute quotient polys" and "FFT + blinding",
+      # and leave "transpose LDEs" (memory bound) and "run N generators"
+      # (scalar) roughly alone. A uniform shift across every scope is noise,
+      # not a result.
+      run: .github/workflows/scripts/summarise-timings.py base.log avx2.log
+
+    - name: Upload logs
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: avx2-experiment
+        path: |
+          base.log
+          avx2.log
