@@ -160,7 +160,7 @@ fn operation_verify(
         custom_predicate_verifications: Vec::new(),
     };
     let aux_tables =
-        build_operation_aux_table_circuit(&params, &mut builder, &[], &[], &aux_table_inputs)?;
+        build_operation_aux_table_circuit(&params, &mut builder, &[], &aux_table_inputs)?;
 
     let st_hash_target = st_target.hash(&mut builder);
     verify_operation_circuit(
@@ -1799,7 +1799,6 @@ fn test_aux_query_kinds_are_pairwise_distinct() -> Result<()> {
         hash_merkle_not_contains_query(&mut builder, h_a, v_a),
         hash_merkle_transition_query(&mut builder, op, h_a, h_b, v_a, v_b),
         hash_merkle_delete_query(&mut builder, h_a, h_b, v_a),
-        hash_open_input_statement_query(&mut builder, &h_a),
         hash_pair_query(&mut builder, OperationAuxQueryKind::PublicKeyOf, h_a, h_b),
         hash_pair_query(&mut builder, OperationAuxQueryKind::SignedBy, h_a, h_b),
         hash_custom_predicate_verify_query(&mut builder, &h_a, &op_type, &op_arg_hashes),
@@ -2064,7 +2063,6 @@ fn helper_verify_operation_through_aux_table(
         params,
         &mut builder,
         &custom_predicate_table,
-        &[],
         &aux_table_input,
     )?;
 

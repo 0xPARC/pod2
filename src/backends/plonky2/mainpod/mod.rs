@@ -360,26 +360,60 @@ pub(crate) fn extract_signatures(
     Ok(table)
 }
 
-pub(crate) fn extract_open_input_statements(
+/// The input statements split into imports, which occupy the copy region rows of the statement
+/// table, and local statements, which occupy universal slots.
+pub(crate) struct PartitionedInputs {
+    /// (is_pub, output statement, import data) per OpenInputStatement op, in input order
+    pub imports: Vec<(bool, middleware::Statement, InputPodOpenStatement)>,
+    /// (is_pub, output statement) per remaining op, in input order
+    pub local_statements: Vec<(bool, middleware::Statement)>,
+    pub local_operations: Vec<middleware::Operation>,
+}
+
+pub(crate) fn partition_inputs(
     params: &Params,
-    aux_list: &mut [OperationAux],
-    operations: &[middleware::Operation],
-) -> Result<Vec<InputPodOpenStatement>> {
-    let mut table = Vec::new();
-    for (i, op) in operations.iter().enumerate() {
+    inputs: &MainPodInputs,
+) -> Result<PartitionedInputs> {
+    let mut imports = Vec::new();
+    let mut local_statements = Vec::new();
+    let mut local_operations = Vec::new();
+    for ((is_pub, st), op) in zip_eq(inputs.statements, inputs.operations) {
         if let middleware::Operation::OpenInputStatement(input_pod_open_statement) = op {
-            aux_list[i] = OperationAux::OpenInputStatement(table.len());
-            table.push(input_pod_open_statement.clone());
+            imports.push((*is_pub, st.clone(), input_pod_open_statement.clone()));
+        } else {
+            local_statements.push((*is_pub, st.clone()));
+            local_operations.push(op.clone());
         }
     }
-    if table.len() > params.max_open_input_statement_ops {
+    if imports.len() > params.max_open_input_statement_ops {
         return Err(Error::custom(format!(
             "The number of required input openings ({}) exceeds the maximum number ({}).",
-            table.len(),
+            imports.len(),
             params.max_open_input_statement_ops
         )));
     }
-    Ok(table)
+    if local_statements.len() > params.max_statements {
+        return Err(Error::custom(format!(
+            "The number of local statements ({}) exceeds the maximum number ({}).",
+            local_statements.len(),
+            params.max_statements
+        )));
+    }
+    Ok(PartitionedInputs {
+        imports,
+        local_statements,
+        local_operations,
+    })
+}
+
+pub(crate) fn extract_open_input_statements(
+    partitioned: &PartitionedInputs,
+) -> Vec<InputPodOpenStatement> {
+    partitioned
+        .imports
+        .iter()
+        .map(|(_, _, input_pod_open_statement)| input_pod_open_statement.clone())
+        .collect()
 }
 
 /// Find the operation argument statement in the list of previous statements and return the index.
@@ -416,10 +450,12 @@ fn pad_operation_args(args: &mut Vec<OperationArg>) {
 }
 
 /// Returns the statements from the given MainPodInputs, padding to the respective max lengths
-/// defined at the given Params.
+/// defined at the given Params.  Layout order matches the circuit's statement table: the None
+/// row, then the copy region (imports), then the universal slots.
 pub(crate) fn layout_statements(
     params: &Params,
     inputs: &MainPodInputs,
+    partitioned: &PartitionedInputs,
 ) -> Result<(Vec<bool>, Vec<Statement>)> {
     let mut statements_is_pub = Vec::new();
     let mut statements = Vec::new();
@@ -429,16 +465,24 @@ pub(crate) fn layout_statements(
     statements.push(middleware::Statement::None.into());
     statements_is_pub.push(false);
 
-    // Input statements
-    assert!(
-        inputs.statements.len() <= params.max_statements,
-        "inputs.statements.len={} > params.max_statements={}",
-        inputs.statements.len(),
-        params.max_statements
-    );
+    // Copy region rows.  Unused rows are None here: the circuit fills them with a valid dummy
+    // import, but nothing references or publishes them, so the layout never has to match it.
+    for i in 0..params.max_open_input_statement_ops {
+        let (is_pub, st) = partitioned
+            .imports
+            .get(i)
+            .map(|(is_pub, st, _)| (*is_pub, st.clone()))
+            .unwrap_or((false, middleware::Statement::None));
+        let mut st = Statement::from(st);
+        pad_statement(&mut st);
+        statements.push(st);
+        statements_is_pub.push(is_pub);
+    }
+
+    // Universal statement slots
     for i in 0..params.max_statements {
-        let (is_pub, st) = inputs
-            .statements
+        let (is_pub, st) = partitioned
+            .local_statements
             .get(i)
             .unwrap_or(&(false, middleware::Statement::None))
             .clone();
@@ -463,7 +507,7 @@ pub(crate) fn process_statements_operations(
     params: &Params,
     statements: &[Statement],
     aux_list: &[OperationAux],
-    input_operations: &[middleware::Operation],
+    partitioned: &PartitionedInputs,
 ) -> Result<Vec<Operation>> {
     assert_eq!(params.max_statements, aux_list.len());
     let mut operations = Vec::new();
@@ -477,8 +521,30 @@ pub(crate) fn process_statements_operations(
         args,
         OperationAux::None,
     ));
+
+    // Copy region operations, aligned with the copy rows of the statement table.  These never
+    // become circuit operation witnesses; they exist so the statement/operation pairing stays
+    // uniform for the mock prover and for display.
+    for i in 0..params.max_open_input_statement_ops {
+        let mut args = Vec::new();
+        pad_operation_args(&mut args);
+        let (op_type, aux) = if i < partitioned.imports.len() {
+            (
+                middleware::OperationType::Native(NativeOperation::OpenInputStatement),
+                OperationAux::OpenInputStatement(i),
+            )
+        } else {
+            (
+                middleware::OperationType::Native(NativeOperation::None),
+                OperationAux::None,
+            )
+        };
+        operations.push(Operation(op_type, args, aux));
+    }
+
     for (i, aux) in aux_list.iter().enumerate() {
-        let op = input_operations
+        let op = partitioned
+            .local_operations
             .get(i)
             .unwrap_or(&middleware::Operation::None)
             .clone();
@@ -520,19 +586,25 @@ impl MainPodProver for Prover {
             ..inputs
         };
 
-        let input_statements: Vec<_> = inputs.statements.iter().map(|(_, st)| st.clone()).collect();
+        let partitioned = partition_inputs(params, &inputs)?;
+        let local_operations = &partitioned.local_operations;
+        let input_statements: Vec<_> = partitioned
+            .local_statements
+            .iter()
+            .map(|(_, st)| st.clone())
+            .collect();
 
         // Aux values for backend::Operation
         let mut aux_list = vec![OperationAux::None; params.max_statements];
         let merkle_proofs =
-            extract_merkle_proofs(params, &mut aux_list, inputs.operations, &input_statements)?;
+            extract_merkle_proofs(params, &mut aux_list, local_operations, &input_statements)?;
         let merkle_transition_proofs =
-            extract_merkle_transition_proofs(params, &mut aux_list, inputs.operations)?;
-        let custom_predicates = extract_custom_predicates(params, inputs.operations)?;
+            extract_merkle_transition_proofs(params, &mut aux_list, local_operations)?;
+        let custom_predicates = extract_custom_predicates(params, local_operations)?;
         let custom_predicate_verifications = extract_custom_predicate_verifications(
             params,
             &mut aux_list,
-            inputs.operations,
+            local_operations,
             &input_statements,
             &custom_predicates,
         )?;
@@ -547,8 +619,7 @@ impl MainPodProver for Prover {
                 (cpr, mtp)
             })
             .collect_vec();
-        let open_input_statements =
-            extract_open_input_statements(params, &mut aux_list, inputs.operations)?;
+        let open_input_statements = extract_open_input_statements(&partitioned);
         let pad_open_input_statement = if params.max_input_pods != 0 {
             let pod = &inputs.pods[0];
             let (_, proof) = pod.pub_raw_statements_mt().prove(0)?;
@@ -565,13 +636,13 @@ impl MainPodProver for Prover {
             None
         };
         let public_key_sks =
-            extract_public_key(params, &mut aux_list, inputs.operations, &input_statements)?;
+            extract_public_key(params, &mut aux_list, local_operations, &input_statements)?;
         let signed_bys =
-            extract_signatures(params, &mut aux_list, inputs.operations, &input_statements)?;
+            extract_signatures(params, &mut aux_list, local_operations, &input_statements)?;
 
-        let (statements_is_pub, statements) = layout_statements(params, &inputs)?;
+        let (statements_is_pub, statements) = layout_statements(params, &inputs, &partitioned)?;
         let operations =
-            process_statements_operations(params, &statements, &aux_list, inputs.operations)?;
+            process_statements_operations(params, &statements, &aux_list, &partitioned)?;
 
         let (pub_sts_mt, sts_mt_proofs, pub_sts) =
             process_public_statements(params, &inputs, &statements_is_pub, &statements)?;
@@ -1545,7 +1616,9 @@ pub mod tests {
         let pod_1 = builder.prove(prover).unwrap();
         pod_1.pod.verify().unwrap();
 
-        assert_eq!(pod_1.public_statements[1], st_lt);
+        // Public statements follow physical statement order, and the copy region precedes the
+        // universal slots, so the imported statement comes before the locally derived one.
+        assert_eq!(pod_1.public_statements[0], st_lt);
     }
 
     #[test]

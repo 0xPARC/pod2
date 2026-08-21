@@ -12,7 +12,7 @@ use crate::{
         error::{Error, Result},
         mainpod::{
             extract_merkle_proofs, extract_merkle_transition_proofs, extract_open_input_statements,
-            extract_signatures, layout_statements, process_public_statements,
+            extract_signatures, layout_statements, partition_inputs, process_public_statements,
             process_statements_operations, MerkleProofs, MerkleTransitionProofs, Operation,
             OperationAux, SignedBy, Statement,
         },
@@ -114,23 +114,28 @@ struct Data {
 
 impl MockMainPod {
     pub fn new(params: &Params, inputs: MainPodInputs) -> Result<Self> {
-        let (statements_is_pub, statements) = layout_statements(params, &inputs)?;
+        let partitioned = partition_inputs(params, &inputs)?;
+        let (statements_is_pub, statements) = layout_statements(params, &inputs, &partitioned)?;
 
-        let input_statements: Vec<_> = inputs.statements.iter().map(|(_, st)| st.clone()).collect();
+        let local_operations = &partitioned.local_operations;
+        let input_statements: Vec<_> = partitioned
+            .local_statements
+            .iter()
+            .map(|(_, st)| st.clone())
+            .collect();
         let mut aux_list = vec![OperationAux::None; params.max_statements];
         // Extract Merkle proofs and pad.
         let merkle_proofs =
-            extract_merkle_proofs(params, &mut aux_list, inputs.operations, &input_statements)?;
+            extract_merkle_proofs(params, &mut aux_list, local_operations, &input_statements)?;
         // Similarly for Merkle state transition proofs.
         let merkle_transition_proofs =
-            extract_merkle_transition_proofs(params, &mut aux_list, inputs.operations)?;
-        let open_input_statements =
-            extract_open_input_statements(params, &mut aux_list, inputs.operations)?;
+            extract_merkle_transition_proofs(params, &mut aux_list, local_operations)?;
+        let open_input_statements = extract_open_input_statements(&partitioned);
         let signatures =
-            extract_signatures(params, &mut aux_list, inputs.operations, &input_statements)?;
+            extract_signatures(params, &mut aux_list, local_operations, &input_statements)?;
 
         let operations =
-            process_statements_operations(params, &statements, &aux_list, inputs.operations)?;
+            process_statements_operations(params, &statements, &aux_list, &partitioned)?;
 
         let (pub_sts_mt, _, pub_sts) =
             process_public_statements(params, &inputs, &statements_is_pub, &statements)?;
