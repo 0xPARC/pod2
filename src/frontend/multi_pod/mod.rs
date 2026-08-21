@@ -1126,11 +1126,10 @@ mod tests {
                 }
 
                 // Probe whether the DP layer beats greedy on bin-packing's
-                // ordering. Under dynamic export tracking, bin-packing
-                // builds segments large enough that greedy cuts can no
-                // longer hit the DP's optimum on this ordering: greedy
-                // returns K=14, DP returns K=13. Pinned so any future
-                // shift back to parity is visible.
+                // ordering. Since imports moved to the copy region and
+                // stopped counting against max_statements, greedy's cuts
+                // reach the DP's optimum on this ordering: both return
+                // K=13. Pinned so any future divergence is visible.
                 let identity: Vec<usize> = (0..shape.num_statements()).collect();
                 let bp_ordering =
                     partition::kahn_bin_packing(&shape, &identity).expect("DAG must be acyclic");
@@ -1147,7 +1146,7 @@ mod tests {
                     k_dp <= k_greedy,
                     "DP must be at least as good as greedy on a fixed ordering"
                 );
-                assert_eq!(k_greedy, 14, "greedy on bin-packing's ordering pins at 14");
+                assert_eq!(k_greedy, 13, "greedy on bin-packing's ordering pins at 13");
                 assert_eq!(k_dp, 13, "DP on bin-packing's ordering pins at 13");
 
                 // Probe the DFS-from-sinks ordering's K directly.

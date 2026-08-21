@@ -229,18 +229,13 @@ pub fn solve_for_k(input: &InputShape, k: usize) -> Option<OutputShape> {
         }
     }
 
-    // (3) Statement-table cap per POD. Each `OpenInputStatement` op
-    // produces a statement, so the table holds `local statements +
-    // chain imports + external-statement imports`, capped by
-    // `max_statements`.
+    // (3) Statement-table cap per POD. Imports occupy the table's copy
+    // region, not universal slots, so only local statements count against
+    // `max_statements`; imports are capped separately by (7b).
     for p in 0..k {
         let assign_sum: Expression = (0..n).map(|s| v.assign[s][p]).sum();
-        let chain_sum: Expression = (0..n).map(|d| v.import_from[d][p]).sum();
-        let ext_sum: Expression = (0..num_ext_statements)
-            .map(|e_prem| v.ext_import_from[e_prem][p])
-            .sum();
         model.add_constraint(constraint!(
-            assign_sum + chain_sum + ext_sum <= input.params.max_statements as f64
+            assign_sum <= input.params.max_statements as f64
         ));
     }
 

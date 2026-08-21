@@ -423,12 +423,9 @@ impl GreedyState {
         if !tree_imports_ok(n_producers, n_ext_imports, n_ext_pods, params) {
             return None;
         }
-        // Statement-table cap: local segment statements plus chain and
-        // external imports together share `max_statements`, because each
-        // `OpenInputStatement` op produces a statement in the POD's table.
-        if tentative.num_operations + n_producers + n_ext_imports > params.max_statements {
-            return None;
-        }
+        // Imports occupy the statement table's copy region, not universal
+        // slots, so they don't count against `max_statements`: locals are
+        // covered by `fits_in_pod` above and imports by `tree_imports_ok`.
         Some(self.scratch_new_producers.len() + self.scratch_new_ext_imports.len())
     }
 
@@ -813,13 +810,9 @@ fn segment_feasible_with(
     let n_ext_pods = workspace.external_pods.len();
     let n_chain_imports = workspace.prev_pod_producers.len();
 
-    // Statement-table cap. Each `OpenInputStatement` op produces a statement
-    // in the POD's statement table, so the table holds `segment statements +
-    // imports`, capped by `max_statements`.
-    if segment.len() + n_chain_imports + n_ext_imports > params.max_statements {
-        return false;
-    }
-
+    // Imports occupy the statement table's copy region, not universal slots,
+    // so they don't count against `max_statements`; the segment-length check
+    // at the top covers locals and `tree_imports_ok` covers imports.
     if !tree_imports_ok(n_chain_imports, n_ext_imports, n_ext_pods, params) {
         return false;
     }
@@ -849,9 +842,6 @@ fn segment_feasible_with(
         }
     }
     let n_chain_imports_terminal = workspace.prev_pod_producers.len();
-    if segment.len() + n_chain_imports_terminal + n_ext_imports > params.max_statements {
-        return false;
-    }
     tree_imports_ok(n_chain_imports_terminal, n_ext_imports, n_ext_pods, params)
 }
 
@@ -1176,9 +1166,8 @@ mod tests {
     #[test]
     fn dependency_chain_respects_topo_order() {
         // 4 statements where each depends on the previous. With
-        // max_statements = 3, a 2-POD partition is feasible: one POD
-        // holds [0,1] (2 stmts, 0 imports) and the other [2,3] (2
-        // stmts + 1 chain import of stmt 1 = 3 stmts at cap).
+        // max_statements = 3, a 2-POD partition is feasible, e.g. [0,1]
+        // and [2,3] with the second POD chain-importing stmt 1.
         use super::super::cost::OperationCost;
         let params = Params {
             max_statements: 3,
