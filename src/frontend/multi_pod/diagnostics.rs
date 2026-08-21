@@ -270,7 +270,7 @@ impl SolutionBreakdown {
             .map(|pod_idx| {
                 let stmts = &output.pod_statements[pod_idx];
                 let is_output = pod_idx + 1 == pod_count;
-                let (mut resources, num_stmts) =
+                let (resources, num_stmts) =
                     aggregate_rows(stmts.iter().map(|&s| &input.costs[s]), &input.params);
 
                 let mut chain_imports: HashSet<usize> = HashSet::new();
@@ -299,12 +299,11 @@ impl SolutionBreakdown {
                     }
                 }
 
-                // Only chain imports add statements beyond assigned nodes.
+                // Imports occupy the statement table's copy region, not
+                // universal slots, so the "total statements" row counts
+                // locals only; imports get their own row against
+                // `max_open_input_statement_ops`.
                 let total_imports = chain_imports.len() + external_imports.len();
-                if let Some(row) = resources.iter_mut().find(|r| r.name == "total statements") {
-                    row.used += chain_imports.len();
-                }
-
                 let imports_row = UtilizationRow {
                     name: "tree imports",
                     used: total_imports,

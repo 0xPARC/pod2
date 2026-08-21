@@ -429,10 +429,9 @@ impl GreedyState {
         ) {
             return None;
         }
-        // Only chain imports add statements beyond assigned nodes.
-        if tentative.num_operations + n_producers > params.max_statements {
-            return None;
-        }
+        // Imports occupy the statement table's copy region, not universal
+        // slots, so they don't count against `max_statements`: locals are
+        // covered by `fits_in_pod` above and imports by `tree_imports_ok`.
         Some(self.scratch_new_producers.len() + self.scratch_new_ext_imports.len())
     }
 
@@ -848,11 +847,9 @@ fn segment_feasible_with(
     let n_ext_pods = workspace.external_pods.len();
     let n_chain_imports = workspace.prev_pod_producers.len();
 
-    // Only chain imports add statements beyond assigned nodes.
-    if segment.len() + n_chain_imports > params.max_statements {
-        return false;
-    }
-
+    // Imports occupy the statement table's copy region, not universal slots,
+    // so they don't count against `max_statements`; the segment-length check
+    // at the top covers locals and `tree_imports_ok` covers imports.
     let imports_ok =
         |n_chain: usize| tree_imports_ok(is_first_pod, n_chain, n_ext_imports, n_ext_pods, params);
     if !imports_ok(n_chain_imports) {
@@ -884,9 +881,6 @@ fn segment_feasible_with(
         }
     }
     let n_chain_imports_terminal = workspace.prev_pod_producers.len();
-    if segment.len() + n_chain_imports_terminal > params.max_statements {
-        return false;
-    }
     imports_ok(n_chain_imports_terminal)
 }
 
@@ -1374,9 +1368,8 @@ mod tests {
     #[test]
     fn dependency_chain_respects_topo_order() {
         // 4 statements where each depends on the previous. With
-        // max_statements = 3, a 2-POD partition is feasible: one POD
-        // holds [0,1] (2 stmts, 0 imports) and the other [2,3] (2
-        // stmts + 1 chain import of stmt 1 = 3 stmts at cap).
+        // max_statements = 3, a 2-POD partition is feasible, e.g. [0,1]
+        // and [2,3] with the second POD chain-importing stmt 1.
         use super::super::cost::OperationCost;
         let params = Params {
             max_statements: 3,
