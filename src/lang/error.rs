@@ -187,6 +187,9 @@ pub enum ValidationError {
         span: Option<Span>,
     },
 
+    #[error("Duplicate key '{key}' in dictionary literal")]
+    DuplicateDictKey { key: String, span: Option<Span> },
+
     #[error("Bracket access '{wildcard}[...]' is not allowed on a wildcard typed as record '{record}'; use `{wildcard}.entry` instead")]
     BracketAccessOnTypedWildcard {
         wildcard: String,
