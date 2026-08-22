@@ -291,6 +291,14 @@ impl Validator {
         let alias = &use_stmt.alias.name;
         let hash = &use_stmt.hash.hash;
 
+        // Reject alias reuse before adding module records to the shared namespace.
+        if self.symbols.imported_modules.contains_key(alias) {
+            return Err(ValidationError::DuplicateImport {
+                name: alias.clone(),
+                span: use_stmt.span,
+            });
+        }
+
         // Check if the module is available by hash
         let module =
             self.available_modules
@@ -1205,6 +1213,58 @@ mod tests {
         // Module predicates are accessed via qualified names, so no local binding
         assert!(validated.symbols.predicates.contains_key("intro_pred"));
         assert!(validated.symbols.imported_modules.contains_key("testmod"));
+    }
+
+    #[test]
+    fn test_duplicate_module_alias() {
+        use std::sync::Arc;
+
+        use hex::ToHex;
+
+        let params = Params::default();
+
+        // Distinct predicates and records expose any mixed alias state.
+        let build_module = |pred_name: &str, records| {
+            let pred = CustomPredicate::and(
+                &params,
+                pred_name.to_string(),
+                vec![],
+                1,
+                vec!["X".to_string()],
+            )
+            .unwrap();
+            let batch = CustomPredicateBatch::new(format!("batch_{}", pred_name), vec![pred]);
+            Arc::new(Module::with_records(batch, HashMap::new(), records))
+        };
+        let module_a = build_module(
+            "from_a",
+            HashMap::from([("R".to_string(), vec!["foo".to_string(), "bar".to_string()])]),
+        );
+        let module_b = build_module("from_b", HashMap::new());
+
+        let mut available_modules = HashMap::new();
+        available_modules.insert(module_a.id(), module_a.clone());
+        available_modules.insert(module_b.id(), module_b.clone());
+
+        let input = format!(
+            r#"
+            use module 0x{} as m
+            use module 0x{} as m
+
+            REQUEST(
+                m::from_b(A)
+                Equal(A, m::R::bar)
+            )
+        "#,
+            module_a.id().encode_hex::<String>(),
+            module_b.id().encode_hex::<String>(),
+        );
+
+        let result = parse_and_validate_request(&input, &available_modules);
+        assert!(matches!(
+            result,
+            Err(ValidationError::DuplicateImport { ref name, .. }) if name == "m"
+        ));
     }
 
     #[test]
