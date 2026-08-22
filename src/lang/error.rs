@@ -133,6 +133,9 @@ pub enum ValidationError {
     #[error("Wildcard '{name}' collides with a predicate name")]
     WildcardPredicateNameCollision { name: String },
 
+    #[error("'{name}' is a native predicate and cannot be redefined or imported under that name")]
+    NativePredicateNameCollision { name: String, span: Option<Span> },
+
     #[error("Predicate definitions are not allowed in requests")]
     PredicatesNotAllowedInRequest { span: Option<Span> },
 
