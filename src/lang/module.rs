@@ -528,6 +528,8 @@ fn build_statement_with_resolved_refs(
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashSet;
+
     use super::*;
     use crate::{
         lang::{
@@ -740,8 +742,13 @@ mod tests {
         // Split the predicate
         let mut split_results = Vec::new();
         for pred in predicates {
-            let result = split_predicate_if_needed(pred, &params, &mut SplitSearchCache::default())
-                .expect("Split failed");
+            let result = split_predicate_if_needed(
+                pred,
+                &params,
+                &mut SplitSearchCache::default(),
+                &HashSet::new(),
+            )
+            .expect("Split failed");
             split_results.push(result);
         }
 

@@ -313,6 +313,8 @@ pub(super) fn solve_milp_for_k(
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashSet;
+
     use super::solve_milp_for_k;
     use crate::{
         lang::frontend_ast_split::{
@@ -422,6 +424,7 @@ mod tests {
                             pred,
                             &params,
                             &mut SplitSearchCache::default(),
+                            &HashSet::new(),
                         );
                         let dp_elapsed = dp_start.elapsed();
                         dp_total += dp_elapsed;
