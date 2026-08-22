@@ -159,16 +159,28 @@ impl PrettyPrint for Value {
 }
 
 impl PrettyPrint for PodRequest {
-    fn fmt_podlang_with_indent(&self, w: &mut dyn Write, _indent: usize) -> std::fmt::Result {
-        write!(w, "REQUEST(")?;
-        for (i, template) in self.request_templates.iter().enumerate() {
-            if i > 0 {
-                write!(w, ", ")?;
-            }
-            template.fmt_podlang_with_indent(w, 4)?;
+    fn fmt_podlang_with_indent(&self, w: &mut dyn Write, indent: usize) -> std::fmt::Result {
+        write!(w, "{}REQUEST(", " ".repeat(indent))?;
+        if self.request_templates.is_empty() {
+            return write!(w, ")");
         }
-        write!(w, ")")
+        fmt_statement_block(w, &self.request_templates, indent, None)
     }
+}
+
+/// Format a whitespace-separated statement block.
+fn fmt_statement_block(
+    w: &mut dyn Write,
+    statements: &[StatementTmpl],
+    indent: usize,
+    batch_context: Option<&CustomPredicateBatch>,
+) -> std::fmt::Result {
+    let statement_indent = " ".repeat(indent + 4);
+    for statement in statements {
+        write!(w, "\n{}", statement_indent)?;
+        statement.fmt_podlang_with_batch_context(w, batch_context)?;
+    }
+    write!(w, "\n{})", " ".repeat(indent))
 }
 
 fn fmt_predicate_definition(
@@ -177,23 +189,12 @@ fn fmt_predicate_definition(
     indent: usize,
     batch_context: Option<&CustomPredicateBatch>,
 ) -> std::fmt::Result {
-    let base_indent = " ".repeat(indent);
-    let statement_indent = " ".repeat(indent + 4);
-
-    fmt_predicate_signature(w, predicate, &base_indent)?;
+    fmt_predicate_signature(w, predicate, &" ".repeat(indent))?;
 
     let conjunction_str = if predicate.conjunction { "AND" } else { "OR" };
-    writeln!(w, " = {}(", conjunction_str)?;
+    write!(w, " = {}(", conjunction_str)?;
 
-    for (i, statement) in predicate.statements.iter().enumerate() {
-        if i > 0 {
-            writeln!(w)?;
-        }
-        write!(w, "{}", statement_indent)?;
-        statement.fmt_podlang_with_batch_context(w, batch_context)?;
-    }
-
-    write!(w, "\n{})", base_indent)
+    fmt_statement_block(w, &predicate.statements, indent, batch_context)
 }
 
 fn fmt_predicate_signature(
@@ -242,7 +243,7 @@ mod tests {
     use super::*;
     use crate::{
         backends::plonky2::primitives::ec::schnorr::SecretKey,
-        lang::load_module,
+        lang::{load_module, parse_request},
         middleware::{
             CustomPredicate, Key, NativePredicate, Params, Predicate, StatementTmpl,
             StatementTmplArg, Value, Wildcard,
@@ -406,6 +407,54 @@ mod tests {
     Equal(B["y"], 2)
 )"#;
         assert_eq!(pretty_printed, expected);
+    }
+
+    fn assert_request_round_trip(input: &str) {
+        let params = Params::default();
+
+        let request = parse_request(input, &params, &[]).expect("Initial parsing should succeed");
+        let pretty_printed = request.to_podlang_string();
+        let reparsed =
+            parse_request(&pretty_printed, &params, &[]).expect("Reparsing should succeed");
+
+        assert_eq!(
+            request.templates(),
+            reparsed.templates(),
+            "Original request should match reparsed request.\nOriginal input:\n{}\nPretty-printed:\n{}\n",
+            input,
+            pretty_printed
+        );
+    }
+
+    #[test]
+    fn test_request_pretty_print() {
+        let params = Params::default();
+        let input = r#"
+            REQUEST(
+                Equal(GovPod["dob"], 1000)
+                Lt(GovPod["dob"], ConstPod["cutoff"])
+            )
+        "#;
+        let request = parse_request(input, &params, &[]).unwrap();
+
+        let expected = r#"REQUEST(
+    Equal(GovPod["dob"], 1000)
+    Lt(GovPod["dob"], ConstPod["cutoff"])
+)"#;
+        assert_eq!(request.to_podlang_string(), expected);
+    }
+
+    #[test]
+    fn test_round_trip_multi_statement_request() {
+        assert_request_round_trip(
+            r#"
+            REQUEST(
+                Equal(GovPod["dob"], 1000)
+                Lt(GovPod["dob"], ConstPod["cutoff"])
+                NotEqual(GovPod["id"], ConstPod["banned"])
+            )
+        "#,
+        );
     }
 
     /// Helper function for round-trip testing
