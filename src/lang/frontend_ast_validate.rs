@@ -806,7 +806,15 @@ impl Validator {
                 Ok(())
             }
             LiteralValue::Dict(d) => {
+                // Reject duplicate keys before lowering collects entries into a map.
+                let mut seen: HashSet<&String> = HashSet::new();
                 for pair in &d.pairs {
+                    if !seen.insert(&pair.key.value) {
+                        return Err(ValidationError::DuplicateDictKey {
+                            key: pair.key.value.clone(),
+                            span: pair.key.span,
+                        });
+                    }
                     self.validate_literal_value(&pair.value)?;
                 }
                 Ok(())
@@ -1362,6 +1370,30 @@ mod tests {
             result,
             Err(ValidationError::DuplicateLiteralRecordEntry { record, entry, .. })
                 if record == "R" && entry == "foo"
+        ));
+    }
+
+    #[test]
+    fn test_dict_literal_duplicate_key() {
+        let input = r#"
+            my_pred(A) = AND(Equal(A["x"], {"a": 1, "a": 2}))
+        "#;
+        let result = parse_and_validate_module(input, &HashMap::new());
+        assert!(matches!(
+            result,
+            Err(ValidationError::DuplicateDictKey { key, .. }) if key == "a"
+        ));
+    }
+
+    #[test]
+    fn test_nested_dict_literal_duplicate_key() {
+        let input = r#"
+            my_pred(A) = AND(Equal(A["x"], {"outer": [{"a": 1, "a": 2}]}))
+        "#;
+        let result = parse_and_validate_module(input, &HashMap::new());
+        assert!(matches!(
+            result,
+            Err(ValidationError::DuplicateDictKey { key, .. }) if key == "a"
         ));
     }
 

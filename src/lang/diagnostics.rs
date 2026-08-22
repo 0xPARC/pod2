@@ -381,6 +381,18 @@ fn render_validation_error(
             )
         }
 
+        ValidationError::DuplicateDictKey { key, span } => {
+            let title = format!("duplicate key `{}` in dictionary literal", key);
+            render_with_optional_span(
+                renderer,
+                source,
+                path,
+                &title,
+                span.as_ref(),
+                "already given",
+            )
+        }
+
         ValidationError::BracketAccessOnTypedWildcard {
             wildcard,
             record,
