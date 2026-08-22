@@ -350,10 +350,6 @@ pub fn lower_module(
     params: &Params,
     module_name: &str,
 ) -> Result<Module, LoweringError> {
-    if !validated.diagnostics().is_empty() {
-        return Err(LoweringError::ValidationErrors);
-    }
-
     let lowerer = Lowerer::new(validated, params);
     lowerer.lower_module(module_name)
 }
@@ -365,10 +361,6 @@ pub fn lower_request(
     validated: ValidatedAST,
     params: &Params,
 ) -> Result<crate::frontend::PodRequest, LoweringError> {
-    if !validated.diagnostics().is_empty() {
-        return Err(LoweringError::ValidationErrors);
-    }
-
     let lowerer = Lowerer::new(validated, params);
     lowerer.lower_request()
 }
