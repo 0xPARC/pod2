@@ -215,9 +215,6 @@ pub enum LoweringError {
 
     #[error("Batching error: {0}")]
     Batching(#[from] BatchingError),
-
-    #[error("Cannot lower document with validation errors")]
-    ValidationErrors,
 }
 
 /// Context information for split boundary failures

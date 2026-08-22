@@ -16,12 +16,11 @@ use crate::{
     middleware::{CustomPredicateBatch, Hash, NativePredicate, Params},
 };
 
-/// A validated AST document with symbol table and diagnostics
+/// A validated AST document and its symbol table.
 #[derive(Debug, Clone)]
 pub struct ValidatedAST {
     document: Document,
     symbols: SymbolTable,
-    diagnostics: Vec<Diagnostic>,
 }
 
 impl ValidatedAST {
@@ -31,10 +30,6 @@ impl ValidatedAST {
 
     pub fn symbols(&self) -> &SymbolTable {
         &self.symbols
-    }
-
-    pub fn diagnostics(&self) -> &[Diagnostic] {
-        &self.diagnostics
     }
 
     pub fn into_document(self) -> Document {
@@ -150,20 +145,6 @@ pub struct WildcardInfo {
     pub record_type: Option<String>,
 }
 
-/// Diagnostic message (warning or info)
-#[derive(Debug, Clone)]
-pub struct Diagnostic {
-    pub level: DiagnosticLevel,
-    pub message: String,
-    pub span: Option<Span>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DiagnosticLevel {
-    Warning,
-    Info,
-}
-
 pub use crate::lang::error::ValidationError;
 
 /// Mode for parsing/validation - determines what constructs are allowed
@@ -190,7 +171,6 @@ struct Validator {
     available_modules: HashMap<Hash, Arc<Module>>,
     params: Params,
     symbols: SymbolTable,
-    diagnostics: Vec<Diagnostic>,
     custom_predicate_count: usize,
     mode: ParseMode,
 }
@@ -210,7 +190,6 @@ impl Validator {
                 imported_modules: HashMap::new(),
                 records: HashMap::new(),
             },
-            diagnostics: Vec::new(),
             custom_predicate_count: 0,
             mode,
         }
@@ -226,7 +205,6 @@ impl Validator {
         Ok(ValidatedAST {
             document,
             symbols: self.symbols,
-            diagnostics: self.diagnostics,
         })
     }
 
@@ -520,7 +498,7 @@ impl Validator {
         Ok(())
     }
 
-    fn validate_references(&mut self, document: &Document) -> Result<(), ValidationError> {
+    fn validate_references(&self, document: &Document) -> Result<(), ValidationError> {
         for item in &document.items {
             match item {
                 DocumentItem::CustomPredicateDef(pred_def) => {
@@ -557,11 +535,10 @@ impl Validator {
         Ok(())
     }
 
-    fn validate_request_statements(&mut self, req_def: &RequestDef) -> Result<(), ValidationError> {
+    fn validate_request_statements(&self, req_def: &RequestDef) -> Result<(), ValidationError> {
         if req_def.statements.is_empty() {
-            self.diagnostics.push(Diagnostic {
-                level: DiagnosticLevel::Warning,
-                message: "Empty REQUEST block".to_string(),
+            return Err(ValidationError::EmptyStatementList {
+                context: "REQUEST block".to_string(),
                 span: req_def.span,
             });
         }
@@ -904,6 +881,16 @@ mod tests {
         )"#;
         let result = parse_and_validate_request(input, &HashMap::new());
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_empty_request_block() {
+        let result = parse_and_validate_request("REQUEST()", &HashMap::new());
+        assert!(matches!(
+            result,
+            Err(ValidationError::EmptyStatementList { ref context, .. })
+                if context == "REQUEST block"
+        ));
     }
 
     #[test]

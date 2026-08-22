@@ -1114,6 +1114,23 @@ mod tests {
         }
     }
 
+    #[test]
+    fn test_e2e_empty_request_names_the_cause() {
+        let params = Params::default();
+
+        let result = parse_request("REQUEST()", &params, &[]);
+
+        let Err(err) = result else {
+            panic!("empty REQUEST should be rejected");
+        };
+        let rendered = format!("{}", err);
+        assert!(
+            rendered.contains("empty statement list in REQUEST block"),
+            "diagnostic should name the cause, got:\n{}",
+            rendered
+        );
+    }
+
     // ---- Records: cross-module export -------------------------------------
 
     #[test]
