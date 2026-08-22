@@ -425,6 +425,32 @@ mod tests {
     }
 
     #[test]
+    fn test_e2e_reserved_word_prefixed_identifiers() -> Result<(), LangError> {
+        // Exercise the literal-or-identifier ambiguity in statement arguments.
+        let input = r#"
+            flagged(true_flag, false_alarm) = AND(
+                Equal(true_flag, true)
+                NotEqual(false_alarm, false)
+            )
+        "#;
+
+        let params = Params::default();
+        let module = load_module(input, "test_module", &params, &[])?;
+
+        let predicate = &module.batch.predicates()[0];
+        assert_eq!(
+            predicate.wildcard_names(),
+            names(&["true_flag", "false_alarm"])
+        );
+        assert_eq!(
+            predicate.statements()[0].args,
+            vec![sta_wc_lit("true_flag", 0), sta_lit(true)]
+        );
+
+        Ok(())
+    }
+
+    #[test]
     fn test_e2e_syntactic_sugar_predicates() -> Result<(), LangError> {
         let input = r#"
             REQUEST(
