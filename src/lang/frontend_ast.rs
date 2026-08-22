@@ -67,6 +67,17 @@ pub struct CustomPredicateDef {
     pub span: Option<Span>,
 }
 
+impl CustomPredicateDef {
+    /// Wildcards this predicate declares, public args first then private.
+    pub fn declared_wildcards(&self) -> impl Iterator<Item = &str> {
+        self.args
+            .public_args
+            .iter()
+            .chain(self.args.private_args.iter().flatten())
+            .map(|arg| arg.name.as_str())
+    }
+}
+
 /// Request definition
 #[derive(Debug, Clone, PartialEq)]
 pub struct RequestDef {

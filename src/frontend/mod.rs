@@ -1770,6 +1770,70 @@ pub mod tests {
     }
 
     #[test]
+    fn test_apply_predicate_with_higher_order_call_e2e() -> Result<()> {
+        // Exercise predicate wildcard promotion across split links.
+        let params = Params::default();
+        let vd_set = &*MOCK_VD_SET;
+
+        let input = r#"
+            holder(A, private: P) = AND(
+                P(A["a"], 7)
+                Equal(A["b"], 2)
+                Equal(A["c"], 3)
+                Lt(A["b"], A["c"])
+                P(A["d"], 8)
+                Equal(A["e"], 5)
+                Equal(A["f"], 6)
+            )
+        "#;
+
+        let module = load_module(input, "test", &params, &[])?;
+
+        let Some(SplitInfo::Chain(chain_info)) = module.splits.get("holder") else {
+            panic!("expected a chain split for holder");
+        };
+        assert_eq!(chain_info.chain_pieces.len(), 2);
+
+        // The continuation takes the predicate-valued wildcard as a public arg.
+        let continuation = module
+            .predicate_ref_by_name(&chain_info.chain_pieces[0].name)
+            .expect("continuation is in the batch")
+            .predicate()
+            .clone();
+        assert!(
+            continuation.wildcard_names()[..continuation.args_len()]
+                .iter()
+                .any(|name| name == "P"),
+            "expected P among the continuation's public args: {:?}",
+            continuation.wildcard_names()
+        );
+
+        let signed_dict = signed_dict_a_to_f(&params)?;
+
+        let mut builder = MainPodBuilder::new(&params, vd_set);
+        builder.pub_op(Operation::dict_signed_by(&signed_dict))?;
+
+        // Source order; `apply_predicate` reorders into split order.
+        let statements = vec![
+            builder.priv_op(Operation::ne((&signed_dict, "a"), 7))?,
+            builder.priv_op(Operation::eq((&signed_dict, "b"), 2))?,
+            builder.priv_op(Operation::eq((&signed_dict, "c"), 3))?,
+            builder.priv_op(Operation::lt((&signed_dict, "b"), (&signed_dict, "c")))?,
+            builder.priv_op(Operation::ne((&signed_dict, "d"), 8))?,
+            builder.priv_op(Operation::eq((&signed_dict, "e"), 5))?,
+            builder.priv_op(Operation::eq((&signed_dict, "f"), 6))?,
+        ];
+
+        module.apply_predicate(&mut builder, "holder", statements, true)?;
+
+        let prover = MockProver {};
+        let pod = builder.prove(&prover)?;
+        pod.pod.verify()?;
+
+        Ok(())
+    }
+
+    #[test]
     fn test_apply_tree_split_disjunction_e2e() -> Result<()> {
         // A 30-branch disjunction splits into a tree (6 leaves, 2 internal
         // nodes, root); discharging one branch costs 3 operations instead of
