@@ -90,6 +90,17 @@ pub enum RecordSource {
     Imported { module: String },
 }
 
+/// Reject names that would always resolve to native predicates.
+fn reject_native_predicate_name(name: &str, span: Option<Span>) -> Result<(), ValidationError> {
+    if NativePredicate::from_str(name).is_ok() {
+        return Err(ValidationError::NativePredicateNameCollision {
+            name: name.to_string(),
+            span,
+        });
+    }
+    Ok(())
+}
+
 /// Build the `SymbolTable.records` key for a record imported via
 /// `use module ... as alias`. Mirrors the `alias::Name` form used for
 /// `TypeRef::Qualified`.
@@ -339,6 +350,8 @@ impl Validator {
         let args = &use_stmt.args;
         let intro_predicate_ref = &use_stmt.intro_hash;
 
+        reject_native_predicate_name(intro_name, use_stmt.name.span)?;
+
         if self.symbols.predicates.contains_key(intro_name) {
             return Err(ValidationError::DuplicateImport {
                 name: intro_name.clone(),
@@ -409,6 +422,8 @@ impl Validator {
         pred_def: &CustomPredicateDef,
     ) -> Result<(), ValidationError> {
         let name = &pred_def.name.name;
+
+        reject_native_predicate_name(name, pred_def.name.span)?;
 
         if self.symbols.predicates.contains_key(name) {
             let first_span = self.symbols.predicates[name].source_span;
@@ -881,6 +896,53 @@ mod tests {
         )"#;
         let result = parse_and_validate_request(input, &HashMap::new());
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_custom_predicate_shadowing_native() {
+        let input = r#"
+            Equal(A, B) = AND(
+                NotEqual(A, B)
+            )
+        "#;
+        let result = parse_and_validate_module(input, &HashMap::new());
+        assert!(matches!(
+            result,
+            Err(ValidationError::NativePredicateNameCollision { ref name, .. })
+                if name == "Equal"
+        ));
+    }
+
+    #[test]
+    fn test_intro_import_shadowing_native() {
+        let input = r#"
+            use intro Equal(X) from 0x0000000000000000000000000000000000000000000000000000000000000001
+
+            user(A) = AND(
+                Equal(A, A)
+            )
+        "#;
+        let result = parse_and_validate_module(input, &HashMap::new());
+        assert!(matches!(
+            result,
+            Err(ValidationError::NativePredicateNameCollision { ref name, .. })
+                if name == "Equal"
+        ));
+    }
+
+    #[test]
+    fn test_sugar_predicate_name_is_also_reserved() {
+        let input = r#"
+            DictInsert(A, B, C, D) = AND(
+                Equal(A, B)
+            )
+        "#;
+        let result = parse_and_validate_module(input, &HashMap::new());
+        assert!(matches!(
+            result,
+            Err(ValidationError::NativePredicateNameCollision { ref name, .. })
+                if name == "DictInsert"
+        ));
     }
 
     #[test]
