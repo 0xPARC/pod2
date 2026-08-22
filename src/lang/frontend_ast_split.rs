@@ -204,6 +204,19 @@ impl SplitTreeInfo {
 pub(super) fn validate_predicate_is_splittable(
     pred: &CustomPredicateDef,
 ) -> Result<(), SplittingError> {
+    // Reject unvalidated ASTs whose wildcard calls lack an explicit tag.
+    for stmt in &pred.statements {
+        if let PredicateRef::Local(callee) = &stmt.predicate {
+            assert!(
+                !pred.declared_wildcards().any(|name| name == callee.name),
+                "'{}' calls its own wildcard '{}' without a higher-order tag; \
+                 was this predicate validated?",
+                pred.name.name,
+                callee.name,
+            );
+        }
+    }
+
     let public_args = pred.args.public_args.len();
 
     // Check: public args must fit in operation arg limit
@@ -365,8 +378,13 @@ fn piece_name(original_name: &str, index: usize, source_names: &HashSet<String>)
     name
 }
 
+/// Collect wildcard uses from statement arguments and predicate position.
 fn collect_wildcards_from_statement(stmt: &StatementTmpl) -> HashSet<String> {
-    stmt.wildcard_names().map(str::to_string).collect()
+    let mut names: HashSet<String> = stmt.wildcard_names().map(str::to_string).collect();
+    if let PredicateRef::Wildcard(callee) = &stmt.predicate {
+        names.insert(callee.name.clone());
+    }
+    names
 }
 
 /// Compute the minimum number of chain links needed to fit `n` statements,
@@ -922,17 +940,14 @@ fn build_chain_links_from_assignment(
     links: LinkAssignment,
     statements: &[StatementTmpl],
     original_public_args: &[String],
+    statement_wildcards: &[HashSet<String>],
 ) -> Vec<ChainLink> {
     let k = links.len();
-    let stmt_wcs: Vec<HashSet<String>> = statements
-        .iter()
-        .map(collect_wildcards_from_statement)
-        .collect();
     let link_wcs: Vec<HashSet<String>> = (0..k)
         .map(|i| {
             links[i]
                 .iter()
-                .flat_map(|&s| stmt_wcs[s].iter().cloned())
+                .flat_map(|&s| statement_wildcards[s].iter().cloned())
                 .collect()
         })
         .collect();
@@ -1018,6 +1033,8 @@ pub(super) struct SplitInput {
     pub(super) shape: SplitShape,
     wildcard_names: Vec<String>,
     original_public_args: Vec<String>,
+    /// Wildcards each statement references, by original statement index.
+    statement_wildcards: Vec<HashSet<String>>,
 }
 
 impl SplitInput {
@@ -1069,13 +1086,14 @@ pub(super) fn prepare_split_input(pred: &CustomPredicateDef) -> SplitInput {
         .map(|id| id.name.clone())
         .collect();
 
-    // Stable, sorted index over wildcards referenced by statements OR declared
-    // as public args (a public arg may be unused in any statement).
-    let mut wildcard_set: HashSet<String> = pred
+    let statement_wildcards: Vec<HashSet<String>> = pred
         .statements
         .iter()
-        .flat_map(collect_wildcards_from_statement)
+        .map(collect_wildcards_from_statement)
         .collect();
+
+    // Include unused public arguments and sort for deterministic indices.
+    let mut wildcard_set: HashSet<String> = statement_wildcards.iter().flatten().cloned().collect();
     for name in &original_public_args {
         wildcard_set.insert(name.clone());
     }
@@ -1089,13 +1107,9 @@ pub(super) fn prepare_split_input(pred: &CustomPredicateDef) -> SplitInput {
 
     // Inverse: which statements reference each wildcard (by index).
     let mut statements_using: Vec<Vec<usize>> = vec![Vec::new(); wildcard_names.len()];
-    for (s, stmt) in pred.statements.iter().enumerate() {
-        let mut seen: HashSet<usize> = HashSet::new();
-        for name in stmt.wildcard_names() {
-            let w = wildcard_index[name];
-            if seen.insert(w) {
-                statements_using[w].push(s);
-            }
+    for (statement, wildcards) in statement_wildcards.iter().enumerate() {
+        for name in wildcards {
+            statements_using[wildcard_index[name]].push(statement);
         }
     }
 
@@ -1112,6 +1126,7 @@ pub(super) fn prepare_split_input(pred: &CustomPredicateDef) -> SplitInput {
         },
         wildcard_names,
         original_public_args,
+        statement_wildcards,
     }
 }
 
@@ -1297,6 +1312,7 @@ fn build_chain_from_assignment(
         assignment,
         &pred.statements,
         &input.original_public_args,
+        &input.statement_wildcards,
     );
 
     // Generate names once so split metadata and definitions remain consistent.
@@ -1987,7 +2003,11 @@ pub(super) fn build_pred(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::lang::{frontend_ast::parse::parse_document, parser::parse_podlang};
+    use crate::lang::{
+        frontend_ast::parse::parse_document,
+        frontend_ast_validate::{validate, ParseMode},
+        parser::parse_podlang,
+    };
 
     /// Split one predicate with a throwaway cache and no cross-predicate name reservations.
     fn split(pred: CustomPredicateDef, params: &Params) -> Result<SplitResult, SplittingError> {
@@ -2003,9 +2023,18 @@ mod tests {
         let parsed = parse_podlang(input).expect("Failed to parse");
         let document = parse_document(parsed.into_iter().next().unwrap()).expect("Failed to parse");
 
-        for item in document.items {
+        // Validate parsed predicates so wildcard calls carry their AST tags.
+        let validated = validate(
+            document,
+            &HashMap::new(),
+            &Params::default(),
+            ParseMode::Module,
+        )
+        .expect("Failed to validate");
+
+        for item in &validated.document().items {
             if let DocumentItem::CustomPredicateDef(pred) = item {
-                return pred;
+                return pred.clone();
             }
         }
 
@@ -2027,6 +2056,22 @@ mod tests {
             result,
             Err(SplittingError::TooManyPublicArgs { .. })
         ));
+    }
+
+    /// Find the split piece containing a call through `wildcard`.
+    fn piece_with_higher_order_call<'a>(
+        result: &'a SplitResult,
+        wildcard: &str,
+    ) -> &'a CustomPredicateDef {
+        result
+            .predicates
+            .iter()
+            .find(|piece| {
+                piece.statements.iter().any(
+                    |stmt| matches!(&stmt.predicate, PredicateRef::Wildcard(id) if id.name == wildcard),
+                )
+            })
+            .expect("some piece holds the higher-order call")
     }
 
     #[test]
@@ -2073,6 +2118,49 @@ mod tests {
         assert_eq!(
             result.chain_info().expect("chain split").chain_pieces[0].name,
             "my_pred_1_"
+        );
+    }
+
+    #[test]
+    fn test_chain_split_counts_predicate_position() {
+        // Predicate position is `P`'s only use, so its piece must declare `P`.
+        let input = r#"
+            holder(A, B, private: C, D, P) = AND(
+                P(C)
+                Equal(A, 1)
+                Equal(B, 2)
+                Lt(A, B)
+                NotEqual(C, D)
+                Equal(D, 4)
+            )
+        "#;
+
+        let result = split(parse_predicate(input), &Params::default()).expect("splits");
+        let piece = piece_with_higher_order_call(&result, "P");
+        assert!(
+            piece.declared_wildcards().any(|name| name == "P"),
+            "piece '{}' holds P(...) but declares {:?}",
+            piece.name.name,
+            piece.declared_wildcards().collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn test_tree_split_counts_predicate_position() {
+        // The higher-order disjunct must declare `P` from predicate position.
+        let branches: String = (0..29)
+            .map(|value| format!("Equal(A, {})\n", value))
+            .collect();
+        let input = format!("big_or(A, private: P) = OR(\n    P(A)\n{})", branches);
+
+        let result = split(parse_predicate(&input), &Params::default()).expect("splits");
+        assert!(result.tree_info().is_some(), "expected a tree split");
+        let leaf = piece_with_higher_order_call(&result, "P");
+        assert!(
+            leaf.declared_wildcards().any(|name| name == "P"),
+            "leaf '{}' holds P(A) but declares {:?}",
+            leaf.name.name,
+            leaf.declared_wildcards().collect::<Vec<_>>()
         );
     }
 
