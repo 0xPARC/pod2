@@ -156,20 +156,22 @@ pub enum PredicateRef {
         module: Identifier,
         predicate: Identifier,
     },
+    /// Call to a generated continuation, resolved only through split metadata.
+    Generated(Identifier),
 }
 
 impl PredicateRef {
     /// Get the predicate name (without module qualifier)
     pub fn predicate_name(&self) -> &str {
         match self {
-            PredicateRef::Local(id) => &id.name,
+            PredicateRef::Local(id) | PredicateRef::Generated(id) => &id.name,
             PredicateRef::Qualified { predicate, .. } => &predicate.name,
         }
     }
 
     pub fn span(&self) -> Option<Span> {
         match self {
-            PredicateRef::Local(id) => id.span,
+            PredicateRef::Local(id) | PredicateRef::Generated(id) => id.span,
             PredicateRef::Qualified { predicate, .. } => predicate.span,
         }
     }
@@ -390,7 +392,7 @@ impl fmt::Display for UseIntroStatement {
 impl fmt::Display for PredicateRef {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            PredicateRef::Local(id) => write!(f, "{}", id),
+            PredicateRef::Local(id) | PredicateRef::Generated(id) => write!(f, "{}", id),
             PredicateRef::Qualified { module, predicate } => {
                 write!(f, "{}::{}", module, predicate)
             }
@@ -1371,7 +1373,7 @@ mod tests {
 
     fn clear_predicate_ref_spans(pred_ref: &mut PredicateRef) {
         match pred_ref {
-            PredicateRef::Local(id) => id.span = None,
+            PredicateRef::Local(id) | PredicateRef::Generated(id) => id.span = None,
             PredicateRef::Qualified { module, predicate } => {
                 module.span = None;
                 predicate.span = None;

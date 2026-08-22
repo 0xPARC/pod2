@@ -1131,6 +1131,66 @@ mod tests {
         );
     }
 
+    #[test]
+    fn test_e2e_wildcard_predicate_call() -> Result<(), LangError> {
+        // Predicate position resolves the private wildcard as a higher-order call.
+        let input = r#"
+            holder(A, private: P) = AND(
+                P(A)
+            )
+        "#;
+
+        let params = Params::default();
+        let module = load_module(input, "test_module", &params, &[])?;
+
+        let statement = &module.batch.predicates()[0].statements()[0];
+        assert_eq!(
+            statement.pred_or_wc,
+            PredicateOrWildcard::Wildcard(wc("P", 1))
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_e2e_split_chain_call_beats_wildcard_of_same_name() -> Result<(), LangError> {
+        // The generated continuation name collides with a wildcard in the head link.
+        let input = r#"
+            my_pred(A, B, private: my_pred_1, C) = AND(
+                Equal(A, 1)
+                Equal(my_pred_1, 3)
+                Equal(C, 4)
+                Lt(A, B)
+                Lt(B, C)
+                NotEqual(A, C)
+            )
+        "#;
+
+        let params = Params::default();
+        let module = load_module(input, "test_module", &params, &[])?;
+
+        assert_eq!(module.batch.predicates().len(), 2);
+        let head = &module.batch.predicates()[module.predicate_index["my_pred"]];
+        let continuation_index = module.predicate_index["my_pred_1"];
+
+        assert!(
+            head.wildcard_names().contains(&"my_pred_1".to_string()),
+            "expected the wildcard to stay in the head link: {:?}",
+            head.wildcard_names()
+        );
+
+        let chain_call = head
+            .statements()
+            .last()
+            .expect("the head link ends with the chain call");
+        assert_eq!(
+            chain_call.pred_or_wc,
+            PredicateOrWildcard::Predicate(Predicate::BatchSelf(continuation_index))
+        );
+
+        Ok(())
+    }
+
     // ---- Records: cross-module export -------------------------------------
 
     #[test]
