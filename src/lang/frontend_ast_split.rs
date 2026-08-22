@@ -1328,7 +1328,7 @@ fn generated_typed_args(names: Vec<String>) -> Vec<TypedArg> {
 /// Call template to a generated local predicate, passing wildcards by name.
 fn generated_call_template(callee: String, arg_names: &[String]) -> StatementTmpl {
     StatementTmpl {
-        predicate: PredicateRef::Local(generated_identifier(callee)),
+        predicate: PredicateRef::Generated(generated_identifier(callee)),
         args: arg_names
             .iter()
             .map(|name| StatementTmplArg::Wildcard(generated_identifier(name.clone())))

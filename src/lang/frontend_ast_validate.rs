@@ -625,6 +625,9 @@ impl Validator {
                     });
                 }
             }
+            PredicateRef::Generated(_) => unreachable!(
+                "split continuations are created after validation, so they never reach it"
+            ),
             PredicateRef::Local(_) => {
                 if let Ok(native) = NativePredicate::from_str(pred_name) {
                     // Native predicate

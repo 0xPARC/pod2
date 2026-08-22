@@ -53,6 +53,12 @@ pub fn resolve_predicate_ref(
             )))
         }
         PredicateRef::Local(id) => resolve_predicate(&id.name, symbols, context),
+        PredicateRef::Generated(id) => {
+            let ResolutionContext::Module { reference_map, .. } = context else {
+                unreachable!("split continuations only exist while lowering a module")
+            };
+            resolve_local_predicate(&id.name, reference_map).map(PredicateOrWildcard::Predicate)
+        }
     }
 }
 
@@ -127,19 +133,10 @@ pub fn resolve_predicate(
         return Some(PredicateOrWildcard::Predicate(predicate));
     }
 
-    // 3. In module context, also check reference_map for split chain pieces
-    //    (predicates created by splitting that aren't in the original symbol table)
-    if let ResolutionContext::Module { reference_map, .. } = context {
-        if reference_map.contains_key(pred_name) {
-            return resolve_local_predicate(pred_name, reference_map)
-                .map(PredicateOrWildcard::Predicate);
-        }
-    }
-
     None
 }
 
-/// Resolve a local predicate (one in this module or a split chain piece) using the reference_map
+/// Resolve a local predicate to its index in the batch under construction.
 fn resolve_local_predicate(
     pred_name: &str,
     reference_map: &HashMap<String, usize>,
