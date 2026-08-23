@@ -204,6 +204,9 @@ pub enum LoweringError {
     #[error("Predicate '{name}' not found in symbol table")]
     PredicateNotFound { name: String },
 
+    #[error("Invalid statement template: {0}")]
+    InvalidStatementTemplate(String),
+
     #[error("Middleware error: {0}")]
     Middleware(#[from] middleware::Error),
 

@@ -22,17 +22,17 @@ pub enum BuilderArg {
     SelfPredicateHash(String),
 }
 
-/// When defining a `BuilderArg`, it can be done from 3 different inputs:
-///  i. (&str, &str): this is to define a origin-key pair, ie. attestation_pod["attestation"])
-/// ii. &str: this is to define a Value wildcard, ie. distance
+/// `BuilderArg` accepts anchored keys as `(origin, field)`, value
+/// wildcards as names, and literal values through [`literal`].
 ///
-/// case i.
+/// Convert an `(origin, field)` pair into an anchored-key argument.
 impl From<(&str, &str)> for BuilderArg {
     fn from((origin, field): (&str, &str)) -> Self {
         Self::Key(origin.to_string(), Key::from(field))
     }
 }
-/// case ii.
+
+/// Convert a wildcard name into a value-wildcard argument.
 impl From<&str> for BuilderArg {
     fn from(wc: &str) -> Self {
         Self::WildcardLiteral(wc.to_string())
@@ -82,49 +82,58 @@ impl StatementTmplBuilder {
 
     /// Desugar the predicate to a simpler form
     /// Should mirror the logic in `MainPodBuilder::lower_op`
-    pub(crate) fn desugar(mut self) -> StatementTmplBuilder {
+    pub(crate) fn desugar(mut self) -> Result<StatementTmplBuilder> {
         let pred = match self.pred_or_wc {
             PredicateOrWildcard::Predicate(p) => p,
-            PredicateOrWildcard::Wildcard(_) => return self,
+            PredicateOrWildcard::Wildcard(_) => return Ok(self),
         };
         let pred = match pred {
-            Predicate::Native(nat_pred) => Predicate::Native(match nat_pred {
-                NativePredicate::Gt => {
-                    self.args.swap(0, 1);
-                    NativePredicate::Lt
+            Predicate::Native(nat_pred) => {
+                let expected = nat_pred.arity();
+                if self.args.len() != expected {
+                    return Err(Error::custom(format!(
+                        "{nat_pred} template requires {expected} arguments but received {}",
+                        self.args.len()
+                    )));
                 }
-                NativePredicate::GtEq => {
-                    self.args.swap(0, 1);
-                    NativePredicate::LtEq
-                }
-                NativePredicate::ArrayContains | NativePredicate::DictContains => {
-                    NativePredicate::Contains
-                }
-                NativePredicate::DictNotContains | NativePredicate::SetNotContains => {
-                    NativePredicate::NotContains
-                }
-                NativePredicate::SetContains => {
-                    self.args.push(self.args[1].clone());
-                    NativePredicate::Contains
-                }
-                NativePredicate::DictInsert => NativePredicate::ContainerInsert,
-                NativePredicate::SetInsert => {
-                    self.args.insert(2, self.args[1].clone());
-                    NativePredicate::ContainerInsert
-                }
-                NativePredicate::DictUpdate | NativePredicate::ArrayUpdate => {
-                    NativePredicate::ContainerUpdate
-                }
-                NativePredicate::DictDelete => NativePredicate::ContainerDelete,
-                NativePredicate::SetDelete => NativePredicate::ContainerDelete,
-                _ => nat_pred,
-            }),
+                Predicate::Native(match nat_pred {
+                    NativePredicate::Gt => {
+                        self.args.swap(0, 1);
+                        NativePredicate::Lt
+                    }
+                    NativePredicate::GtEq => {
+                        self.args.swap(0, 1);
+                        NativePredicate::LtEq
+                    }
+                    NativePredicate::ArrayContains | NativePredicate::DictContains => {
+                        NativePredicate::Contains
+                    }
+                    NativePredicate::DictNotContains | NativePredicate::SetNotContains => {
+                        NativePredicate::NotContains
+                    }
+                    NativePredicate::SetContains => {
+                        self.args.push(self.args[1].clone());
+                        NativePredicate::Contains
+                    }
+                    NativePredicate::DictInsert => NativePredicate::ContainerInsert,
+                    NativePredicate::SetInsert => {
+                        self.args.insert(2, self.args[1].clone());
+                        NativePredicate::ContainerInsert
+                    }
+                    NativePredicate::DictUpdate | NativePredicate::ArrayUpdate => {
+                        NativePredicate::ContainerUpdate
+                    }
+                    NativePredicate::DictDelete => NativePredicate::ContainerDelete,
+                    NativePredicate::SetDelete => NativePredicate::ContainerDelete,
+                    _ => nat_pred,
+                })
+            }
             _ => pred,
         };
-        StatementTmplBuilder {
+        Ok(StatementTmplBuilder {
             pred_or_wc: PredicateOrWildcard::Predicate(pred),
             args: self.args,
-        }
+        })
     }
 }
 
@@ -156,10 +165,7 @@ impl CustomPredicateBatchBuilder {
         &self.predicates
     }
 
-    /// Append a prebuilt predicate, skipping the checks `predicate()`
-    /// performs except for name uniqueness: duplicate names would make
-    /// name lookups (and `finish()`'s forward-reference resolution) bind
-    /// silently to the first occurrence.
+    /// Append a prebuilt predicate after validating it against this batch.
     pub fn push_predicate(&mut self, predicate: CustomPredicate) -> Result<()> {
         if self.predicate_index_by_name.contains_key(&predicate.name) {
             return Err(Error::custom(format!(
@@ -167,6 +173,35 @@ impl CustomPredicateBatchBuilder {
                 predicate.name
             )));
         }
+        let new_len = self.predicates.len() + 1;
+        if new_len > Params::max_custom_batch_size() {
+            return Err(Error::max_length(
+                "self.predicates.len".to_string(),
+                new_len,
+                Params::max_custom_batch_size(),
+            ));
+        }
+        for statement in predicate.statements() {
+            if let middleware::PredicateOrWildcard::Predicate(Predicate::Native(native)) =
+                statement.pred_or_wc()
+            {
+                let expected = native.arity();
+                if statement.args().len() != expected {
+                    return Err(Error::custom(format!(
+                        "{native} template requires {expected} arguments but received {}",
+                        statement.args().len()
+                    )));
+                }
+            }
+        }
+        let predicate = CustomPredicate::new(
+            &self.params,
+            predicate.name,
+            predicate.conjunction,
+            predicate.statements,
+            predicate.args_len,
+            predicate.wildcard_names,
+        )?;
         self.predicate_index_by_name
             .insert(predicate.name.clone(), self.predicates.len());
         self.predicates.push(predicate);
@@ -209,10 +244,11 @@ impl CustomPredicateBatchBuilder {
                 name
             )));
         }
-        if self.predicates.len() >= Params::max_custom_batch_size() {
+        let new_len = self.predicates.len() + 1;
+        if new_len > Params::max_custom_batch_size() {
             return Err(Error::max_length(
                 "self.predicates.len".to_string(),
-                self.predicates.len(),
+                new_len,
                 Params::max_custom_batch_size(),
             ));
         }
@@ -238,7 +274,7 @@ impl CustomPredicateBatchBuilder {
             .iter()
             .enumerate()
             .map(|(stmt_idx, sb)| {
-                let stb = sb.clone().desugar();
+                let stb = sb.clone().desugar()?;
                 let st_tmpl_args = stb
                     .args
                     .iter()
@@ -407,6 +443,7 @@ mod tests {
         // Check that the POD builds
         let prover = MockProver {};
         let proof = mp_builder.prove(&prover)?;
+        proof.pod.verify()?;
 
         Ok(())
     }
@@ -455,8 +492,133 @@ mod tests {
 
         let prover = MockProver {};
         let proof = mp_builder.prove(&prover)?;
+        proof.pod.verify()?;
 
         Ok(())
+    }
+
+    #[test]
+    fn malformed_syntactic_sugar_templates_return_errors() {
+        use NativePredicate::*;
+
+        let predicates = [
+            DictContains,
+            DictNotContains,
+            SetContains,
+            SetNotContains,
+            ArrayContains,
+            GtEq,
+            Gt,
+            DictInsert,
+            DictUpdate,
+            DictDelete,
+            SetInsert,
+            SetDelete,
+            ArrayUpdate,
+        ];
+        for predicate in predicates {
+            for found in [predicate.arity() - 1, predicate.arity() + 1] {
+                let mut template = StatementTmplBuilder::new_from_pred(predicate);
+                for value in 0..found {
+                    template = template.arg(literal(value as i64));
+                }
+                let mut builder = CustomPredicateBatchBuilder::new(
+                    Params::default(),
+                    format!("{predicate}_{found}"),
+                );
+
+                let result = builder.predicate_and("invalid", &[], &[], &[template]);
+
+                assert!(
+                    result.is_err(),
+                    "{predicate} accepted {found} arguments; expected {}",
+                    predicate.arity()
+                );
+                assert!(builder.predicates().is_empty());
+            }
+        }
+    }
+
+    #[test]
+    fn push_predicate_enforces_batch_size() {
+        let params = Params::default();
+        let mut builder = CustomPredicateBatchBuilder::new(params.clone(), "batch".into());
+        for index in 0..Params::max_custom_batch_size() {
+            let predicate = CustomPredicate::new(
+                &params,
+                format!("predicate_{index}"),
+                true,
+                vec![],
+                0,
+                vec![],
+            )
+            .unwrap();
+            builder.push_predicate(predicate).unwrap();
+        }
+        let overflow =
+            CustomPredicate::new(&params, "overflow".into(), true, vec![], 0, vec![]).unwrap();
+
+        builder
+            .push_predicate(overflow)
+            .expect_err("the custom predicate batch is full");
+
+        assert_eq!(builder.predicates().len(), Params::max_custom_batch_size());
+    }
+
+    #[test]
+    fn push_predicate_revalidates_builder_params() {
+        let permissive = Params {
+            max_custom_predicate_wildcards: 2,
+            ..Params::default()
+        };
+        let predicate = CustomPredicate::new(
+            &permissive,
+            "two_private_values".into(),
+            true,
+            vec![],
+            0,
+            vec!["a".into(), "b".into()],
+        )
+        .unwrap();
+        let mut builder = CustomPredicateBatchBuilder::new(
+            Params {
+                max_custom_predicate_wildcards: 1,
+                ..Params::default()
+            },
+            "batch".into(),
+        );
+
+        builder
+            .push_predicate(predicate)
+            .expect_err("predicate exceeds this builder's wildcard limit");
+
+        assert!(builder.predicates().is_empty());
+    }
+
+    #[test]
+    fn push_predicate_rejects_malformed_native_template() {
+        let params = Params::default();
+        let predicate = CustomPredicate::new(
+            &params,
+            "malformed".into(),
+            true,
+            vec![StatementTmpl {
+                pred_or_wc: middleware::PredicateOrWildcard::Predicate(Predicate::Native(
+                    NativePredicate::Equal,
+                )),
+                args: vec![StatementTmplArg::Literal(Value::from(1))],
+            }],
+            0,
+            vec![],
+        )
+        .unwrap();
+        let mut builder = CustomPredicateBatchBuilder::new(params, "batch".into());
+
+        builder
+            .push_predicate(predicate)
+            .expect_err("Equal requires two arguments");
+
+        assert!(builder.predicates().is_empty());
     }
 
     #[test]
