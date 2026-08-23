@@ -17,8 +17,8 @@ use std::{
 use crate::{
     frontend::{MainPod, MainPodBuilder, Operation},
     middleware::{
-        Hash, InputPodOpenStatement, MainPodProver, NativeOperation, OperationAux, OperationType,
-        Params, Statement, VDSet, Value, BASE_PARAMS,
+        InputPodOpenStatement, MainPodProver, NativeOperation, OperationAux, OperationType, Params,
+        Statement, VDSet, Value, BASE_PARAMS,
     },
 };
 
@@ -94,26 +94,24 @@ impl fmt::Display for SolverKind {
     }
 }
 
-/// Side table pairing an [`OutputShape`]'s positional external indices
-/// with the concrete pod hashes and input statements they refer to. The
-/// solver never sees concrete data; the build layer uses this index to
-/// reattach hashes when materialising a [`MultiPodResult`] from a
-/// partition.
+/// Maps an [`OutputShape`]'s symbolic external indices back to concrete input
+/// PODs and statements. This keeps the solver data-independent while allowing
+/// the build layer to materialize concrete PODs from a partition.
 #[derive(Clone, Debug)]
 struct ExternalIndex {
-    pods: Vec<Hash>,
+    input_pod_indices: Vec<usize>,
     statements: Vec<ExternalDependency>,
-    /// Inverse of `pods` for O(1) hash → abstract-pod-index lookup.
-    pod_index_by_hash: HashMap<Hash, usize>,
+    /// Symbolic POD index keyed by builder input position.
+    abstract_index_by_input_pod: HashMap<usize, usize>,
 }
 
 impl ExternalIndex {
-    fn new(pods: Vec<Hash>, statements: Vec<ExternalDependency>) -> Self {
-        let pod_index_by_hash = pods.iter().copied().zip(0..).collect();
+    fn new(input_pod_indices: Vec<usize>, statements: Vec<ExternalDependency>) -> Self {
+        let abstract_index_by_input_pod = input_pod_indices.iter().copied().zip(0..).collect();
         Self {
-            pods,
+            input_pod_indices,
             statements,
-            pod_index_by_hash,
+            abstract_index_by_input_pod,
         }
     }
 }
@@ -342,17 +340,6 @@ impl MultiPodBuilder {
             });
         }
 
-        let input_pod_idx_by_abs: Vec<usize> = external_index
-            .pods
-            .iter()
-            .map(|h| {
-                self.input_pods
-                    .iter()
-                    .position(|p| p.statements_hash() == *h)
-                    .expect("external pod referenced by user op is in input_pods")
-            })
-            .collect();
-
         Ok(SolvedMultiPod {
             params: self.params,
             vd_set: self.vd_set,
@@ -364,7 +351,6 @@ impl MultiPodBuilder {
             shape,
             output,
             external_index,
-            input_pod_idx_by_abs,
             public_sets,
         })
     }
@@ -383,10 +369,6 @@ pub struct SolvedMultiPod {
     shape: InputShape,
     output: OutputShape,
     external_index: ExternalIndex,
-    /// `external_index.pods[abs_pod]` is a hash; this maps that
-    /// abstract index to the matching POD's position in `input_pods`,
-    /// so `pod_inputs` can attach the right `MainPod` without scanning.
-    input_pod_idx_by_abs: Vec<usize>,
     /// Per-POD public sets. Computed once at `solve()` for the chain-tree
     /// capacity check and reused by `prove()`.
     public_sets: Vec<BTreeSet<usize>>,
@@ -467,15 +449,15 @@ impl SolvedMultiPod {
                 // Staging-time aux carries a `pod_index` from the staging
                 // builder's input slots; re-issue against this POD's
                 // ext_slot mapping.
-                let OperationAux::OpenInputStatement(InputPodOpenStatement { sts_root, .. }) =
+                let OperationAux::OpenInputStatement(InputPodOpenStatement { pod_index, .. }) =
                     &self.operations[s].2
                 else {
                     unreachable!("OpenInputStatement op without InputPodOpenStatement aux");
                 };
                 let abs_pod = *self
                     .external_index
-                    .pod_index_by_hash
-                    .get(sts_root)
+                    .abstract_index_by_input_pod
+                    .get(pod_index)
                     .expect("staging OpenInputStatement's source pod is in external_index");
                 let slot = ext_slot[&abs_pod];
                 builder.open_input_st(public, slot, &self.statements[s])?;
@@ -528,7 +510,7 @@ impl SolvedMultiPod {
         let mut ext_slot: HashMap<usize, usize> = HashMap::new();
         let n_ext_pods = refs.len();
         for abs_pod in refs {
-            let pod_idx = self.input_pod_idx_by_abs[abs_pod];
+            let pod_idx = self.external_index.input_pod_indices[abs_pod];
             ext_slot.insert(abs_pod, inputs.len());
             inputs.push(self.input_pods[pod_idx].clone());
         }
@@ -648,12 +630,11 @@ fn intermediate_public_sets(shape: &InputShape, output: &OutputShape) -> Vec<BTr
 /// graph uses this to recognise when a statement argument refers to an
 /// externally-provided POD's public statement rather than a locally-built
 /// one.
-fn build_external_statement_map(input_pods: &[MainPod]) -> HashMap<Statement, Hash> {
+fn build_external_statement_map(input_pods: &[MainPod]) -> HashMap<Statement, usize> {
     let mut map = HashMap::new();
-    for pod in input_pods {
-        let pod_hash = pod.statements_hash();
+    for (pod_index, pod) in input_pods.iter().enumerate() {
         for stmt in pod.pod.pub_statements() {
-            map.insert(stmt, pod_hash);
+            map.entry(stmt).or_insert(pod_index);
         }
     }
     map
@@ -684,8 +665,8 @@ fn build_shape_and_index(
 ) -> (InputShape, ExternalIndex) {
     let n_orig = operations.len();
 
-    let mut external_pods: Vec<Hash> = Vec::new();
-    let mut pod_idx: HashMap<Hash, usize> = HashMap::new();
+    let mut external_pods: Vec<usize> = Vec::new();
+    let mut pod_idx: HashMap<usize, usize> = HashMap::new();
     let mut external_statements: Vec<ExternalDependency> = Vec::new();
     let mut external_statement_idx: HashMap<ExternalDependency, usize> = HashMap::new();
     let mut statement_pod: Vec<usize> = Vec::new();
@@ -693,14 +674,14 @@ fn build_shape_and_index(
     for edges in &deps.statement_deps {
         for src in edges {
             if let StatementSource::External(ext) = src {
-                if let Entry::Vacant(e) = pod_idx.entry(ext.pod_hash) {
+                if let Entry::Vacant(e) = pod_idx.entry(ext.pod_index) {
                     e.insert(external_pods.len());
-                    external_pods.push(ext.pod_hash);
+                    external_pods.push(ext.pod_index);
                 }
                 if let Entry::Vacant(e) = external_statement_idx.entry(ext.clone()) {
                     e.insert(external_statements.len());
                     external_statements.push(ext.clone());
-                    statement_pod.push(pod_idx[&ext.pod_hash]);
+                    statement_pod.push(pod_idx[&ext.pod_index]);
                 }
             }
         }
@@ -749,7 +730,7 @@ fn build_shape_and_index(
             match src {
                 StatementSource::Internal(_) => has_internal = true,
                 StatementSource::External(ext) => {
-                    let pod = pod_idx[&ext.pod_hash];
+                    let pod = pod_idx[&ext.pod_index];
                     let statement = external_statement_idx[ext];
                     distinct_pods.insert(pod);
                     statements_by_pod.entry(pod).or_default().push(statement);
@@ -831,7 +812,7 @@ fn build_shape_and_index(
                             AbstractDep::Internal(synth_idx)
                         } else {
                             AbstractDep::External {
-                                pod: pod_idx[&ext.pod_hash],
+                                pod: pod_idx[&ext.pod_index],
                                 statement: u,
                             }
                         }
@@ -843,7 +824,7 @@ fn build_shape_and_index(
     for &u in &synthetic_to_statement {
         let ext = &external_statements[u];
         dep_edges.push(vec![AbstractDep::External {
-            pod: pod_idx[&ext.pod_hash],
+            pod: pod_idx[&ext.pod_index],
             statement: u,
         }]);
     }
@@ -1317,8 +1298,7 @@ mod tests {
                 Operation as FrontendOp,
             },
             middleware::{
-                Hash, NativeOperation, OperationAux, OperationType, Params, RawValue, Statement,
-                Value, ValueRef,
+                NativeOperation, OperationAux, OperationType, Params, Statement, Value, ValueRef,
             },
         };
 
@@ -1330,12 +1310,10 @@ mod tests {
             )
         }
 
-        fn ext_statement(pod_seed: i64, val: i64) -> ExternalDependency {
-            // A unique pod hash per seed and a literal-Equal statement per
-            // value. The statement contents are arbitrary as long as
-            // different input statements hash differently.
+        fn ext_statement(pod_index: usize, val: i64) -> ExternalDependency {
+            // Distinct values keep the fixture statements distinguishable.
             ExternalDependency {
-                pod_hash: Hash::from(RawValue::from(pod_seed)),
+                pod_index,
                 statement: Statement::Equal(
                     ValueRef::Literal(Value::from(val)),
                     ValueRef::Literal(Value::from(val)),
@@ -1461,6 +1439,24 @@ mod tests {
             assert_eq!(shape.num_statements(), 6);
             assert_eq!(index.statements.len(), 2);
             assert_eq!(shape.num_external_pods, 1);
+        }
+
+        #[test]
+        fn concrete_input_pods_remain_distinct() {
+            let first = ext_statement(0, 1);
+            let second = ext_statement(1, 2);
+            let deps = DependencyGraph {
+                statement_deps: vec![
+                    vec![StatementSource::External(first)],
+                    vec![StatementSource::External(second)],
+                ],
+            };
+            let operations = vec![noop_op(), noop_op()];
+
+            let (shape, index) = build_shape_and_index(&operations, &deps, &[], &Params::default());
+
+            assert_eq!(shape.num_external_pods, 2);
+            assert_eq!(index.input_pod_indices, vec![0, 1]);
         }
     }
 }
