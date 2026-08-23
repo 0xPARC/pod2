@@ -10,7 +10,8 @@ pub static MOCK_VD_SET: LazyLock<VDSet> = LazyLock::new(|| VDSet::new(&[]));
 use crate::{
     backends::plonky2::{primitives::ec::schnorr::SecretKey, signer::Signer},
     frontend::{
-        MainPod, MainPodBuilder, Operation, PodRequest, Result, SignedDict, SignedDictBuilder,
+        entry, Error, MainPod, MainPodBuilder, Operation, PodRequest, Result, SignedDict,
+        SignedDictBuilder,
     },
     lang::parse_request,
     middleware::{
@@ -58,14 +59,14 @@ pub fn zu_kyc_pod_builder(
 
     kyc.pub_op(Operation::set_not_contains(
         sanction_set,
-        (gov_id, "idNumber"),
+        entry(gov_id, "idNumber")?,
     ))?;
-    kyc.pub_op(Operation::lt((gov_id, "dateOfBirth"), now_minus_18y))?;
+    kyc.pub_op(Operation::lt(entry(gov_id, "dateOfBirth")?, now_minus_18y))?;
     kyc.pub_op(Operation::eq(
-        (gov_id, "socialSecurityNumber"),
-        (pay_stub, "socialSecurityNumber"),
+        entry(gov_id, "socialSecurityNumber")?,
+        entry(pay_stub, "socialSecurityNumber")?,
     ))?;
-    kyc.pub_op(Operation::eq((pay_stub, "startDate"), now_minus_1y))?;
+    kyc.pub_op(Operation::eq(entry(pay_stub, "startDate")?, now_minus_1y))?;
 
     Ok(kyc)
 }
@@ -197,7 +198,9 @@ impl EthDosHelper {
     ) -> Result<()> {
         // eth_friend statement
         let attestation_signed_by_int = pod.priv_op(Operation::dict_signed_by(int_attestation))?;
-        let int_attests_to_dst = int_attestation.get_statement("attestation").unwrap();
+        let int_attests_to_dst = int_attestation
+            .get_statement("attestation")?
+            .ok_or_else(|| Error::custom("signed dictionary has no attestation entry"))?;
         let ethfriends_int_dst = pod.priv_op(Operation::custom(
             self.eth_friend.clone(),
             [attestation_signed_by_int, int_attests_to_dst],
@@ -268,7 +271,7 @@ pub fn great_boy_pod_builder(
             ))?;
             // Each good boy has 2 good boy pods
             great_boy.priv_op(Operation::eq(
-                (good_boy_signed_dicts[good_boy_idx * 2 + issuer_idx], "user"),
+                entry(good_boy_signed_dicts[good_boy_idx * 2 + issuer_idx], "user")?,
                 friend_signed_dicts[good_boy_idx].public_key,
             ))?;
         }
@@ -279,7 +282,7 @@ pub fn great_boy_pod_builder(
         ))?;
         // Each good boy is receivers' friend
         great_boy.pub_op(Operation::eq(
-            (friend_signed_dicts[good_boy_idx], "friend"),
+            entry(friend_signed_dicts[good_boy_idx], "friend")?,
             *receiver,
         ))?;
     }
@@ -387,12 +390,18 @@ pub fn tickets_pod_builder(
     // Create a main pod referencing this signed pod with some statements
     let mut builder = MainPodBuilder::new(params, vd_set);
     builder.pub_op(Operation::dict_signed_by(signed_dict))?;
-    builder.pub_op(Operation::eq((signed_dict, "eventId"), expected_event_id))?;
-    builder.pub_op(Operation::eq((signed_dict, "isConsumed"), expect_consumed))?;
-    builder.pub_op(Operation::eq((signed_dict, "isRevoked"), false))?;
+    builder.pub_op(Operation::eq(
+        entry(signed_dict, "eventId")?,
+        expected_event_id,
+    ))?;
+    builder.pub_op(Operation::eq(
+        entry(signed_dict, "isConsumed")?,
+        expect_consumed,
+    ))?;
+    builder.pub_op(Operation::eq(entry(signed_dict, "isRevoked")?, false))?;
     builder.pub_op(Operation::dict_not_contains(
         blacklisted_email_set_value,
-        (signed_dict, "attendeeEmail"),
+        entry(signed_dict, "attendeeEmail")?,
     ))?;
 
     // This isn't the most fool-proof way to prove ownership (it requires
@@ -401,7 +410,7 @@ pub fn tickets_pod_builder(
     let sk = TICKET_OWNER_SECRET_KEY;
     builder.pub_op(Operation::public_key(
         sk.clone(),
-        (signed_dict, "attendeePublicKey"),
+        entry(signed_dict, "attendeePublicKey")?,
     ))?;
 
     // Nullifier calculation is public, but based on the private sk.

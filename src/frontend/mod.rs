@@ -110,19 +110,19 @@ impl SignedDict {
             .then_some(())
             .ok_or(Error::custom("Invalid signature!"))
     }
-    pub fn get(&self, key: impl Into<StrKey>) -> Option<Value> {
-        self.dict.get(&key.into()).unwrap()
+    pub fn get(&self, key: impl Into<StrKey>) -> Result<Option<Value>> {
+        self.dict.get(&key.into()).map_err(Into::into)
     }
     // Returns the Contains statement that defines key if it exists.
-    pub fn get_statement(&self, key: impl Into<StrKey>) -> Option<Statement> {
+    pub fn get_statement(&self, key: impl Into<StrKey>) -> Result<Option<Statement>> {
         let key: StrKey = key.into();
-        self.dict.get(&key).unwrap().map(|value| {
+        Ok(self.dict.get(&key)?.map(|value| {
             Statement::Contains(
                 ValueRef::Literal(Value::from(self.dict.clone())),
                 ValueRef::Literal(Value::from(key.name())),
                 ValueRef::Literal(value.clone()),
             )
-        })
+        }))
     }
 }
 
@@ -637,7 +637,11 @@ impl MainPodBuilder {
                             ..
                         }),
                         // TODO: validate proof
-                    ) => self.input_pods[*pod_index].public_statements[*index].clone(),
+                    ) => self
+                        .input_pods
+                        .get(*pod_index)
+                        .and_then(|pod| pod.public_statements.get(*index).cloned())
+                        .ok_or_else(native_arg_error)?,
                     (t, _, _) => {
                         if t.is_syntactic_sugar() {
                             return Err(Error::custom(format!(
@@ -718,8 +722,19 @@ impl MainPodBuilder {
     }
 
     fn op_input_st(&self, pod_index: usize, st_index: usize) -> Result<Operation> {
-        let pod = &self.input_pods[pod_index];
-        let raw_statement = pod.pod.pub_raw_statements()[st_index].clone();
+        let pod = self.input_pods.get(pod_index).ok_or_else(|| {
+            Error::custom(format!("input POD index {pod_index} is out of bounds"))
+        })?;
+        let raw_statement = pod
+            .pod
+            .pub_raw_statements()
+            .get(st_index)
+            .cloned()
+            .ok_or_else(|| {
+                Error::custom(format!(
+                    "statement index {st_index} is out of bounds for input POD {pod_index}"
+                ))
+            })?;
         let sts_mt = pod.pod.pub_raw_statements_mt();
         let (_, mt_proof) = sts_mt.prove(st_index)?;
         Ok(Operation(
@@ -742,7 +757,9 @@ impl MainPodBuilder {
         pod_index: usize,
         st: &Statement,
     ) -> Result<Statement> {
-        let pod = &self.input_pods[pod_index];
+        let pod = self.input_pods.get(pod_index).ok_or_else(|| {
+            Error::custom(format!("input POD index {pod_index} is out of bounds"))
+        })?;
         if let Some(st_index) = pod.public_statements.iter().position(|st0| st0 == st) {
             let op = self.op_input_st(pod_index, st_index)?;
             self.op(public, Vec::new(), op)
@@ -1185,8 +1202,8 @@ pub mod tests {
         let op_eq1 = Operation(
             OperationType::Native(NativeOperation::EqualFromEntries),
             vec![
-                OperationArg::from((&signed_dict, "a")),
-                OperationArg::from((&signed_dict, "b")),
+                entry(&signed_dict, "a").unwrap(),
+                entry(&signed_dict, "b").unwrap(),
             ],
             OperationAux::None,
         );
@@ -1194,8 +1211,8 @@ pub mod tests {
         let op_eq2 = Operation(
             OperationType::Native(NativeOperation::EqualFromEntries),
             vec![
-                OperationArg::from((&signed_dict, "b")),
-                OperationArg::from((&signed_dict, "a")),
+                entry(&signed_dict, "b").unwrap(),
+                entry(&signed_dict, "a").unwrap(),
             ],
             OperationAux::None,
         );
@@ -1233,7 +1250,7 @@ pub mod tests {
         let contains = builder.contains.clone();
 
         let error = builder
-            .pub_op(Operation::gt((&signed_dict, "num"), 5))
+            .pub_op(Operation::gt(entry(&signed_dict, "num").unwrap(), 5))
             .expect_err("2 is not greater than 5");
 
         assert!(matches!(
@@ -1265,6 +1282,28 @@ pub mod tests {
 
         assert!(builder.input_pods.is_empty());
         assert!(builder.contains.is_empty());
+    }
+
+    #[test]
+    fn invalid_open_input_index_returns_error() {
+        let mut builder = MainPodBuilder::new(&Params::default(), &MOCK_VD_SET);
+
+        builder
+            .open_input_st(false, 0, &Statement::None)
+            .expect_err("there are no input PODs");
+
+        assert!(builder.statements.is_empty());
+        assert!(builder.operations.is_empty());
+    }
+
+    #[test]
+    fn missing_signed_dict_entry_returns_none() -> Result<()> {
+        let signed =
+            SignedDictBuilder::new(&Params::default()).sign(&Signer(SecretKey(1u32.into())))?;
+
+        assert_eq!(signed.get("missing")?, None);
+        assert_eq!(signed.get_statement("missing")?, None);
+        Ok(())
     }
 
     #[test]
@@ -1356,7 +1395,9 @@ pub mod tests {
         builder
             .pub_op(Operation::dict_signed_by(&signed_dict))
             .unwrap();
-        let st0 = signed_dict.get_statement("dict").unwrap();
+        let st0 = signed_dict
+            .get_statement("dict")?
+            .expect("signed dictionary contains dict");
         let local = dict!({"key" => "a"});
         let st1 = builder
             .op(true, vec![], Operation::dict_contains(local, "key", "a"))
@@ -1584,7 +1625,9 @@ pub mod tests {
                 Operation::dict_contains(local, "known_secret", SecretKey(BigUint::from(123u32))),
             )
             .unwrap();
-        let st1 = signed_dict.get_statement("owner").unwrap();
+        let st1 = signed_dict
+            .get_statement("owner")?
+            .expect("signed dictionary contains owner");
         assert!(builder
             .pub_op(Operation(
                 // OperationType
@@ -1829,12 +1872,12 @@ pub mod tests {
 
         // Create 6 Equal statements (one for each predicate constraint) in original order
         // Each proves that signed_dict["x"] = n, matching the Equal(A["x"], n) template
-        let st_a = builder.priv_op(Operation::eq((&signed_dict, "a"), 1))?;
-        let st_b = builder.priv_op(Operation::eq((&signed_dict, "b"), 2))?;
-        let st_c = builder.priv_op(Operation::eq((&signed_dict, "c"), 3))?;
-        let st_d = builder.priv_op(Operation::eq((&signed_dict, "d"), 4))?;
-        let st_e = builder.priv_op(Operation::eq((&signed_dict, "e"), 5))?;
-        let st_f = builder.priv_op(Operation::eq((&signed_dict, "f"), 6))?;
+        let st_a = builder.priv_op(Operation::eq(entry(&signed_dict, "a")?, 1))?;
+        let st_b = builder.priv_op(Operation::eq(entry(&signed_dict, "b")?, 2))?;
+        let st_c = builder.priv_op(Operation::eq(entry(&signed_dict, "c")?, 3))?;
+        let st_d = builder.priv_op(Operation::eq(entry(&signed_dict, "d")?, 4))?;
+        let st_e = builder.priv_op(Operation::eq(entry(&signed_dict, "e")?, 5))?;
+        let st_f = builder.priv_op(Operation::eq(entry(&signed_dict, "f")?, 6))?;
 
         // Pass statements in original declaration order
         let statements = vec![st_a, st_b, st_c, st_d, st_e, st_f];
@@ -1890,7 +1933,7 @@ pub mod tests {
 
         let mut builder = MainPodBuilder::new(&params, vd_set);
         builder.pub_op(Operation::dict_signed_by(&signed_dict))?;
-        let st_branch = builder.priv_op(Operation::eq((&signed_dict, "k17"), 17))?;
+        let st_branch = builder.priv_op(Operation::eq(entry(&signed_dict, "k17")?, 17))?;
 
         let mut statements = vec![Statement::None; 30];
         statements[17] = st_branch;
