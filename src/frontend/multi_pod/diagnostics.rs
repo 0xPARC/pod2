@@ -299,15 +299,10 @@ impl SolutionBreakdown {
                     }
                 }
 
-                // Statement-table cap: each `OpenInputStatement` op
-                // produces a statement in the POD's statement table, so
-                // the "total statements" row reflects local statements
-                // PLUS chain and external imports: the same number
-                // `segment_feasible_with` checks against
-                // `max_statements`.
+                // Only chain imports add statements beyond assigned nodes.
                 let total_imports = chain_imports.len() + external_imports.len();
                 if let Some(row) = resources.iter_mut().find(|r| r.name == "total statements") {
-                    row.used += total_imports;
+                    row.used += chain_imports.len();
                 }
 
                 let imports_row = UtilizationRow {

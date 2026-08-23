@@ -422,10 +422,8 @@ impl GreedyState {
         if !tree_imports_ok(self.a == 0, n_producers, n_ext_imports, n_ext_pods, params) {
             return None;
         }
-        // Statement-table cap: local segment statements plus chain and
-        // external imports together share `max_statements`, because each
-        // `OpenInputStatement` op produces a statement in the POD's table.
-        if tentative.num_operations + n_producers + n_ext_imports > params.max_statements {
+        // Only chain imports add statements beyond assigned nodes.
+        if tentative.num_operations + n_producers > params.max_statements {
             return None;
         }
         Some(self.scratch_new_producers.len() + self.scratch_new_ext_imports.len())
@@ -796,10 +794,8 @@ fn segment_feasible_with(
     let n_ext_pods = workspace.external_pods.len();
     let n_chain_imports = workspace.prev_pod_producers.len();
 
-    // Statement-table cap. Each `OpenInputStatement` op produces a statement
-    // in the POD's statement table, so the table holds `segment statements +
-    // imports`, capped by `max_statements`.
-    if segment.len() + n_chain_imports + n_ext_imports > params.max_statements {
+    // Only chain imports add statements beyond assigned nodes.
+    if segment.len() + n_chain_imports > params.max_statements {
         return false;
     }
 
@@ -834,7 +830,7 @@ fn segment_feasible_with(
         }
     }
     let n_chain_imports_terminal = workspace.prev_pod_producers.len();
-    if segment.len() + n_chain_imports_terminal + n_ext_imports > params.max_statements {
+    if segment.len() + n_chain_imports_terminal > params.max_statements {
         return false;
     }
     imports_ok(n_chain_imports_terminal)
@@ -1142,6 +1138,33 @@ mod tests {
              external imports packed into a single POD",
             n
         );
+    }
+
+    #[test]
+    fn external_open_node_consumes_one_statement_slot() {
+        use super::super::cost::OperationCost;
+
+        let input = InputShape {
+            costs: vec![OperationCost::default(), OperationCost::default()],
+            dep_edges: vec![
+                vec![AbstractDep::External {
+                    pod: 0,
+                    statement: 0,
+                }],
+                vec![AbstractDep::Internal(0)],
+            ],
+            output_public_indices: vec![1],
+            num_external_pods: 1,
+            statement_pod: vec![0],
+            params: Params {
+                max_statements: 2,
+                ..Params::default()
+            },
+        };
+
+        let out = partition(&input).expect("Open plus consumer should fit");
+        assert_eq!(out.pod_count, 1);
+        assert_eq!(out.pod_statements, vec![vec![0, 1]]);
     }
 
     #[test]

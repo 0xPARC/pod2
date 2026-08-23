@@ -227,18 +227,12 @@ pub fn solve_for_k(input: &InputShape, k: usize) -> Option<OutputShape> {
         }
     }
 
-    // (3) Statement-table cap per POD. Each `OpenInputStatement` op
-    // produces a statement, so the table holds `local statements +
-    // chain imports + external-statement imports`, capped by
-    // `max_statements`.
+    // (3) Statement cap: only chain imports add nodes beyond assignments.
     for p in 0..k {
         let assign_sum: Expression = (0..n).map(|s| v.assign[s][p]).sum();
         let chain_sum: Expression = (0..n).map(|d| v.import_from[d][p]).sum();
-        let ext_sum: Expression = (0..num_ext_statements)
-            .map(|e_prem| v.ext_import_from[e_prem][p])
-            .sum();
         model.add_constraint(constraint!(
-            assign_sum + chain_sum + ext_sum <= input.params.max_statements as f64
+            assign_sum + chain_sum <= input.params.max_statements as f64
         ));
     }
 
@@ -598,6 +592,30 @@ mod tests {
             solve_for_k(&input, 2).is_some(),
             "MILP must accept K=2 for the same input"
         );
+    }
+
+    #[test]
+    fn external_open_node_consumes_one_statement_slot() {
+        let input = InputShape {
+            costs: vec![OperationCost::default(), OperationCost::default()],
+            dep_edges: vec![
+                vec![AbstractDep::External {
+                    pod: 0,
+                    statement: 0,
+                }],
+                vec![AbstractDep::Internal(0)],
+            ],
+            output_public_indices: vec![1],
+            num_external_pods: 1,
+            statement_pod: vec![0],
+            params: Params {
+                max_statements: 2,
+                ..Params::default()
+            },
+        };
+
+        let out = solve_for_k(&input, 1).expect("Open plus consumer should fit");
+        assert_eq!(out.pod_statements, vec![vec![0, 1]]);
     }
 
     #[test]
