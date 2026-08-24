@@ -74,7 +74,7 @@ if __name__ == "__main__":
             other = parse(f)
         if not base or not other:
             sys.exit("no timing lines found in one of the logs")
-        compare(base, other, "base", "avx2")
+        compare(base, other, "base", "other")
     else:
         src = open(args[0]) if args else sys.stdin
         totals = parse(src)
