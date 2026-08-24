@@ -16,7 +16,7 @@ use good_lp::{
 
 use super::{
     cost::{CustomPredicateId, OperationCost, ResourceTotals},
-    shape::{AbstractDep, InputShape, OutputShape},
+    shape::{input_pod_slots, AbstractDep, InputShape, OutputShape},
 };
 use crate::middleware::Params;
 
@@ -28,7 +28,6 @@ struct MilpVars {
     ext_import_from: Vec<Vec<Variable>>,
     ext_used: Vec<Vec<Variable>>,
     cp_used: Vec<Vec<Variable>>,
-    uses_chain: Vec<Variable>,
 }
 
 fn mk_binary_grid(vars: &mut ProblemVariables, rows: usize, cols: usize) -> Vec<Vec<Variable>> {
@@ -51,7 +50,6 @@ fn declare_vars(
         ext_import_from: mk_binary_grid(vars, num_ext_statements, k),
         ext_used: mk_binary_grid(vars, num_ext_pods, k),
         cp_used: mk_binary_grid(vars, num_cps, k),
-        uses_chain: (0..k).map(|_| vars.add(variable().binary())).collect(),
     }
 }
 
@@ -390,28 +388,17 @@ pub fn solve_for_k(input: &InputShape, k: usize) -> Option<OutputShape> {
         }
     }
 
-    // (9) uses_chain[p] = OR of import_from[*][p].
+    // (9) Input-POD cap: later PODs reserve one predecessor slot; each
+    // distinct external POD uses another.
     for p in 0..k {
-        for d in 0..n {
-            model.add_constraint(constraint!(v.uses_chain[p] >= v.import_from[d][p]));
-        }
-        // Upper bound: at most 1 if any import is set. We don't need a
-        // tight upper bound since the input-pod cap is the only thing
-        // that reads uses_chain, and a slack uses_chain = 1 is harmless
-        // when no imports are taken.
-        let sum: Expression = (0..n).map(|d| v.import_from[d][p]).sum();
-        model.add_constraint(constraint!(v.uses_chain[p] <= sum));
-    }
-
-    // (10) Input-pod cap: uses_chain + external pods <= max_input_pods.
-    for p in 0..k {
+        let chain_pods = input_pod_slots(p == 0, 0) as f64;
         let ext_sum: Expression = (0..num_ext_pods).map(|e| v.ext_used[e][p]).sum();
         model.add_constraint(constraint!(
-            v.uses_chain[p] + ext_sum <= input.params.max_input_pods as f64
+            ext_sum + chain_pods <= input.params.max_input_pods as f64
         ));
     }
 
-    // (11) POD-range preprocessing: each statement's assignable PODs are
+    // (10) POD-range preprocessing: each statement's assignable PODs are
     // bounded by `[min_pod(s), max_pod(s)]` derived from upstream and
     // downstream resource sums. Fix assigns outside this range to 0.
     // Pure constraint tightening; never rules out a feasible partition,

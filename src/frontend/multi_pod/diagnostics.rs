@@ -16,7 +16,8 @@ use std::{
 
 use super::{
     cost::{OperationCost, ResourceTotals},
-    shape::{AbstractDep, InputShape, OutputShape},
+    partition::SegmentChecker,
+    shape::{input_pod_slots, AbstractDep, InputShape, OutputShape},
 };
 use crate::middleware::Params;
 
@@ -198,7 +199,8 @@ pub struct PodUtilization {
     pub num_statements: usize,
     pub resources: Vec<UtilizationRow>,
     pub imports: UtilizationRow,
-    pub external_pods: UtilizationRow,
+    /// Number of input-POD slots occupied. See [`input_pod_slots`].
+    pub input_pod_slots: UtilizationRow,
     /// Statements this POD contributes to a Merkle tree. For intermediate
     /// PODs: locally-proved statements consumed downstream. For the output
     /// POD: the fresh tree size (`|output_public_indices|`). The limit is
@@ -215,9 +217,8 @@ pub struct SolutionBreakdown {
 }
 
 impl SolutionBreakdown {
-    /// Build a breakdown from an [`InputShape`] and its [`OutputShape`].
-    /// Re-derives per-POD imports and external-pod references from the
-    /// dep graph and the partition; both are pure functions of the inputs.
+    /// Computes per-POD resource use from an [`InputShape`] and its
+    /// [`OutputShape`].
     pub fn from_solution(input: &InputShape, output: &OutputShape) -> Self {
         let n = input.num_statements();
         let pod_count = output.pod_count;
@@ -314,9 +315,9 @@ impl SolutionBreakdown {
                     used: total_imports,
                     limit: input.params.max_open_input_statement_ops,
                 };
-                let external_row = UtilizationRow {
-                    name: "external pods",
-                    used: external_pods.len(),
+                let input_pods_row = UtilizationRow {
+                    name: "input pods",
+                    used: input_pod_slots(pod_idx == 0, external_pods.len()),
                     limit: input.params.max_input_pods,
                 };
                 let publishes_row = UtilizationRow {
@@ -331,7 +332,7 @@ impl SolutionBreakdown {
                     num_statements: num_stmts,
                     resources,
                     imports: imports_row,
-                    external_pods: external_row,
+                    input_pod_slots: input_pods_row,
                     publishes: publishes_row,
                 }
             })
@@ -364,7 +365,7 @@ impl fmt::Display for SolutionBreakdown {
             for row in
                 pod.resources
                     .iter()
-                    .chain([&pod.imports, &pod.external_pods, &pod.publishes])
+                    .chain([&pod.imports, &pod.input_pod_slots, &pod.publishes])
             {
                 if row.used > 0 {
                     let pct = if row.limit > 0 {
@@ -477,12 +478,13 @@ pub fn diagnose_failure(input: &InputShape) -> Option<CapViolation> {
     // doesn't fit; if it doesn't fit on its own (Unsplittable above didn't
     // trigger but the segment-relative caps overflow), surface the
     // violation that broke the camel's back.
+    let mut checker = SegmentChecker::new(&ordering, input);
     let mut segment_start = 0_usize;
     let mut segment_index = 0_usize;
     let mut pos = 0_usize;
     while pos < n {
         let next_pos = pos + 1;
-        if super::partition::segment_feasible(&ordering, input, segment_start, next_pos) {
+        if checker.is_feasible(segment_start, next_pos, false) {
             pos = next_pos;
             continue;
         }
@@ -547,10 +549,20 @@ fn identify_overflow(
     let s = ordering[a];
     let c = &input.costs[s];
 
+    let external_pods: HashSet<usize> = input.dep_edges[s]
+        .iter()
+        .filter_map(|dep| match dep {
+            AbstractDep::External { pod, .. } => Some(*pod),
+            AbstractDep::Internal(_) => None,
+        })
+        .collect();
+    let input_pods = input_pod_slots(segment_index == 0, external_pods.len());
+
     let state = &params.containers.state_ops;
     let transition = &params.containers.transition_ops;
     let categories: &[(&'static str, usize, usize)] = &[
         ("total statements", 1, params.max_statements),
+        ("input pods", input_pods, params.max_input_pods),
         (
             "merkle proofs (small)",
             c.merkle_proofs_small,
@@ -630,6 +642,58 @@ mod tests {
             .expect("non-empty problem has a bottleneck");
         assert_eq!(bottleneck.name, "total statements");
         assert_eq!(bottleneck.min_pods(), Some(3)); // ceil(6/2)
+    }
+
+    /// Reports the predecessor slot when another resource cap moves a
+    /// statement from the first POD to a later POD.
+    #[test]
+    fn diagnose_failure_names_the_input_pod_cap() {
+        let params = Params {
+            max_signed_by_ops: 1,
+            ..Params::default()
+        };
+        let two_external_pods = vec![
+            AbstractDep::External {
+                pod: 0,
+                statement: 0,
+            },
+            AbstractDep::External {
+                pod: 1,
+                statement: 1,
+            },
+        ];
+        let signed_by_cost = OperationCost {
+            signed_by: 1,
+            ..OperationCost::default()
+        };
+        let input = InputShape {
+            costs: vec![signed_by_cost.clone(), signed_by_cost],
+            dep_edges: vec![two_external_pods.clone(), two_external_pods],
+            output_public_indices: vec![1],
+            num_external_pods: 2,
+            statement_pod: vec![0, 1],
+            params,
+        };
+
+        assert!(
+            partition::partition(&input).is_none(),
+            "the second POD cannot hold two external pods alongside the chain slot"
+        );
+        match diagnose_failure(&input).expect("failure must be diagnosed") {
+            CapViolation::Resource {
+                offending_stmt,
+                category,
+                used,
+                max_allowed,
+                ..
+            } => {
+                assert_eq!(category, "input pods");
+                assert_eq!(offending_stmt, 1);
+                assert_eq!(used, 3);
+                assert_eq!(max_allowed, 2);
+            }
+            other => panic!("expected an input-pod cap violation, got {}", other),
+        }
     }
 
     #[test]

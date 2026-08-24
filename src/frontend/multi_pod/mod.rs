@@ -33,6 +33,7 @@ mod shape;
 use cost::OperationCost;
 use deps::{DependencyGraph, ExternalDependency, StatementSource};
 pub use diagnostics::{ResourceSummary, SolutionBreakdown};
+use shape::input_pod_slots;
 pub use shape::{AbstractDep, InputShape, OutputShape};
 
 #[derive(Debug, thiserror::Error)]
@@ -525,11 +526,14 @@ impl SolvedMultiPod {
             }
         }
         let mut ext_slot: HashMap<usize, usize> = HashMap::new();
+        let n_ext_pods = refs.len();
         for abs_pod in refs {
             let pod_idx = self.input_pod_idx_by_abs[abs_pod];
             ext_slot.insert(abs_pod, inputs.len());
             inputs.push(self.input_pods[pod_idx].clone());
         }
+        // Verify that solver slot accounting matches the inputs built here.
+        assert_eq!(inputs.len(), input_pod_slots(p == 0, n_ext_pods));
         (inputs, ext_slot)
     }
 }
@@ -727,6 +731,9 @@ fn build_shape_and_index(
     // here; the synthetic allocation loop below unions this with the
     // 2+ consumers rule.
     //
+    // This pre-pass cannot know which POD will host the statement. The
+    // partitioner performs the exact per-POD slot check.
+    //
     // Republishing any input statement forces chain use at the consumer
     // site, so the post-republish budget is
     // `(K - R) + 1 <= max_input_pods`, i.e.
@@ -857,9 +864,42 @@ fn build_shape_and_index(
 mod tests {
     use super::*;
     use crate::{
-        backends::plonky2::mock::mainpod::MockProver, examples::MOCK_VD_SET,
-        frontend::Operation as FrontendOp,
+        backends::plonky2::{
+            mock::mainpod::MockProver, primitives::ec::schnorr::SecretKey, signer::Signer,
+        },
+        examples::MOCK_VD_SET,
+        frontend::{Operation as FrontendOp, SignedDict, SignedDictBuilder},
     };
+
+    /// Builds an external POD and returns its public `Lt(1, bound)` statement.
+    fn external_lt_pod(
+        bound: i64,
+        params: &Params,
+        vd_set: &VDSet,
+        prover: &MockProver,
+    ) -> (MainPod, Statement) {
+        let mut ext_builder = MainPodBuilder::new(params, vd_set);
+        ext_builder
+            .pub_op(FrontendOp::lt(1, bound))
+            .expect("ext pub op");
+        let pod = ext_builder.prove(prover).expect("ext prove");
+        let stmt = pod
+            .pod
+            .pub_statements()
+            .into_iter()
+            .find(|s| !s.is_none())
+            .expect("ext pod has a public statement");
+        (pod, stmt)
+    }
+
+    /// Builds a signed dictionary whose ID and signing key derive from `seed`.
+    fn signed_dict(seed: u32, params: &Params) -> SignedDict {
+        let mut signed_builder = SignedDictBuilder::new(params);
+        signed_builder.insert("id", seed as i64);
+        signed_builder
+            .sign(&Signer(SecretKey(seed.into())))
+            .expect("sign dict")
+    }
 
     #[test]
     fn end_to_end_solve_single_pod() {
@@ -1035,17 +1075,7 @@ mod tests {
         .expect("load module");
         let batch = &module.batch;
 
-        let mut ext_builder = MainPodBuilder::new(&params, vd_set);
-        ext_builder
-            .pub_op(FrontendOp::lt(1, 2))
-            .expect("ext pub op");
-        let ext_pod = ext_builder.prove(&prover).expect("ext prove");
-        let ext_stmt = ext_pod
-            .pod
-            .pub_statements()
-            .into_iter()
-            .find(|s| !s.is_none())
-            .expect("ext pod has a public statement");
+        let (ext_pod, ext_stmt) = external_lt_pod(2, &params, vd_set, &prover);
 
         let mut builder = MultiPodBuilder::new(&params, vd_set);
         builder.add_pod(ext_pod).expect("add ext pod");
@@ -1059,6 +1089,69 @@ mod tests {
         let solved = builder.solve().expect("should solve");
         let result = solved.prove(&prover).expect("prove should succeed");
         assert!(!result.pods.is_empty());
+        for (i, pod) in result.pods.iter().enumerate() {
+            pod.pod
+                .verify()
+                .unwrap_or_else(|e| panic!("POD {} verification failed: {:?}", i, e));
+        }
+    }
+
+    /// Later PODs reserve an input slot for their predecessor even when
+    /// they import no statements from it.
+    #[test]
+    fn later_pod_charges_chain_slot_against_max_input_pods() {
+        use crate::lang::load_module;
+
+        let params = Params {
+            max_signed_by_ops: 1,
+            ..Params::default()
+        };
+        let vd_set = &*MOCK_VD_SET;
+        let prover = MockProver {};
+
+        let module = load_module(
+            r#"
+            pred_ab(X, Y) = AND(
+                Lt(X, 2)
+                Lt(Y, 3)
+            )
+            "#,
+            "test",
+            &params,
+            &[],
+        )
+        .expect("load module");
+        let batch = &module.batch;
+
+        let (pod_lt_2, lt_2) = external_lt_pod(2, &params, vd_set, &prover);
+        let (pod_lt_3, lt_3) = external_lt_pod(3, &params, vd_set, &prover);
+
+        let mut builder = MultiPodBuilder::new(&params, vd_set);
+        builder.add_pod(pod_lt_2).expect("add first external pod");
+        builder.add_pod(pod_lt_3).expect("add second external pod");
+        builder
+            .priv_op(FrontendOp::dict_signed_by(&signed_dict(1, &params)))
+            .expect("first signed_by");
+        builder
+            .pub_op(FrontendOp::custom(
+                batch.predicate_ref_by_name("pred_ab").unwrap(),
+                [lt_2, lt_3],
+            ))
+            .expect("pred_ab over both external statements");
+        builder
+            .priv_op(FrontendOp::dict_signed_by(&signed_dict(2, &params)))
+            .expect("second signed_by");
+
+        let solved = builder.solve().expect("should solve");
+        assert_eq!(
+            solved.solution().pod_count,
+            2,
+            "2 SignedBy ops at max_signed_by_ops = 1 need 2 PODs"
+        );
+        // The second POD uses one predecessor slot and one external-POD slot.
+        assert_eq!(solved.solution_breakdown().pods[1].input_pod_slots.used, 2);
+
+        let result = solved.prove(&prover).expect("prove should succeed");
         for (i, pod) in result.pods.iter().enumerate() {
             pod.pod
                 .verify()
@@ -1175,11 +1268,6 @@ mod tests {
     /// `max_statements`.
     #[test]
     fn signed_by_limit_forces_multi_pod_split() {
-        use crate::{
-            backends::plonky2::{primitives::ec::schnorr::SecretKey, signer::Signer},
-            frontend::SignedDictBuilder,
-        };
-
         let params = Params {
             max_signed_by_ops: 2,
             ..Params::default()
@@ -1188,12 +1276,9 @@ mod tests {
         let prover = MockProver {};
 
         let mut builder = MultiPodBuilder::new(&params, vd_set);
-        for i in 0..4_i64 {
-            let mut signed_builder = SignedDictBuilder::new(&params);
-            signed_builder.insert("id", i);
-            let signer = Signer(SecretKey((i as u32 + 1).into()));
-            let signed_dict = signed_builder.sign(&signer).expect("sign dict");
-            if i == 3 {
+        for i in 1..=4_u32 {
+            let signed_dict = signed_dict(i, &params);
+            if i == 4 {
                 builder
                     .pub_op(FrontendOp::dict_signed_by(&signed_dict))
                     .expect("pub signed_by");
