@@ -10,6 +10,14 @@
 //! Run in mock mode: `cargo run --release --example main_pod_points -- --mock`
 use std::env;
 
+#[cfg(feature = "mimalloc")]
+#[global_allocator]
+static GLOBAL_ALLOC: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
+#[cfg(feature = "jemalloc")]
+#[global_allocator]
+static GLOBAL_ALLOC: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
+
 use pod2::{
     backends::plonky2::{
         basetypes::DEFAULT_VD_SET, mainpod::Prover, mock::mainpod::MockProver,

@@ -1,0 +1,50 @@
+name: Test timings
+
+# Manual only: this exists to answer "what is CI actually spending its time on",
+# not to gate anything. It costs nothing until someone runs it.
+on:
+  workflow_dispatch:
+    inputs:
+      filter:
+        description: "Test name filter (empty runs the whole suite)"
+        required: false
+        default: ""
+
+jobs:
+  timings:
+    name: Test timings
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: Set up Rust
+      uses: actions-rust-lang/setup-rust-toolchain@v1
+      with:
+        # Read the tests.yml cache but never write to it: the feature set here
+        # differs, and this job should not disturb the entry PRs restore from.
+        cache-shared-key: tests-release
+        cache-save-if: false
+    - name: Run tests with timing
+      # `--nocapture` is load-bearing. The `timed!` macro and plonky2's
+      # TimingTree both print, and libtest swallows stdout without it, so the
+      # timings silently vanish. Tests still run in parallel, so samples
+      # interleave and cannot be attributed to an individual test; the totals
+      # are what this job is for.
+      #
+      # The filter goes through env rather than being interpolated into the
+      # script: a dispatch input pasted straight into `run:` would let anyone
+      # who can trigger the workflow run arbitrary commands.
+      env:
+        FILTER: ${{ inputs.filter || '' }}
+      run: |
+        set -o pipefail
+        cargo test --release --features time,db_rocksdb ${FILTER:+"$FILTER"} \
+          -- --nocapture 2>&1 | tee timings.log
+    - name: Summarise
+      if: always()
+      run: .github/workflows/scripts/summarise-timings.py < timings.log
+    - name: Upload full log
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: timings
+        path: timings.log

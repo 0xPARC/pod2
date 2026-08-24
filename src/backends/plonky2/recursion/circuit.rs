@@ -181,7 +181,11 @@ pub fn prove_rec_circuit<I: InnerCircuit>(
         proofs,
         verifier_datas,
     )?;
-    Ok(circuit_data.prove(pw)?)
+    Ok(crate::backends::plonky2::prove_with_timing(
+        "prove_rec_circuit",
+        circuit_data,
+        pw,
+    )?)
 }
 
 impl<I: InnerCircuit> RecursiveCircuit<I> {
