@@ -1024,8 +1024,7 @@ impl Params {
         BASE_PARAMS.max_depth_custom_batch_mt
     }
 
-    /// Total size of the statement table: the None row, the copy region (one row per
-    /// OpenInputStatement op) and the universal statement slots.
+    /// Total statement-table size: the None row, copy region and universal slots.
     pub fn statement_table_size(&self) -> usize {
         1 + self.max_open_input_statement_ops + self.max_statements
     }
