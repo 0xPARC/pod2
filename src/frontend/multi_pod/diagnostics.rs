@@ -298,10 +298,8 @@ impl SolutionBreakdown {
                     }
                 }
 
-                // Imports occupy the statement table's copy region, not
-                // universal slots, so the "total statements" row counts
-                // locals only; imports get their own row against
-                // `max_open_input_statement_ops`.
+                // "total statements" covers universal slots; the next row reports copy-region
+                // imports separately.
                 let total_imports = chain_imports.len() + external_imports.len();
                 let imports_row = UtilizationRow {
                     name: "tree imports",

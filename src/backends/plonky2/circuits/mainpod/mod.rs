@@ -511,10 +511,10 @@ fn append_container_proofs_operation_aux_table_circuit(
     }
 }
 
-/// Build the copy region of the statement table: one row per OpenInputStatement op.  Each row
-/// verifies membership of the raw statement in the input pod's statements root and emits the
-/// normalized statement (and its hash) directly as a statement table row, so imports don't
-/// occupy universal statement slots.
+/// Builds one copy-region row per `OpenInputStatement` operation.
+///
+/// Each row verifies the raw statement against the input POD's statements root and returns the
+/// normalized statement and its hash. Copy rows do not consume universal statement slots.
 fn build_copy_region_circuit(
     params: &Params,
     builder: &mut CircuitBuilder,
@@ -1664,8 +1664,8 @@ impl Flattenable for StsRootsEntry {
     }
 }
 
-/// If `is_pub`, check that the insertion proof selected by `pub_insert_idx` inserts `st_hash`
-/// on top of the current public statements root and advance the root; otherwise keep the root.
+/// Applies the insertion proof at `pub_insert_idx` when `is_pub`; otherwise returns `sts_root`
+/// unchanged.
 fn verify_public_statement_insertion_circuit(
     params: &Params,
     builder: &mut CircuitBuilder,
@@ -1805,8 +1805,8 @@ fn verify_main_pod_circuit(
         measure_gates_end!(builder, measure);
     }
 
-    // Statement at index 0 is always None to be used for padding operation arguments in custom
-    // predicate statements.  The copy region rows follow, then the universal statement slots.
+    // Index 0 is reserved for None, which pads custom-predicate operation arguments. Copy rows
+    // and universal slots follow.
     let st_none = StatementTarget::new_native(builder, params, NativePredicate::None, &[]);
     let statements = iter::once(&st_none)
         .chain(copy_rows.iter().map(|(st, _)| st))
@@ -1816,8 +1816,8 @@ fn verify_main_pod_circuit(
     // projected lookups. Reusing the flattened forms avoids re-flattening per op-arg lookup.
     let statement_flatteneds: Vec<Vec<Target>> =
         statements.clone().map(|st| st.flatten()).collect();
-    // Copy region rows already carry the hash computed by their emission gadget, so hash only the
-    // None row and the universal rows.
+    // Copy-row hashes were computed while verifying their input statements. Only hash the None
+    // row and universal rows here.
     let none_hash = builder.hash_n_to_hash_no_pad::<PoseidonHash>(statement_flatteneds[0].clone());
     let statement_hashes: Vec<HashOutTarget> = iter::once(none_hash)
         .chain(copy_rows.iter().map(|(_, hash)| *hash))
@@ -1834,8 +1834,7 @@ fn verify_main_pod_circuit(
         .map(|(statement, &hash)| StatementWithHash { statement, hash })
         .collect_vec();
 
-    // Public-statement insertion for the copy region, which precedes the universal slots in
-    // physical statement order.
+    // Copy rows precede universal slots, so process their public-statement insertions first.
     for (is_pub, pub_insert_idx, (_, copy_st_hash)) in izip!(
         &main_pod.statements_is_pub[..num_copy_rows],
         &main_pod.pub_insert_idx[..num_copy_rows],
@@ -1862,8 +1861,7 @@ fn verify_main_pod_circuit(
     )
     .enumerate()
     {
-        // Previous statements are the hardcoded None at index 0, the copy region and every
-        // earlier universal statement.
+        // Universal operations may refer to None, any copy row or an earlier universal statement.
         let i = 1 + num_copy_rows + j;
         let prev_statement_flatteneds = &statement_flatteneds[..i];
         let prev_statement_hashes = &statement_hashes[..i];
@@ -2119,7 +2117,7 @@ impl MainPodVerifyTarget {
                 .map(|_| MerkleProofExistenceTarget::new_virtual(params.max_depth_mt_vds, builder))
                 .collect(),
             extend_pod0_pub_statements: builder.add_virtual_bool_target_safe(),
-            // is_pub/pub_insert_idx cover the copy region rows followed by the universal slots
+            // Publication metadata covers copy rows followed by universal slots.
             statements_is_pub: (0..params.max_open_input_statement_ops + params.max_statements)
                 .map(|_| builder.add_virtual_bool_target_safe())
                 .collect(),
@@ -2247,10 +2245,9 @@ impl InnerCircuit for MainPodVerifyTarget {
             self.sts_mt_proofs[i].set_targets(pw, &pad_sts_mt_proof)?;
         }
 
-        // Skip statement and operation 0 which are a hardcoded None.  The next
-        // max_open_input_statement_ops entries are the copy region: their is_pub/pub_insert_idx
-        // are witnesses, but their statements are derived in-circuit from the open input
-        // statement data, so only the universal tail sets statement/operation targets.
+        // Index 0 is hardcoded None. Copy-row statements are derived from open-input data in the
+        // circuit, so only their publication metadata is witnessed here. Statement and operation
+        // witnesses begin after the copy region.
         let num_copy_rows = self.params.max_open_input_statement_ops;
         let statements_is_pub = &input.statements_is_pub[1..];
         let statements = &input.statements[1..];

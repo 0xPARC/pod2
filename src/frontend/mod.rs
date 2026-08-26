@@ -953,8 +953,7 @@ impl MainPodBuilder {
         } else {
             Vec::new()
         };
-        // Public statements follow the pod's physical statement order, where the copy region
-        // (imports) precedes the universal slots, so list published imports first.
+        // Preserve physical table order: published imports precede published local statements.
         let (imports, locals): (Vec<_>, Vec<_>) = statements
             .into_iter()
             .zip(operations.iter())
@@ -1025,7 +1024,7 @@ impl MainPodCompiler {
     fn push_st_op(&mut self, public: bool, st: Statement, op: middleware::Operation) {
         self.statements.push((public, st));
         self.operations.push(op);
-        // Imports occupy copy region rows, not universal slots, so cap them separately.
+        // Imports use copy rows and have a separate capacity limit from universal statements.
         let num_imports = self
             .operations
             .iter()

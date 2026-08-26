@@ -423,9 +423,8 @@ impl GreedyState {
         if !tree_imports_ok(n_producers, n_ext_imports, n_ext_pods, params) {
             return None;
         }
-        // Imports occupy the statement table's copy region, not universal
-        // slots, so they don't count against `max_statements`: locals are
-        // covered by `fits_in_pod` above and imports by `tree_imports_ok`.
+        // `fits_in_pod` enforces the local-statement limit; `tree_imports_ok` enforces the
+        // separate copy-region limit.
         Some(self.scratch_new_producers.len() + self.scratch_new_ext_imports.len())
     }
 
@@ -810,9 +809,8 @@ fn segment_feasible_with(
     let n_ext_pods = workspace.external_pods.len();
     let n_chain_imports = workspace.prev_pod_producers.len();
 
-    // Imports occupy the statement table's copy region, not universal slots,
-    // so they don't count against `max_statements`; the segment-length check
-    // at the top covers locals and `tree_imports_ok` covers imports.
+    // The segment-length check enforces the local-statement limit; `tree_imports_ok` enforces
+    // the separate copy-region limit.
     if !tree_imports_ok(n_chain_imports, n_ext_imports, n_ext_pods, params) {
         return false;
     }
@@ -1165,9 +1163,8 @@ mod tests {
 
     #[test]
     fn dependency_chain_respects_topo_order() {
-        // 4 statements where each depends on the previous. With
-        // max_statements = 3, a 2-POD partition is feasible, e.g. [0,1]
-        // and [2,3] with the second POD chain-importing stmt 1.
+        // Four statements, each depending on its predecessor. [0, 1] and [2, 3] form a valid
+        // two-POD partition; the second POD imports statement 1 through its copy region.
         use super::super::cost::OperationCost;
         let params = Params {
             max_statements: 3,

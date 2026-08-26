@@ -1125,11 +1125,8 @@ mod tests {
                     );
                 }
 
-                // Probe whether the DP layer beats greedy on bin-packing's
-                // ordering. Since imports moved to the copy region and
-                // stopped counting against max_statements, greedy's cuts
-                // reach the DP's optimum on this ordering: both return
-                // K=13. Pinned so any future divergence is visible.
+                // Imports no longer consume universal slots, so greedy matches the DP optimum for
+                // this ordering (K=13). Pin both results to catch regressions.
                 let identity: Vec<usize> = (0..shape.num_statements()).collect();
                 let bp_ordering =
                     partition::kahn_bin_packing(&shape, &identity).expect("DAG must be acyclic");

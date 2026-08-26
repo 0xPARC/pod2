@@ -360,12 +360,11 @@ pub(crate) fn extract_signatures(
     Ok(table)
 }
 
-/// The input statements split into imports, which occupy the copy region rows of the statement
-/// table, and local statements, which occupy universal slots.
+/// Inputs partitioned by their statement-table regions.
 pub(crate) struct PartitionedInputs {
-    /// (is_pub, output statement, import data) per OpenInputStatement op, in input order
+    /// Imported statements in input order: `(is_pub, output statement, import data)`.
     pub imports: Vec<(bool, middleware::Statement, InputPodOpenStatement)>,
-    /// (is_pub, output statement) per remaining op, in input order
+    /// Local statements in input order: `(is_pub, output statement)`.
     pub local_statements: Vec<(bool, middleware::Statement)>,
     pub local_operations: Vec<middleware::Operation>,
 }
@@ -449,9 +448,7 @@ fn pad_operation_args(args: &mut Vec<OperationArg>) {
     fill_pad(args, OperationArg::None, BASE_PARAMS.max_operation_args)
 }
 
-/// Returns the statements from the given MainPodInputs, padding to the respective max lengths
-/// defined at the given Params.  Layout order matches the circuit's statement table: the None
-/// row, then the copy region (imports), then the universal slots.
+/// Lays out and pads statements in circuit-table order: None, copy region, universal slots.
 pub(crate) fn layout_statements(
     params: &Params,
     inputs: &MainPodInputs,
@@ -465,8 +462,8 @@ pub(crate) fn layout_statements(
     statements.push(middleware::Statement::None.into());
     statements_is_pub.push(false);
 
-    // Copy region rows.  Unused rows are None here: the circuit fills them with a valid dummy
-    // import, but nothing references or publishes them, so the layout never has to match it.
+    // Pad unused copy rows with None. The circuit derives dummy imports for these rows, but
+    // generated operations never reference or publish them.
     for i in 0..params.max_open_input_statement_ops {
         let (is_pub, st) = partitioned
             .imports
@@ -522,9 +519,8 @@ pub(crate) fn process_statements_operations(
         OperationAux::None,
     ));
 
-    // Copy region operations, aligned with the copy rows of the statement table.  These never
-    // become circuit operation witnesses; they exist so the statement/operation pairing stays
-    // uniform for the mock prover and for display.
+    // These entries align operations with copy-region statements for the mock prover and display
+    // code. They are not circuit operation witnesses.
     for i in 0..params.max_open_input_statement_ops {
         let mut args = Vec::new();
         pad_operation_args(&mut args);
@@ -1616,8 +1612,7 @@ pub mod tests {
         let pod_1 = builder.prove(prover).unwrap();
         pod_1.pod.verify().unwrap();
 
-        // Public statements follow physical statement order, and the copy region precedes the
-        // universal slots, so the imported statement comes before the locally derived one.
+        // Copy-region imports precede locally derived public statements.
         assert_eq!(pod_1.public_statements[0], st_lt);
     }
 
