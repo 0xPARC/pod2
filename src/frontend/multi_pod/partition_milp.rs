@@ -232,7 +232,10 @@ pub fn solve_for_k(input: &InputShape, k: usize) -> Option<OutputShape> {
     // (3) Universal statement slots per POD. Imports use the copy region and are constrained
     // separately by (7b).
     for p in 0..k {
-        let assign_sum: Expression = (0..n).map(|s| v.assign[s][p]).sum();
+        let assign_sum: Expression = (0..n)
+            .filter(|&s| !input.costs[s].uses_copy_row)
+            .map(|s| v.assign[s][p])
+            .sum();
         model.add_constraint(constraint!(
             assign_sum <= input.params.max_statements as f64
         ));
@@ -580,8 +583,9 @@ mod tests {
         // same external pod with distinct input statements. K=1 must be
         // infeasible because the combined import cap (chain + external)
         // is busted.
-        let params = Params::default();
+        let mut params = Params::default();
         let n = params.max_open_input_statement_ops + 1;
+        params.max_statements = n;
         let input = InputShape {
             costs: (0..n).map(|_| OperationCost::default()).collect(),
             dep_edges: (0..n)
@@ -605,6 +609,39 @@ mod tests {
             solve_for_k(&input, 2).is_some(),
             "MILP must accept K=2 for the same input"
         );
+    }
+
+    #[test]
+    fn copy_row_and_universal_statement_share_pod() {
+        let params = Params {
+            max_statements: 1,
+            max_open_input_statement_ops: 1,
+            ..Params::default()
+        };
+        let input = InputShape {
+            costs: vec![
+                OperationCost {
+                    uses_copy_row: true,
+                    ..OperationCost::default()
+                },
+                OperationCost::default(),
+            ],
+            dep_edges: vec![
+                vec![AbstractDep::External {
+                    pod: 0,
+                    statement: 0,
+                }],
+                vec![AbstractDep::Internal(0)],
+            ],
+            output_public_indices: vec![1],
+            num_external_pods: 1,
+            statement_pod: vec![0],
+            params,
+        };
+
+        let out = solve_for_k(&input, 1).expect("should fit in one POD");
+        assert_eq!(out.pod_count, 1);
+        assert_eq!(out.pod_statements[0], vec![0, 1]);
     }
 
     #[test]

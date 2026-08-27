@@ -75,7 +75,7 @@ fn aggregate_rows<'a>(
     let rows = vec![
         UtilizationRow {
             name: "total statements",
-            used: totals.num_operations,
+            used: totals.num_universal_statements,
             limit: params.max_statements,
         },
         UtilizationRow {
@@ -119,7 +119,7 @@ fn aggregate_rows<'a>(
             limit: params.max_custom_predicates,
         },
     ];
-    (rows, totals.num_operations)
+    (rows, totals.num_universal_statements)
 }
 
 /// Pre-solve aggregate resource summary.

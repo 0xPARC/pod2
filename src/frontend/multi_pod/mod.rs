@@ -799,12 +799,15 @@ fn build_shape_and_index(
     }
     let n_synth = synthetic_to_statement.len();
 
-    // Augmented costs: originals + zero costs for synthetics.
+    // Synthetic republishes are openings, so they use copy rows rather than universal slots.
     let mut costs: Vec<OperationCost> = operations
         .iter()
         .map(|op| OperationCost::from_operation(op, params))
         .collect();
-    costs.extend((0..n_synth).map(|_| OperationCost::default()));
+    costs.extend((0..n_synth).map(|_| OperationCost {
+        uses_copy_row: true,
+        ..OperationCost::default()
+    }));
 
     // Augmented dep_edges. Original statements: External(pod, statement)
     // becomes Internal(synth_idx) when the input statement is being
@@ -1020,7 +1023,11 @@ mod tests {
         // against the per-POD builder's slot.
         use crate::lang::load_module;
 
-        let params = Params::default();
+        let params = Params {
+            max_statements: 1,
+            max_open_input_statement_ops: 1,
+            ..Params::default()
+        };
         let vd_set = &*MOCK_VD_SET;
         let prover = MockProver {};
 
@@ -1057,6 +1064,7 @@ mod tests {
             .expect("pred_a on ext stmt");
 
         let solved = builder.solve().expect("should solve");
+        assert_eq!(solved.solution().pod_count, 1);
         let result = solved.prove(&prover).expect("prove should succeed");
         assert!(!result.pods.is_empty());
         for (i, pod) in result.pods.iter().enumerate() {
