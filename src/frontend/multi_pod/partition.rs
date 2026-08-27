@@ -20,7 +20,7 @@
 //! - **Cutting the ordering into segments**. Once the order is fixed
 //!   this collapses to a 1D problem: where do POD boundaries go?
 //!   Dynamic programming over prefixes solves it optimally in
-//!   O(n * W^2) where W = `max_statements` (see [`run_dp`]). It
+//!   O(n * W^2), where W is the combined universal- and copy-row capacity (see [`run_dp`]). It
 //!   also ensures feasibility in cases where a left-to-right greedy
 //!   walk produces an infeasible partition; the per-ordering
 //!   feasibility-rescue counts in [`ordering_and_cutter_contribution_sweep`]
@@ -170,7 +170,7 @@ pub(super) fn kahn_bin_packing(
         // prefer the lowest-tiebreak ready statement that fits, falling
         // back to lowest-tiebreak overall when nothing fits (which
         // closes the segment).
-        let (chosen_idx, opens_new_segment) = if state.totals.num_operations == 0 {
+        let (chosen_idx, opens_new_segment) = if ordering.len() == state.segment_start {
             // Empty segment: no coupling signal yet, identity tiebreak only.
             let i = ready
                 .iter()
@@ -787,7 +787,7 @@ fn segment_feasible_with(
 ) -> bool {
     let params = &input.params;
     let segment = &ordering[start..end];
-    if segment.is_empty() || segment.len() > params.max_statements {
+    if segment.is_empty() {
         return false;
     }
 
@@ -968,10 +968,12 @@ struct DpEntry {
 fn run_dp(ordering: &[usize], input: &InputShape) -> Option<Vec<Segment>> {
     let n = ordering.len();
     let mut checker = SegmentChecker::new(ordering, input);
-    // Each POD holds at most `max_statements` local statements, so any
-    // candidate segment longer than that is infeasible. This bounds
-    // the inner loop's start window per `end`.
-    let max_segment_len = input.params.max_statements;
+    // A segment can contain both universal statements and copy rows. Their combined capacities
+    // bound the inner loop's start window per `end`.
+    let max_segment_len = input
+        .params
+        .max_statements
+        .saturating_add(input.params.max_open_input_statement_ops);
 
     // The table has `n + 1` cells, one per boundary position (including
     // 0 and n). `dp[0]` is the base case: the empty prefix needs 0 PODs.
@@ -1132,6 +1134,39 @@ mod tests {
     }
 
     #[test]
+    fn copy_row_and_universal_statement_share_pod() {
+        let params = Params {
+            max_statements: 1,
+            max_open_input_statement_ops: 1,
+            ..Params::default()
+        };
+        let input = InputShape {
+            costs: vec![
+                OperationCost {
+                    uses_copy_row: true,
+                    ..OperationCost::default()
+                },
+                OperationCost::default(),
+            ],
+            dep_edges: vec![
+                vec![AbstractDep::External {
+                    pod: 0,
+                    statement: 0,
+                }],
+                vec![AbstractDep::Internal(0)],
+            ],
+            output_public_indices: vec![1],
+            num_external_pods: 1,
+            statement_pod: vec![0],
+            params,
+        };
+
+        let out = partition(&input).expect("should fit in one POD");
+        assert_eq!(out.pod_count, 1);
+        assert_eq!(out.pod_statements[0], vec![0, 1]);
+    }
+
+    #[test]
     fn splits_when_statement_count_exceeds_cap() {
         // Force a 2-POD split via tight max_statements.
         let params = Params {
@@ -1160,8 +1195,9 @@ mod tests {
         // `max_input_pods` can't force a split, so the only constraint
         // that drives K > 1 is the combined import cap.
         use super::super::cost::OperationCost;
-        let params = Params::default();
+        let mut params = Params::default();
         let n = params.max_open_input_statement_ops + 1;
+        params.max_statements = n;
         let input = InputShape {
             costs: (0..n).map(|_| OperationCost::default()).collect(),
             dep_edges: (0..n)

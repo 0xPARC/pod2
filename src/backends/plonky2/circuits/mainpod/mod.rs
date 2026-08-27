@@ -511,7 +511,7 @@ fn append_container_proofs_operation_aux_table_circuit(
     }
 }
 
-/// Builds one copy-region row per `OpenInputStatement` operation.
+/// Builds the configured copy region from `OpenInputStatement` targets.
 ///
 /// Each row verifies the raw statement against the input POD's statements root and returns the
 /// normalized statement and its hash. Copy rows do not consume universal statement slots.

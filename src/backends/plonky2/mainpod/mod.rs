@@ -1594,19 +1594,29 @@ pub mod tests {
         let real_prover = Prover {};
         let prover: &dyn MainPodProver = if mock { &mock_prover } else { &real_prover };
 
-        let params = middleware::Params::default();
-        let vd_set = &*DEFAULT_VD_SET;
+        let params = middleware::Params {
+            max_statements: 1,
+            max_open_input_statement_ops: 1,
+            ..Default::default()
+        };
+        let mut vds = DEFAULT_VD_LIST.clone();
+        vds.push(
+            cache_get_rec_main_pod_verifier_circuit_data(&params)
+                .verifier_only
+                .clone(),
+        );
+        let vd_set = VDSet::new(&vds);
 
-        let mut builder = MainPodBuilder::new(&params, vd_set);
+        let mut builder = MainPodBuilder::new(&params, &vd_set);
 
         let st_lt = builder.pub_op(frontend::Operation::lt(42, 100)).unwrap();
 
         let pod_0 = builder.prove(prover).unwrap();
         pod_0.pod.verify().unwrap();
 
-        let mut builder = MainPodBuilder::new(&params, vd_set);
+        let mut builder = MainPodBuilder::new(&params, &vd_set);
         builder.add_pod(pod_0).unwrap();
-        builder.pub_op(frontend::Operation::eq(50, 50)).unwrap();
+        let st_eq = builder.pub_op(frontend::Operation::eq(50, 50)).unwrap();
         builder.open_input_st(true, 0, &st_lt).unwrap();
 
         let pod_1 = builder.prove(prover).unwrap();
@@ -1614,6 +1624,7 @@ pub mod tests {
 
         // Copy-region imports precede locally derived public statements.
         assert_eq!(pod_1.public_statements[0], st_lt);
+        assert_eq!(pod_1.public_statements[1], st_eq);
     }
 
     #[test]
