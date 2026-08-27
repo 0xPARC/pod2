@@ -12,9 +12,10 @@
 //!
 //! - **Picking an ordering**. Combinatorial: there's no realistic way
 //!   to search every topological order. We sample a small set of
-//!   candidates: one bin-packing ordering ([`kahn_bin_packing`]), the
-//!   DFS-from-sinks ordering ([`build_dfs_topo_order`]), and ten
-//!   random-priority orderings ([`kahn_with_priority`]).
+//!   candidates: one bin-packing ordering ([`kahn_bin_packing`]), an
+//!   external-opening-first ordering, the DFS-from-sinks ordering
+//!   ([`build_dfs_topo_order`]), and ten random-priority orderings
+//!   ([`kahn_with_priority`]).
 //!
 //! - **Cutting the ordering into segments**. Once the order is fixed
 //!   this collapses to a 1D problem: where do POD boundaries go?
@@ -519,9 +520,46 @@ fn random_priority(rng: &mut ChaCha20Rng, n: usize) -> Vec<usize> {
     prio_of
 }
 
+fn external_opening_pod(input: &InputShape, statement: usize) -> Option<usize> {
+    if !input.costs[statement].is_external_opening {
+        return None;
+    }
+    match input.dep_edges[statement].as_slice() {
+        [AbstractDep::External { pod, .. }] => Some(*pod),
+        _ => None,
+    }
+}
+
+/// Prioritise external openings by source POD before unrelated work.
+///
+/// The first POD can devote all of its input slots to external PODs,
+/// while every later POD also needs its chain predecessor. Opening
+/// statements there makes them available to later PODs through the
+/// chain and can remove that additional input-slot pressure.
+fn external_opening_priority(input: &InputShape) -> Option<Vec<usize>> {
+    let mut statements: Vec<usize> = (0..input.num_statements()).collect();
+    if !statements
+        .iter()
+        .any(|&s| external_opening_pod(input, s).is_some())
+    {
+        return None;
+    }
+    statements.sort_unstable_by_key(|&s| match external_opening_pod(input, s) {
+        Some(pod) => (0, pod, s),
+        None => (1, 0, s),
+    });
+
+    let mut priority = vec![0; statements.len()];
+    for (rank, statement) in statements.into_iter().enumerate() {
+        priority[statement] = rank;
+    }
+    Some(priority)
+}
+
 /// Generate the candidate orderings the cutter will try. Bin-packing
-/// goes first (strongest single seed on production-cap workloads),
-/// then DFS-from-sinks, then the random-priority orderings for variety.
+/// goes first (strongest single seed on production-cap workloads), then
+/// the external-opening-first and DFS-from-sinks orderings, followed by
+/// random-priority orderings for variety.
 fn candidate_orderings(input: &InputShape) -> Vec<Vec<usize>> {
     let n = input.num_statements();
     let mut orderings: Vec<Vec<usize>> = Vec::new();
@@ -529,6 +567,11 @@ fn candidate_orderings(input: &InputShape) -> Vec<Vec<usize>> {
     let prio_id: Vec<usize> = (0..n).collect();
     if let Some(o) = kahn_bin_packing(input, &prio_id) {
         orderings.push(o);
+    }
+    if let Some(prio) = external_opening_priority(input) {
+        if let Some(o) = kahn_with_priority(input, &prio) {
+            orderings.push(o);
+        }
     }
 
     orderings.push(build_dfs_topo_order(input));
@@ -1165,6 +1208,74 @@ mod tests {
         let out = partition(&input).expect("Open plus consumer should fit");
         assert_eq!(out.pod_count, 1);
         assert_eq!(out.pod_statements, vec![vec![0, 1]]);
+    }
+
+    #[test]
+    fn external_openings_can_move_forward_to_save_a_pod() {
+        let params = Params {
+            max_statements: 5,
+            max_input_pods: 2,
+            max_signed_by_ops: 1,
+            max_public_statements: 3,
+            ..Params::default()
+        };
+        let signed = || OperationCost {
+            signed_by: 1,
+            ..OperationCost::default()
+        };
+        let opening = || OperationCost {
+            is_external_opening: true,
+            ..OperationCost::default()
+        };
+        let input = InputShape {
+            costs: vec![
+                signed(),
+                signed(),
+                opening(),
+                opening(),
+                OperationCost::default(),
+            ],
+            dep_edges: vec![
+                vec![],
+                vec![],
+                vec![AbstractDep::External {
+                    pod: 0,
+                    statement: 0,
+                }],
+                vec![AbstractDep::External {
+                    pod: 1,
+                    statement: 1,
+                }],
+                vec![
+                    AbstractDep::Internal(0),
+                    AbstractDep::Internal(2),
+                    AbstractDep::Internal(3),
+                ],
+            ],
+            output_public_indices: vec![4],
+            num_external_pods: 2,
+            statement_pod: vec![0, 1],
+            params,
+        };
+
+        // Source order puts both external openings after the first
+        // resource-forced cut, where the predecessor takes a third slot.
+        let source_order: Vec<usize> = (0..input.num_statements()).collect();
+        let source_out =
+            partition_with_ordering(&input, &source_order).expect("source order should partition");
+        assert_eq!(source_out.pod_count, 3);
+
+        let priority = external_opening_priority(&input).expect("input contains external openings");
+        let opening_order =
+            kahn_with_priority(&input, &priority).expect("dependency graph should be acyclic");
+        assert_eq!(opening_order, vec![2, 3, 0, 1, 4]);
+        assert_eq!(candidate_orderings(&input)[1], opening_order);
+
+        let opening_out = partition_with_ordering(&input, &opening_order)
+            .expect("external-opening order should partition");
+        assert_eq!(opening_out.pod_count, 2);
+        assert!(opening_out.pod_statements[0].contains(&2));
+        assert!(opening_out.pod_statements[0].contains(&3));
     }
 
     #[test]

@@ -76,8 +76,9 @@ pub type Result<T> = std::result::Result<T, Error>;
 /// [`Error::MilpUnavailable`].
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum SolverKind {
-    /// Production DP partitioner with bin-packing + random-priority Kahn
-    /// orderings. Polynomial time, no external solver dependency.
+    /// Production DP partitioner over deterministic and sampled
+    /// topological orderings. Polynomial time, with no external solver
+    /// dependency.
     Heuristic,
     /// MILP oracle (via `good_lp` / SCIP). Optimal K but non-linear time
     /// growth on hard instances. Intended for offline use against a
@@ -792,7 +793,10 @@ fn build_shape_and_index(
         .iter()
         .map(|op| OperationCost::from_operation(op, params))
         .collect();
-    costs.extend((0..n_synth).map(|_| OperationCost::default()));
+    costs.extend((0..n_synth).map(|_| OperationCost {
+        is_external_opening: true,
+        ..OperationCost::default()
+    }));
 
     // Augmented dep_edges. Original statements: External(pod, statement)
     // becomes Internal(synth_idx) when the input statement is being
@@ -1358,6 +1362,7 @@ mod tests {
                 shape.dep_edges[synth_idx][0],
                 AbstractDep::External { .. }
             ));
+            assert!(shape.costs[synth_idx].is_external_opening);
         }
 
         #[test]
