@@ -289,11 +289,19 @@ pub struct LiteralSecretKey {
     pub span: Option<Span>,
 }
 
-/// Array literal: [...]
+/// Array literal, such as `[a, b, 5: c]`.
+///
+/// Each element stores its resolved index. Elements remain in source order.
 #[derive(Debug, Clone, PartialEq)]
 pub struct LiteralArray {
-    pub elements: Vec<LiteralValue>,
+    pub elements: Vec<LiteralArrayElement>,
     pub span: Option<Span>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct LiteralArrayElement {
+    pub index: usize,
+    pub value: LiteralValue,
 }
 
 /// Set literal: #[...]
@@ -638,11 +646,17 @@ impl fmt::Display for LiteralSecretKey {
 impl fmt::Display for LiteralArray {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "[")?;
+        // Emit an index only when it differs from the next implicit index.
+        let mut next_implicit_index = 0;
         for (i, elem) in self.elements.iter().enumerate() {
             if i > 0 {
                 write!(f, ", ")?;
             }
-            write!(f, "{}", elem)?;
+            if elem.index != next_implicit_index {
+                write!(f, "{}: ", elem.index)?;
+            }
+            write!(f, "{}", elem.value)?;
+            next_implicit_index = elem.index + 1;
         }
         write!(f, "]")
     }
@@ -1016,7 +1030,9 @@ pub mod parse {
         }
     }
 
-    fn parse_literal_value(pair: Pair<Rule>) -> Result<LiteralValue, parser::ParseError> {
+    pub(super) fn parse_literal_value(
+        pair: Pair<Rule>,
+    ) -> Result<LiteralValue, parser::ParseError> {
         assert_eq!(pair.as_rule(), Rule::literal_value);
         let inner = pair.into_inner().next().unwrap();
 
@@ -1169,14 +1185,58 @@ pub mod parse {
     fn parse_literal_array(pair: Pair<Rule>) -> Result<LiteralArray, parser::ParseError> {
         assert_eq!(pair.as_rule(), Rule::literal_array);
         let span = get_span(&pair);
-        let elements: Result<Vec<_>, _> = pair
-            .into_inner()
-            .filter(|p| p.as_rule() == Rule::literal_value)
-            .map(parse_literal_value)
-            .collect();
+        let mut elements = Vec::new();
+        let mut seen_indices = std::collections::HashSet::new();
+        // Omitted indices start at zero and increment from the preceding element.
+        let mut next_implicit_index = Some(0usize);
+        for elem_pair in pair.into_inner() {
+            assert_eq!(elem_pair.as_rule(), Rule::array_elem);
+            let mut designated_index = None;
+            let mut value = None;
+            for part in elem_pair.into_inner() {
+                match part.as_rule() {
+                    Rule::array_index => {
+                        designated_index = Some(parse_array_index(part)?);
+                    }
+                    Rule::literal_value => value = Some(parse_literal_value(part)?),
+                    other => unreachable!("unexpected rule in array_elem: {other:?}"),
+                }
+            }
+            let index = match designated_index {
+                Some(index) => index,
+                None => next_implicit_index.ok_or_else(|| {
+                    parser::ParseError::InvalidInt("implicit array index overflows".to_string())
+                })?,
+            };
+            if i64::try_from(index).is_err() {
+                return Err(parser::ParseError::InvalidInt(format!(
+                    "array index {index} exceeds i64::MAX"
+                )));
+            }
+            let value = value.expect("array_elem always contains a literal_value");
+            if !seen_indices.insert(index) {
+                return Err(parser::ParseError::DuplicateArrayIndex(index));
+            }
+            next_implicit_index = index.checked_add(1);
+            elements.push(LiteralArrayElement { index, value });
+        }
         Ok(LiteralArray {
-            elements: elements?,
+            elements,
             span: Some(span),
+        })
+    }
+
+    // Container array keys are non-negative i64 values.
+    fn parse_array_index(pair: Pair<Rule>) -> Result<usize, parser::ParseError> {
+        assert_eq!(pair.as_rule(), Rule::array_index);
+        let text = pair.as_str();
+        let index: i64 = text
+            .parse()
+            .map_err(|e| parser::ParseError::InvalidInt(format!("array index {text}: {e}")))?;
+        usize::try_from(index).map_err(|_| {
+            parser::ParseError::InvalidInt(format!(
+                "array index {text} cannot be represented on this platform"
+            ))
         })
     }
 
@@ -1281,8 +1341,10 @@ pub mod parse {
 
 #[cfg(test)]
 mod tests {
+    use pest::Parser as _;
+
     use super::*;
-    use crate::lang::parser::parse_podlang;
+    use crate::lang::parser::{self, parse_podlang, PodlangParser, Rule};
 
     /// Test that parsing and pretty-printing produces equivalent output
     fn test_roundtrip(input: &str) {
@@ -1414,7 +1476,7 @@ mod tests {
             LiteralValue::Array(a) => {
                 a.span = None;
                 for elem in &mut a.elements {
-                    clear_literal_spans(elem);
+                    clear_literal_spans(&mut elem.value);
                 }
             }
             LiteralValue::Set(s) => {
@@ -1776,5 +1838,90 @@ REQUEST(
             result.unwrap_err(),
             crate::lang::parser::ParseError::InvalidEscapeSequence(_)
         ));
+    }
+
+    fn parse_array_literal(input: &str) -> Result<LiteralArray, parser::ParseError> {
+        let parsed = PodlangParser::parse(Rule::test_literal_value, input).expect("pest parse");
+        let value_pair = parsed
+            .into_iter()
+            .next()
+            .unwrap()
+            .into_inner()
+            .find(|p| p.as_rule() == Rule::literal_value)
+            .unwrap();
+        match parse::parse_literal_value(value_pair)? {
+            LiteralValue::Array(a) => Ok(a),
+            other => panic!("expected array literal, got {other:?}"),
+        }
+    }
+
+    fn array_indices(a: &LiteralArray) -> Vec<usize> {
+        a.elements.iter().map(|e| e.index).collect()
+    }
+
+    #[test]
+    fn test_array_literal_indices_resolve_from_designators() {
+        let dense = parse_array_literal("[10, 20, 30]").unwrap();
+        assert_eq!(array_indices(&dense), vec![0, 1, 2]);
+
+        // Omitted indices follow the preceding explicit index.
+        let sparse = parse_array_literal("[10, 20, 7: 30, 40, 100: 50]").unwrap();
+        assert_eq!(array_indices(&sparse), vec![0, 1, 7, 8, 100]);
+
+        // Explicit indices may appear out of order.
+        let unordered = parse_array_literal("[5: 10, 0: 20, 30]").unwrap();
+        assert_eq!(array_indices(&unordered), vec![5, 0, 1]);
+    }
+
+    #[test]
+    fn test_array_literal_duplicate_index_rejected() {
+        assert!(matches!(
+            parse_array_literal("[10, 20, 1: 30]"),
+            Err(parser::ParseError::DuplicateArrayIndex(1))
+        ));
+        assert!(matches!(
+            parse_array_literal("[3: 10, 3: 20]"),
+            Err(parser::ParseError::DuplicateArrayIndex(3))
+        ));
+        assert!(matches!(
+            parse_array_literal("[5: 10, 0: 20, 30, 40, 50, 60, 70]"),
+            Err(parser::ParseError::DuplicateArrayIndex(5))
+        ));
+        // Explicit and inferred indices must fit the container's i64 key type.
+        assert!(matches!(
+            parse_array_literal("[99999999999999999999: 1]"),
+            Err(parser::ParseError::InvalidInt(_))
+        ));
+        assert!(matches!(
+            parse_array_literal("[9223372036854775807: 1, 2]"),
+            Err(parser::ParseError::InvalidInt(_))
+        ));
+
+        // A following explicit index does not use the implicit successor.
+        let resumed = parse_array_literal("[9223372036854775807: 1, 0: 2]").unwrap();
+        assert_eq!(array_indices(&resumed), vec![i64::MAX as usize, 0]);
+    }
+
+    #[test]
+    fn test_array_literal_display_only_marks_gaps() {
+        let sparse = parse_array_literal("[10, 20, 7: 30, 40, 100: 50]").unwrap();
+        assert_eq!(sparse.to_string(), "[10, 20, 7: 30, 40, 100: 50]");
+
+        let redundant = parse_array_literal("[0: 10, 1: 20]").unwrap();
+        assert_eq!(redundant.to_string(), "[10, 20]");
+
+        let leading_gap = parse_array_literal("[3: 10, 20]").unwrap();
+        assert_eq!(leading_gap.to_string(), "[3: 10, 20]");
+    }
+
+    #[test]
+    fn test_sparse_array_roundtrip() {
+        test_roundtrip(
+            r#"
+            sparse(A) = AND(
+                Equal(A["arr"], [1, 2, 5: "x", "y", 42: [7: true]])
+            )
+            "#,
+        );
     }
 }

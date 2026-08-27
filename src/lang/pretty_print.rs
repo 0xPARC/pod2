@@ -239,12 +239,14 @@ fn fmt_predicate_signature(
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+
     use super::*;
     use crate::{
         backends::plonky2::primitives::ec::schnorr::SecretKey,
         lang::load_module,
         middleware::{
-            CustomPredicate, Key, NativePredicate, Params, Predicate, StatementTmpl,
+            containers, CustomPredicate, Key, NativePredicate, Params, Predicate, StatementTmpl,
             StatementTmplArg, Value, Wildcard,
         },
     };
@@ -698,5 +700,30 @@ mod tests {
                 pretty_printed
             );
         }
+    }
+
+    #[test]
+    fn test_round_trip_sparse_array_literal() {
+        let input = r#"
+            sparse_array(Pod) = AND(
+                Equal(Pod["arr"], [1, 2, 5: "x", "y"])
+            )
+        "#;
+        assert_round_trip(input);
+    }
+
+    #[test]
+    fn test_sparse_array_value_prints_as_podlang() {
+        let array = containers::Array::from_sparse(HashMap::from([
+            (0, Value::from(1i64)),
+            (1, Value::from(2i64)),
+            (5, Value::from("x")),
+            (6, Value::from("y")),
+        ]))
+        .unwrap();
+        assert_eq!(
+            Value::from(array).to_podlang_string(),
+            r#"[1, 2, 5: "x", "y"]"#
+        );
     }
 }
