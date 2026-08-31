@@ -42,6 +42,11 @@ impl MemDB {
     pub fn new() -> Self {
         Self::default()
     }
+
+    #[cfg(test)]
+    pub(crate) fn len(&self) -> usize {
+        self.inner.lock().expect("not poisoned").len()
+    }
 }
 
 impl Read for MemDB {
