@@ -215,7 +215,43 @@ impl MainPodBuilder {
                 "Requested extend_input_pod0_public_statements with no input pods",
             ));
         }
+        self.validate_public_statement_count(self.new_public_statement_count(), true)?;
         self.extend_input_pod0_public_statements = true;
+        Ok(())
+    }
+
+    fn new_public_statement_count(&self) -> usize {
+        self.statements.iter().filter(|(public, _)| *public).count()
+    }
+
+    fn validate_public_statement_count(
+        &self,
+        new_public_count: usize,
+        extend_input_pod0: bool,
+    ) -> Result<()> {
+        if new_public_count > self.params.max_public_statements {
+            return Err(Error::too_many_public_statements(
+                new_public_count,
+                self.params.max_public_statements,
+            ));
+        }
+
+        let inherited_public_count = if extend_input_pod0 {
+            self.input_pods
+                .first()
+                .map_or(0, |pod| pod.public_statements.len())
+        } else {
+            0
+        };
+        let extended_public_count = inherited_public_count + new_public_count;
+        let extended_capacity = 2usize.pow(BASE_PARAMS.max_depth_public_statements_mt as u32);
+        if extended_public_count > extended_capacity {
+            return Err(Error::too_many_extended_public_statements(
+                extended_public_count,
+                extended_capacity,
+            ));
+        }
+
         Ok(())
     }
 
@@ -245,6 +281,10 @@ impl MainPodBuilder {
                 self.params.max_statements,
             ));
         }
+        self.validate_public_statement_count(
+            self.new_public_statement_count() + usize::from(public),
+            self.extend_input_pod0_public_statements,
+        )?;
         let (st, op) = st_op;
         self.track_contains(&st);
 
@@ -847,6 +887,11 @@ impl MainPodBuilder {
             plan.operations.push(op);
         }
 
+        self.validate_public_statement_count(
+            plan.statements.iter().filter(|(public, _)| *public).count(),
+            self.extend_input_pod0_public_statements,
+        )?;
+
         Ok(st)
     }
 
@@ -861,18 +906,10 @@ impl MainPodBuilder {
             return Ok(());
         }
 
-        let public_count = if self.extend_input_pod0_public_statements {
-            self.input_pods[0].public_statements.len()
-        } else {
-            0
-        } + self.statements.iter().filter(|(public, _)| *public).count()
-            + 1;
-        if public_count > 2usize.pow(BASE_PARAMS.max_depth_public_statements_mt as u32) {
-            return Err(Error::too_many_public_statements(
-                public_count,
-                2usize.pow(BASE_PARAMS.max_depth_public_statements_mt as u32),
-            ));
-        }
+        self.validate_public_statement_count(
+            self.new_public_statement_count() + 1,
+            self.extend_input_pod0_public_statements,
+        )?;
         self.statements[index].0 = true;
         Ok(())
     }
@@ -1336,16 +1373,129 @@ pub mod tests {
     }
 
     #[test]
+    fn public_insert_enforces_per_pod_limit_atomically() {
+        let mut builder = MainPodBuilder::new(
+            &Params {
+                max_public_statements: 0,
+                ..Params::default()
+            },
+            &MOCK_VD_SET,
+        );
+        let statement = Statement::equal(1, 1);
+
+        builder
+            .insert(true, (statement, Operation::eq(1, 1)))
+            .expect_err("this POD cannot publish statements");
+
+        assert!(builder.statements.is_empty());
+        assert!(builder.operations.is_empty());
+        assert!(builder.contains.is_empty());
+    }
+
+    #[test]
+    fn public_op_enforces_per_pod_limit_atomically() {
+        let mut builder = MainPodBuilder::new(
+            &Params {
+                max_public_statements: 1,
+                ..Params::default()
+            },
+            &MOCK_VD_SET,
+        );
+        builder.pub_op(Operation::eq(1, 1)).unwrap();
+        let statements = builder.statements.clone();
+        let operations = builder.operations.clone();
+        let contains = builder.contains.clone();
+
+        builder
+            .pub_op(Operation::eq(2, 2))
+            .expect_err("the per-POD publication limit is full");
+
+        assert_eq!(builder.statements, statements);
+        assert_eq!(builder.operations, operations);
+        assert_eq!(builder.contains, contains);
+    }
+
+    #[test]
+    fn failed_public_op_does_not_promote_existing_statement() {
+        let mut builder = MainPodBuilder::new(
+            &Params {
+                max_public_statements: 0,
+                ..Params::default()
+            },
+            &MOCK_VD_SET,
+        );
+        let statement = builder.priv_op(Operation::eq(1, 1)).unwrap();
+
+        builder
+            .pub_op(Operation::eq(1, 1))
+            .expect_err("this POD cannot promote the private statement");
+
+        assert_eq!(builder.statements, vec![(false, statement)]);
+        assert_eq!(builder.operations.len(), 1);
+    }
+
+    #[test]
+    fn reveal_enforces_per_pod_limit_atomically() {
+        let mut builder = MainPodBuilder::new(
+            &Params {
+                max_public_statements: 0,
+                ..Params::default()
+            },
+            &MOCK_VD_SET,
+        );
+        let statement = builder.priv_op(Operation::eq(1, 1)).unwrap();
+
+        let error = builder
+            .reveal(&statement)
+            .expect_err("this POD cannot publish statements");
+
+        assert!(matches!(
+            error,
+            Error::Inner { inner, .. }
+                if matches!(*inner, InnerError::TooManyPublicStatements(1, 0))
+        ));
+        assert_eq!(builder.statements, vec![(false, statement)]);
+        assert_eq!(builder.operations.len(), 1);
+    }
+
+    #[test]
+    fn inherited_public_statements_do_not_use_per_pod_allowance() {
+        let mut input_builder = MainPodBuilder::new(&Params::default(), &MOCK_VD_SET);
+        input_builder.pub_op(Operation::eq(10, 10)).unwrap();
+        input_builder.pub_op(Operation::eq(11, 11)).unwrap();
+        let input_pod = input_builder.prove(&MockProver {}).unwrap();
+
+        let mut builder = MainPodBuilder::new(
+            &Params {
+                max_public_statements: 1,
+                ..Params::default()
+            },
+            &MOCK_VD_SET,
+        );
+        builder.add_pod(input_pod).unwrap();
+        builder.extend_input_pod0_public_statements().unwrap();
+        builder.pub_op(Operation::eq(12, 12)).unwrap();
+
+        let pod = builder.prove(&MockProver {}).unwrap();
+        assert_eq!(pod.public_statements.len(), 3);
+    }
+
+    #[test]
     fn rejected_reveal_preserves_builder() {
         let capacity = 2usize.pow(BASE_PARAMS.max_depth_public_statements_mt as u32);
+        let mut input_builder = MainPodBuilder::new(&Params::default(), &MOCK_VD_SET);
+        input_builder.pub_op(Operation::eq(-1, -1)).unwrap();
+        let input_pod = input_builder.prove(&MockProver {}).unwrap();
         let params = Params {
-            max_statements: capacity + 1,
-            max_public_statements: capacity + 1,
+            max_statements: capacity,
+            max_public_statements: capacity,
             ..Params::default()
         };
         let mut builder = MainPodBuilder::new(&params, &MOCK_VD_SET);
+        builder.add_pod(input_pod).unwrap();
+        builder.extend_input_pod0_public_statements().unwrap();
         let mut statements = Vec::new();
-        for value in 0..=capacity {
+        for value in 0..capacity {
             let statement = Statement::equal(value as i64, value as i64);
             builder
                 .insert(
@@ -1355,22 +1505,31 @@ pub mod tests {
                 .unwrap();
             statements.push(statement);
         }
-        for statement in &statements[..capacity] {
+        for statement in &statements[..capacity - 1] {
             builder.reveal(statement).unwrap();
         }
 
-        builder
-            .reveal(&statements[capacity])
-            .expect_err("the public tree is full");
+        let error = builder
+            .reveal(&statements[capacity - 1])
+            .expect_err("the extended public tree is full");
 
-        assert!(!builder.statements[capacity].0);
+        assert!(matches!(
+            error,
+            Error::Inner { inner, .. }
+                if matches!(
+                    *inner,
+                    InnerError::TooManyExtendedPublicStatements(found, max)
+                        if found == capacity + 1 && max == capacity
+                )
+        ));
+        assert!(!builder.statements[capacity - 1].0);
         assert_eq!(
             builder
                 .statements
                 .iter()
                 .filter(|(public, _)| *public)
                 .count(),
-            capacity
+            capacity - 1
         );
     }
 
