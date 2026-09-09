@@ -141,6 +141,23 @@ pub struct MainPodBuilder {
     contains: Vec<(RawValue, RawValue)>, // (root, key)
 }
 
+#[derive(Clone, Debug)]
+struct OperationPlan {
+    statements: Vec<(bool, Statement)>,
+    operations: Vec<Operation>,
+    contains: Vec<(RawValue, RawValue)>,
+}
+
+impl From<&MainPodBuilder> for OperationPlan {
+    fn from(builder: &MainPodBuilder) -> Self {
+        Self {
+            statements: builder.statements.clone(),
+            operations: builder.operations.clone(),
+            contains: builder.contains.clone(),
+        }
+    }
+}
+
 impl fmt::Display for MainPodBuilder {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         writeln!(f, "MainPod:")?;
@@ -179,17 +196,18 @@ impl MainPodBuilder {
         self.statements.len()
     }
     pub fn add_pod(&mut self, pod: MainPod) -> Result<()> {
+        let new_len = self.input_pods.len() + 1;
+        if new_len > self.params.max_input_pods {
+            return Err(Error::too_many_input_pods(
+                new_len,
+                self.params.max_input_pods,
+            ));
+        }
         for st in &pod.public_statements {
             self.track_contains(st);
         }
         self.input_pods.push(pod);
-        match self.input_pods.len() > self.params.max_input_pods {
-            true => Err(Error::too_many_input_pods(
-                self.input_pods.len(),
-                self.params.max_input_pods,
-            )),
-            _ => Ok(()),
-        }
+        Ok(())
     }
     pub fn extend_input_pod0_public_statements(&mut self) -> Result<()> {
         if self.input_pods.is_empty() {
@@ -204,6 +222,10 @@ impl MainPodBuilder {
     // If we're adding a Contains statement with literal arguments (an Entry), track it in
     // `dict_contains` to avoid adding it again via `Self::add_entries_contains`.
     fn track_contains(&mut self, st: &Statement) {
+        Self::track_contains_in(&mut self.contains, st);
+    }
+
+    fn track_contains_in(contains: &mut Vec<(RawValue, RawValue)>, st: &Statement) {
         if let Statement::Contains(
             ValueRef::Literal(dict),
             ValueRef::Literal(key),
@@ -211,23 +233,23 @@ impl MainPodBuilder {
         ) = &st
         {
             let root_key = (dict.raw(), key.raw());
-            self.contains.push(root_key);
+            contains.push(root_key);
         }
     }
 
     pub fn insert(&mut self, public: bool, st_op: (Statement, Operation)) -> Result<()> {
-        // TODO: Do error handling instead of panic
+        let new_len = self.statements.len() + 1;
+        if new_len > self.params.max_statements {
+            return Err(Error::too_many_statements(
+                new_len,
+                self.params.max_statements,
+            ));
+        }
         let (st, op) = st_op;
         self.track_contains(&st);
 
         self.statements.push((public, st));
         self.operations.push(op);
-        if self.statements.len() > self.params.max_statements {
-            return Err(Error::too_many_statements(
-                self.statements.len(),
-                self.params.max_statements,
-            ));
-        }
         Ok(())
     }
 
@@ -673,7 +695,7 @@ impl MainPodBuilder {
 
     /// For every operation that has Entry statements as arguments we add a Contains statement to
     /// open the dictionary (unless such Contains already exists).
-    fn add_entries_contains(&mut self, op: &Operation) -> Result<()> {
+    fn add_entries_contains(&self, plan: &mut OperationPlan, op: &Operation) -> Result<()> {
         for arg in &op.1 {
             if let OperationArg::Statement(Statement::Contains(
                 ValueRef::Literal(dict),
@@ -682,9 +704,13 @@ impl MainPodBuilder {
             )) = arg
             {
                 let root_key = (dict.raw(), key.raw());
-                if !self.contains.contains(&root_key) {
-                    self.contains.push(root_key);
-                    self.priv_op(Operation::dict_contains(dict, key, v))?;
+                if !plan.contains.contains(&root_key) {
+                    self.apply_op(
+                        plan,
+                        false,
+                        Vec::new(),
+                        Operation::dict_contains(dict, key, v),
+                    )?;
                 }
             }
         }
@@ -731,18 +757,18 @@ impl MainPodBuilder {
     /// Ensure that the statement exists in the pod.  First search among loaded statements.  If not
     /// found, search among public statements from input pods and if found, load the statement via
     /// the OpenInputStatement operation.
-    fn ensure_statement(&mut self, st: &Statement) -> Result<()> {
+    fn ensure_statement(&self, plan: &mut OperationPlan, st: &Statement) -> Result<()> {
         if matches!(st, Statement::None) {
             // An implicit None always exists at index 0
             return Ok(());
         }
-        if self.statements.iter().any(|(_, st0)| st0 == st) {
+        if plan.statements.iter().any(|(_, st0)| st0 == st) {
             return Ok(());
         }
         for (pod_index, pod) in self.input_pods.iter().enumerate() {
             if let Some(st_index) = pod.public_statements.iter().position(|st0| st0 == st) {
                 let op = self.op_input_st(pod_index, st_index)?;
-                self.op(false, Vec::new(), op)?;
+                self.apply_op(plan, false, Vec::new(), op)?;
                 return Ok(());
             }
         }
@@ -756,16 +782,32 @@ impl MainPodBuilder {
         wildcard_values: Vec<(usize, Value)>,
         op: Operation,
     ) -> Result<Statement> {
-        self.add_entries_contains(&op)?;
+        // Stage generated and requested operations so validation is atomic.
+        let mut plan = OperationPlan::from(&*self);
+        let statement = self.apply_op(&mut plan, public, wildcard_values, op)?;
+        self.statements = plan.statements;
+        self.operations = plan.operations;
+        self.contains = plan.contains;
+        Ok(statement)
+    }
+
+    fn apply_op(
+        &self,
+        plan: &mut OperationPlan,
+        public: bool,
+        wildcard_values: Vec<(usize, Value)>,
+        op: Operation,
+    ) -> Result<Statement> {
+        self.add_entries_contains(plan, &op)?;
         let op = Self::fill_in_aux(Self::lower_op(op)?)?;
         for arg in &op.1 {
             if let OperationArg::Statement(st) = arg {
-                self.ensure_statement(st)?;
+                self.ensure_statement(plan, st)?;
             }
         }
         let st = self.op_statement(wildcard_values, op.clone())?;
         // Skip adding the statement and operation if it already exists
-        if let Some((public0, _st0)) = self
+        if let Some((public0, _st0)) = plan
             .statements
             .iter_mut()
             .find(|(_public0, st0)| st0 == &st)
@@ -776,30 +818,45 @@ impl MainPodBuilder {
                 *public0 = true;
             }
         } else {
-            self.insert(public, (st.clone(), op))?;
+            let new_len = plan.statements.len() + 1;
+            if new_len > self.params.max_statements {
+                return Err(Error::too_many_statements(
+                    new_len,
+                    self.params.max_statements,
+                ));
+            }
+            Self::track_contains_in(&mut plan.contains, &st);
+            plan.statements.push((public, st.clone()));
+            plan.operations.push(op);
         }
 
         Ok(st)
     }
 
     pub fn reveal(&mut self, st: &Statement) -> Result<()> {
-        if let Some((public, _st0)) = self.statements.iter_mut().find(|(_public, st0)| st0 == st) {
-            *public = true;
-        } else {
-            return Err(Error::custom(format!("statement {} not found", st)));
+        let index = self
+            .statements
+            .iter()
+            .position(|(_, st0)| st0 == st)
+            .ok_or_else(|| Error::custom(format!("statement {} not found", st)))?;
+
+        if self.statements[index].0 {
+            return Ok(());
         }
 
         let public_count = if self.extend_input_pod0_public_statements {
             self.input_pods[0].public_statements.len()
         } else {
             0
-        } + self.statements.iter().filter(|(public, _)| *public).count();
+        } + self.statements.iter().filter(|(public, _)| *public).count()
+            + 1;
         if public_count > 2usize.pow(BASE_PARAMS.max_depth_public_statements_mt as u32) {
             return Err(Error::too_many_public_statements(
                 public_count,
                 2usize.pow(BASE_PARAMS.max_depth_public_statements_mt as u32),
             ));
         }
+        self.statements[index].0 = true;
         Ok(())
     }
 
@@ -978,7 +1035,7 @@ pub mod tests {
         lang::{load_module, SplitInfo},
         middleware::{
             containers::{Array, Set},
-            Signer as _, Value,
+            AnchoredKey, Signer as _, Value,
         },
     };
 
@@ -1158,8 +1215,7 @@ pub mod tests {
     }
 
     #[test]
-    #[should_panic]
-    fn test_false_st() {
+    fn rejected_false_operation_preserves_builder() {
         let params = Params::default();
         let vd_set = &*MOCK_VD_SET;
         let mut builder = SignedDictBuilder::new(&params);
@@ -1168,21 +1224,115 @@ pub mod tests {
         let signer = Signer(SecretKey(1u32.into()));
         let signed_dict = builder.sign(&signer).unwrap();
 
-        println!("{}", signed_dict);
-
         let mut builder = MainPodBuilder::new(&params, vd_set);
         builder
             .pub_op(Operation::dict_signed_by(&signed_dict))
             .unwrap();
-        builder
+        let statements = builder.statements.clone();
+        let operations = builder.operations.clone();
+        let contains = builder.contains.clone();
+
+        let error = builder
             .pub_op(Operation::gt((&signed_dict, "num"), 5))
-            .unwrap();
+            .expect_err("2 is not greater than 5");
 
-        let prover = MockProver {};
-        let false_pod = builder.prove(&prover).unwrap();
+        assert!(matches!(
+            error,
+            Error::Inner { inner, .. } if matches!(*inner, InnerError::OpInvalidArgs(_))
+        ));
+        assert_eq!(builder.statements, statements);
+        assert_eq!(builder.operations, operations);
+        assert_eq!(builder.contains, contains);
+    }
 
-        println!("{}", builder);
-        println!("{}", false_pod);
+    #[test]
+    fn rejected_add_pod_preserves_builder() {
+        let vd_set = &*MOCK_VD_SET;
+        let mut input_builder = MainPodBuilder::new(&Params::default(), vd_set);
+        input_builder.pub_op(Operation::eq(1, 1)).unwrap();
+        let input_pod = input_builder.prove(&MockProver {}).unwrap();
+        let mut builder = MainPodBuilder::new(
+            &Params {
+                max_input_pods: 0,
+                ..Params::default()
+            },
+            vd_set,
+        );
+
+        builder
+            .add_pod(input_pod)
+            .expect_err("the input POD limit is zero");
+
+        assert!(builder.input_pods.is_empty());
+        assert!(builder.contains.is_empty());
+    }
+
+    #[test]
+    fn rejected_insert_preserves_builder() {
+        let mut builder = MainPodBuilder::new(
+            &Params {
+                max_statements: 0,
+                ..Params::default()
+            },
+            &MOCK_VD_SET,
+        );
+        let statement = Statement::Contains(
+            ValueRef::Literal(Value::from(1)),
+            ValueRef::Literal(Value::from(2)),
+            ValueRef::Literal(Value::from(3)),
+        );
+        let operation = Operation(
+            OperationType::Native(NativeOperation::None),
+            vec![],
+            OperationAux::None,
+        );
+
+        builder
+            .insert(false, (statement, operation))
+            .expect_err("the statement limit is zero");
+
+        assert!(builder.statements.is_empty());
+        assert!(builder.operations.is_empty());
+        assert!(builder.contains.is_empty());
+    }
+
+    #[test]
+    fn rejected_reveal_preserves_builder() {
+        let capacity = 2usize.pow(BASE_PARAMS.max_depth_public_statements_mt as u32);
+        let params = Params {
+            max_statements: capacity + 1,
+            max_public_statements: capacity + 1,
+            ..Params::default()
+        };
+        let mut builder = MainPodBuilder::new(&params, &MOCK_VD_SET);
+        let mut statements = Vec::new();
+        for value in 0..=capacity {
+            let statement = Statement::equal(value as i64, value as i64);
+            builder
+                .insert(
+                    false,
+                    (statement.clone(), Operation::eq(value as i64, value as i64)),
+                )
+                .unwrap();
+            statements.push(statement);
+        }
+        for statement in &statements[..capacity] {
+            builder.reveal(statement).unwrap();
+        }
+
+        builder
+            .reveal(&statements[capacity])
+            .expect_err("the public tree is full");
+
+        assert!(!builder.statements[capacity].0);
+        assert_eq!(
+            builder
+                .statements
+                .iter()
+                .filter(|(public, _)| *public)
+                .count(),
+            capacity
+        );
     }
 
     #[test]
@@ -1490,28 +1640,17 @@ pub mod tests {
         Ok(())
     }
 
-    #[should_panic]
     #[test]
     fn test_reject_unsound_statement() {
-        // try to insert a statement that doesn't follow from the operation
-        // right now the mock prover catches this when it calls compile()
         let params = Params::default();
         let vd_set = &*MOCK_VD_SET;
         let mut builder = MainPodBuilder::new(&params, vd_set);
         let local = dict!({"a" => 3, "b" => 27});
-        let value_of_a = Statement::contains(local.clone(), "a", 3);
-        let value_of_b = Statement::contains(local.clone(), "b", 27);
-
-        let op_contains = Operation(
-            OperationType::Native(NativeOperation::DictContainsFromEntries),
-            vec![],
-            OperationAux::None,
-        );
-        builder
-            .insert(false, (value_of_a.clone(), op_contains.clone()))
+        let value_of_a = builder
+            .priv_op(Operation::dict_contains(local.clone(), "a", 3))
             .unwrap();
-        builder
-            .insert(false, (value_of_b.clone(), op_contains))
+        let value_of_b = builder
+            .priv_op(Operation::dict_contains(local.clone(), "b", 27))
             .unwrap();
         let st = Statement::equal(
             AnchoredKey::from((&local, "a")),
@@ -1527,9 +1666,20 @@ pub mod tests {
         );
         builder.insert(false, (st, op)).unwrap();
 
-        let prover = MockProver {};
-        let pod = builder.prove(&prover).unwrap();
-        pod.pod.verify().unwrap();
+        let error = builder
+            .prove(&MockProver {})
+            .expect_err("the claimed equality does not follow from the operation");
+        assert!(matches!(
+            error,
+            Error::Inner { inner, .. }
+                if matches!(
+                    *inner,
+                    InnerError::Custom(ref message)
+                        if message.contains("Compile failed due to invalid deduction")
+                )
+        ));
+        assert_eq!(builder.statements.len(), 3);
+        assert_eq!(builder.operations.len(), 3);
     }
 
     #[test]
