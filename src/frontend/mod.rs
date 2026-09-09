@@ -246,7 +246,7 @@ impl MainPodBuilder {
         let extended_public_count = inherited_public_count + new_public_count;
         let extended_capacity = 2usize.pow(BASE_PARAMS.max_depth_public_statements_mt as u32);
         if extended_public_count > extended_capacity {
-            return Err(Error::too_many_public_statements(
+            return Err(Error::too_many_extended_public_statements(
                 extended_public_count,
                 extended_capacity,
             ));
@@ -1445,10 +1445,15 @@ pub mod tests {
         );
         let statement = builder.priv_op(Operation::eq(1, 1)).unwrap();
 
-        builder
+        let error = builder
             .reveal(&statement)
             .expect_err("this POD cannot publish statements");
 
+        assert!(matches!(
+            error,
+            Error::Inner { inner, .. }
+                if matches!(*inner, InnerError::TooManyPublicStatements(1, 0))
+        ));
         assert_eq!(builder.statements, vec![(false, statement)]);
         assert_eq!(builder.operations.len(), 1);
     }
@@ -1504,10 +1509,19 @@ pub mod tests {
             builder.reveal(statement).unwrap();
         }
 
-        builder
+        let error = builder
             .reveal(&statements[capacity - 1])
             .expect_err("the extended public tree is full");
 
+        assert!(matches!(
+            error,
+            Error::Inner { inner, .. }
+                if matches!(
+                    *inner,
+                    InnerError::TooManyExtendedPublicStatements(found, max)
+                        if found == capacity + 1 && max == capacity
+                )
+        ));
         assert!(!builder.statements[capacity - 1].0);
         assert_eq!(
             builder

@@ -18,6 +18,8 @@ pub enum InnerError {
     TooManyInputPods(usize, usize),
     #[error("Too many public statements provided: {0} were provided, but the maximum is {1}")]
     TooManyPublicStatements(usize, usize),
+    #[error("Too many public statements after extending input POD 0: {0} inherited plus new public statements, but the public statement tree holds at most {1}")]
+    TooManyExtendedPublicStatements(usize, usize),
     #[error("Too many statements provided: {0} were provided, but the maximum is {1}")]
     TooManyStatements(usize, usize),
     // Other
@@ -92,6 +94,9 @@ impl Error {
     }
     pub(crate) fn too_many_public_statements(found: usize, max: usize) -> Self {
         new!(TooManyPublicStatements(found, max))
+    }
+    pub(crate) fn too_many_extended_public_statements(found: usize, capacity: usize) -> Self {
+        new!(TooManyExtendedPublicStatements(found, capacity))
     }
     pub(crate) fn too_many_statements(found: usize, max: usize) -> Self {
         new!(TooManyStatements(found, max))
