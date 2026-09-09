@@ -468,7 +468,9 @@ impl<'a> Lowerer<'a> {
             let builder_arg = lower_statement_arg_with_context(arg, symbols, &context)?;
             builder = builder.arg(builder_arg);
         }
-        let desugared = builder.desugar();
+        let desugared = builder
+            .desugar()
+            .map_err(|error| LoweringError::InvalidStatementTemplate(error.to_string()))?;
 
         // Convert BuilderArgs to StatementTmplArgs
         let mut mw_args = Vec::new();
