@@ -994,7 +994,7 @@ pub mod tests {
             .unwrap();
         kyc_builder
             .pub_op(frontend::Operation::lt(
-                (&gov_id, "dateOfBirth"),
+                frontend::entry(&gov_id, "dateOfBirth").unwrap(),
                 now_minus_18y,
             ))
             .unwrap();
@@ -1210,8 +1210,8 @@ pub mod tests {
             42,
         ))?;
         let st2 = pod_builder.priv_op(frontend::Operation::eq(
-            (&secret_dict.clone(), "key"),
-            (&dict, "score"),
+            frontend::entry(&secret_dict, "key")?,
+            frontend::entry(&dict, "score")?,
         ))?;
 
         let _st3 = pod_builder.priv_op(frontend::Operation::custom(cpb_and.clone(), [st0, st2]))?;
@@ -1441,7 +1441,7 @@ pub mod tests {
         // Transform `Lt(5, 42)` into `Lt(5, d.a)` by using `DictContains(d, "a", 42)`
         builder
             .pub_op(frontend::Operation::replace_value_with_entry(
-                vec![None, Some((&d, "a"))],
+                vec![None, Some(frontend::entry(&d, "a").unwrap())],
                 st,
             ))
             .unwrap();
@@ -1497,7 +1497,7 @@ pub mod tests {
         // Transform `PredA(42)` into `PredA(d.x)` by using `DictContains(d, "x", 42)`
         let st_a1 = builder
             .priv_op(frontend::Operation::replace_value_with_entry(
-                vec![Some((&d, "x"))],
+                vec![Some(frontend::entry(&d, "x").unwrap())],
                 st_a,
             ))
             .unwrap();

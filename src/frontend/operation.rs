@@ -1,7 +1,7 @@
 use std::{fmt, iter};
 
 use crate::{
-    frontend::SignedDict,
+    frontend::{Error, Result, SignedDict},
     middleware::{
         containers::{Array, Dictionary},
         root_key_to_ak, CustomPredicateRef, NativeOperation, OperationAux, OperationType,
@@ -68,33 +68,72 @@ impl From<&Value> for OperationArg {
     }
 }
 
-impl From<(&Dictionary, &str)> for OperationArg {
-    fn from((dict, key): (&Dictionary, &str)) -> Self {
-        // TODO: Use TryFrom
-        let value = dict.get(&key.into()).unwrap().unwrap();
-        Self::Statement(Statement::Contains(
+impl TryFrom<(&Dictionary, &str)> for OperationArg {
+    type Error = Error;
+
+    fn try_from((dict, key): (&Dictionary, &str)) -> Result<Self> {
+        let value = dict
+            .get(&key.into())?
+            .ok_or_else(|| Error::custom(format!("key {key:?} not found in dictionary")))?;
+        Ok(Self::Statement(Statement::Contains(
             dict.clone().into(),
             key.into(),
             value.into(),
-        ))
+        )))
     }
 }
 
-impl From<(&Array, i64)> for OperationArg {
-    fn from((array, index): (&Array, i64)) -> Self {
-        // TODO: Use TryFrom
-        let value = array.get(index as usize).unwrap().unwrap();
-        Self::Statement(Statement::Contains(
+impl TryFrom<(&Array, i64)> for OperationArg {
+    type Error = Error;
+
+    fn try_from((array, index): (&Array, i64)) -> Result<Self> {
+        let array_index = usize::try_from(index)
+            .map_err(|_| Error::custom(format!("array index {index} is negative")))?;
+        let value = array
+            .get(array_index)?
+            .ok_or_else(|| Error::custom(format!("index {index} not found in array")))?;
+        Ok(Self::Statement(Statement::Contains(
             array.clone().into(),
             Value::from(index).into(),
             value.into(),
-        ))
+        )))
     }
 }
 
-impl From<(&SignedDict, &str)> for OperationArg {
-    fn from((signed_dict, key): (&SignedDict, &str)) -> Self {
-        OperationArg::from((&signed_dict.dict, key))
+impl TryFrom<(&SignedDict, &str)> for OperationArg {
+    type Error = Error;
+
+    fn try_from((signed_dict, key): (&SignedDict, &str)) -> Result<Self> {
+        Self::try_from((&signed_dict.dict, key))
+    }
+}
+
+/// Convert a container entry into a resolved operation argument.
+pub fn entry<C, K>(container: C, key: K) -> Result<OperationArg>
+where
+    OperationArg: TryFrom<(C, K), Error = Error>,
+{
+    OperationArg::try_from((container, key))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::dict;
+
+    #[test]
+    fn missing_dictionary_entry_returns_error() {
+        let dictionary = dict!({"present" => 1});
+
+        entry(&dictionary, "missing").expect_err("missing dictionary key should be rejected");
+    }
+
+    #[test]
+    fn invalid_array_index_returns_error() {
+        let array = Array::new(vec![Value::from(1)]);
+
+        entry(&array, -1).expect_err("negative array index should be rejected");
+        entry(&array, 1).expect_err("missing array index should be rejected");
     }
 }
 
