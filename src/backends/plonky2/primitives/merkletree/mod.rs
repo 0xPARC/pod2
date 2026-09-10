@@ -511,14 +511,15 @@ impl MerkleTree {
         Self::new_with_db(Box::new(db), kvs).unwrap()
     }
     pub fn new_with_db(db: Box<dyn DB>, kvs: &HashMap<RawValue, RawValue>) -> Result<Self> {
-        // Start with an empty node as root.
+        let mut leaves: Vec<Leaf> = kvs
+            .iter()
+            .map(|(&key, &value)| Leaf::new(key, value))
+            .collect();
+        leaves.sort_unstable_by(|left, right| left.path.cmp(&right.path));
+
         let root = {
             let mut tx = db.tx();
-            // Iterate over key-value pairs (if any) and add them.
-            let mut root = EMPTY_HASH;
-            for (k, v) in kvs.iter() {
-                root = apply_op(tx.as_mut(), MerkleTreeOp::Insert, root, *k, Some(*v))?;
-            }
+            let root = build_subtree(tx.as_mut(), &leaves, 0)?;
             tx.commit().map_err(Error::Database)?;
             root
         };
@@ -617,6 +618,31 @@ impl MerkleTree {
     /// resolving `key` as well as a `MerkleProof`.
     pub fn prove_nonexistence(&self, key: &RawValue) -> Result<MerkleProof> {
         prove_nonexistence(self.db.as_ref(), self.root, key)
+    }
+}
+
+/// Build the canonical subtree for path-sorted leaves and store every
+/// reachable node exactly once.
+fn build_subtree(tx: &mut dyn TX, leaves: &[Leaf], level: usize) -> Result<Hash> {
+    match leaves {
+        [] => Ok(EMPTY_HASH),
+        [leaf] => {
+            let hash = leaf.hash;
+            store_node(tx, Node::Leaf(leaf.clone()))?;
+            Ok(hash)
+        }
+        _ if level == MAX_DEPTH => Err(Error::custom(
+            "distinct Merkle tree keys have identical paths",
+        )),
+        _ => {
+            let first_right = leaves.partition_point(|leaf| !leaf.path[level]);
+            let left = build_subtree(tx, &leaves[..first_right], level + 1)?;
+            let right = build_subtree(tx, &leaves[first_right..], level + 1)?;
+            let node = Intermediate::new(left, right);
+            let hash = node.hash;
+            store_node(tx, Node::Intermediate(node))?;
+            Ok(hash)
+        }
     }
 }
 
@@ -1129,6 +1155,8 @@ pub mod tests {
     use std::cmp::Ordering;
 
     use itertools::Itertools;
+    use rand::{seq::SliceRandom, Rng, SeedableRng};
+    use rand_chacha::ChaCha20Rng;
 
     use super::*;
 
@@ -1218,6 +1246,81 @@ pub mod tests {
 
         assert_eq!(collected_kvs, sorted_kvs);
 
+        Ok(())
+    }
+
+    fn build_incrementally(entries: &[(RawValue, RawValue)]) -> Result<MerkleTree> {
+        let mut tree = MerkleTree::empty_with_db(Box::new(db::MemDB::new()));
+        for (key, value) in entries {
+            tree.insert(key, value)?;
+        }
+        Ok(tree)
+    }
+
+    fn assert_bulk_matches_incremental(
+        kvs: &HashMap<RawValue, RawValue>,
+        entries: &[(RawValue, RawValue)],
+    ) -> Result<()> {
+        let bulk = MerkleTree::new(kvs);
+        let incremental = build_incrementally(entries)?;
+
+        assert_eq!(bulk.root(), incremental.root());
+        assert_eq!(
+            bulk.into_iter().collect_vec(),
+            incremental.into_iter().collect_vec()
+        );
+        for (key, expected_value) in kvs {
+            let (bulk_value, bulk_proof) = bulk.prove(key)?;
+            let (incremental_value, incremental_proof) = incremental.prove(key)?;
+            assert_eq!(bulk_value, *expected_value);
+            assert_eq!(incremental_value, *expected_value);
+            assert_eq!(bulk_proof, incremental_proof);
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_bulk_constructor_matches_incremental_insertion() -> Result<()> {
+        let mut rng = ChaCha20Rng::seed_from_u64(0x5eed);
+
+        for size in [0, 1, 2, 3, 10, 100, 1_000] {
+            let mut kvs = HashMap::new();
+            while kvs.len() < size {
+                let key = RawValue::from(rng.gen_range(0..i64::MAX));
+                let value = RawValue::from(rng.gen_range(0..i64::MAX));
+                kvs.insert(key, value);
+            }
+            let mut entries = kvs.iter().map(|(&key, &value)| (key, value)).collect_vec();
+            entries.shuffle(&mut rng);
+            assert_bulk_matches_incremental(&kvs, &entries)?;
+            entries.reverse();
+            assert_bulk_matches_incremental(&kvs, &entries)?;
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_bulk_constructor_handles_maximum_shared_prefix() -> Result<()> {
+        let low = RawValue::from(0);
+        let high = RawValue([F::ZERO, F::ZERO, F::ZERO, F::from_canonical_u64(1 << 63)]);
+        let entries = [(low, RawValue::from(1)), (high, RawValue::from(2))];
+        let kvs = entries.into_iter().collect();
+
+        assert_bulk_matches_incremental(&kvs, &entries)
+    }
+
+    #[test]
+    fn test_bulk_constructor_stores_only_final_nodes() -> Result<()> {
+        let kvs: HashMap<RawValue, RawValue> = (0..1_024)
+            .map(|value| (RawValue::from(value), RawValue::from(value)))
+            .collect();
+        let db = db::MemDB::new();
+        let tree = MerkleTree::new_with_db(Box::new(db.clone()), &kvs)?;
+
+        assert_ne!(tree.root(), EMPTY_HASH);
+        assert_eq!(db.len(), 2 * kvs.len() - 1);
         Ok(())
     }
 
