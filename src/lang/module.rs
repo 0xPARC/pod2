@@ -439,14 +439,7 @@ fn build_single_batch(
         .map(|pred| {
             pred.statements
                 .iter()
-                .map(|stmt| {
-                    build_statement_with_resolved_refs(
-                        stmt,
-                        reference_map,
-                        &pred.name.name,
-                        symbols,
-                    )
-                })
+                .map(|stmt| build_statement_with_resolved_refs(stmt, reference_map, symbols))
                 .collect::<Result<_, _>>()
         })
         .collect();
@@ -494,14 +487,10 @@ fn build_single_batch(
 fn build_statement_with_resolved_refs(
     stmt: &crate::lang::frontend_ast::StatementTmpl,
     reference_map: &HashMap<String, usize>,
-    custom_predicate_name: &str, // custom pred that defines this statement template
     symbols: &SymbolTable,
 ) -> Result<StatementTmplBuilder, BatchingError> {
     // Resolve the predicate using the unified resolution function
-    let context = ResolutionContext::Module {
-        reference_map,
-        custom_predicate_name,
-    };
+    let context = ResolutionContext::Module { reference_map };
 
     let pred_or_wc =
         resolve_predicate_ref(&stmt.predicate, symbols, &context).ok_or_else(|| {
@@ -528,6 +517,8 @@ fn build_statement_with_resolved_refs(
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashSet;
+
     use super::*;
     use crate::{
         lang::{
@@ -546,19 +537,18 @@ mod tests {
         let parsed = parse_podlang(input).expect("Failed to parse");
         let document = parse_document(parsed.into_iter().next().unwrap()).expect("Failed to parse");
         let params = Params::default();
-        let validated = validate(
-            document.clone(),
-            &HashMap::new(),
-            &params,
-            ParseMode::Module,
-        )
-        .expect("Failed to validate");
+        let validated = validate(document, &HashMap::new(), &params, ParseMode::Module)
+            .expect("Failed to validate");
 
-        let predicates = document
+        // Use validated predicates so wildcard calls carry their AST tags.
+        let predicates = validated
+            .document()
             .items
-            .into_iter()
+            .iter()
             .filter_map(|item| match item {
-                crate::lang::frontend_ast::DocumentItem::CustomPredicateDef(pred) => Some(pred),
+                crate::lang::frontend_ast::DocumentItem::CustomPredicateDef(pred) => {
+                    Some(pred.clone())
+                }
                 _ => None,
             })
             .collect();
@@ -740,8 +730,13 @@ mod tests {
         // Split the predicate
         let mut split_results = Vec::new();
         for pred in predicates {
-            let result = split_predicate_if_needed(pred, &params, &mut SplitSearchCache::default())
-                .expect("Split failed");
+            let result = split_predicate_if_needed(
+                pred,
+                &params,
+                &mut SplitSearchCache::default(),
+                &HashSet::new(),
+            )
+            .expect("Split failed");
             split_results.push(result);
         }
 

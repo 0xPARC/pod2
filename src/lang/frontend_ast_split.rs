@@ -204,6 +204,19 @@ impl SplitTreeInfo {
 pub(super) fn validate_predicate_is_splittable(
     pred: &CustomPredicateDef,
 ) -> Result<(), SplittingError> {
+    // Reject unvalidated ASTs whose wildcard calls lack an explicit tag.
+    for stmt in &pred.statements {
+        if let PredicateRef::Local(callee) = &stmt.predicate {
+            assert!(
+                !pred.declared_wildcards().any(|name| name == callee.name),
+                "'{}' calls its own wildcard '{}' without a higher-order tag; \
+                 was this predicate validated?",
+                pred.name.name,
+                callee.name,
+            );
+        }
+    }
+
     let public_args = pred.args.public_args.len();
 
     // Check: public args must fit in operation arg limit
@@ -224,10 +237,12 @@ pub(super) fn validate_predicate_is_splittable(
 /// splitting many predicates under one `Params` share one cache so same-shape
 /// predicates search only once; whole-module callers should prefer
 /// [`split_predicates_if_needed`], which also parallelizes the searches.
+/// `source_names` reserves source-defined names for generated pieces.
 pub fn split_predicate_if_needed(
     pred: CustomPredicateDef,
     params: &Params,
     search_cache: &mut SplitSearchCache,
+    source_names: &HashSet<String>,
 ) -> Result<SplitResult, SplittingError> {
     // Early validation
     validate_predicate_is_splittable(&pred)?;
@@ -237,13 +252,18 @@ pub fn split_predicate_if_needed(
     }
 
     if needs_tree_split(&pred) {
-        return Ok(SplitResult::tree(split_into_tree(pred, params)?));
+        return Ok(SplitResult::tree(split_into_tree(
+            pred,
+            params,
+            source_names,
+        )?));
     }
 
     Ok(SplitResult::chain(split_into_chain(
         &pred,
         params,
         search_cache,
+        source_names,
     )?))
 }
 
@@ -277,6 +297,11 @@ pub fn split_predicates_if_needed(
     predicates
         .iter()
         .try_for_each(validate_predicate_is_splittable)?;
+
+    let source_names: HashSet<String> = predicates
+        .iter()
+        .map(|pred| pred.name.name.clone())
+        .collect();
 
     // Chain-splitting predicates get a prepared split input for the ordering
     // search; tree-splitting disjunctions need no search, and the rest pass
@@ -320,9 +345,11 @@ pub fn split_predicates_if_needed(
         .zip(&inputs)
         .zip(&rep_of_pred)
         .map(|((pred, input), rep)| match rep {
-            None if needs_tree_split(&pred) => {
-                Ok(SplitResult::tree(split_into_tree(pred, params)?))
-            }
+            None if needs_tree_split(&pred) => Ok(SplitResult::tree(split_into_tree(
+                pred,
+                params,
+                &source_names,
+            )?)),
             None => Ok(SplitResult::whole(pred)),
             Some(rep) => {
                 let input = input
@@ -333,6 +360,7 @@ pub fn split_predicates_if_needed(
                     input,
                     assignments[*rep].clone(),
                     params,
+                    &source_names,
                 )?))
             }
         })
@@ -340,8 +368,23 @@ pub fn split_predicates_if_needed(
     results.into_iter().collect()
 }
 
+/// Append underscores until a generated piece name does not collide with a
+/// source-defined predicate.
+fn piece_name(original_name: &str, index: usize, source_names: &HashSet<String>) -> String {
+    let mut name = format!("{}_{}", original_name, index);
+    while source_names.contains(&name) {
+        name.push('_');
+    }
+    name
+}
+
+/// Collect wildcard uses from statement arguments and predicate position.
 fn collect_wildcards_from_statement(stmt: &StatementTmpl) -> HashSet<String> {
-    stmt.wildcard_names().map(str::to_string).collect()
+    let mut names: HashSet<String> = stmt.wildcard_names().map(str::to_string).collect();
+    if let PredicateRef::Wildcard(callee) = &stmt.predicate {
+        names.insert(callee.name.clone());
+    }
+    names
 }
 
 /// Compute the minimum number of chain links needed to fit `n` statements,
@@ -897,17 +940,14 @@ fn build_chain_links_from_assignment(
     links: LinkAssignment,
     statements: &[StatementTmpl],
     original_public_args: &[String],
+    statement_wildcards: &[HashSet<String>],
 ) -> Vec<ChainLink> {
     let k = links.len();
-    let stmt_wcs: Vec<HashSet<String>> = statements
-        .iter()
-        .map(collect_wildcards_from_statement)
-        .collect();
     let link_wcs: Vec<HashSet<String>> = (0..k)
         .map(|i| {
             links[i]
                 .iter()
-                .flat_map(|&s| stmt_wcs[s].iter().cloned())
+                .flat_map(|&s| statement_wildcards[s].iter().cloned())
                 .collect()
         })
         .collect();
@@ -993,6 +1033,8 @@ pub(super) struct SplitInput {
     pub(super) shape: SplitShape,
     wildcard_names: Vec<String>,
     original_public_args: Vec<String>,
+    /// Wildcards each statement references, by original statement index.
+    statement_wildcards: Vec<HashSet<String>>,
 }
 
 impl SplitInput {
@@ -1044,13 +1086,14 @@ pub(super) fn prepare_split_input(pred: &CustomPredicateDef) -> SplitInput {
         .map(|id| id.name.clone())
         .collect();
 
-    // Stable, sorted index over wildcards referenced by statements OR declared
-    // as public args (a public arg may be unused in any statement).
-    let mut wildcard_set: HashSet<String> = pred
+    let statement_wildcards: Vec<HashSet<String>> = pred
         .statements
         .iter()
-        .flat_map(collect_wildcards_from_statement)
+        .map(collect_wildcards_from_statement)
         .collect();
+
+    // Include unused public arguments and sort for deterministic indices.
+    let mut wildcard_set: HashSet<String> = statement_wildcards.iter().flatten().cloned().collect();
     for name in &original_public_args {
         wildcard_set.insert(name.clone());
     }
@@ -1064,13 +1107,9 @@ pub(super) fn prepare_split_input(pred: &CustomPredicateDef) -> SplitInput {
 
     // Inverse: which statements reference each wildcard (by index).
     let mut statements_using: Vec<Vec<usize>> = vec![Vec::new(); wildcard_names.len()];
-    for (s, stmt) in pred.statements.iter().enumerate() {
-        let mut seen: HashSet<usize> = HashSet::new();
-        for name in stmt.wildcard_names() {
-            let w = wildcard_index[name];
-            if seen.insert(w) {
-                statements_using[w].push(s);
-            }
+    for (statement, wildcards) in statement_wildcards.iter().enumerate() {
+        for name in wildcards {
+            statements_using[wildcard_index[name]].push(statement);
         }
     }
 
@@ -1087,6 +1126,7 @@ pub(super) fn prepare_split_input(pred: &CustomPredicateDef) -> SplitInput {
         },
         wildcard_names,
         original_public_args,
+        statement_wildcards,
     }
 }
 
@@ -1220,6 +1260,7 @@ fn split_into_chain(
     pred: &CustomPredicateDef,
     params: &Params,
     search_cache: &mut SplitSearchCache,
+    source_names: &HashSet<String>,
 ) -> Result<(Vec<CustomPredicateDef>, SplitChainInfo), SplittingError> {
     let input = prepare_split_input(pred);
 
@@ -1237,7 +1278,7 @@ fn split_into_chain(
         assignment
     };
 
-    build_chain_from_assignment(pred, &input, assignment, params)
+    build_chain_from_assignment(pred, &input, assignment, params, source_names)
 }
 
 /// Everything downstream of the ordering search: reorder the statements per
@@ -1248,6 +1289,7 @@ fn build_chain_from_assignment(
     input: &SplitInput,
     assignment: LinkAssignment,
     params: &Params,
+    source_names: &HashSet<String>,
 ) -> Result<(Vec<CustomPredicateDef>, SplitChainInfo), SplittingError> {
     let original_name = pred.name.name.clone();
     let conjunction = pred.conjunction_type;
@@ -1270,21 +1312,25 @@ fn build_chain_from_assignment(
         assignment,
         &pred.statements,
         &input.original_public_args,
+        &input.statement_wildcards,
     );
 
-    // Build SplitChainInfo (execution order: innermost continuation first).
+    // Generate names once so split metadata and definitions remain consistent.
     let num_links = chain_links.len();
+    let piece_names: Vec<String> = (0..num_links)
+        .map(|index| match index {
+            0 => original_name.clone(),
+            _ => piece_name(&original_name, index, source_names),
+        })
+        .collect();
+
+    // Store pieces in execution order, from innermost continuation to head.
     let mut chain_pieces = Vec::new();
     for i in (0..num_links).rev() {
         let link = &chain_links[i];
         let is_last = i == num_links - 1;
-        let name = if i == 0 {
-            original_name.clone()
-        } else {
-            format!("{}_{}", original_name, i)
-        };
         chain_pieces.push(SplitChainPiece {
-            name,
+            name: piece_names[i].clone(),
             real_statement_count: link.statements.len(),
             has_chain_call: !is_last,
         });
@@ -1298,7 +1344,7 @@ fn build_chain_from_assignment(
     };
 
     let mut chain_predicates =
-        generate_chain_predicates(&original_name, chain_links, conjunction, params)?;
+        generate_chain_predicates(&piece_names, chain_links, conjunction, params)?;
 
     validate_generated_predicates(&chain_predicates, params);
 
@@ -1328,7 +1374,7 @@ fn generated_typed_args(names: Vec<String>) -> Vec<TypedArg> {
 /// Call template to a generated local predicate, passing wildcards by name.
 fn generated_call_template(callee: String, arg_names: &[String]) -> StatementTmpl {
     StatementTmpl {
-        predicate: PredicateRef::Local(generated_identifier(callee)),
+        predicate: PredicateRef::Generated(generated_identifier(callee)),
         args: arg_names
             .iter()
             .map(|name| StatementTmplArg::Wildcard(generated_identifier(name.clone())))
@@ -1340,7 +1386,7 @@ fn generated_call_template(callee: String, arg_names: &[String]) -> StatementTmp
 /// Build the chain's [`CustomPredicateDef`]s from the per-link metadata,
 /// inserting a chain call on every non-last link.
 fn generate_chain_predicates(
-    original_name: &str,
+    piece_names: &[String],
     chain_links: Vec<ChainLink>,
     conjunction: ConjunctionType,
     _params: &Params,
@@ -1348,19 +1394,13 @@ fn generate_chain_predicates(
     let mut predicates = Vec::new();
 
     for (i, link) in chain_links.iter().enumerate() {
-        let pred_name = if i == 0 {
-            original_name.to_string()
-        } else {
-            format!("{}_{}", original_name, i)
-        };
-
         let is_last = i == chain_links.len() - 1;
         let mut statements = link.statements.clone();
 
         if !is_last {
             let next_link = &chain_links[i + 1];
             statements.push(generated_call_template(
-                format!("{}_{}", original_name, i + 1),
+                piece_names[i + 1].clone(),
                 &next_link.public_args_in,
             ));
         }
@@ -1374,7 +1414,7 @@ fn generate_chain_predicates(
         }
 
         predicates.push(CustomPredicateDef {
-            name: generated_identifier(pred_name),
+            name: generated_identifier(piece_names[i].clone()),
             args: ArgSection {
                 public_args: generated_typed_args(link.public_args_in.clone()),
                 private_args: (!private_arg_names.is_empty())
@@ -1430,6 +1470,7 @@ fn validate_generated_predicates(generated: &[CustomPredicateDef], params: &Para
 fn split_into_tree(
     pred: CustomPredicateDef,
     params: &Params,
+    source_names: &HashSet<String>,
 ) -> Result<(Vec<CustomPredicateDef>, SplitTreeInfo), SplittingError> {
     let max_arity = Params::max_custom_predicate_arity();
     let max_wildcards = params.max_custom_predicate_wildcards;
@@ -1564,7 +1605,7 @@ fn split_into_tree(
         if index == root_index {
             original_name.clone()
         } else {
-            format!("{}_{}", original_name, index + 1)
+            piece_name(&original_name, index + 1, source_names)
         }
     };
 
@@ -1962,21 +2003,38 @@ pub(super) fn build_pred(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::lang::{frontend_ast::parse::parse_document, parser::parse_podlang};
+    use crate::lang::{
+        frontend_ast::parse::parse_document,
+        frontend_ast_validate::{validate, ParseMode},
+        parser::parse_podlang,
+    };
 
-    /// One-shot split with a throwaway cache; tests exercise single
-    /// predicates, so there is nothing to share.
+    /// Split one predicate with a throwaway cache and no cross-predicate name reservations.
     fn split(pred: CustomPredicateDef, params: &Params) -> Result<SplitResult, SplittingError> {
-        split_predicate_if_needed(pred, params, &mut SplitSearchCache::default())
+        split_predicate_if_needed(
+            pred,
+            params,
+            &mut SplitSearchCache::default(),
+            &HashSet::new(),
+        )
     }
 
     fn parse_predicate(input: &str) -> CustomPredicateDef {
         let parsed = parse_podlang(input).expect("Failed to parse");
         let document = parse_document(parsed.into_iter().next().unwrap()).expect("Failed to parse");
 
-        for item in document.items {
+        // Validate parsed predicates so wildcard calls carry their AST tags.
+        let validated = validate(
+            document,
+            &HashMap::new(),
+            &Params::default(),
+            ParseMode::Module,
+        )
+        .expect("Failed to validate");
+
+        for item in &validated.document().items {
             if let DocumentItem::CustomPredicateDef(pred) = item {
-                return pred;
+                return pred.clone();
             }
         }
 
@@ -1998,6 +2056,112 @@ mod tests {
             result,
             Err(SplittingError::TooManyPublicArgs { .. })
         ));
+    }
+
+    /// Find the split piece containing a call through `wildcard`.
+    fn piece_with_higher_order_call<'a>(
+        result: &'a SplitResult,
+        wildcard: &str,
+    ) -> &'a CustomPredicateDef {
+        result
+            .predicates
+            .iter()
+            .find(|piece| {
+                piece.statements.iter().any(
+                    |stmt| matches!(&stmt.predicate, PredicateRef::Wildcard(id) if id.name == wildcard),
+                )
+            })
+            .expect("some piece holds the higher-order call")
+    }
+
+    #[test]
+    fn test_piece_names_dodge_source_names() {
+        // Reserve the default continuation name to exercise collision handling.
+        let input = r#"
+            my_pred(A) = AND(
+                Equal(A["a"], 1)
+                Equal(A["b"], 2)
+                Equal(A["c"], 3)
+                Equal(A["d"], 4)
+                Equal(A["e"], 5)
+                Equal(A["f"], 6)
+            )
+        "#;
+        let source_names = HashSet::from(["my_pred".to_string(), "my_pred_1".to_string()]);
+
+        let result = split_predicate_if_needed(
+            parse_predicate(input),
+            &Params::default(),
+            &mut SplitSearchCache::default(),
+            &source_names,
+        )
+        .expect("splits");
+
+        let piece_names: Vec<&str> = result
+            .predicates
+            .iter()
+            .map(|piece| piece.name.name.as_str())
+            .collect();
+        assert_eq!(piece_names, vec!["my_pred_1_", "my_pred"]);
+
+        let head = result.predicates.last().expect("the head link comes last");
+        let chain_call = head
+            .statements
+            .last()
+            .expect("head link ends with the call");
+        assert!(
+            matches!(&chain_call.predicate, PredicateRef::Generated(callee) if callee.name == "my_pred_1_"),
+            "chain call should target the dodged name, got {:?}",
+            chain_call.predicate
+        );
+
+        assert_eq!(
+            result.chain_info().expect("chain split").chain_pieces[0].name,
+            "my_pred_1_"
+        );
+    }
+
+    #[test]
+    fn test_chain_split_counts_predicate_position() {
+        // Predicate position is `P`'s only use, so its piece must declare `P`.
+        let input = r#"
+            holder(A, B, private: C, D, P) = AND(
+                P(C)
+                Equal(A, 1)
+                Equal(B, 2)
+                Lt(A, B)
+                NotEqual(C, D)
+                Equal(D, 4)
+            )
+        "#;
+
+        let result = split(parse_predicate(input), &Params::default()).expect("splits");
+        let piece = piece_with_higher_order_call(&result, "P");
+        assert!(
+            piece.declared_wildcards().any(|name| name == "P"),
+            "piece '{}' holds P(...) but declares {:?}",
+            piece.name.name,
+            piece.declared_wildcards().collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn test_tree_split_counts_predicate_position() {
+        // The higher-order disjunct must declare `P` from predicate position.
+        let branches: String = (0..29)
+            .map(|value| format!("Equal(A, {})\n", value))
+            .collect();
+        let input = format!("big_or(A, private: P) = OR(\n    P(A)\n{})", branches);
+
+        let result = split(parse_predicate(&input), &Params::default()).expect("splits");
+        assert!(result.tree_info().is_some(), "expected a tree split");
+        let leaf = piece_with_higher_order_call(&result, "P");
+        assert!(
+            leaf.declared_wildcards().any(|name| name == "P"),
+            "leaf '{}' holds P(A) but declares {:?}",
+            leaf.name.name,
+            leaf.declared_wildcards().collect::<Vec<_>>()
+        );
     }
 
     #[test]

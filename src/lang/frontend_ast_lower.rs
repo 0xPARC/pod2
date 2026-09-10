@@ -31,8 +31,6 @@ pub enum ResolutionContext<'a> {
     Module {
         /// Maps predicate name to index within the module
         reference_map: &'a HashMap<String, usize>,
-        /// Name of the custom predicate being defined (for wildcard scope lookup)
-        custom_predicate_name: &'a str,
     },
 }
 
@@ -53,34 +51,28 @@ pub fn resolve_predicate_ref(
             )))
         }
         PredicateRef::Local(id) => resolve_predicate(&id.name, symbols, context),
+        PredicateRef::Wildcard(id) => Some(PredicateOrWildcard::Wildcard(id.name.clone())),
+        PredicateRef::Generated(id) => {
+            let ResolutionContext::Module { reference_map } = context else {
+                unreachable!("split continuations only exist while lowering a module")
+            };
+            resolve_local_predicate(&id.name, reference_map).map(PredicateOrWildcard::Predicate)
+        }
     }
 }
 
-/// Resolve a predicate name to a Predicate using the symbol table
+/// Resolve a source predicate name through native and module namespaces.
 pub fn resolve_predicate(
     pred_name: &str,
     symbols: &SymbolTable,
     context: &ResolutionContext,
 ) -> Option<PredicateOrWildcard> {
-    // 0. Try wildcard first (only in module context where we're defining predicates)
-    if let ResolutionContext::Module {
-        custom_predicate_name,
-        ..
-    } = context
-    {
-        if let Some(wc_scope) = symbols.wildcard_scopes.get(*custom_predicate_name) {
-            if wc_scope.wildcards.contains_key(pred_name) {
-                return Some(PredicateOrWildcard::Wildcard(pred_name.to_string()));
-            }
-        }
-    }
-
-    // 1. Try native predicate second
+    // Resolve native predicates before consulting the symbol table.
     if let Ok(native) = NativePredicate::from_str(pred_name) {
         return Some(PredicateOrWildcard::Predicate(Predicate::Native(native)));
     }
 
-    // 2. Look up in symbol table
+    // Resolve non-native names through the symbol table.
     if let Some(info) = symbols.predicates.get(pred_name) {
         let predicate = match &info.kind {
             PredicateKind::Native(np) => Predicate::Native(*np),
@@ -90,7 +82,7 @@ pub fn resolve_predicate(
                     // Requests can't define local predicates, so this shouldn't happen
                     return None;
                 }
-                ResolutionContext::Module { reference_map, .. } => {
+                ResolutionContext::Module { reference_map } => {
                     resolve_local_predicate(pred_name, reference_map)?
                 }
             },
@@ -127,19 +119,10 @@ pub fn resolve_predicate(
         return Some(PredicateOrWildcard::Predicate(predicate));
     }
 
-    // 3. In module context, also check reference_map for split chain pieces
-    //    (predicates created by splitting that aren't in the original symbol table)
-    if let ResolutionContext::Module { reference_map, .. } = context {
-        if reference_map.contains_key(pred_name) {
-            return resolve_local_predicate(pred_name, reference_map)
-                .map(PredicateOrWildcard::Predicate);
-        }
-    }
-
     None
 }
 
-/// Resolve a local predicate (one in this module or a split chain piece) using the reference_map
+/// Resolve a local predicate to its index in the batch under construction.
 fn resolve_local_predicate(
     pred_name: &str,
     reference_map: &HashMap<String, usize>,
