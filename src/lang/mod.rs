@@ -425,6 +425,32 @@ mod tests {
     }
 
     #[test]
+    fn test_e2e_reserved_word_prefixed_identifiers() -> Result<(), LangError> {
+        // Exercise the literal-or-identifier ambiguity in statement arguments.
+        let input = r#"
+            flagged(true_flag, false_alarm) = AND(
+                Equal(true_flag, true)
+                NotEqual(false_alarm, false)
+            )
+        "#;
+
+        let params = Params::default();
+        let module = load_module(input, "test_module", &params, &[])?;
+
+        let predicate = &module.batch.predicates()[0];
+        assert_eq!(
+            predicate.wildcard_names(),
+            names(&["true_flag", "false_alarm"])
+        );
+        assert_eq!(
+            predicate.statements()[0].args,
+            vec![sta_wc_lit("true_flag", 0), sta_lit(true)]
+        );
+
+        Ok(())
+    }
+
+    #[test]
     fn test_e2e_syntactic_sugar_predicates() -> Result<(), LangError> {
         let input = r#"
             REQUEST(
@@ -1086,6 +1112,23 @@ mod tests {
             },
             e => panic!("Expected LangError::Validation, but got {:?}", e),
         }
+    }
+
+    #[test]
+    fn test_e2e_empty_request_names_the_cause() {
+        let params = Params::default();
+
+        let result = parse_request("REQUEST()", &params, &[]);
+
+        let Err(err) = result else {
+            panic!("empty REQUEST should be rejected");
+        };
+        let rendered = format!("{}", err);
+        assert!(
+            rendered.contains("empty statement list in REQUEST block"),
+            "diagnostic should name the cause, got:\n{}",
+            rendered
+        );
     }
 
     // ---- Records: cross-module export -------------------------------------

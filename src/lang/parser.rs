@@ -136,6 +136,9 @@ mod tests {
         assert_inner(&Rule::identifier, "someVar");
         assert_inner(&Rule::anchored_key, "someVar[\"key\"]");
         assert_inner(&Rule::literal_value, "true");
+        // Boolean literals must not consume an identifier prefix.
+        assert_inner(&Rule::identifier, "true_flag");
+        assert_inner(&Rule::identifier, "falsehood");
         assert_inner(&Rule::literal_value, "PublicKey(abc)");
         assert_inner(&Rule::predicate_hash_self, "@self_predicate(foo)");
         assert_inner(&Rule::literal_value, "@native_predicate(Equal)");
@@ -152,6 +155,8 @@ mod tests {
                                                       // Bool
         assert_parses(Rule::literal_bool, "true");
         assert_parses(Rule::literal_bool, "false");
+        assert_fails(Rule::literal_bool, "true_flag");
+        assert_fails(Rule::literal_bool, "falsehood");
 
         // Raw - Require 64 hex digits (32 bytes, equal to 4 * 64-bit field elements)
         assert_parses(

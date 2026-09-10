@@ -16,12 +16,11 @@ use crate::{
     middleware::{CustomPredicateBatch, Hash, NativePredicate, Params},
 };
 
-/// A validated AST document with symbol table and diagnostics
+/// A validated AST document and its symbol table.
 #[derive(Debug, Clone)]
 pub struct ValidatedAST {
     document: Document,
     symbols: SymbolTable,
-    diagnostics: Vec<Diagnostic>,
 }
 
 impl ValidatedAST {
@@ -31,10 +30,6 @@ impl ValidatedAST {
 
     pub fn symbols(&self) -> &SymbolTable {
         &self.symbols
-    }
-
-    pub fn diagnostics(&self) -> &[Diagnostic] {
-        &self.diagnostics
     }
 
     pub fn into_document(self) -> Document {
@@ -95,6 +90,17 @@ pub enum RecordSource {
     Imported { module: String },
 }
 
+/// Reject names that would always resolve to native predicates.
+fn reject_native_predicate_name(name: &str, span: Option<Span>) -> Result<(), ValidationError> {
+    if NativePredicate::from_str(name).is_ok() {
+        return Err(ValidationError::NativePredicateNameCollision {
+            name: name.to_string(),
+            span,
+        });
+    }
+    Ok(())
+}
+
 /// Build the `SymbolTable.records` key for a record imported via
 /// `use module ... as alias`. Mirrors the `alias::Name` form used for
 /// `TypeRef::Qualified`.
@@ -150,20 +156,6 @@ pub struct WildcardInfo {
     pub record_type: Option<String>,
 }
 
-/// Diagnostic message (warning or info)
-#[derive(Debug, Clone)]
-pub struct Diagnostic {
-    pub level: DiagnosticLevel,
-    pub message: String,
-    pub span: Option<Span>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DiagnosticLevel {
-    Warning,
-    Info,
-}
-
 pub use crate::lang::error::ValidationError;
 
 /// Mode for parsing/validation - determines what constructs are allowed
@@ -190,7 +182,6 @@ struct Validator {
     available_modules: HashMap<Hash, Arc<Module>>,
     params: Params,
     symbols: SymbolTable,
-    diagnostics: Vec<Diagnostic>,
     custom_predicate_count: usize,
     mode: ParseMode,
 }
@@ -210,7 +201,6 @@ impl Validator {
                 imported_modules: HashMap::new(),
                 records: HashMap::new(),
             },
-            diagnostics: Vec::new(),
             custom_predicate_count: 0,
             mode,
         }
@@ -226,7 +216,6 @@ impl Validator {
         Ok(ValidatedAST {
             document,
             symbols: self.symbols,
-            diagnostics: self.diagnostics,
         })
     }
 
@@ -302,6 +291,14 @@ impl Validator {
         let alias = &use_stmt.alias.name;
         let hash = &use_stmt.hash.hash;
 
+        // Reject alias reuse before adding module records to the shared namespace.
+        if self.symbols.imported_modules.contains_key(alias) {
+            return Err(ValidationError::DuplicateImport {
+                name: alias.clone(),
+                span: use_stmt.span,
+            });
+        }
+
         // Check if the module is available by hash
         let module =
             self.available_modules
@@ -360,6 +357,8 @@ impl Validator {
         let intro_name = &use_stmt.name.name;
         let args = &use_stmt.args;
         let intro_predicate_ref = &use_stmt.intro_hash;
+
+        reject_native_predicate_name(intro_name, use_stmt.name.span)?;
 
         if self.symbols.predicates.contains_key(intro_name) {
             return Err(ValidationError::DuplicateImport {
@@ -431,6 +430,8 @@ impl Validator {
         pred_def: &CustomPredicateDef,
     ) -> Result<(), ValidationError> {
         let name = &pred_def.name.name;
+
+        reject_native_predicate_name(name, pred_def.name.span)?;
 
         if self.symbols.predicates.contains_key(name) {
             let first_span = self.symbols.predicates[name].source_span;
@@ -520,7 +521,7 @@ impl Validator {
         Ok(())
     }
 
-    fn validate_references(&mut self, document: &Document) -> Result<(), ValidationError> {
+    fn validate_references(&self, document: &Document) -> Result<(), ValidationError> {
         for item in &document.items {
             match item {
                 DocumentItem::CustomPredicateDef(pred_def) => {
@@ -557,11 +558,10 @@ impl Validator {
         Ok(())
     }
 
-    fn validate_request_statements(&mut self, req_def: &RequestDef) -> Result<(), ValidationError> {
+    fn validate_request_statements(&self, req_def: &RequestDef) -> Result<(), ValidationError> {
         if req_def.statements.is_empty() {
-            self.diagnostics.push(Diagnostic {
-                level: DiagnosticLevel::Warning,
-                message: "Empty REQUEST block".to_string(),
+            return Err(ValidationError::EmptyStatementList {
+                context: "REQUEST block".to_string(),
                 span: req_def.span,
             });
         }
@@ -806,7 +806,15 @@ impl Validator {
                 Ok(())
             }
             LiteralValue::Dict(d) => {
+                // Reject duplicate keys before lowering collects entries into a map.
+                let mut seen: HashSet<&String> = HashSet::new();
                 for pair in &d.pairs {
+                    if !seen.insert(&pair.key.value) {
+                        return Err(ValidationError::DuplicateDictKey {
+                            key: pair.key.value.clone(),
+                            span: pair.key.span,
+                        });
+                    }
                     self.validate_literal_value(&pair.value)?;
                 }
                 Ok(())
@@ -896,6 +904,63 @@ mod tests {
         )"#;
         let result = parse_and_validate_request(input, &HashMap::new());
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_custom_predicate_shadowing_native() {
+        let input = r#"
+            Equal(A, B) = AND(
+                NotEqual(A, B)
+            )
+        "#;
+        let result = parse_and_validate_module(input, &HashMap::new());
+        assert!(matches!(
+            result,
+            Err(ValidationError::NativePredicateNameCollision { ref name, .. })
+                if name == "Equal"
+        ));
+    }
+
+    #[test]
+    fn test_intro_import_shadowing_native() {
+        let input = r#"
+            use intro Equal(X) from 0x0000000000000000000000000000000000000000000000000000000000000001
+
+            user(A) = AND(
+                Equal(A, A)
+            )
+        "#;
+        let result = parse_and_validate_module(input, &HashMap::new());
+        assert!(matches!(
+            result,
+            Err(ValidationError::NativePredicateNameCollision { ref name, .. })
+                if name == "Equal"
+        ));
+    }
+
+    #[test]
+    fn test_sugar_predicate_name_is_also_reserved() {
+        let input = r#"
+            DictInsert(A, B, C, D) = AND(
+                Equal(A, B)
+            )
+        "#;
+        let result = parse_and_validate_module(input, &HashMap::new());
+        assert!(matches!(
+            result,
+            Err(ValidationError::NativePredicateNameCollision { ref name, .. })
+                if name == "DictInsert"
+        ));
+    }
+
+    #[test]
+    fn test_empty_request_block() {
+        let result = parse_and_validate_request("REQUEST()", &HashMap::new());
+        assert!(matches!(
+            result,
+            Err(ValidationError::EmptyStatementList { ref context, .. })
+                if context == "REQUEST block"
+        ));
     }
 
     #[test]
@@ -1151,6 +1216,58 @@ mod tests {
     }
 
     #[test]
+    fn test_duplicate_module_alias() {
+        use std::sync::Arc;
+
+        use hex::ToHex;
+
+        let params = Params::default();
+
+        // Distinct predicates and records expose any mixed alias state.
+        let build_module = |pred_name: &str, records| {
+            let pred = CustomPredicate::and(
+                &params,
+                pred_name.to_string(),
+                vec![],
+                1,
+                vec!["X".to_string()],
+            )
+            .unwrap();
+            let batch = CustomPredicateBatch::new(format!("batch_{}", pred_name), vec![pred]);
+            Arc::new(Module::with_records(batch, HashMap::new(), records))
+        };
+        let module_a = build_module(
+            "from_a",
+            HashMap::from([("R".to_string(), vec!["foo".to_string(), "bar".to_string()])]),
+        );
+        let module_b = build_module("from_b", HashMap::new());
+
+        let mut available_modules = HashMap::new();
+        available_modules.insert(module_a.id(), module_a.clone());
+        available_modules.insert(module_b.id(), module_b.clone());
+
+        let input = format!(
+            r#"
+            use module 0x{} as m
+            use module 0x{} as m
+
+            REQUEST(
+                m::from_b(A)
+                Equal(A, m::R::bar)
+            )
+        "#,
+            module_a.id().encode_hex::<String>(),
+            module_b.id().encode_hex::<String>(),
+        );
+
+        let result = parse_and_validate_request(&input, &available_modules);
+        assert!(matches!(
+            result,
+            Err(ValidationError::DuplicateImport { ref name, .. }) if name == "m"
+        ));
+    }
+
+    #[test]
     fn test_syntactic_sugar_predicates() {
         let input = r#"REQUEST(
             GtEq(A["x"], B["y"])
@@ -1362,6 +1479,30 @@ mod tests {
             result,
             Err(ValidationError::DuplicateLiteralRecordEntry { record, entry, .. })
                 if record == "R" && entry == "foo"
+        ));
+    }
+
+    #[test]
+    fn test_dict_literal_duplicate_key() {
+        let input = r#"
+            my_pred(A) = AND(Equal(A["x"], {"a": 1, "a": 2}))
+        "#;
+        let result = parse_and_validate_module(input, &HashMap::new());
+        assert!(matches!(
+            result,
+            Err(ValidationError::DuplicateDictKey { key, .. }) if key == "a"
+        ));
+    }
+
+    #[test]
+    fn test_nested_dict_literal_duplicate_key() {
+        let input = r#"
+            my_pred(A) = AND(Equal(A["x"], {"outer": [{"a": 1, "a": 2}]}))
+        "#;
+        let result = parse_and_validate_module(input, &HashMap::new());
+        assert!(matches!(
+            result,
+            Err(ValidationError::DuplicateDictKey { key, .. }) if key == "a"
         ));
     }
 
