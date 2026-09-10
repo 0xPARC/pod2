@@ -795,7 +795,7 @@ impl Validator {
             }
             LiteralValue::Array(a) => {
                 for elem in &a.elements {
-                    self.validate_literal_value(elem)?;
+                    self.validate_literal_value(&elem.value)?;
                 }
                 Ok(())
             }
