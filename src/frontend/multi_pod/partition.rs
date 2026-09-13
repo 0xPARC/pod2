@@ -12,9 +12,10 @@
 //!
 //! - **Picking an ordering**. Combinatorial: there's no realistic way
 //!   to search every topological order. We sample a small set of
-//!   candidates: one bin-packing ordering ([`kahn_bin_packing`]), the
-//!   DFS-from-sinks ordering ([`build_dfs_topo_order`]), and ten
-//!   random-priority orderings ([`kahn_with_priority`]).
+//!   candidates: one bin-packing ordering ([`kahn_bin_packing`]), an
+//!   external-opening-first ordering, the DFS-from-sinks ordering
+//!   ([`build_dfs_topo_order`]), and ten random-priority orderings
+//!   ([`kahn_with_priority`]).
 //!
 //! - **Cutting the ordering into segments**. Once the order is fixed
 //!   this collapses to a 1D problem: where do POD boundaries go?
@@ -35,7 +36,7 @@ use rand_chacha::ChaCha20Rng;
 
 use super::{
     cost::{CustomPredicateId, OperationCost, ResourceTotals},
-    shape::{AbstractDep, InputShape, OutputShape},
+    shape::{input_pod_slots, AbstractDep, InputShape, OutputShape},
 };
 use crate::middleware::Params;
 
@@ -268,18 +269,17 @@ pub(super) fn kahn_with_priority(input: &InputShape, prio_of: &[usize]) -> Optio
     (ordering.len() == n).then_some(ordering)
 }
 
-/// Per-segment cap check for input-tree imports (chain slot + external
-/// slots) and input-pods. Tree imports are capped by
-/// `params.max_open_input_statement_ops`; the chain slot counts as one
-/// input-pod iff there are any prev-pod producers.
+/// Checks a segment's statement-import and input-POD limits. Every POD
+/// after the first reserves an input-POD slot for its predecessor.
 fn tree_imports_ok(
+    is_first_pod: bool,
     n_producers: usize,
     n_ext_imports: usize,
     n_ext_pods: usize,
     params: &Params,
 ) -> bool {
     n_producers + n_ext_imports <= params.max_open_input_statement_ops
-        && usize::from(n_producers > 0) + n_ext_pods <= params.max_input_pods
+        && input_pod_slots(is_first_pod, n_ext_pods) <= params.max_input_pods
 }
 
 /// Running state of the current segment used by greedy packing in
@@ -420,13 +420,11 @@ impl GreedyState {
         let n_producers = self.prev_pod_producers.len() + self.scratch_new_producers.len();
         let n_ext_imports = self.external_imports.len() + self.scratch_new_ext_imports.len();
         let n_ext_pods = self.external_pods.len() + self.scratch_new_ext_pods.len();
-        if !tree_imports_ok(n_producers, n_ext_imports, n_ext_pods, params) {
+        if !tree_imports_ok(self.a == 0, n_producers, n_ext_imports, n_ext_pods, params) {
             return None;
         }
-        // Statement-table cap: local segment statements plus chain and
-        // external imports together share `max_statements`, because each
-        // `OpenInputStatement` op produces a statement in the POD's table.
-        if tentative.num_operations + n_producers + n_ext_imports > params.max_statements {
+        // Only chain imports add statements beyond assigned nodes.
+        if tentative.num_operations + n_producers > params.max_statements {
             return None;
         }
         Some(self.scratch_new_producers.len() + self.scratch_new_ext_imports.len())
@@ -522,9 +520,46 @@ fn random_priority(rng: &mut ChaCha20Rng, n: usize) -> Vec<usize> {
     prio_of
 }
 
+fn external_opening_pod(input: &InputShape, statement: usize) -> Option<usize> {
+    if !input.costs[statement].is_external_opening {
+        return None;
+    }
+    match input.dep_edges[statement].as_slice() {
+        [AbstractDep::External { pod, .. }] => Some(*pod),
+        _ => None,
+    }
+}
+
+/// Prioritise external openings by source POD before unrelated work.
+///
+/// The first POD can devote all of its input slots to external PODs,
+/// while every later POD also needs its chain predecessor. Opening
+/// statements there makes them available to later PODs through the
+/// chain and can remove that additional input-slot pressure.
+fn external_opening_priority(input: &InputShape) -> Option<Vec<usize>> {
+    let mut statements: Vec<usize> = (0..input.num_statements()).collect();
+    if !statements
+        .iter()
+        .any(|&s| external_opening_pod(input, s).is_some())
+    {
+        return None;
+    }
+    statements.sort_unstable_by_key(|&s| match external_opening_pod(input, s) {
+        Some(pod) => (0, pod, s),
+        None => (1, 0, s),
+    });
+
+    let mut priority = vec![0; statements.len()];
+    for (rank, statement) in statements.into_iter().enumerate() {
+        priority[statement] = rank;
+    }
+    Some(priority)
+}
+
 /// Generate the candidate orderings the cutter will try. Bin-packing
-/// goes first (strongest single seed on production-cap workloads),
-/// then DFS-from-sinks, then the random-priority orderings for variety.
+/// goes first (strongest single seed on production-cap workloads), then
+/// the external-opening-first and DFS-from-sinks orderings, followed by
+/// random-priority orderings for variety.
 fn candidate_orderings(input: &InputShape) -> Vec<Vec<usize>> {
     let n = input.num_statements();
     let mut orderings: Vec<Vec<usize>> = Vec::new();
@@ -532,6 +567,11 @@ fn candidate_orderings(input: &InputShape) -> Vec<Vec<usize>> {
     let prio_id: Vec<usize> = (0..n).collect();
     if let Some(o) = kahn_bin_packing(input, &prio_id) {
         orderings.push(o);
+    }
+    if let Some(prio) = external_opening_priority(input) {
+        if let Some(o) = kahn_with_priority(input, &prio) {
+            orderings.push(o);
+        }
     }
 
     orderings.push(build_dfs_topo_order(input));
@@ -621,26 +661,46 @@ fn build_max_consumer_pos(consumers: &[Vec<usize>], pos_in_ordering: &[usize]) -
     mcp
 }
 
-/// Non-terminal-only per-segment feasibility check, self-contained
-/// (builds its own `pos_in_ordering` and `DpWorkspace`). Callers in a
-/// hot loop should use `segment_feasible_with` to reuse allocations.
-pub(super) fn segment_feasible(ordering: &[usize], input: &InputShape, a: usize, p: usize) -> bool {
-    let pos_in_ordering = build_pos_in_ordering(ordering);
-    let consumers = input.consumers();
-    let max_consumer_pos = build_max_consumer_pos(&consumers, &pos_in_ordering);
-    let output_pub_set: HashSet<usize> = input.output_public_indices.iter().copied().collect();
-    let mut ws = DpWorkspace::default();
-    segment_feasible_with(
-        ordering,
-        &pos_in_ordering,
-        &max_consumer_pos,
-        &output_pub_set,
-        input,
-        a,
-        p,
-        false,
-        &mut ws,
-    )
+/// Reuses ordering metadata and scratch storage across segment checks.
+pub(super) struct SegmentChecker<'a> {
+    ordering: &'a [usize],
+    input: &'a InputShape,
+    pos_in_ordering: Vec<usize>,
+    max_consumer_pos: Vec<usize>,
+    output_pub_set: HashSet<usize>,
+    workspace: DpWorkspace,
+}
+
+impl<'a> SegmentChecker<'a> {
+    pub(super) fn new(ordering: &'a [usize], input: &'a InputShape) -> Self {
+        let pos_in_ordering = build_pos_in_ordering(ordering);
+        let consumers = input.consumers();
+        let max_consumer_pos = build_max_consumer_pos(&consumers, &pos_in_ordering);
+        Self {
+            ordering,
+            input,
+            pos_in_ordering,
+            max_consumer_pos,
+            output_pub_set: input.output_public_indices.iter().copied().collect(),
+            workspace: DpWorkspace::default(),
+        }
+    }
+
+    /// Returns whether `ordering[a..p]` fits in one POD. Terminal segments
+    /// use the output-POD rules.
+    pub(super) fn is_feasible(&mut self, a: usize, p: usize, is_terminal: bool) -> bool {
+        segment_feasible_with(
+            self.ordering,
+            &self.pos_in_ordering,
+            &self.max_consumer_pos,
+            &self.output_pub_set,
+            self.input,
+            a,
+            p,
+            is_terminal,
+            &mut self.workspace,
+        )
+    }
 }
 
 /// Greedy partition of `ordering` into segments: extend each segment
@@ -662,41 +722,15 @@ fn greedy_segments(
     if n == 0 {
         return Some(Vec::new());
     }
-    let pos_in_ordering = build_pos_in_ordering(ordering);
-    let consumers = input.consumers();
-    let max_consumer_pos = build_max_consumer_pos(&consumers, &pos_in_ordering);
-    let output_pub_set: HashSet<usize> = input.output_public_indices.iter().copied().collect();
-    let mut ws = DpWorkspace::default();
+    let mut checker = SegmentChecker::new(ordering, input);
     let mut segments: Vec<Segment> = Vec::new();
     let mut start = 0_usize;
     while start < n {
-        if !segment_feasible_with(
-            ordering,
-            &pos_in_ordering,
-            &max_consumer_pos,
-            &output_pub_set,
-            input,
-            start,
-            start + 1,
-            false,
-            &mut ws,
-        ) {
+        if !checker.is_feasible(start, start + 1, false) {
             return None;
         }
         let mut end = start + 1;
-        while end < n
-            && segment_feasible_with(
-                ordering,
-                &pos_in_ordering,
-                &max_consumer_pos,
-                &output_pub_set,
-                input,
-                start,
-                end + 1,
-                false,
-                &mut ws,
-            )
-        {
+        while end < n && checker.is_feasible(start, end + 1, false) {
             end += 1;
         }
         segments.push(Segment { start, end });
@@ -706,17 +740,7 @@ fn greedy_segments(
         let last = *segments
             .last()
             .expect("non-empty ordering produced no segments");
-        if !segment_feasible_with(
-            ordering,
-            &pos_in_ordering,
-            &max_consumer_pos,
-            &output_pub_set,
-            input,
-            last.start,
-            last.end,
-            true,
-            &mut ws,
-        ) {
+        if !checker.is_feasible(last.start, last.end, true) {
             return None;
         }
     }
@@ -768,6 +792,7 @@ fn segment_feasible_with(
     // - external imports: external (input) statements (slots 1..N).
     // External-pod references are tracked separately for `max_input_pods`,
     // which is a per-slot cap, not a per-statement one.
+    let is_first_pod = start == 0;
     let mut totals = ResourceTotals::default();
     workspace.distinct_cps.clear();
     workspace.prev_pod_producers.clear();
@@ -798,12 +823,11 @@ fn segment_feasible_with(
                 }
             }
         }
-        // Mid-loop bail: the chain-slot + external-slot tree-imports
-        // cap can only grow as we add more statements, so once it's
-        // busted there's no recovery. Saves the remaining statements'
-        // worth of inserts on infeasible segments.
+        // Import counts only increase as the segment grows, so stop once
+        // either cap is exceeded.
         if workspace.prev_pod_producers.len() + workspace.external_imports.len()
             > params.max_open_input_statement_ops
+            || input_pod_slots(is_first_pod, workspace.external_pods.len()) > params.max_input_pods
         {
             return false;
         }
@@ -813,14 +837,14 @@ fn segment_feasible_with(
     let n_ext_pods = workspace.external_pods.len();
     let n_chain_imports = workspace.prev_pod_producers.len();
 
-    // Statement-table cap. Each `OpenInputStatement` op produces a statement
-    // in the POD's statement table, so the table holds `segment statements +
-    // imports`, capped by `max_statements`.
-    if segment.len() + n_chain_imports + n_ext_imports > params.max_statements {
+    // Only chain imports add statements beyond assigned nodes.
+    if segment.len() + n_chain_imports > params.max_statements {
         return false;
     }
 
-    if !tree_imports_ok(n_chain_imports, n_ext_imports, n_ext_pods, params) {
+    let imports_ok =
+        |n_chain: usize| tree_imports_ok(is_first_pod, n_chain, n_ext_imports, n_ext_pods, params);
+    if !imports_ok(n_chain_imports) {
         return false;
     }
 
@@ -849,10 +873,10 @@ fn segment_feasible_with(
         }
     }
     let n_chain_imports_terminal = workspace.prev_pod_producers.len();
-    if segment.len() + n_chain_imports_terminal + n_ext_imports > params.max_statements {
+    if segment.len() + n_chain_imports_terminal > params.max_statements {
         return false;
     }
-    tree_imports_ok(n_chain_imports_terminal, n_ext_imports, n_ext_pods, params)
+    imports_ok(n_chain_imports_terminal)
 }
 
 /// A half-open boundary range covering one POD's statements:
@@ -940,10 +964,7 @@ struct DpEntry {
 #[allow(clippy::needless_range_loop)]
 fn run_dp(ordering: &[usize], input: &InputShape) -> Option<Vec<Segment>> {
     let n = ordering.len();
-    let pos_in_ordering = build_pos_in_ordering(ordering);
-    let consumers = input.consumers();
-    let max_consumer_pos = build_max_consumer_pos(&consumers, &pos_in_ordering);
-    let output_pub_set: HashSet<usize> = input.output_public_indices.iter().copied().collect();
+    let mut checker = SegmentChecker::new(ordering, input);
     // Each POD holds at most `max_statements` local statements, so any
     // candidate segment longer than that is infeasible. This bounds
     // the inner loop's start window per `end`.
@@ -952,7 +973,6 @@ fn run_dp(ordering: &[usize], input: &InputShape) -> Option<Vec<Segment>> {
     // The table has `n + 1` cells, one per boundary position (including
     // 0 and n). `dp[0]` is the base case: the empty prefix needs 0 PODs.
     let mut dp: Vec<Option<DpEntry>> = vec![None; n + 1];
-    let mut workspace = DpWorkspace::default();
     dp[0] = Some(DpEntry {
         pod_count: 0,
         prev_start: 0,
@@ -965,23 +985,13 @@ fn run_dp(ordering: &[usize], input: &InputShape) -> Option<Vec<Segment>> {
     let best_segment_ending_at = |end: usize,
                                   kind: PodKind,
                                   dp: &[Option<DpEntry>],
-                                  workspace: &mut DpWorkspace|
+                                  checker: &mut SegmentChecker|
      -> Option<DpEntry> {
         let window_start = end.saturating_sub(max_segment_len);
         let mut best: Option<DpEntry> = None;
         for start in window_start..end {
             let Some(prev) = dp[start] else { continue };
-            if !segment_feasible_with(
-                ordering,
-                &pos_in_ordering,
-                &max_consumer_pos,
-                &output_pub_set,
-                input,
-                start,
-                end,
-                kind.is_terminal(),
-                workspace,
-            ) {
+            if !checker.is_feasible(start, end, kind.is_terminal()) {
                 continue;
             }
             let candidate = DpEntry {
@@ -999,14 +1009,14 @@ fn run_dp(ordering: &[usize], input: &InputShape) -> Option<Vec<Segment>> {
     // as a chain-extending POD (the output POD's special rules are
     // handled separately below).
     for end in 1..=n {
-        let entry = best_segment_ending_at(end, PodKind::ChainExtending, &dp, &mut workspace);
+        let entry = best_segment_ending_at(end, PodKind::ChainExtending, &dp, &mut checker);
         dp[end] = entry;
     }
 
     // Terminal scan: pick the cheapest output POD covering `start..n`,
     // using the output-POD feasibility flavour. Returns `None` if no
     // candidate is feasible.
-    let terminal = best_segment_ending_at(n, PodKind::Output, &dp, &mut workspace)?;
+    let terminal = best_segment_ending_at(n, PodKind::Output, &dp, &mut checker)?;
 
     // Backtrack: walk `prev_start` breadcrumbs from `terminal` back to
     // boundary 0 to recover the actual cut positions.
@@ -1174,6 +1184,101 @@ mod tests {
     }
 
     #[test]
+    fn external_open_node_consumes_one_statement_slot() {
+        use super::super::cost::OperationCost;
+
+        let input = InputShape {
+            costs: vec![OperationCost::default(), OperationCost::default()],
+            dep_edges: vec![
+                vec![AbstractDep::External {
+                    pod: 0,
+                    statement: 0,
+                }],
+                vec![AbstractDep::Internal(0)],
+            ],
+            output_public_indices: vec![1],
+            num_external_pods: 1,
+            statement_pod: vec![0],
+            params: Params {
+                max_statements: 2,
+                ..Params::default()
+            },
+        };
+
+        let out = partition(&input).expect("Open plus consumer should fit");
+        assert_eq!(out.pod_count, 1);
+        assert_eq!(out.pod_statements, vec![vec![0, 1]]);
+    }
+
+    #[test]
+    fn external_openings_can_move_forward_to_save_a_pod() {
+        let params = Params {
+            max_statements: 5,
+            max_input_pods: 2,
+            max_signed_by_ops: 1,
+            max_public_statements: 3,
+            ..Params::default()
+        };
+        let signed = || OperationCost {
+            signed_by: 1,
+            ..OperationCost::default()
+        };
+        let opening = || OperationCost {
+            is_external_opening: true,
+            ..OperationCost::default()
+        };
+        let input = InputShape {
+            costs: vec![
+                signed(),
+                signed(),
+                opening(),
+                opening(),
+                OperationCost::default(),
+            ],
+            dep_edges: vec![
+                vec![],
+                vec![],
+                vec![AbstractDep::External {
+                    pod: 0,
+                    statement: 0,
+                }],
+                vec![AbstractDep::External {
+                    pod: 1,
+                    statement: 1,
+                }],
+                vec![
+                    AbstractDep::Internal(0),
+                    AbstractDep::Internal(2),
+                    AbstractDep::Internal(3),
+                ],
+            ],
+            output_public_indices: vec![4],
+            num_external_pods: 2,
+            statement_pod: vec![0, 1],
+            params,
+        };
+
+        // Source order puts both external openings after the first
+        // resource-forced cut, where the predecessor takes a third slot.
+        let source_order: Vec<usize> = (0..input.num_statements()).collect();
+        let source_out =
+            partition_with_ordering(&input, &source_order).expect("source order should partition");
+        assert_eq!(source_out.pod_count, 3);
+
+        let priority = external_opening_priority(&input).expect("input contains external openings");
+        let opening_order =
+            kahn_with_priority(&input, &priority).expect("dependency graph should be acyclic");
+        assert_eq!(opening_order, vec![2, 3, 0, 1, 4]);
+        assert_eq!(candidate_orderings(&input)[1], opening_order);
+
+        let opening_out = partition_with_ordering(&input, &opening_order)
+            .expect("external-opening order should partition");
+        assert_eq!(opening_out.pod_count, 2);
+        assert!(opening_out.pod_statements[0].contains(&2));
+        assert!(opening_out.pod_statements[0].contains(&3));
+    }
+
+    #[test]
     fn dependency_chain_respects_topo_order() {
         // 4 statements where each depends on the previous. With
         // max_statements = 3, a 2-POD partition is feasible: one POD
@@ -1226,7 +1331,7 @@ mod tests {
         use rand::SeedableRng;
         use rand_chacha::ChaCha20Rng;
 
-        use super::super::partition_milp::random_input;
+        use super::super::{partition_milp::random_input, SolutionBreakdown};
 
         let param_variants: Vec<(&str, Params)> = vec![
             (
@@ -1294,6 +1399,30 @@ mod tests {
                     total += 1;
                     let input = random_input(&mut rng, n, params.clone());
                     let identity: Vec<usize> = (0..input.num_statements()).collect();
+
+                    // Recompute per-POD usage from the dependency graph to catch
+                    // accounting errors shared by the DP and greedy partitioners.
+                    if let Some(sol) = partition(&input) {
+                        for pod in SolutionBreakdown::from_solution(&input, &sol).pods {
+                            for row in pod.resources.iter().chain([
+                                &pod.imports,
+                                &pod.input_pod_slots,
+                                &pod.publishes,
+                            ]) {
+                                assert!(
+                                    row.used <= row.limit,
+                                    "POD {} over the {} cap [{} n={} trial={}]: {} > {}",
+                                    pod.pod_idx,
+                                    row.name,
+                                    label,
+                                    n,
+                                    trial,
+                                    row.used,
+                                    row.limit,
+                                );
+                            }
+                        }
+                    }
 
                     let k_per_ord_dp = |o: &[usize]| -> Option<usize> {
                         partition_with_ordering(&input, o).map(|s| s.pod_count)
