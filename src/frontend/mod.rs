@@ -2104,12 +2104,12 @@ pub mod tests {
         builder.pub_op(Operation::dict_signed_by(&signed_dict))?;
 
         let statements = vec![
-            builder.priv_op(Operation::eq((&signed_dict, "a"), 1))?,
-            builder.priv_op(Operation::eq((&signed_dict, "b"), 2))?,
-            builder.priv_op(Operation::eq((&signed_dict, "c"), 3))?,
-            builder.priv_op(Operation::eq((&signed_dict, "d"), 4))?,
-            builder.priv_op(Operation::eq((&signed_dict, "e"), 5))?,
-            builder.priv_op(Operation::eq((&signed_dict, "f"), 6))?,
+            builder.priv_op(Operation::eq(entry(&signed_dict, "a")?, 1))?,
+            builder.priv_op(Operation::eq(entry(&signed_dict, "b")?, 2))?,
+            builder.priv_op(Operation::eq(entry(&signed_dict, "c")?, 3))?,
+            builder.priv_op(Operation::eq(entry(&signed_dict, "d")?, 4))?,
+            builder.priv_op(Operation::eq(entry(&signed_dict, "e")?, 5))?,
+            builder.priv_op(Operation::eq(entry(&signed_dict, "f")?, 6))?,
         ];
 
         module.apply_predicate(&mut builder, "large_pred", statements, true)?;
@@ -2167,13 +2167,16 @@ pub mod tests {
 
         // Source order; `apply_predicate` reorders into split order.
         let statements = vec![
-            builder.priv_op(Operation::ne((&signed_dict, "a"), 7))?,
-            builder.priv_op(Operation::eq((&signed_dict, "b"), 2))?,
-            builder.priv_op(Operation::eq((&signed_dict, "c"), 3))?,
-            builder.priv_op(Operation::lt((&signed_dict, "b"), (&signed_dict, "c")))?,
-            builder.priv_op(Operation::ne((&signed_dict, "d"), 8))?,
-            builder.priv_op(Operation::eq((&signed_dict, "e"), 5))?,
-            builder.priv_op(Operation::eq((&signed_dict, "f"), 6))?,
+            builder.priv_op(Operation::ne(entry(&signed_dict, "a")?, 7))?,
+            builder.priv_op(Operation::eq(entry(&signed_dict, "b")?, 2))?,
+            builder.priv_op(Operation::eq(entry(&signed_dict, "c")?, 3))?,
+            builder.priv_op(Operation::lt(
+                entry(&signed_dict, "b")?,
+                entry(&signed_dict, "c")?,
+            ))?,
+            builder.priv_op(Operation::ne(entry(&signed_dict, "d")?, 8))?,
+            builder.priv_op(Operation::eq(entry(&signed_dict, "e")?, 5))?,
+            builder.priv_op(Operation::eq(entry(&signed_dict, "f")?, 6))?,
         ];
 
         module.apply_predicate(&mut builder, "holder", statements, true)?;
