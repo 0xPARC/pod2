@@ -1984,6 +1984,15 @@ pub mod tests {
         Ok(())
     }
 
+    /// Build the signed dictionary used by split-predicate tests.
+    fn signed_dict_a_to_f(params: &Params) -> Result<SignedDict> {
+        let mut builder = SignedDictBuilder::new(params);
+        for (index, key) in ["a", "b", "c", "d", "e", "f"].iter().enumerate() {
+            builder.insert(*key, index as i64 + 1);
+        }
+        builder.sign(&Signer(SecretKey(1u32.into())))
+    }
+
     #[test]
     fn test_apply_predicate_e2e() -> Result<()> {
         // End-to-end test of apply_predicate with MockProver
@@ -2014,16 +2023,7 @@ pub mod tests {
         assert_eq!(chain_info.chain_pieces.len(), 2);
         assert_eq!(chain_info.real_statement_count, 6);
 
-        // Create a signed dict with the required entries
-        let mut signed_builder = SignedDictBuilder::new(&params);
-        signed_builder.insert("a", 1);
-        signed_builder.insert("b", 2);
-        signed_builder.insert("c", 3);
-        signed_builder.insert("d", 4);
-        signed_builder.insert("e", 5);
-        signed_builder.insert("f", 6);
-        let signer = Signer(SecretKey(1u32.into()));
-        let signed_dict = signed_builder.sign(&signer)?;
+        let signed_dict = signed_dict_a_to_f(&params)?;
 
         // Build the main pod
         let mut builder = MainPodBuilder::new(&params, vd_set);
@@ -2058,6 +2058,131 @@ pub mod tests {
         let pod = builder.prove(&prover)?;
 
         // Verify the pod
+        pod.pod.verify()?;
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_apply_predicate_with_shadowed_continuation_name_e2e() -> Result<()> {
+        // Force the generated continuation to avoid an existing source name.
+        let params = Params::default();
+        let vd_set = &*MOCK_VD_SET;
+
+        let input = r#"
+            large_pred_1(A) = AND(
+                Equal(A["a"], 1)
+            )
+
+            large_pred(A) = AND(
+                Equal(A["a"], 1)
+                Equal(A["b"], 2)
+                Equal(A["c"], 3)
+                Equal(A["d"], 4)
+                Equal(A["e"], 5)
+                Equal(A["f"], 6)
+            )
+        "#;
+
+        let module = load_module(input, "test", &params, &[])?;
+
+        let Some(SplitInfo::Chain(chain_info)) = module.splits.get("large_pred") else {
+            panic!("expected a chain split for large_pred");
+        };
+        assert_eq!(
+            chain_info
+                .chain_pieces
+                .iter()
+                .map(|piece| piece.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["large_pred_1_", "large_pred"]
+        );
+
+        let signed_dict = signed_dict_a_to_f(&params)?;
+
+        let mut builder = MainPodBuilder::new(&params, vd_set);
+        builder.pub_op(Operation::dict_signed_by(&signed_dict))?;
+
+        let statements = vec![
+            builder.priv_op(Operation::eq(entry(&signed_dict, "a")?, 1))?,
+            builder.priv_op(Operation::eq(entry(&signed_dict, "b")?, 2))?,
+            builder.priv_op(Operation::eq(entry(&signed_dict, "c")?, 3))?,
+            builder.priv_op(Operation::eq(entry(&signed_dict, "d")?, 4))?,
+            builder.priv_op(Operation::eq(entry(&signed_dict, "e")?, 5))?,
+            builder.priv_op(Operation::eq(entry(&signed_dict, "f")?, 6))?,
+        ];
+
+        module.apply_predicate(&mut builder, "large_pred", statements, true)?;
+
+        let prover = MockProver {};
+        let pod = builder.prove(&prover)?;
+        pod.pod.verify()?;
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_apply_predicate_with_higher_order_call_e2e() -> Result<()> {
+        // Exercise predicate wildcard promotion across split links.
+        let params = Params::default();
+        let vd_set = &*MOCK_VD_SET;
+
+        let input = r#"
+            holder(A, private: P) = AND(
+                P(A["a"], 7)
+                Equal(A["b"], 2)
+                Equal(A["c"], 3)
+                Lt(A["b"], A["c"])
+                P(A["d"], 8)
+                Equal(A["e"], 5)
+                Equal(A["f"], 6)
+            )
+        "#;
+
+        let module = load_module(input, "test", &params, &[])?;
+
+        let Some(SplitInfo::Chain(chain_info)) = module.splits.get("holder") else {
+            panic!("expected a chain split for holder");
+        };
+        assert_eq!(chain_info.chain_pieces.len(), 2);
+
+        // The continuation takes the predicate-valued wildcard as a public arg.
+        let continuation = module
+            .predicate_ref_by_name(&chain_info.chain_pieces[0].name)
+            .expect("continuation is in the batch")
+            .predicate()
+            .clone();
+        assert!(
+            continuation.wildcard_names()[..continuation.args_len()]
+                .iter()
+                .any(|name| name == "P"),
+            "expected P among the continuation's public args: {:?}",
+            continuation.wildcard_names()
+        );
+
+        let signed_dict = signed_dict_a_to_f(&params)?;
+
+        let mut builder = MainPodBuilder::new(&params, vd_set);
+        builder.pub_op(Operation::dict_signed_by(&signed_dict))?;
+
+        // Source order; `apply_predicate` reorders into split order.
+        let statements = vec![
+            builder.priv_op(Operation::ne(entry(&signed_dict, "a")?, 7))?,
+            builder.priv_op(Operation::eq(entry(&signed_dict, "b")?, 2))?,
+            builder.priv_op(Operation::eq(entry(&signed_dict, "c")?, 3))?,
+            builder.priv_op(Operation::lt(
+                entry(&signed_dict, "b")?,
+                entry(&signed_dict, "c")?,
+            ))?,
+            builder.priv_op(Operation::ne(entry(&signed_dict, "d")?, 8))?,
+            builder.priv_op(Operation::eq(entry(&signed_dict, "e")?, 5))?,
+            builder.priv_op(Operation::eq(entry(&signed_dict, "f")?, 6))?,
+        ];
+
+        module.apply_predicate(&mut builder, "holder", statements, true)?;
+
+        let prover = MockProver {};
+        let pod = builder.prove(&prover)?;
         pod.pod.verify()?;
 
         Ok(())

@@ -206,12 +206,12 @@ impl Validator {
         }
     }
 
-    fn validate(mut self, document: Document) -> Result<ValidatedAST, ValidationError> {
+    fn validate(mut self, mut document: Document) -> Result<ValidatedAST, ValidationError> {
         // Pass 1: Build symbol table
         self.build_symbol_table(&document)?;
 
-        // Pass 2: Validate all references
-        self.validate_references(&document)?;
+        // Resolve references and tag higher-order wildcard calls in the AST.
+        self.validate_references(&mut document)?;
 
         Ok(ValidatedAST {
             document,
@@ -521,8 +521,8 @@ impl Validator {
         Ok(())
     }
 
-    fn validate_references(&self, document: &Document) -> Result<(), ValidationError> {
-        for item in &document.items {
+    fn validate_references(&self, document: &mut Document) -> Result<(), ValidationError> {
+        for item in &mut document.items {
             match item {
                 DocumentItem::CustomPredicateDef(pred_def) => {
                     self.validate_custom_predicate_statements(pred_def)?;
@@ -538,7 +538,7 @@ impl Validator {
 
     fn validate_custom_predicate_statements(
         &self,
-        pred_def: &CustomPredicateDef,
+        pred_def: &mut CustomPredicateDef,
     ) -> Result<(), ValidationError> {
         let pred_name = pred_def.name.name.clone();
         let wildcard_scope = self
@@ -551,14 +551,14 @@ impl Validator {
         // predicate rather than once per statement.
         self.validate_wildcard_names(wildcard_scope)?;
 
-        for stmt in &pred_def.statements {
+        for stmt in &mut pred_def.statements {
             self.validate_statement(stmt, Some((&pred_name, wildcard_scope)))?;
         }
 
         Ok(())
     }
 
-    fn validate_request_statements(&self, req_def: &RequestDef) -> Result<(), ValidationError> {
+    fn validate_request_statements(&self, req_def: &mut RequestDef) -> Result<(), ValidationError> {
         if req_def.statements.is_empty() {
             return Err(ValidationError::EmptyStatementList {
                 context: "REQUEST block".to_string(),
@@ -566,7 +566,7 @@ impl Validator {
             });
         }
 
-        for stmt in &req_def.statements {
+        for stmt in &mut req_def.statements {
             self.validate_statement(stmt, None)?;
         }
 
@@ -587,7 +587,7 @@ impl Validator {
 
     fn validate_statement(
         &self,
-        stmt: &StatementTmpl,
+        stmt: &mut StatementTmpl,
         wildcard_context: Option<(&str, &WildcardScope)>,
     ) -> Result<(), ValidationError> {
         let pred_name = stmt.predicate.predicate_name();
@@ -625,7 +625,13 @@ impl Validator {
                     });
                 }
             }
-            PredicateRef::Local(_) => {
+            PredicateRef::Generated(_) => unreachable!(
+                "split continuations are created after validation, so they never reach it"
+            ),
+            PredicateRef::Wildcard(_) => unreachable!(
+                "wildcard tags are assigned by validation itself, so they never reach it"
+            ),
+            PredicateRef::Unqualified(_) => {
                 if let Ok(native) = NativePredicate::from_str(pred_name) {
                     // Native predicate
                     Some(PredicateInfo {
@@ -659,6 +665,14 @@ impl Validator {
                     found: stmt.args.len(),
                     span: stmt.span,
                 });
+            }
+        }
+
+        // Preserve higher-order wildcard resolution for later stages.
+        if pred_info.is_none() {
+            if let PredicateRef::Unqualified(id) = &stmt.predicate {
+                let callee = id.clone();
+                stmt.predicate = PredicateRef::Wildcard(callee);
             }
         }
 
