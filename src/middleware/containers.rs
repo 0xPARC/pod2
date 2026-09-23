@@ -326,13 +326,11 @@ impl fmt::Display for Container {
             write!(f, "]")
         } else if self.kind() == *ContainerKind::default().set_array() {
             let a = self.clone().as_array().expect("array");
-            // Merkle iteration is ordered by key hash. Read one entry beyond the
-            // eight-item limit to detect truncation, then sort the bounded preview.
-            let mut entries: Vec<_> = a.iter().take(9).collect();
-            entries.sort_by_key(|r| r.as_ref().ok().map(|(index, _)| *index));
+            // Array keys are unhashed integers, but Merkle traversal follows their
+            // bits least-significant first. Preserve that order in this bounded
+            // preview, since sorting a subset would not select the lowest indices.
             write!(f, "[")?;
-            let mut next_implicit_index = 0;
-            for (i, r) in entries.into_iter().enumerate() {
+            for (i, r) in a.iter().enumerate() {
                 if i > 0 {
                     write!(f, ", ")?;
                 }
@@ -341,13 +339,7 @@ impl fmt::Display for Container {
                     break;
                 }
                 match r {
-                    Ok((index, value)) => {
-                        if index != next_implicit_index {
-                            write!(f, "{}: ", index)?;
-                        }
-                        write!(f, "{}", value)?;
-                        next_implicit_index = index + 1;
-                    }
+                    Ok((index, value)) => write!(f, "{}: {}", index, value)?,
                     Err(e) => write!(f, "{e}")?,
                 }
             }
