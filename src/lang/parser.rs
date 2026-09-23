@@ -26,6 +26,9 @@ pub enum ParseError {
 
     #[error("Invalid escape sequence in string: {0}")]
     InvalidEscapeSequence(String),
+
+    #[error("Duplicate array index: {0}")]
+    DuplicateArrayIndex(usize),
 }
 
 impl From<pest::error::Error<Rule>> for ParseError {
@@ -300,5 +303,17 @@ mod tests {
                 Equal(SomeUser["country"], Other["country"])
             )"#,
         );
+    }
+
+    #[test]
+    fn test_parse_sparse_array_literals() {
+        assert_parses(Rule::literal_array, "[5: \"x\"]");
+        assert_parses(Rule::literal_array, "[1, 2, 5: \"x\", \"y\"]");
+        assert_parses(Rule::literal_array, "[0: 1, 1: 2]");
+        assert_parses(Rule::literal_array, "[9: [3: true]]");
+        // Indices cannot be negative or computed.
+        assert_fails(Rule::test_literal_value, "[-1: 5]");
+        assert_fails(Rule::test_literal_value, "[R::foo: 5]");
+        assert_fails(Rule::test_literal_value, "[5:]");
     }
 }

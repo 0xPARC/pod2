@@ -326,6 +326,9 @@ impl fmt::Display for Container {
             write!(f, "]")
         } else if self.kind() == *ContainerKind::default().set_array() {
             let a = self.clone().as_array().expect("array");
+            // Array keys are unhashed integers, but Merkle traversal follows their
+            // bits least-significant first. Preserve that order in this bounded
+            // preview, since sorting a subset would not select the lowest indices.
             write!(f, "[")?;
             for (i, r) in a.iter().enumerate() {
                 if i > 0 {
@@ -800,6 +803,22 @@ impl Array {
             ),
         }
     }
+    /// Builds a sparse array from indexed values.
+    ///
+    /// Returns an error if an index exceeds `i64::MAX`, the largest array key.
+    pub fn from_sparse(elements: HashMap<usize, Value>) -> Result<Self> {
+        let elements = elements
+            .into_iter()
+            .map(|(i, v)| {
+                let index = i64::try_from(i)
+                    .map_err(|_| Error::custom(format!("array index {i} exceeds i64::MAX")))?;
+                Ok((Value::from(index), v))
+            })
+            .collect::<Result<_>>()?;
+        Ok(Self {
+            inner: Container::new(*ContainerKind::default().set_array(), elements),
+        })
+    }
     pub fn empty_with_db(db: Box<dyn DB>) -> Self {
         Container::empty_with_db(db)
             .as_array()
@@ -866,6 +885,15 @@ impl Eq for Array {}
 mod tests {
     use super::*;
     use crate::middleware::db::mem::MemDB;
+
+    #[cfg(target_pointer_width = "64")]
+    #[test]
+    fn sparse_array_rejects_indices_above_i64_max() {
+        let unrepresentable_index = i64::MAX as usize + 1;
+        assert!(
+            Array::from_sparse(HashMap::from([(unrepresentable_index, Value::from(1),)])).is_err()
+        );
+    }
 
     #[test]
     fn value_serde_round_trip_preserves_container_kind() {

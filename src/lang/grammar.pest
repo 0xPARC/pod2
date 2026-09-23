@@ -152,7 +152,11 @@ base64_string = @{ base64_char+ }
 literal_secret_key = { "SecretKey" ~ "(" ~ base64_string ~ ")" }
 
 // Container Literals (recursive definition using literal_value)
-literal_array = { "[" ~ (literal_value ~ ("," ~ literal_value)*)? ~ "]" }
+// An optional index sets an element's position. Later omitted indices increment
+// from the previous element. `[1, 2, 5: "x", "y"]` assigns indices 0, 1, 5, and 6.
+literal_array = { "[" ~ (array_elem ~ ("," ~ array_elem)*)? ~ "]" }
+array_elem = { (array_index ~ ":")? ~ literal_value }
+array_index = @{ ASCII_DIGIT+ }
 literal_set = { "#[" ~ (literal_value ~ ("," ~ literal_value)*)? ~ "]" }
 literal_dict = { "{" ~ (dict_pair ~ ("," ~ dict_pair)*)? ~ "}" }
 dict_pair = { literal_string ~ ":" ~ literal_value }

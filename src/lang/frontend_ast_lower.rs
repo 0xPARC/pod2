@@ -154,9 +154,15 @@ pub(crate) fn lower_literal(lit: &LiteralValue) -> Value {
         LiteralValue::PublicKey(pk) => Value::from(pk.point),
         LiteralValue::SecretKey(sk) => Value::from(sk.secret_key.clone()),
         LiteralValue::Array(a) => {
-            let elements: Vec<_> = a.elements.iter().map(lower_literal).collect();
-            let array = containers::Array::new(elements);
-            Value::from(array)
+            let elements: HashMap<_, _> = a
+                .elements
+                .iter()
+                .map(|e| (e.index, lower_literal(&e.value)))
+                .collect();
+            Value::from(
+                containers::Array::from_sparse(elements)
+                    .expect("array literal indices are validated during parsing"),
+            )
         }
         LiteralValue::Set(s) => {
             let elements: std::collections::HashSet<_> =
@@ -227,12 +233,15 @@ pub fn lower_literal_with_context(
             Ok(Value::from(pred.hash()))
         }
         LiteralValue::Array(a) => {
-            let elements: Vec<_> = a
+            let elements: HashMap<_, _> = a
                 .elements
                 .iter()
-                .map(|e| lower_literal_with_context(e, symbols, context))
+                .map(|e| {
+                    let value = lower_literal_with_context(&e.value, symbols, context)?;
+                    Ok::<_, LoweringError>((e.index, value))
+                })
                 .collect::<Result<_, _>>()?;
-            Ok(Value::from(containers::Array::new(elements)))
+            Ok(Value::from(containers::Array::from_sparse(elements)?))
         }
         LiteralValue::Set(s) => {
             let elements: std::collections::HashSet<_> = s
@@ -1102,5 +1111,42 @@ mod tests {
             }
             other => panic!("expected Literal at arg 1, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn test_sparse_array_literal_lowers_to_sparse_container() {
+        let input = r#"
+            my_pred(A) = AND(Equal(A["x"], [10, 20, 7: 30, 40]))
+        "#;
+        let v = lower_literal_in_pred(input);
+        let expected = Value::from(
+            containers::Array::from_sparse(HashMap::from([
+                (0, Value::from(10i64)),
+                (1, Value::from(20i64)),
+                (7, Value::from(30i64)),
+                (8, Value::from(40i64)),
+            ]))
+            .unwrap(),
+        );
+        assert_eq!(v.raw(), expected.raw());
+
+        // Source order does not affect an array with the same indexed values.
+        let reordered = lower_literal_in_pred(
+            r#"
+            my_pred(A) = AND(Equal(A["x"], [7: 30, 8: 40, 0: 10, 20]))
+        "#,
+        );
+        assert_eq!(reordered.raw(), expected.raw());
+    }
+
+    #[test]
+    fn test_dense_array_literal_matches_array_new() {
+        let v = lower_literal_in_pred(r#"my_pred(A) = AND(Equal(A["x"], [10, 20, 30]))"#);
+        let expected = Value::from(containers::Array::new(vec![
+            Value::from(10i64),
+            Value::from(20i64),
+            Value::from(30i64),
+        ]));
+        assert_eq!(v.raw(), expected.raw());
     }
 }

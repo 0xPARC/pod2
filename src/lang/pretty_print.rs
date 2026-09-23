@@ -5,8 +5,8 @@ use std::fmt::Write;
 use crate::{
     frontend::PodRequest,
     middleware::{
-        CustomPredicate, CustomPredicateBatch, Predicate, PredicateOrWildcard, StatementTmpl,
-        StatementTmplArg, Value,
+        containers::Container, CustomPredicate, CustomPredicateBatch, Predicate,
+        PredicateOrWildcard, StatementTmpl, StatementTmplArg, TypedValue, Value,
     },
 };
 
@@ -113,6 +113,7 @@ impl StatementTmplArg {
         batch_context: Option<&CustomPredicateBatch>,
     ) -> std::fmt::Result {
         match self {
+            StatementTmplArg::Literal(value) => value.fmt_podlang(w),
             StatementTmplArg::SelfPredicateHash(index) => {
                 if let Some(batch) = batch_context {
                     if let Some(predicate) = batch.predicates().get(*index) {
@@ -154,7 +155,61 @@ impl CustomPredicateBatch {
 
 impl PrettyPrint for Value {
     fn fmt_podlang_with_indent(&self, w: &mut dyn Write, _indent: usize) -> std::fmt::Result {
-        write!(w, "{}", self.typed)
+        match &self.typed {
+            TypedValue::Container(container) => fmt_container(w, container),
+            other => write!(w, "{}", other),
+        }
+    }
+}
+
+// Podlang must preserve every entry, including nested containers. Display is only
+// a bounded preview and cannot be used to serialize container literals.
+fn fmt_container(w: &mut dyn Write, container: &Container) -> std::fmt::Result {
+    if let Some(array) = container.as_array() {
+        let mut entries = array
+            .iter()
+            .collect::<crate::middleware::Result<Vec<_>>>()
+            .map_err(|_| std::fmt::Error)?;
+        // Merkle traversal follows low bits first, rather than numeric index order.
+        entries.sort_by_key(|(index, _)| *index);
+        write!(w, "[")?;
+        let mut next_implicit_index = Some(0);
+        for (i, (index, value)) in entries.into_iter().enumerate() {
+            if i > 0 {
+                write!(w, ", ")?;
+            }
+            if Some(index) != next_implicit_index {
+                write!(w, "{index}: ")?;
+            }
+            value.fmt_podlang(w)?;
+            next_implicit_index = index.checked_add(1);
+        }
+        write!(w, "]")
+    } else if let Some(dictionary) = container.as_dictionary() {
+        write!(w, "{{")?;
+        for (i, entry) in dictionary.iter().enumerate() {
+            let (key, value) = entry.map_err(|_| std::fmt::Error)?;
+            if i > 0 {
+                write!(w, ", ")?;
+            }
+            let key = serde_json::to_string(&key).map_err(|_| std::fmt::Error)?;
+            write!(w, "{key}: ")?;
+            value.fmt_podlang(w)?;
+        }
+        write!(w, "}}")
+    } else if let Some(set) = container.as_set() {
+        write!(w, "#[")?;
+        for (i, entry) in set.iter().enumerate() {
+            let value = entry.map_err(|_| std::fmt::Error)?;
+            if i > 0 {
+                write!(w, ", ")?;
+            }
+            value.fmt_podlang(w)?;
+        }
+        write!(w, "]")
+    } else {
+        // Generic key/value containers have no Podlang literal syntax.
+        Err(std::fmt::Error)
     }
 }
 
@@ -240,12 +295,14 @@ fn fmt_predicate_signature(
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+
     use super::*;
     use crate::{
         backends::plonky2::primitives::ec::schnorr::SecretKey,
         lang::{load_module, parse_request},
         middleware::{
-            CustomPredicate, Key, NativePredicate, Params, Predicate, StatementTmpl,
+            containers, CustomPredicate, Key, NativePredicate, Params, Predicate, StatementTmpl,
             StatementTmplArg, Value, Wildcard,
         },
     };
@@ -747,5 +804,60 @@ mod tests {
                 pretty_printed
             );
         }
+    }
+
+    #[test]
+    fn test_round_trip_sparse_array_literal() {
+        let input = r#"
+            sparse_array(Pod) = AND(
+                Equal(Pod["arr"], [1, 2, 5: "x", "y"])
+            )
+        "#;
+        assert_round_trip(input);
+    }
+
+    #[test]
+    fn test_round_trip_large_container_literals() {
+        for literal in [
+            "[10, 20, 30, 40, 50, 60, 70, 80, 90, 100]",
+            "[100: 10, 20, 30, 40, 50, 60, 70, 80, 90, 0: 100]",
+            "#[10, 20, 30, 40, 50, 60, 70, 80, 90, 100]",
+            r#"{"a": 10, "b": 20, "c": 30, "d": 40, "e": 50,
+                "f": 60, "g": 70, "h": 80, "i": 90, "j": 100}"#,
+            r#"[{"quoted \"key\"\n": #[[10, 20, 30, 40, 50, 60, 70, 80, 90, 100]]}]"#,
+            "[[], #[], {}]",
+        ] {
+            assert_round_trip(&format!(
+                "container_literal(Pod) = AND(Equal(Pod[\"data\"], {literal}))"
+            ));
+        }
+    }
+
+    #[test]
+    fn test_sparse_array_value_prints_as_podlang() {
+        let array = containers::Array::from_sparse(HashMap::from([
+            (0, Value::from(1i64)),
+            (1, Value::from(2i64)),
+            (5, Value::from("x")),
+            (6, Value::from("y")),
+        ]))
+        .unwrap();
+        assert_eq!(
+            Value::from(array).to_podlang_string(),
+            r#"[1, 2, 5: "x", "y"]"#
+        );
+    }
+
+    #[test]
+    fn test_array_podlang_is_complete_while_display_is_a_preview() {
+        let value = Value::from(containers::Array::new((10..22).map(Value::from).collect()));
+        assert_eq!(
+            value.to_podlang_string(),
+            "[10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21]"
+        );
+        assert_eq!(
+            value.to_string(),
+            "[0: 10, 8: 18, 4: 14, 2: 12, 10: 20, 6: 16, 1: 11, 9: 19, …]"
+        );
     }
 }
