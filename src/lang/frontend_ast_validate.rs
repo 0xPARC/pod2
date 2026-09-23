@@ -631,7 +631,7 @@ impl Validator {
             PredicateRef::Wildcard(_) => unreachable!(
                 "wildcard tags are assigned by validation itself, so they never reach it"
             ),
-            PredicateRef::Local(_) => {
+            PredicateRef::Unqualified(_) => {
                 if let Ok(native) = NativePredicate::from_str(pred_name) {
                     // Native predicate
                     Some(PredicateInfo {
@@ -670,7 +670,7 @@ impl Validator {
 
         // Preserve higher-order wildcard resolution for later stages.
         if pred_info.is_none() {
-            if let PredicateRef::Local(id) = &stmt.predicate {
+            if let PredicateRef::Unqualified(id) = &stmt.predicate {
                 let callee = id.clone();
                 stmt.predicate = PredicateRef::Wildcard(callee);
             }

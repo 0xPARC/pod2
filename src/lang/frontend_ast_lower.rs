@@ -50,7 +50,7 @@ pub fn resolve_predicate_ref(
                 CustomPredicateRef::new(imported_module.batch.clone(), idx),
             )))
         }
-        PredicateRef::Local(id) => resolve_predicate(&id.name, symbols, context),
+        PredicateRef::Unqualified(id) => resolve_predicate(&id.name, symbols, context),
         PredicateRef::Wildcard(id) => Some(PredicateOrWildcard::Wildcard(id.name.clone())),
         PredicateRef::Generated(id) => {
             let ResolutionContext::Module { reference_map } = context else {

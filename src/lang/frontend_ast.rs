@@ -157,11 +157,12 @@ impl StatementTmpl {
     }
 }
 
-/// Reference to a predicate (local or qualified with module name)
+/// Reference to a source predicate, generated continuation, or predicate wildcard.
 #[derive(Debug, Clone, PartialEq)]
 pub enum PredicateRef {
-    /// Unqualified name (local or native predicate)
-    Local(Identifier),
+    /// Unqualified source name, resolved as a native, local, or imported predicate.
+    /// Validation converts higher-order calls to `Wildcard`.
+    Unqualified(Identifier),
     /// Qualified name (module::predicate)
     Qualified {
         module: Identifier,
@@ -178,18 +179,18 @@ impl PredicateRef {
     /// Get the predicate name (without module qualifier)
     pub fn predicate_name(&self) -> &str {
         match self {
-            PredicateRef::Local(id) | PredicateRef::Generated(id) | PredicateRef::Wildcard(id) => {
-                &id.name
-            }
+            PredicateRef::Unqualified(id)
+            | PredicateRef::Generated(id)
+            | PredicateRef::Wildcard(id) => &id.name,
             PredicateRef::Qualified { predicate, .. } => &predicate.name,
         }
     }
 
     pub fn span(&self) -> Option<Span> {
         match self {
-            PredicateRef::Local(id) | PredicateRef::Generated(id) | PredicateRef::Wildcard(id) => {
-                id.span
-            }
+            PredicateRef::Unqualified(id)
+            | PredicateRef::Generated(id)
+            | PredicateRef::Wildcard(id) => id.span,
             PredicateRef::Qualified { predicate, .. } => predicate.span,
         }
     }
@@ -410,7 +411,9 @@ impl fmt::Display for UseIntroStatement {
 impl fmt::Display for PredicateRef {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            PredicateRef::Local(id) | PredicateRef::Generated(id) | PredicateRef::Wildcard(id) => {
+            PredicateRef::Unqualified(id)
+            | PredicateRef::Generated(id)
+            | PredicateRef::Wildcard(id) => {
                 write!(f, "{}", id)
             }
             PredicateRef::Qualified { module, predicate } => {
@@ -988,7 +991,7 @@ pub mod parse {
                 let predicate = parse_identifier(parts.next().unwrap());
                 PredicateRef::Qualified { module, predicate }
             }
-            Rule::identifier => PredicateRef::Local(parse_identifier(inner)),
+            Rule::identifier => PredicateRef::Unqualified(parse_identifier(inner)),
             _ => unreachable!("Unexpected predicate_ref rule: {:?}", inner.as_rule()),
         }
     }
@@ -1393,9 +1396,9 @@ mod tests {
 
     fn clear_predicate_ref_spans(pred_ref: &mut PredicateRef) {
         match pred_ref {
-            PredicateRef::Local(id) | PredicateRef::Generated(id) | PredicateRef::Wildcard(id) => {
-                id.span = None
-            }
+            PredicateRef::Unqualified(id)
+            | PredicateRef::Generated(id)
+            | PredicateRef::Wildcard(id) => id.span = None,
             PredicateRef::Qualified { module, predicate } => {
                 module.span = None;
                 predicate.span = None;

@@ -206,7 +206,7 @@ pub(super) fn validate_predicate_is_splittable(
 ) -> Result<(), SplittingError> {
     // Reject unvalidated ASTs whose wildcard calls lack an explicit tag.
     for stmt in &pred.statements {
-        if let PredicateRef::Local(callee) = &stmt.predicate {
+        if let PredicateRef::Unqualified(callee) = &stmt.predicate {
             assert!(
                 !pred.declared_wildcards().any(|name| name == callee.name),
                 "'{}' calls its own wildcard '{}' without a higher-order tag; \
@@ -1952,7 +1952,7 @@ pub(super) fn build_pred(
                 })
                 .collect();
             StatementTmpl {
-                predicate: PredicateRef::Local(Identifier {
+                predicate: PredicateRef::Unqualified(Identifier {
                     name: "Equal".to_string(),
                     span: None,
                 }),
