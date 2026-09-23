@@ -381,6 +381,30 @@ fn render_validation_error(
             )
         }
 
+        ValidationError::NativePredicateNameCollision { name, span } => {
+            let title = format!("`{}` is a native predicate", name);
+            render_with_optional_span(
+                renderer,
+                source,
+                path,
+                &title,
+                span.as_ref(),
+                "references to this name always resolve to the native predicate",
+            )
+        }
+
+        ValidationError::DuplicateDictKey { key, span } => {
+            let title = format!("duplicate key `{}` in dictionary literal", key);
+            render_with_optional_span(
+                renderer,
+                source,
+                path,
+                &title,
+                span.as_ref(),
+                "already given",
+            )
+        }
+
         ValidationError::BracketAccessOnTypedWildcard {
             wildcard,
             record,

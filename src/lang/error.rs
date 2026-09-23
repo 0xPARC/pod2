@@ -133,6 +133,9 @@ pub enum ValidationError {
     #[error("Wildcard '{name}' collides with a predicate name")]
     WildcardPredicateNameCollision { name: String },
 
+    #[error("'{name}' is a native predicate and cannot be redefined or imported under that name")]
+    NativePredicateNameCollision { name: String, span: Option<Span> },
+
     #[error("Predicate definitions are not allowed in requests")]
     PredicatesNotAllowedInRequest { span: Option<Span> },
 
@@ -187,6 +190,9 @@ pub enum ValidationError {
         span: Option<Span>,
     },
 
+    #[error("Duplicate key '{key}' in dictionary literal")]
+    DuplicateDictKey { key: String, span: Option<Span> },
+
     #[error("Bracket access '{wildcard}[...]' is not allowed on a wildcard typed as record '{record}'; use `{wildcard}.entry` instead")]
     BracketAccessOnTypedWildcard {
         wildcard: String,
@@ -215,9 +221,6 @@ pub enum LoweringError {
 
     #[error("Batching error: {0}")]
     Batching(#[from] BatchingError),
-
-    #[error("Cannot lower document with validation errors")]
-    ValidationErrors,
 }
 
 /// Context information for split boundary failures

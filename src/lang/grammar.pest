@@ -11,11 +11,12 @@ WHITESPACE = _{ (" " | "\t" | NEWLINE)+ }
 // COMMENT matches a line comment (//...\n) or block comment (/*...*/).
 COMMENT = _{ ("//" ~ (!NEWLINE ~ ANY)* | "/*" ~ (!"*/" ~ ANY)* ~ "*/" ) }
 
-// Word-boundary anchor: the reserved word must not be followed by an
-// identifier character, otherwise prefixes like `record_count` or `recorder`
-// would be wrongly rejected by the `!reserved_identifier` lookahead in
-// `identifier`.
-reserved_identifier = @{ ("private" | "true" | "false" | "record") ~ !(ASCII_ALPHANUMERIC | "_") }
+// Word-boundary anchor: a reserved word only counts as one when an identifier
+// character doesn't follow it, otherwise prefixes like `record_count` or
+// `recorder` would be wrongly rejected by the `!reserved_identifier` lookahead
+// in `identifier`.
+word_end = _{ !(ASCII_ALPHANUMERIC | "_") }
+reserved_identifier = @{ ("private" | "true" | "false" | "record") ~ word_end }
 
 // Define rules for identifiers (predicate names, wildcard names)
 // Must start with alpha or _, followed by alpha, numeric, or _
@@ -119,7 +120,11 @@ record_entry_index = {
 
 // Primitive literal types
 literal_int = @{ "-"? ~ ASCII_DIGIT+ }
-literal_bool = @{ "true" | "false" }
+// `word_end` matters here as much as in `reserved_identifier`: without it
+// `true_flag` parses as the bool `true` followed by junk, and `statement_arg`
+// has already committed to `literal_value` by then, so there is no fallback to
+// `identifier`.
+literal_bool = @{ ("true" | "false") ~ word_end }
 
 // hash_hex: 0x followed by exactly 32 PAIRS of hex digits (64 hex characters)
 // representing a 32-byte value in big-endian order
