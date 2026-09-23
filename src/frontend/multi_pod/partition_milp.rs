@@ -16,7 +16,7 @@ use good_lp::{
 
 use super::{
     cost::{CustomPredicateId, OperationCost, ResourceTotals},
-    shape::{AbstractDep, InputShape, OutputShape},
+    shape::{input_pod_slots, AbstractDep, InputShape, OutputShape},
 };
 use crate::middleware::Params;
 
@@ -28,7 +28,6 @@ struct MilpVars {
     ext_import_from: Vec<Vec<Variable>>,
     ext_used: Vec<Vec<Variable>>,
     cp_used: Vec<Vec<Variable>>,
-    uses_chain: Vec<Variable>,
 }
 
 fn mk_binary_grid(vars: &mut ProblemVariables, rows: usize, cols: usize) -> Vec<Vec<Variable>> {
@@ -51,7 +50,6 @@ fn declare_vars(
         ext_import_from: mk_binary_grid(vars, num_ext_statements, k),
         ext_used: mk_binary_grid(vars, num_ext_pods, k),
         cp_used: mk_binary_grid(vars, num_cps, k),
-        uses_chain: (0..k).map(|_| vars.add(variable().binary())).collect(),
     }
 }
 
@@ -229,18 +227,12 @@ pub fn solve_for_k(input: &InputShape, k: usize) -> Option<OutputShape> {
         }
     }
 
-    // (3) Statement-table cap per POD. Each `OpenInputStatement` op
-    // produces a statement, so the table holds `local statements +
-    // chain imports + external-statement imports`, capped by
-    // `max_statements`.
+    // (3) Statement cap: only chain imports add nodes beyond assignments.
     for p in 0..k {
         let assign_sum: Expression = (0..n).map(|s| v.assign[s][p]).sum();
         let chain_sum: Expression = (0..n).map(|d| v.import_from[d][p]).sum();
-        let ext_sum: Expression = (0..num_ext_statements)
-            .map(|e_prem| v.ext_import_from[e_prem][p])
-            .sum();
         model.add_constraint(constraint!(
-            assign_sum + chain_sum + ext_sum <= input.params.max_statements as f64
+            assign_sum + chain_sum <= input.params.max_statements as f64
         ));
     }
 
@@ -390,28 +382,17 @@ pub fn solve_for_k(input: &InputShape, k: usize) -> Option<OutputShape> {
         }
     }
 
-    // (9) uses_chain[p] = OR of import_from[*][p].
+    // (9) Input-POD cap: later PODs reserve one predecessor slot; each
+    // distinct external POD uses another.
     for p in 0..k {
-        for d in 0..n {
-            model.add_constraint(constraint!(v.uses_chain[p] >= v.import_from[d][p]));
-        }
-        // Upper bound: at most 1 if any import is set. We don't need a
-        // tight upper bound since the input-pod cap is the only thing
-        // that reads uses_chain, and a slack uses_chain = 1 is harmless
-        // when no imports are taken.
-        let sum: Expression = (0..n).map(|d| v.import_from[d][p]).sum();
-        model.add_constraint(constraint!(v.uses_chain[p] <= sum));
-    }
-
-    // (10) Input-pod cap: uses_chain + external pods <= max_input_pods.
-    for p in 0..k {
+        let chain_pods = input_pod_slots(p == 0, 0) as f64;
         let ext_sum: Expression = (0..num_ext_pods).map(|e| v.ext_used[e][p]).sum();
         model.add_constraint(constraint!(
-            v.uses_chain[p] + ext_sum <= input.params.max_input_pods as f64
+            ext_sum + chain_pods <= input.params.max_input_pods as f64
         ));
     }
 
-    // (11) POD-range preprocessing: each statement's assignable PODs are
+    // (10) POD-range preprocessing: each statement's assignable PODs are
     // bounded by `[min_pod(s), max_pod(s)]` derived from upstream and
     // downstream resource sums. Fix assigns outside this range to 0.
     // Pure constraint tightening; never rules out a feasible partition,
@@ -611,6 +592,30 @@ mod tests {
             solve_for_k(&input, 2).is_some(),
             "MILP must accept K=2 for the same input"
         );
+    }
+
+    #[test]
+    fn external_open_node_consumes_one_statement_slot() {
+        let input = InputShape {
+            costs: vec![OperationCost::default(), OperationCost::default()],
+            dep_edges: vec![
+                vec![AbstractDep::External {
+                    pod: 0,
+                    statement: 0,
+                }],
+                vec![AbstractDep::Internal(0)],
+            ],
+            output_public_indices: vec![1],
+            num_external_pods: 1,
+            statement_pod: vec![0],
+            params: Params {
+                max_statements: 2,
+                ..Params::default()
+            },
+        };
+
+        let out = solve_for_k(&input, 1).expect("Open plus consumer should fit");
+        assert_eq!(out.pod_statements, vec![vec![0, 1]]);
     }
 
     #[test]

@@ -46,6 +46,9 @@ impl From<&CustomPredicateRef> for CustomPredicateId {
 ///   op kind.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct OperationCost {
+    /// True for a statement copied directly from an external input POD.
+    #[serde(default)]
+    pub is_external_opening: bool,
     /// `Contains`-family proofs on a shallow tree (depth <=
     /// `max_depth_small`). May occupy either a small or medium state slot.
     pub merkle_proofs_small: usize,
@@ -247,6 +250,9 @@ impl OperationCost {
                 NativeOperation::PublicKeyFromEntries => {
                     cost.public_key = 1;
                 }
+                NativeOperation::OpenInputStatement => {
+                    cost.is_external_opening = true;
+                }
                 // Zero-cost ops (no per-POD resource consumed).
                 NativeOperation::None
                 | NativeOperation::EqualFromEntries
@@ -259,8 +265,6 @@ impl OperationCost {
                 | NativeOperation::ProductFromEntries
                 | NativeOperation::MaxFromEntries
                 | NativeOperation::HashFromEntries
-                // Tracked separately by the partitioner.
-                | NativeOperation::OpenInputStatement
                 // Syntactic sugar variants (lowered before proving).
                 | NativeOperation::GtEqFromEntries
                 | NativeOperation::GtFromEntries
@@ -359,6 +363,16 @@ mod tests {
         );
         assert_eq!(pk.public_key, 1);
         assert_eq!(pk.signed_by, 0);
+    }
+
+    #[test]
+    fn open_input_is_marked_for_early_scheduling() {
+        let cost = OperationCost::from_operation(
+            &native_op(NativeOperation::OpenInputStatement, OperationAux::None),
+            &Params::default(),
+        );
+
+        assert!(cost.is_external_opening);
     }
 
     /// Contains on a tree at depth `<= max_depth_small` is small-eligible;

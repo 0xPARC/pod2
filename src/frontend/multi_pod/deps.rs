@@ -4,16 +4,14 @@ use std::collections::HashMap;
 
 use crate::{
     frontend::{Operation, OperationArg},
-    middleware::{
-        Hash, InputPodOpenStatement, NativeOperation, OperationAux, OperationType, Statement,
-    },
+    middleware::{InputPodOpenStatement, NativeOperation, OperationAux, OperationType, Statement},
 };
 
 /// Reference to a statement sourced from an external input POD.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct ExternalDependency {
-    /// Hash of the external POD containing `statement` in its public set.
-    pub pod_hash: Hash,
+    /// Position of the concrete source POD in the builder's input list.
+    pub pod_index: usize,
     /// The statement value itself.
     pub statement: Statement,
 }
@@ -36,14 +34,13 @@ pub struct DependencyGraph {
 }
 
 impl DependencyGraph {
-    /// Build the dependency graph from parallel `statements` and
-    /// `operations` arrays (where `operations[i]` produces `statements[i]`)
-    /// plus a `statement -> pod hash` map for recognising external
-    /// references.
+    /// Build dependencies from aligned statements and operations, where
+    /// `operations[i]` produces `statements[i]`, while retaining each external
+    /// reference's source POD.
     pub fn build(
         statements: &[Statement],
         operations: &[Operation],
-        external_pod_statements: &HashMap<Statement, Hash>,
+        external_pod_statements: &HashMap<Statement, usize>,
     ) -> Self {
         let mut statement_deps = Vec::with_capacity(statements.len());
 
@@ -85,9 +82,9 @@ impl DependencyGraph {
                         // it. Fall through to the external lookup below.
                     }
 
-                    if let Some(&pod_hash) = external_pod_statements.get(dep_stmt) {
+                    if let Some(&pod_index) = external_pod_statements.get(dep_stmt) {
                         deps.push(StatementSource::External(ExternalDependency {
-                            pod_hash,
+                            pod_index,
                             statement: dep_stmt.clone(),
                         }));
                     } else {
@@ -105,11 +102,11 @@ impl DependencyGraph {
             // accounts for the input-tree slot and the external-pod reference.
             if let OperationType::Native(NativeOperation::OpenInputStatement) = op.0 {
                 if let OperationAux::OpenInputStatement(InputPodOpenStatement {
-                    sts_root, ..
+                    pod_index, ..
                 }) = &op.2
                 {
                     deps.push(StatementSource::External(ExternalDependency {
-                        pod_hash: *sts_root,
+                        pod_index: *pod_index,
                         statement: statements[idx].clone(),
                     }));
                 }

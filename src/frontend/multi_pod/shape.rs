@@ -32,6 +32,14 @@ pub enum AbstractDep {
     },
 }
 
+/// Returns the input-POD slots used: one per distinct external POD, plus
+/// a predecessor slot for each POD after the first. The predecessor stays
+/// in slot 0 to extend its public-statement tree even when no statements
+/// are imported from it.
+pub(super) fn input_pod_slots(is_first_pod: bool, num_external_pods: usize) -> usize {
+    usize::from(!is_first_pod) + num_external_pods
+}
+
 /// Symbolic input to the solver: the structure of a multi-POD problem in
 /// positional form.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
