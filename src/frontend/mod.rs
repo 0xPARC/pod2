@@ -273,7 +273,7 @@ impl MainPodBuilder {
         }
     }
 
-    // Imports use copy rows and have a separate capacity limit from universal statements.
+    // Imports have a separate capacity limit for input statement rows.
     fn check_statement_capacity(&self, operations: &[Operation], op: &Operation) -> Result<()> {
         let num_imports = operations
             .iter()
@@ -1024,7 +1024,7 @@ impl MainPodCompiler {
     fn push_st_op(&mut self, public: bool, st: Statement, op: middleware::Operation) {
         self.statements.push((public, st));
         self.operations.push(op);
-        // Imports use copy rows and have a separate capacity limit from universal statements.
+        // Imports have a separate capacity limit for input statement rows.
         let num_imports = self
             .operations
             .iter()
@@ -1573,7 +1573,7 @@ pub mod tests {
     }
 
     #[test]
-    fn copy_row_limits_preserve_insert_state() {
+    fn input_statement_row_limits_preserve_insert_state() {
         let params = Params {
             max_statements: 1,
             max_open_input_statement_ops: 1,
@@ -1597,7 +1597,7 @@ pub mod tests {
         let import_op = builder.op_input_st(0, 1).unwrap();
         builder
             .insert(false, (excess_import, import_op))
-            .expect_err("the copy region is full");
+            .expect_err("the input statement region is full");
         builder
             .insert(false, (Statement::equal(4, 4), Operation::eq(4, 4)))
             .expect_err("the universal statement region is full");
@@ -1609,7 +1609,7 @@ pub mod tests {
     }
 
     #[test]
-    fn copy_row_limits_preserve_operation_plan() {
+    fn input_statement_row_limits_preserve_operation_plan() {
         let params = Params {
             max_statements: 1,
             max_open_input_statement_ops: 2,
@@ -1650,7 +1650,7 @@ pub mod tests {
         let contains = builder.contains.clone();
         builder
             .open_input_st(true, 0, &third_import)
-            .expect_err("the copy region is full");
+            .expect_err("the input statement region is full");
         assert_eq!(builder.statements, statements);
         assert_eq!(builder.operations, operations);
         assert_eq!(builder.contains, contains);
