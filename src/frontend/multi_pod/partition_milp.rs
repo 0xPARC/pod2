@@ -229,11 +229,11 @@ pub fn solve_for_k(input: &InputShape, k: usize) -> Option<OutputShape> {
         }
     }
 
-    // (3) Universal statement slots per POD. Imports use the copy region and are constrained
-    // separately by (7b).
+    // (3) Universal statement slots per POD. Imports use the input statement region and are
+    // constrained separately by (7b).
     for p in 0..k {
         let assign_sum: Expression = (0..n)
-            .filter(|&s| !input.costs[s].uses_copy_row)
+            .filter(|&s| !input.costs[s].uses_input_statement_row)
             .map(|s| v.assign[s][p])
             .sum();
         model.add_constraint(constraint!(
@@ -612,7 +612,7 @@ mod tests {
     }
 
     #[test]
-    fn copy_row_and_universal_statement_share_pod() {
+    fn input_statement_row_and_universal_statement_share_pod() {
         let params = Params {
             max_statements: 1,
             max_open_input_statement_ops: 1,
@@ -621,7 +621,7 @@ mod tests {
         let input = InputShape {
             costs: vec![
                 OperationCost {
-                    uses_copy_row: true,
+                    uses_input_statement_row: true,
                     ..OperationCost::default()
                 },
                 OperationCost::default(),

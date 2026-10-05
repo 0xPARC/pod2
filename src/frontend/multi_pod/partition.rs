@@ -19,8 +19,8 @@
 //! - **Cutting the ordering into segments**. Once the order is fixed
 //!   this collapses to a 1D problem: where do POD boundaries go?
 //!   Dynamic programming over prefixes solves it optimally in
-//!   O(n * W^2), where W is the combined universal- and copy-row capacity (see [`run_dp`]). It
-//!   also ensures feasibility in cases where a left-to-right greedy
+//!   O(n * W^2), where W is the combined capacity for universal and input statement rows
+//!   (see [`run_dp`]). It also ensures feasibility in cases where a left-to-right greedy
 //!   walk produces an infeasible partition; the per-ordering
 //!   feasibility-rescue counts in [`ordering_and_cutter_contribution_sweep`]
 //!   quantify how often this happens.
@@ -424,7 +424,7 @@ impl GreedyState {
             return None;
         }
         // `fits_in_pod` enforces the local-statement limit; `tree_imports_ok` enforces the
-        // separate copy-region limit.
+        // separate input statement region limit.
         Some(self.scratch_new_producers.len() + self.scratch_new_ext_imports.len())
     }
 
@@ -810,7 +810,7 @@ fn segment_feasible_with(
     let n_chain_imports = workspace.prev_pod_producers.len();
 
     // The segment-length check enforces the local-statement limit; `tree_imports_ok` enforces
-    // the separate copy-region limit.
+    // the separate input statement region limit.
     if !tree_imports_ok(n_chain_imports, n_ext_imports, n_ext_pods, params) {
         return false;
     }
@@ -932,8 +932,8 @@ fn run_dp(ordering: &[usize], input: &InputShape) -> Option<Vec<Segment>> {
     let consumers = input.consumers();
     let max_consumer_pos = build_max_consumer_pos(&consumers, &pos_in_ordering);
     let output_pub_set: HashSet<usize> = input.output_public_indices.iter().copied().collect();
-    // A segment can contain both universal statements and copy rows. Their combined capacities
-    // bound the inner loop's start window per `end`.
+    // A segment can contain both universal statements and input statement rows. Their combined
+    // capacities bound the inner loop's start window per `end`.
     let max_segment_len = input
         .params
         .max_statements
@@ -1109,7 +1109,7 @@ mod tests {
     }
 
     #[test]
-    fn copy_row_and_universal_statement_share_pod() {
+    fn input_statement_row_and_universal_statement_share_pod() {
         let params = Params {
             max_statements: 1,
             max_open_input_statement_ops: 1,
@@ -1118,7 +1118,7 @@ mod tests {
         let input = InputShape {
             costs: vec![
                 OperationCost {
-                    uses_copy_row: true,
+                    uses_input_statement_row: true,
                     ..OperationCost::default()
                 },
                 OperationCost::default(),
@@ -1200,7 +1200,7 @@ mod tests {
     #[test]
     fn dependency_chain_respects_topo_order() {
         // Four statements, each depending on its predecessor. [0, 1] and [2, 3] form a valid
-        // two-POD partition; the second POD imports statement 1 through its copy region.
+        // two-POD partition; the second POD imports statement 1 through its input statement region.
         use super::super::cost::OperationCost;
         let params = Params {
             max_statements: 3,

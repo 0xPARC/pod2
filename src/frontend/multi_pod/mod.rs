@@ -799,13 +799,14 @@ fn build_shape_and_index(
     }
     let n_synth = synthetic_to_statement.len();
 
-    // Synthetic republishes are openings, so they use copy rows rather than universal slots.
+    // Synthetic republishes are openings, so they use input statement rows rather than universal
+    // slots.
     let mut costs: Vec<OperationCost> = operations
         .iter()
         .map(|op| OperationCost::from_operation(op, params))
         .collect();
     costs.extend((0..n_synth).map(|_| OperationCost {
-        uses_copy_row: true,
+        uses_input_statement_row: true,
         ..OperationCost::default()
     }));
 

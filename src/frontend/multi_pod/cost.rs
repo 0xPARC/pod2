@@ -46,10 +46,10 @@ impl From<&CustomPredicateRef> for CustomPredicateId {
 ///   op kind.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct OperationCost {
-    /// The statement is materialized in the copy region rather than a
+    /// The statement is materialized in the input statement region rather than a
     /// universal statement slot.
     #[serde(default)]
-    pub uses_copy_row: bool,
+    pub uses_input_statement_row: bool,
     /// `Contains`-family proofs on a shallow tree (depth <=
     /// `max_depth_small`). May occupy either a small or medium state slot.
     pub merkle_proofs_small: usize,
@@ -169,7 +169,7 @@ impl ResourceTotals {
     /// (typically by deduping CP IDs in its own structure) before
     /// calling [`fits_in_pod`].
     pub fn add(&mut self, cost: &OperationCost) {
-        self.num_universal_statements += usize::from(!cost.uses_copy_row);
+        self.num_universal_statements += usize::from(!cost.uses_input_statement_row);
         self.merkle_proofs_small += cost.merkle_proofs_small;
         self.merkle_proofs_medium += cost.merkle_proofs_medium;
         self.merkle_state_transitions_small += cost.merkle_state_transitions_small;
@@ -181,8 +181,8 @@ impl ResourceTotals {
 
     /// True iff all sums fit in one POD under `params`.
     ///
-    /// `num_universal_statements` enforces `max_statements`; imports use the separate copy-row
-    /// budget.
+    /// `num_universal_statements` enforces `max_statements`; imports use the separate input
+    /// statement row budget.
     pub fn fits_in_pod(&self, params: &Params) -> bool {
         let state = &params.containers.state_ops;
         let transition = &params.containers.transition_ops;
@@ -271,8 +271,8 @@ impl OperationCost {
                 | NativeOperation::GtFromEntries
                 | NativeOperation::GtToNotEqual
                 | NativeOperation::ReplaceValueWithEntry => {}
-                // Copy-region use is tracked separately by the partitioner.
-                NativeOperation::OpenInputStatement => cost.uses_copy_row = true,
+                // Input statement region use is tracked separately by the partitioner.
+                NativeOperation::OpenInputStatement => cost.uses_input_statement_row = true,
             },
             OperationType::Custom(cpr) => {
                 cost.custom_pred_verifications = 1;
@@ -349,14 +349,14 @@ mod tests {
     }
 
     #[test]
-    fn open_input_uses_copy_region_in_resource_totals() {
+    fn open_input_uses_input_statement_region_in_resource_totals() {
         let params = Params::default();
         let cost = OperationCost::from_operation(
             &native_op(NativeOperation::OpenInputStatement, OperationAux::None),
             &params,
         );
 
-        assert!(cost.uses_copy_row);
+        assert!(cost.uses_input_statement_row);
         let totals = ResourceTotals::accumulate([&cost]);
         assert_eq!(totals.num_universal_statements, 0);
     }

@@ -298,8 +298,8 @@ impl SolutionBreakdown {
                     }
                 }
 
-                // "total statements" covers universal slots; the next row reports copy-region
-                // imports separately.
+                // "total statements" covers universal slots; the next row reports input statement
+                // region imports separately.
                 let total_imports = chain_imports.len() + external_imports.len();
                 let imports_row = UtilizationRow {
                     name: "tree imports",

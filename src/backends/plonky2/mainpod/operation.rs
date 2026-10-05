@@ -111,8 +111,8 @@ impl OperationAux {
             Self::MerkleTransitionProofIndex(size, i) => {
                 Self::table_offset_merkle_transition_proof(params, *size) + *i
             }
-            // OpenInputStatement operations use copy rows rather than universal operation slots,
-            // so they have no auxiliary-table index.
+            // OpenInputStatement operations use input statement rows rather than universal
+            // operation slots, so they have no auxiliary-table index.
             Self::OpenInputStatement(_) => {
                 unreachable!("OpenInputStatement has no aux table entry")
             }
