@@ -14,3 +14,7 @@ To run it locally:
 	- [mdbook-katex](https://github.com/lzanini/mdbook-katex): `cargo install mdbook-katex`
 - Go to the book directory: `cd book`
 - Run the mdbook: `mdbook serve`
+
+## License
+
+MIT
