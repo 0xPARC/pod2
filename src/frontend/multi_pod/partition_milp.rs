@@ -229,18 +229,15 @@ pub fn solve_for_k(input: &InputShape, k: usize) -> Option<OutputShape> {
         }
     }
 
-    // (3) Statement-table cap per POD. Each `OpenInputStatement` op
-    // produces a statement, so the table holds `local statements +
-    // chain imports + external-statement imports`, capped by
-    // `max_statements`.
+    // (3) Universal statement slots per POD. Imports use the input statement region and are
+    // constrained separately by (7b).
     for p in 0..k {
-        let assign_sum: Expression = (0..n).map(|s| v.assign[s][p]).sum();
-        let chain_sum: Expression = (0..n).map(|d| v.import_from[d][p]).sum();
-        let ext_sum: Expression = (0..num_ext_statements)
-            .map(|e_prem| v.ext_import_from[e_prem][p])
+        let assign_sum: Expression = (0..n)
+            .filter(|&s| !input.costs[s].uses_input_statement_row)
+            .map(|s| v.assign[s][p])
             .sum();
         model.add_constraint(constraint!(
-            assign_sum + chain_sum + ext_sum <= input.params.max_statements as f64
+            assign_sum <= input.params.max_statements as f64
         ));
     }
 
@@ -586,8 +583,9 @@ mod tests {
         // same external pod with distinct input statements. K=1 must be
         // infeasible because the combined import cap (chain + external)
         // is busted.
-        let params = Params::default();
+        let mut params = Params::default();
         let n = params.max_open_input_statement_ops + 1;
+        params.max_statements = n;
         let input = InputShape {
             costs: (0..n).map(|_| OperationCost::default()).collect(),
             dep_edges: (0..n)
@@ -611,6 +609,39 @@ mod tests {
             solve_for_k(&input, 2).is_some(),
             "MILP must accept K=2 for the same input"
         );
+    }
+
+    #[test]
+    fn input_statement_row_and_universal_statement_share_pod() {
+        let params = Params {
+            max_statements: 1,
+            max_open_input_statement_ops: 1,
+            ..Params::default()
+        };
+        let input = InputShape {
+            costs: vec![
+                OperationCost {
+                    uses_input_statement_row: true,
+                    ..OperationCost::default()
+                },
+                OperationCost::default(),
+            ],
+            dep_edges: vec![
+                vec![AbstractDep::External {
+                    pod: 0,
+                    statement: 0,
+                }],
+                vec![AbstractDep::Internal(0)],
+            ],
+            output_public_indices: vec![1],
+            num_external_pods: 1,
+            statement_pod: vec![0],
+            params,
+        };
+
+        let out = solve_for_k(&input, 1).expect("should fit in one POD");
+        assert_eq!(out.pod_count, 1);
+        assert_eq!(out.pod_statements[0], vec![0, 1]);
     }
 
     #[test]

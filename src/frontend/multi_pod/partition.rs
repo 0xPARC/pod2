@@ -19,8 +19,8 @@
 //! - **Cutting the ordering into segments**. Once the order is fixed
 //!   this collapses to a 1D problem: where do POD boundaries go?
 //!   Dynamic programming over prefixes solves it optimally in
-//!   O(n * W^2) where W = `max_statements` (see [`run_dp`]). It
-//!   also ensures feasibility in cases where a left-to-right greedy
+//!   O(n * W^2), where W is the combined capacity for universal and input statement rows
+//!   (see [`run_dp`]). It also ensures feasibility in cases where a left-to-right greedy
 //!   walk produces an infeasible partition; the per-ordering
 //!   feasibility-rescue counts in [`ordering_and_cutter_contribution_sweep`]
 //!   quantify how often this happens.
@@ -169,7 +169,7 @@ pub(super) fn kahn_bin_packing(
         // prefer the lowest-tiebreak ready statement that fits, falling
         // back to lowest-tiebreak overall when nothing fits (which
         // closes the segment).
-        let (chosen_idx, opens_new_segment) = if state.totals.num_operations == 0 {
+        let (chosen_idx, opens_new_segment) = if ordering.len() == state.a {
             // Empty segment: no coupling signal yet, identity tiebreak only.
             let i = ready
                 .iter()
@@ -423,12 +423,8 @@ impl GreedyState {
         if !tree_imports_ok(n_producers, n_ext_imports, n_ext_pods, params) {
             return None;
         }
-        // Statement-table cap: local segment statements plus chain and
-        // external imports together share `max_statements`, because each
-        // `OpenInputStatement` op produces a statement in the POD's table.
-        if tentative.num_operations + n_producers + n_ext_imports > params.max_statements {
-            return None;
-        }
+        // `fits_in_pod` enforces the local-statement limit; `tree_imports_ok` enforces the
+        // separate input statement region limit.
         Some(self.scratch_new_producers.len() + self.scratch_new_ext_imports.len())
     }
 
@@ -754,7 +750,7 @@ fn segment_feasible_with(
 ) -> bool {
     let params = &input.params;
     let segment = &ordering[start..end];
-    if segment.is_empty() || segment.len() > params.max_statements {
+    if segment.is_empty() {
         return false;
     }
 
@@ -813,13 +809,8 @@ fn segment_feasible_with(
     let n_ext_pods = workspace.external_pods.len();
     let n_chain_imports = workspace.prev_pod_producers.len();
 
-    // Statement-table cap. Each `OpenInputStatement` op produces a statement
-    // in the POD's statement table, so the table holds `segment statements +
-    // imports`, capped by `max_statements`.
-    if segment.len() + n_chain_imports + n_ext_imports > params.max_statements {
-        return false;
-    }
-
+    // The segment-length check enforces the local-statement limit; `tree_imports_ok` enforces
+    // the separate input statement region limit.
     if !tree_imports_ok(n_chain_imports, n_ext_imports, n_ext_pods, params) {
         return false;
     }
@@ -849,9 +840,6 @@ fn segment_feasible_with(
         }
     }
     let n_chain_imports_terminal = workspace.prev_pod_producers.len();
-    if segment.len() + n_chain_imports_terminal + n_ext_imports > params.max_statements {
-        return false;
-    }
     tree_imports_ok(n_chain_imports_terminal, n_ext_imports, n_ext_pods, params)
 }
 
@@ -944,10 +932,12 @@ fn run_dp(ordering: &[usize], input: &InputShape) -> Option<Vec<Segment>> {
     let consumers = input.consumers();
     let max_consumer_pos = build_max_consumer_pos(&consumers, &pos_in_ordering);
     let output_pub_set: HashSet<usize> = input.output_public_indices.iter().copied().collect();
-    // Each POD holds at most `max_statements` local statements, so any
-    // candidate segment longer than that is infeasible. This bounds
-    // the inner loop's start window per `end`.
-    let max_segment_len = input.params.max_statements;
+    // A segment can contain both universal statements and input statement rows. Their combined
+    // capacities bound the inner loop's start window per `end`.
+    let max_segment_len = input
+        .params
+        .max_statements
+        .saturating_add(input.params.max_open_input_statement_ops);
 
     // The table has `n + 1` cells, one per boundary position (including
     // 0 and n). `dp[0]` is the base case: the empty prefix needs 0 PODs.
@@ -1119,6 +1109,39 @@ mod tests {
     }
 
     #[test]
+    fn input_statement_row_and_universal_statement_share_pod() {
+        let params = Params {
+            max_statements: 1,
+            max_open_input_statement_ops: 1,
+            ..Params::default()
+        };
+        let input = InputShape {
+            costs: vec![
+                OperationCost {
+                    uses_input_statement_row: true,
+                    ..OperationCost::default()
+                },
+                OperationCost::default(),
+            ],
+            dep_edges: vec![
+                vec![AbstractDep::External {
+                    pod: 0,
+                    statement: 0,
+                }],
+                vec![AbstractDep::Internal(0)],
+            ],
+            output_public_indices: vec![1],
+            num_external_pods: 1,
+            statement_pod: vec![0],
+            params,
+        };
+
+        let out = partition(&input).expect("should fit in one POD");
+        assert_eq!(out.pod_count, 1);
+        assert_eq!(out.pod_statements[0], vec![0, 1]);
+    }
+
+    #[test]
     fn splits_when_statement_count_exceeds_cap() {
         // Force a 2-POD split via tight max_statements.
         let params = Params {
@@ -1147,8 +1170,9 @@ mod tests {
         // `max_input_pods` can't force a split, so the only constraint
         // that drives K > 1 is the combined import cap.
         use super::super::cost::OperationCost;
-        let params = Params::default();
+        let mut params = Params::default();
         let n = params.max_open_input_statement_ops + 1;
+        params.max_statements = n;
         let input = InputShape {
             costs: (0..n).map(|_| OperationCost::default()).collect(),
             dep_edges: (0..n)
@@ -1175,10 +1199,8 @@ mod tests {
 
     #[test]
     fn dependency_chain_respects_topo_order() {
-        // 4 statements where each depends on the previous. With
-        // max_statements = 3, a 2-POD partition is feasible: one POD
-        // holds [0,1] (2 stmts, 0 imports) and the other [2,3] (2
-        // stmts + 1 chain import of stmt 1 = 3 stmts at cap).
+        // Four statements, each depending on its predecessor. [0, 1] and [2, 3] form a valid
+        // two-POD partition; the second POD imports statement 1 through its input statement region.
         use super::super::cost::OperationCost;
         let params = Params {
             max_statements: 3,

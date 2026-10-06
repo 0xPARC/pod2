@@ -75,7 +75,7 @@ fn aggregate_rows<'a>(
     let rows = vec![
         UtilizationRow {
             name: "total statements",
-            used: totals.num_operations,
+            used: totals.num_universal_statements,
             limit: params.max_statements,
         },
         UtilizationRow {
@@ -119,7 +119,7 @@ fn aggregate_rows<'a>(
             limit: params.max_custom_predicates,
         },
     ];
-    (rows, totals.num_operations)
+    (rows, totals.num_universal_statements)
 }
 
 /// Pre-solve aggregate resource summary.
@@ -269,7 +269,7 @@ impl SolutionBreakdown {
             .map(|pod_idx| {
                 let stmts = &output.pod_statements[pod_idx];
                 let is_output = pod_idx + 1 == pod_count;
-                let (mut resources, num_stmts) =
+                let (resources, num_stmts) =
                     aggregate_rows(stmts.iter().map(|&s| &input.costs[s]), &input.params);
 
                 let mut chain_imports: HashSet<usize> = HashSet::new();
@@ -298,17 +298,9 @@ impl SolutionBreakdown {
                     }
                 }
 
-                // Statement-table cap: each `OpenInputStatement` op
-                // produces a statement in the POD's statement table, so
-                // the "total statements" row reflects local statements
-                // PLUS chain and external imports: the same number
-                // `segment_feasible_with` checks against
-                // `max_statements`.
+                // "total statements" covers universal slots; the next row reports input statement
+                // region imports separately.
                 let total_imports = chain_imports.len() + external_imports.len();
-                if let Some(row) = resources.iter_mut().find(|r| r.name == "total statements") {
-                    row.used += total_imports;
-                }
-
                 let imports_row = UtilizationRow {
                     name: "tree imports",
                     used: total_imports,

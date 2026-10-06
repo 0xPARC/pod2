@@ -254,7 +254,6 @@ enum OperationAuxQueryKind {
     MerkleNotContains = 2,
     MerkleTransition = 3,
     MerkleDelete = 4,
-    OpenInputStatement = 5,
     CustomPredVerify = 6,
     PublicKeyOf = 7,
     SignedBy = 8,
@@ -334,17 +333,6 @@ fn hash_merkle_delete_query(
             .chain(new_root.elements)
             .chain(key.elements)
             .collect(),
-    )
-}
-
-fn hash_open_input_statement_query(
-    builder: &mut CircuitBuilder,
-    st_hash: &HashOutTarget,
-) -> HashOutTarget {
-    operation_aux_query_hash(
-        builder,
-        OperationAuxQueryKind::OpenInputStatement,
-        st_hash.elements.to_vec(),
     )
 }
 
@@ -523,13 +511,17 @@ fn append_container_proofs_operation_aux_table_circuit(
     }
 }
 
-fn append_open_input_statements_aux_table_circuit(
+/// Builds the configured input statement region from `OpenInputStatement` targets.
+///
+/// Each row verifies the raw statement against the input POD's statements root and returns the
+/// normalized statement and its hash. Input statement rows do not consume universal statement
+/// slots.
+fn build_input_statement_region_circuit(
     params: &Params,
     builder: &mut CircuitBuilder,
-    table: &mut MuxTableTarget,
     input_pod_table: &[InputPodEntryTarget],
     open_input_statements: &[OpenInputStatementTarget],
-) {
+) -> Vec<(StatementTarget, HashOutTarget)> {
     if !open_input_statements.is_empty() {
         assert!(!input_pod_table.is_empty());
     }
@@ -538,6 +530,7 @@ fn append_open_input_statements_aux_table_circuit(
         params.max_open_input_statement_ops,
         open_input_statements.len()
     );
+    let mut input_statement_rows = Vec::with_capacity(open_input_statements.len());
     for data in open_input_statements {
         let measure = measure_gates_begin!(builder, "OpenInputSt");
         let pod = builder.vec_ref_small(params, input_pod_table, data.input_pod_table_index);
@@ -563,18 +556,16 @@ fn append_open_input_statements_aux_table_circuit(
             &pod.vd_hash,
         );
         let st_hash = st.hash(builder);
-        let query_hash = hash_open_input_statement_query(builder, &st_hash);
-        table.push(query_hash);
+        input_statement_rows.push((st, st_hash));
         measure_gates_end!(builder, measure);
     }
+    input_statement_rows
 }
 
-#[allow(clippy::too_many_arguments)]
 fn build_operation_aux_table_circuit(
     params: &Params,
     builder: &mut CircuitBuilder,
     custom_predicate_table: &[HashOutTarget],
-    input_pod_table: &[InputPodEntryTarget],
     input: &AuxTableInputTargets,
 ) -> Result<MuxTableTarget> {
     let measure = measure_gates_begin!(builder, "BuildOpAuxTbl");
@@ -598,14 +589,6 @@ fn build_operation_aux_table_circuit(
         &mut table,
         &input.merkle_proofs,
         &input.merkle_transition_proofs,
-    );
-
-    append_open_input_statements_aux_table_circuit(
-        params,
-        builder,
-        &mut table,
-        input_pod_table,
-        &input.open_input_statements,
     );
 
     // CustomPredVerify: store only the hash of the verification query in the aux table.
@@ -822,14 +805,6 @@ fn verify_operation_circuit(
                 verify_merkle_delete_circuit(builder, st, &op.op_type, resolved_aux, &cache),
             ]);
         }
-        if params.max_open_input_statement_ops > 0 {
-            op_checks.extend_from_slice(&[verify_open_input_statement_circuit(
-                builder,
-                st_hash,
-                &op.op_type,
-                resolved_aux,
-            )]);
-        }
         if params.max_custom_predicate_verification_ops > 0 {
             op_checks.push(verify_custom_circuit(
                 builder,
@@ -1004,22 +979,6 @@ fn verify_custom_circuit(
     let query_ok = builder.is_equal_flattenable(&resolved_query_hash, &query_hash);
     measure_gates_end!(builder, measure);
     query_ok
-}
-
-fn verify_open_input_statement_circuit(
-    builder: &mut CircuitBuilder,
-    st_hash: &HashOutTarget,
-    op_type: &OperationTypeTarget,
-    resolved_query_hash: HashOutTarget,
-) -> BoolTarget {
-    let measure = measure_gates_begin!(builder, "OpOpenInputSt");
-    let op_code_ok = op_type.has_native(builder, NativeOperation::OpenInputStatement);
-    let expected_query_hash = hash_open_input_statement_query(builder, st_hash);
-    let query_ok = builder.is_equal_flattenable(&resolved_query_hash, &expected_query_hash);
-
-    let ok = builder.all([op_code_ok, query_ok]);
-    measure_gates_end!(builder, measure);
-    ok
 }
 
 /// Carries out the checks necessary for EqualFromEntries and
@@ -1706,6 +1665,27 @@ impl Flattenable for StsRootsEntry {
     }
 }
 
+/// Applies the insertion proof at `pub_insert_idx` when `is_pub`; otherwise returns `sts_root`
+/// unchanged.
+fn verify_public_statement_insertion_circuit(
+    params: &Params,
+    builder: &mut CircuitBuilder,
+    sts_roots_table: &[StsRootsEntry],
+    is_pub: BoolTarget,
+    pub_insert_idx: Target,
+    st_hash: HashOutTarget,
+    sts_root: HashOutTarget,
+) -> HashOutTarget {
+    let sts_roots_entry = builder.vec_ref_small(params, sts_roots_table, pub_insert_idx);
+    builder.conditional_assert_eq_flattenable(is_pub.target, &sts_roots_entry.old_root, &sts_root);
+    builder.conditional_assert_eq_flattenable(
+        is_pub.target,
+        &sts_roots_entry.st_hash,
+        &ValueTarget::from(st_hash),
+    );
+    builder.select_flattenable(params, is_pub, &sts_roots_entry.new_root, &sts_root)
+}
+
 fn verify_main_pod_circuit(
     builder: &mut CircuitBuilder,
     main_pod: &MainPodVerifyTarget,
@@ -1795,9 +1775,18 @@ fn verify_main_pod_circuit(
         params,
         builder,
         &custom_predicate_table,
-        &input_pod_table,
         &main_pod.aux_table_input,
     )?;
+
+    let measure_input_statement_region = measure_gates_begin!(builder, "InputStatementRegion");
+    let input_statement_rows = build_input_statement_region_circuit(
+        params,
+        builder,
+        &input_pod_table,
+        &main_pod.aux_table_input.open_input_statements,
+    );
+    measure_gates_end!(builder, measure_input_statement_region);
+    let num_input_statement_rows = input_statement_rows.len();
 
     let mut sts_roots_table = Vec::new();
     for sts_mt_proof in &main_pod.sts_mt_proofs {
@@ -1820,15 +1809,24 @@ fn verify_main_pod_circuit(
     // Statement at index 0 is always None to be used for padding operation arguments in custom
     // predicate statements
     let st_none = StatementTarget::new_native(builder, params, NativePredicate::None, &[]);
-    let statements = iter::once(&st_none).chain(main_pod.statements.iter());
+    let statements = iter::once(&st_none)
+        .chain(input_statement_rows.iter().map(|(st, _)| st))
+        .chain(main_pod.statements.iter());
 
     // Precompute flattened statements and their hashes once, then resolve operation args using
     // projected lookups. Reusing the flattened forms avoids re-flattening per op-arg lookup.
     let statement_flatteneds: Vec<Vec<Target>> =
         statements.clone().map(|st| st.flatten()).collect();
-    let statement_hashes = statement_flatteneds
-        .iter()
-        .map(|flat| builder.hash_n_to_hash_no_pad::<PoseidonHash>(flat.clone()))
+    // Input statement hashes were computed while verifying their membership proofs. Only hash the
+    // None row and universal rows here.
+    let none_hash = builder.hash_n_to_hash_no_pad::<PoseidonHash>(statement_flatteneds[0].clone());
+    let statement_hashes: Vec<HashOutTarget> = iter::once(none_hash)
+        .chain(input_statement_rows.iter().map(|(_, hash)| *hash))
+        .chain(
+            statement_flatteneds[1 + num_input_statement_rows..]
+                .iter()
+                .map(|flat| builder.hash_n_to_hash_no_pad::<PoseidonHash>(flat.clone())),
+        )
         .collect_vec();
     // Pair each statement with its hash here, where the two are known to correspond, so nothing
     // downstream has to keep a statement and a loose hash aligned by hand.
@@ -1837,15 +1835,37 @@ fn verify_main_pod_circuit(
         .map(|(statement, &hash)| StatementWithHash { statement, hash })
         .collect_vec();
 
+    // Input statement rows precede universal slots, so process their public-statement insertions
+    // first.
+    for (is_pub, pub_insert_idx, (_, input_statement_hash)) in izip!(
+        &main_pod.statements_is_pub[..num_input_statement_rows],
+        &main_pod.pub_insert_idx[..num_input_statement_rows],
+        &input_statement_rows
+    ) {
+        let measure = measure_gates_begin!(builder, "PubSt");
+        sts_root = verify_public_statement_insertion_circuit(
+            params,
+            builder,
+            &sts_roots_table,
+            *is_pub,
+            *pub_insert_idx,
+            *input_statement_hash,
+            sts_root,
+        );
+        measure_gates_end!(builder, measure);
+    }
+
     // 5. Verify statements
     for (j, (is_pub, pub_insert_idx, op)) in izip!(
-        &main_pod.statements_is_pub,
-        &main_pod.pub_insert_idx,
+        &main_pod.statements_is_pub[num_input_statement_rows..],
+        &main_pod.pub_insert_idx[num_input_statement_rows..],
         &main_pod.operations
     )
     .enumerate()
     {
-        let i = j + 1; // Previous statement have a hardcoded None at index 0
+        // Universal operations may refer to None, any input statement row or an earlier universal
+        // statement.
+        let i = 1 + num_input_statement_rows + j;
         let prev_statement_flatteneds = &statement_flatteneds[..i];
         let prev_statement_hashes = &statement_hashes[..i];
         let st = statements_with_hashes[i];
@@ -1859,20 +1879,15 @@ fn verify_main_pod_circuit(
             &aux_tables,
         )?;
         let measure = measure_gates_begin!(builder, "PubSt");
-        let sts_roots_entry = builder.vec_ref_small(params, &sts_roots_table, *pub_insert_idx);
-        builder.conditional_assert_eq_flattenable(
-            is_pub.target,
-            &sts_roots_entry.old_root,
-            &sts_root,
+        sts_root = verify_public_statement_insertion_circuit(
+            params,
+            builder,
+            &sts_roots_table,
+            *is_pub,
+            *pub_insert_idx,
+            st.hash,
+            sts_root,
         );
-        builder.conditional_assert_eq_flattenable(
-            is_pub.target,
-            &sts_roots_entry.st_hash,
-            &ValueTarget::from(st.hash),
-        );
-        let new_sts_root =
-            builder.select_flattenable(params, *is_pub, &sts_roots_entry.new_root, &sts_root);
-        sts_root = new_sts_root;
         measure_gates_end!(builder, measure);
     }
 
@@ -2105,10 +2120,11 @@ impl MainPodVerifyTarget {
                 .map(|_| MerkleProofExistenceTarget::new_virtual(params.max_depth_mt_vds, builder))
                 .collect(),
             extend_pod0_pub_statements: builder.add_virtual_bool_target_safe(),
-            statements_is_pub: (0..params.max_statements)
+            // Publication metadata covers input statement rows followed by universal slots.
+            statements_is_pub: (0..params.max_open_input_statement_ops + params.max_statements)
                 .map(|_| builder.add_virtual_bool_target_safe())
                 .collect(),
-            pub_insert_idx: (0..params.max_statements)
+            pub_insert_idx: (0..params.max_open_input_statement_ops + params.max_statements)
                 .map(|_| builder.add_virtual_target())
                 .collect(),
             statements: (0..params.max_statements)
@@ -2232,12 +2248,18 @@ impl InnerCircuit for MainPodVerifyTarget {
             self.sts_mt_proofs[i].set_targets(pw, &pad_sts_mt_proof)?;
         }
 
-        // Skip statement and operation 0 which are a hardcoded None
+        // Index 0 is hardcoded None. Input statements are derived from open-input data in the
+        // circuit, so only their publication metadata is witnessed here. Statement and operation
+        // witnesses begin after the input statement region.
+        let num_input_statement_rows = self.params.max_open_input_statement_ops;
         let statements_is_pub = &input.statements_is_pub[1..];
         let statements = &input.statements[1..];
         let operations = &input.operations[1..];
         let mut sts_mt_proofs_idx = 0;
-        assert_eq!(statements.len(), self.params.max_statements);
+        assert_eq!(
+            statements.len(),
+            num_input_statement_rows + self.params.max_statements
+        );
         for (i, (is_pub, st, op)) in izip!(statements_is_pub, statements, operations).enumerate() {
             pw.set_bool_target(self.statements_is_pub[i], *is_pub)?;
             pw.set_target(
@@ -2247,8 +2269,10 @@ impl InnerCircuit for MainPodVerifyTarget {
             if *is_pub {
                 sts_mt_proofs_idx += 1;
             }
-            self.statements[i].set_targets(pw, st)?;
-            self.operations[i].set_targets(pw, &self.params, op)?;
+            if i >= num_input_statement_rows {
+                self.statements[i - num_input_statement_rows].set_targets(pw, st)?;
+                self.operations[i - num_input_statement_rows].set_targets(pw, &self.params, op)?;
+            }
         }
 
         assert!(input.custom_predicates_with_mpt_proofs.len() <= self.params.max_custom_predicates);

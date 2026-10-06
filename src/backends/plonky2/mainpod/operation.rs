@@ -87,12 +87,9 @@ impl OperationAux {
             }
         }
     }
-    fn table_offset_open_input_statement(params: &Params) -> usize {
+    fn table_offset_custom_pred_verify(params: &Params) -> usize {
         Self::table_offset_merkle_transition_proof(params, Size::min())
             + params.containers.transition_ops.max_total()
-    }
-    fn table_offset_custom_pred_verify(params: &Params) -> usize {
-        Self::table_offset_open_input_statement(params) + params.max_open_input_statement_ops
     }
     fn table_offset_public_key(params: &Params) -> usize {
         Self::table_offset_custom_pred_verify(params) + params.max_custom_predicate_verification_ops
@@ -103,7 +100,6 @@ impl OperationAux {
     pub(crate) fn table_size(params: &Params) -> usize {
         1 + params.containers.state_ops.max_total()
             + params.containers.transition_ops.max_total()
-            + params.max_open_input_statement_ops
             + params.max_custom_predicate_verification_ops
             + params.max_public_key_ops
             + params.max_signed_by_ops
@@ -115,7 +111,11 @@ impl OperationAux {
             Self::MerkleTransitionProofIndex(size, i) => {
                 Self::table_offset_merkle_transition_proof(params, *size) + *i
             }
-            Self::OpenInputStatement(i) => Self::table_offset_open_input_statement(params) + *i,
+            // OpenInputStatement operations use input statement rows rather than universal
+            // operation slots, so they have no auxiliary-table index.
+            Self::OpenInputStatement(_) => {
+                unreachable!("OpenInputStatement has no aux table entry")
+            }
             Self::CustomPredVerifyIndex(i) => Self::table_offset_custom_pred_verify(params) + *i,
             Self::PublicKeyIndex(i) => Self::table_offset_public_key(params) + *i,
             Self::SignedByIndex(i) => Self::table_offset_signed_by(params) + *i,

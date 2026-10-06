@@ -1024,9 +1024,9 @@ impl Params {
         BASE_PARAMS.max_depth_custom_batch_mt
     }
 
-    /// Total size of the statement table including None
+    /// Total statement-table size: the None row, input statement region and universal slots.
     pub fn statement_table_size(&self) -> usize {
-        1 + self.max_statements
+        1 + self.max_open_input_statement_ops + self.max_statements
     }
 
     pub fn print_serialized_sizes(&self) {
