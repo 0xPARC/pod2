@@ -2226,3 +2226,40 @@ fn test_verify_operation_custom_aux_index_binding() -> frontend::Result<()> {
 
     Ok(())
 }
+
+#[test]
+fn imported_statement_witness_uses_universal_operations() {
+    use plonky2::iop::witness::Witness;
+
+    let (params, input) =
+        crate::backends::plonky2::mock::mainpod::tests::witness_input_with_imported_statement();
+    let mut builder = CircuitBuilder::new(CircuitConfig::standard_recursion_config());
+    let target = MainPodVerifyTarget::new_virtual(&params, &mut builder);
+    let mut witness = PartialWitness::new();
+    target.set_targets(&mut witness, &input).unwrap();
+
+    // The imported public statement precedes the local public statement, with padding in
+    // both regions. Publication indices must cover every row independently of operations.
+    for (i, (is_public, insert_index)) in [(true, 0), (false, 1), (true, 1), (false, 2)]
+        .into_iter()
+        .enumerate()
+    {
+        assert_eq!(
+            witness.get_target(target.statements_is_pub[i].target),
+            F::from_bool(is_public)
+        );
+        assert_eq!(
+            witness.get_target(target.pub_insert_idx[i]),
+            F::from_canonical_usize(insert_index)
+        );
+    }
+    assert_eq!(witness.get_target(target.operations[0].args[0].low), F::ONE);
+    assert_eq!(
+        witness.get_target(target.operations[0].op_type.elements[1]),
+        F::from_canonical_usize(middleware::NativeOperation::EqualFromEntries as usize)
+    );
+    assert_eq!(
+        witness.get_target(target.operations[1].op_type.elements[1]),
+        F::from_canonical_usize(middleware::NativeOperation::None as usize)
+    );
+}

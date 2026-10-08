@@ -4,6 +4,7 @@
 
 use std::{fmt, iter};
 
+use itertools::zip_eq;
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -40,6 +41,7 @@ pub struct MockMainPod {
     input_pods: Vec<Box<dyn Pod>>,
     statements_is_pub: Vec<bool>,
     statements: Vec<Statement>,
+    /// Universal operations only; imports are verified from `open_input_statements`.
     operations: Vec<Operation>,
     public_statements: Vec<Statement>,
     public_statements_mt: Array,
@@ -58,10 +60,26 @@ impl fmt::Display for MockMainPod {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         writeln!(f, "MockMainPod ({}):", self.statements_root())?;
         writeln!(f, "  statements:")?;
+        let universal_start = 1 + self.params.max_open_input_statement_ops;
         for (i, st) in self.statements.iter().enumerate() {
             let is_pub = self.statements_is_pub[i];
-            let op = &self.operations[i];
-            fmt_statement_index(f, is_pub, st, op, i)?;
+            if i == 0 {
+                fmt_statement_index(f, is_pub, st, &"None", i)?;
+            } else if i < universal_start {
+                if i - 1 < self.open_input_statements.len() {
+                    fmt_statement_index(
+                        f,
+                        is_pub,
+                        st,
+                        &format_args!("OpenInputStatement open_input_statement_{:02}", i - 1),
+                        i,
+                    )?;
+                } else {
+                    fmt_statement_index(f, is_pub, st, &"None", i)?;
+                }
+            } else {
+                fmt_statement_index(f, is_pub, st, &self.operations[i - universal_start], i)?;
+            }
         }
         Ok(())
     }
@@ -71,7 +89,7 @@ fn fmt_statement_index(
     f: &mut fmt::Formatter,
     is_pub: bool,
     st: &Statement,
-    op: &Operation,
+    op: &dyn fmt::Display,
     index: usize,
 ) -> fmt::Result {
     if f.alternate() || !st.is_none() {
@@ -259,29 +277,43 @@ impl Pod for MockMainPod {
             }
         }
 
-        // 5. verify that all `input_statements` are correctly generated
-        // by `self.operations` (where each operation can only access previous statements)
-        let statement_check = self
-            .statements
-            .iter()
-            .enumerate()
-            .map(|(i, s)| {
-                let op = self.operations[i].deref(
-                    &self.statements,
-                    &self.signatures,
-                    &self.merkle_proofs,
-                    &self.merkle_transition_proofs,
-                    &self.open_input_statements,
-                )?;
-                if let middleware::Operation::OpenInputStatement(op) = &op {
-                    self.precheck_open_input_statement(op)?;
-                }
-                op.check_and_log(&self.params, &s.clone().try_into()?)
-                    .map_err(|e| e.into())
-            })
-            .collect::<Result<Vec<_>>>()?;
-        if !statement_check.iter().all(|b| *b) {
-            return Err(Error::statement_not_check());
+        let universal_start = 1 + self.params.max_open_input_statement_ops;
+        if self.statements.len() != universal_start + self.params.max_statements
+            || self.operations.len() != self.params.max_statements
+            || self.open_input_statements.len() > self.params.max_open_input_statement_ops
+        {
+            return Err(Error::custom(
+                "Invalid mock POD statement or operation counts",
+            ));
+        }
+
+        // The initial None and input rows have no universal operations. Check imports directly
+        // against their opening data, and require unused rows to remain None.
+        for (i, st) in self.statements[..universal_start].iter().enumerate() {
+            let data = i
+                .checked_sub(1)
+                .and_then(|i| self.open_input_statements.get(i));
+            let op = if let Some(data) = data {
+                self.precheck_open_input_statement(data)?;
+                middleware::Operation::OpenInputStatement(data.clone())
+            } else {
+                middleware::Operation::None
+            };
+            if !op.check_and_log(&self.params, &st.clone().try_into()?)? {
+                return Err(Error::statement_not_check());
+            }
+        }
+
+        for (st, op) in zip_eq(&self.statements[universal_start..], &self.operations) {
+            let op = op.deref(
+                &self.statements,
+                &self.signatures,
+                &self.merkle_proofs,
+                &self.merkle_transition_proofs,
+            )?;
+            if !op.check_and_log(&self.params, &st.clone().try_into()?)? {
+                return Err(Error::statement_not_check());
+            }
         }
         Ok(())
     }
@@ -396,6 +428,146 @@ pub mod tests {
         middleware,
         middleware::{Signer as _, Value},
     };
+
+    fn mock_pod_with_imported_statement() -> MockMainPod {
+        let params = Params {
+            max_input_pods: 1,
+            max_statements: 2,
+            max_public_statements: 2,
+            max_open_input_statement_ops: 2,
+            max_custom_predicates: 0,
+            max_custom_predicate_verification_ops: 0,
+            max_public_key_ops: 0,
+            max_signed_by_ops: 0,
+            containers: middleware::ParamsContainers {
+                state_ops: middleware::ParamsMerkleProofs {
+                    max_small: 1,
+                    max_medium: 0,
+                },
+                transition_ops: middleware::ParamsMerkleProofs {
+                    max_small: 0,
+                    max_medium: 0,
+                },
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let mut source = frontend::MainPodBuilder::new(&params, &MOCK_VD_SET);
+        let balances = crate::dict!({"balance" => 42});
+        let balance = source
+            .pub_op(frontend::Operation::dict_contains(balances, "balance", 42))
+            .unwrap();
+        let source = source.prove(&MockProver {}).unwrap();
+
+        let mut builder = frontend::MainPodBuilder::new(&params, &MOCK_VD_SET);
+        builder.add_pod(source).unwrap();
+        builder.open_input_st(true, 0, &balance).unwrap();
+        builder
+            .pub_op(frontend::Operation::eq(balance, 42))
+            .unwrap();
+        let pod = builder.prove(&MockProver {}).unwrap();
+        *(pod.pod as Box<dyn Any>).downcast::<MockMainPod>().unwrap()
+    }
+
+    #[test]
+    fn imported_statement_and_local_operation_round_trip() {
+        use crate::backends::plonky2::mainpod::OperationArg;
+
+        let pod = mock_pod_with_imported_statement();
+        pod.verify().unwrap();
+        assert_eq!(pod.operations.len(), 2);
+        assert_eq!(pod.operations[0].args()[0], OperationArg::Index(1));
+        assert_eq!(
+            pod.operations[1].op_type(),
+            middleware::OperationType::Native(middleware::NativeOperation::None)
+        );
+        assert_eq!(pod.open_input_statements.len(), 1);
+        assert!(pod.statements[2].is_none());
+        assert!(pod.statements[4].is_none());
+        let public = pod.pub_raw_statements();
+        assert_eq!(public[0], pod.statements[1].clone().try_into().unwrap());
+        assert_eq!(public[1], pod.statements[3].clone().try_into().unwrap());
+
+        let display = format!("{pod}");
+        assert!(display.contains("OpenInputStatement open_input_statement_00"));
+        assert!(display.contains("Native(EqualFromEntries) 01 00"));
+        assert_eq!(format!("{pod:#}").matches(" <- ").count(), 5);
+
+        let restored = MockMainPod::deserialize_data(
+            pod.params.clone(),
+            pod.serialize_data(),
+            pod.vd_set.clone(),
+        )
+        .unwrap();
+        assert_eq!(restored, pod);
+        restored.verify().unwrap();
+    }
+
+    #[test]
+    fn imported_statement_verification_rejects_tampering() {
+        let pod = mock_pod_with_imported_statement();
+        let mut wrong_statement = pod.clone();
+        wrong_statement.statements[1] = pod.statements[3].clone();
+        assert!(wrong_statement.verify().is_err());
+
+        let mut wrong_source = pod.clone();
+        wrong_source.open_input_statements[0].sts_root = EMPTY_HASH;
+        assert!(wrong_source.verify().is_err());
+
+        let mut wrong_proof = pod.clone();
+        wrong_proof.open_input_statements[0]
+            .proof
+            .siblings
+            .push(EMPTY_HASH);
+        assert!(wrong_proof.verify().is_err());
+
+        // Rows without opening data must not become an unchecked source of local arguments.
+        for padding_index in [0, 2] {
+            let mut nonempty_padding = pod.clone();
+            nonempty_padding.statements[padding_index] = pod.statements[1].clone();
+            assert!(nonempty_padding.verify().is_err());
+        }
+
+        let mut missing_operation = pod;
+        missing_operation.operations.clear();
+        assert!(missing_operation.verify().is_err());
+    }
+
+    pub(crate) fn witness_input_with_imported_statement() -> (
+        Params,
+        crate::backends::plonky2::circuits::mainpod::MainPodVerifyInput,
+    ) {
+        use crate::backends::plonky2::circuits::mainpod::{AuxTableInput, MainPodVerifyInput};
+
+        let pod = mock_pod_with_imported_statement();
+        let mut public_tree = Array::new(Vec::new());
+        let sts_mt_proofs = pod
+            .public_statements
+            .iter()
+            .enumerate()
+            .map(|(i, st)| public_tree.insert(i, Value::from(st.hash())).unwrap())
+            .collect();
+        let input = MainPodVerifyInput {
+            vds_set: pod.vd_set.clone(),
+            vd_mt_proofs: vec![pod.vd_set.get_vds_proof_0()],
+            extend_pod0_pub_statements: false,
+            statements_is_pub: pod.statements_is_pub.clone(),
+            sts_mt_proofs,
+            statements: pod.statements.clone(),
+            operations: pod.operations.clone(),
+            custom_predicates_with_mpt_proofs: Vec::new(),
+            aux_table_input: AuxTableInput {
+                merkle_proofs: pod.merkle_proofs.clone(),
+                merkle_transition_proofs: pod.merkle_transition_proofs.clone(),
+                pad_open_input_statement: Some(pod.open_input_statements[0].clone()),
+                open_input_statements: pod.open_input_statements.clone(),
+                public_key_sks: Vec::new(),
+                signed_bys: Vec::new(),
+                custom_predicate_verifications: Vec::new(),
+            },
+        };
+        (pod.params, input)
+    }
 
     #[test]
     fn test_mock_main_zu_kyc() -> frontend::Result<()> {

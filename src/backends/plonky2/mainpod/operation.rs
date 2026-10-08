@@ -7,7 +7,7 @@ use crate::{
         error::{Error, Result},
         mainpod::{MerkleProofs, MerkleTransitionProofs, SignedBy, Statement},
     },
-    middleware::{self, InputPodOpenStatement, OperationType, Params},
+    middleware::{self, OperationType, Params},
 };
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -58,7 +58,6 @@ pub enum OperationAux {
     None,
     MerkleProofIndex(Size, usize),
     MerkleTransitionProofIndex(Size, usize),
-    OpenInputStatement(usize),
     CustomPredVerifyIndex(usize),
     PublicKeyIndex(usize),
     SignedByIndex(usize),
@@ -111,11 +110,6 @@ impl OperationAux {
             Self::MerkleTransitionProofIndex(size, i) => {
                 Self::table_offset_merkle_transition_proof(params, *size) + *i
             }
-            // OpenInputStatement operations use input statement rows rather than universal
-            // operation slots, so they have no auxiliary-table index.
-            Self::OpenInputStatement(_) => {
-                unreachable!("OpenInputStatement has no aux table entry")
-            }
             Self::CustomPredVerifyIndex(i) => Self::table_offset_custom_pred_verify(params) + *i,
             Self::PublicKeyIndex(i) => Self::table_offset_public_key(params) + *i,
             Self::SignedByIndex(i) => Self::table_offset_signed_by(params) + *i,
@@ -142,7 +136,6 @@ impl Operation {
         signatures: &[SignedBy],
         merkle_proofs: &MerkleProofs,
         merkle_transition_proofs: &MerkleTransitionProofs,
-        open_input_statements: &[InputPodOpenStatement],
     ) -> Result<crate::middleware::Operation> {
         let deref_args = self
             .1
@@ -187,17 +180,6 @@ impl Operation {
                 )
             }
             OperationAux::CustomPredVerifyIndex(_) => crate::middleware::OperationAux::None,
-            OperationAux::OpenInputStatement(i) => {
-                crate::middleware::OperationAux::OpenInputStatement(
-                    open_input_statements
-                        .get(i)
-                        .ok_or(Error::custom(format!(
-                            "Missing OpenInputStatement data index {}",
-                            i
-                        )))?
-                        .clone(),
-                )
-            }
             OperationAux::SignedByIndex(i) => crate::middleware::OperationAux::Signature(
                 signatures
                     .get(i)
@@ -235,7 +217,6 @@ impl fmt::Display for Operation {
                 write!(f, " {}_merkle_proof_{:02}", size, i)?
             }
             OperationAux::CustomPredVerifyIndex(i) => write!(f, " custom_pred_verify_{:02}", i)?,
-            OperationAux::OpenInputStatement(i) => write!(f, " open_input_statement_{:02}", i)?,
             OperationAux::PublicKeyIndex(i) => write!(f, " public_key_{:02}", i)?,
             OperationAux::SignedByIndex(i) => write!(f, " signed_by_{:02}", i)?,
             OperationAux::MerkleTransitionProofIndex(size, i) => {

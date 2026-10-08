@@ -40,8 +40,8 @@ use crate::{
         self,
         containers::{Array, EMPTY_MT_ROOT},
         value_from_op, wildcard_values_from_op_st, CustomPredicateRef, Error as MiddlewareError,
-        Hash, InputPodOpenStatement, MainPodInputs, MainPodProver, NativeOperation, Params, Pod,
-        PodType, RawValue, StatementArg, VDSet, Value, ValueRef, BASE_PARAMS,
+        Hash, InputPodOpenStatement, MainPodInputs, MainPodProver, Params, Pod, PodType, RawValue,
+        StatementArg, VDSet, Value, ValueRef, BASE_PARAMS,
     },
     timed,
 };
@@ -501,6 +501,7 @@ pub(crate) fn layout_statements(
     Ok((statements_is_pub, statements))
 }
 
+/// Builds universal operations whose arguments index the full statement table, including imports.
 pub(crate) fn process_statements_operations(
     params: &Params,
     statements: &[Statement],
@@ -509,35 +510,6 @@ pub(crate) fn process_statements_operations(
 ) -> Result<Vec<Operation>> {
     assert_eq!(params.max_statements, aux_list.len());
     let mut operations = Vec::new();
-
-    // Operation at index 0 is always None to match the None statement at index 0 (used for padding
-    // operation arguments in custom predicate statements)
-    let mut args = Vec::new();
-    pad_operation_args(&mut args);
-    operations.push(Operation(
-        middleware::OperationType::Native(NativeOperation::None),
-        args,
-        OperationAux::None,
-    ));
-
-    // These entries align operations with input statement rows for the mock prover and display
-    // code. They are not circuit operation witnesses.
-    for i in 0..params.max_open_input_statement_ops {
-        let mut args = Vec::new();
-        pad_operation_args(&mut args);
-        let (op_type, aux) = if i < partitioned.imports.len() {
-            (
-                middleware::OperationType::Native(NativeOperation::OpenInputStatement),
-                OperationAux::OpenInputStatement(i),
-            )
-        } else {
-            (
-                middleware::OperationType::Native(NativeOperation::None),
-                OperationAux::None,
-            )
-        };
-        operations.push(Operation(op_type, args, aux));
-    }
 
     for (i, aux) in aux_list.iter().enumerate() {
         let op = partitioned

@@ -2193,6 +2193,7 @@ pub struct MainPodVerifyInput {
     pub statements_is_pub: Vec<bool>,
     pub sts_mt_proofs: Vec<MerkleTreeStateTransitionProof>,
     pub statements: Vec<mainpod::Statement>,
+    /// Universal operations only; arguments index the full statement table.
     pub operations: Vec<mainpod::Operation>,
     pub custom_predicates_with_mpt_proofs: Vec<(CustomPredicateRef, MerkleProof)>,
     pub aux_table_input: AuxTableInput,
@@ -2248,19 +2249,18 @@ impl InnerCircuit for MainPodVerifyTarget {
             self.sts_mt_proofs[i].set_targets(pw, &pad_sts_mt_proof)?;
         }
 
-        // Index 0 is hardcoded None. Input statements are derived from open-input data in the
-        // circuit, so only their publication metadata is witnessed here. Statement and operation
-        // witnesses begin after the input statement region.
+        // Input statements are derived from open-input data in the circuit, but publication
+        // metadata covers both regions. Index 0 is the hardcoded None statement.
         let num_input_statement_rows = self.params.max_open_input_statement_ops;
         let statements_is_pub = &input.statements_is_pub[1..];
         let statements = &input.statements[1..];
-        let operations = &input.operations[1..];
         let mut sts_mt_proofs_idx = 0;
         assert_eq!(
             statements.len(),
             num_input_statement_rows + self.params.max_statements
         );
-        for (i, (is_pub, st, op)) in izip!(statements_is_pub, statements, operations).enumerate() {
+        assert_eq!(statements_is_pub.len(), statements.len());
+        for (i, is_pub) in statements_is_pub.iter().enumerate() {
             pw.set_bool_target(self.statements_is_pub[i], *is_pub)?;
             pw.set_target(
                 self.pub_insert_idx[i],
@@ -2269,10 +2269,13 @@ impl InnerCircuit for MainPodVerifyTarget {
             if *is_pub {
                 sts_mt_proofs_idx += 1;
             }
-            if i >= num_input_statement_rows {
-                self.statements[i - num_input_statement_rows].set_targets(pw, st)?;
-                self.operations[i - num_input_statement_rows].set_targets(pw, &self.params, op)?;
-            }
+        }
+
+        let universal_statements = &statements[num_input_statement_rows..];
+        assert_eq!(input.operations.len(), self.params.max_statements);
+        for (i, (st, op)) in zip_eq(universal_statements, &input.operations).enumerate() {
+            self.statements[i].set_targets(pw, st)?;
+            self.operations[i].set_targets(pw, &self.params, op)?;
         }
 
         assert!(input.custom_predicates_with_mpt_proofs.len() <= self.params.max_custom_predicates);
