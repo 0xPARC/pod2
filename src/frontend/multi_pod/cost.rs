@@ -113,11 +113,9 @@ impl ResourceTotals {
         t
     }
 
-    /// Minimum number of PODs required to perform the input operations, not
-    /// accounting for any additional cost of publishing and importing
-    /// statements across POD boundaries. This provides us with a lower bound
-    /// estimate, allowing us to exit early from the solver if we find any
-    /// configuration which achieves this lower bound.
+    /// Lower bound on POD count from universal statements and their tracked resources.
+    /// Imports and publication are accounted for separately, so an import-only stream returns
+    /// zero. Callers that know the problem is nonempty must raise the bound to at least one.
     pub fn min_pods(&self, params: &Params) -> usize {
         if self.num_universal_statements == 0 {
             return 0;
@@ -212,7 +210,10 @@ impl OperationCost {
     /// depth; operations on trees deeper than
     /// `params.containers.max_depth_small` are charged to the medium pool.
     pub fn from_operation(op: &Operation, params: &Params) -> Self {
-        let mut cost = Self::default();
+        let mut cost = Self {
+            uses_input_statement_row: op.is_open_input_statement(),
+            ..Self::default()
+        };
         let max_depth_small = params.containers.max_depth_small;
 
         match &op.0 {
@@ -262,8 +263,6 @@ impl OperationCost {
                 }
                 NativeOperation::OpenInputStatement => {
                     cost.is_external_opening = true;
-                    // Input statement region use is tracked separately by the partitioner.
-                    cost.uses_input_statement_row = true;
                 }
                 // Zero-cost ops (no per-POD resource consumed).
                 NativeOperation::None

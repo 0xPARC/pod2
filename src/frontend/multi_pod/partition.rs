@@ -97,7 +97,10 @@ pub fn partition(input: &InputShape) -> Option<OutputShape> {
 /// number of imported statements per POD, which might result in a higher
 /// K than the estimate.
 fn resource_lower_bound_k(input: &InputShape) -> usize {
-    ResourceTotals::accumulate(input.costs.iter()).min_pods(&input.params)
+    // Resource totals omit imports, but every nonempty problem still needs at least one POD.
+    ResourceTotals::accumulate(input.costs.iter())
+        .min_pods(&input.params)
+        .max(usize::from(!input.costs.is_empty()))
 }
 
 /// Produce a topological ordering biased to keep mutually-fittable
@@ -846,7 +849,7 @@ fn segment_feasible_with(
     let n_ext_pods = workspace.external_pods.len();
     let n_chain_imports = workspace.prev_pod_producers.len();
 
-    // The segment-length check enforces the local-statement limit; `tree_imports_ok` enforces
+    // `ResourceTotals::fits_in_pod` enforces the local-statement limit; `tree_imports_ok` enforces
     // the separate input statement region limit.
     let imports_ok =
         |n_chain: usize| tree_imports_ok(is_first_pod, n_chain, n_ext_imports, n_ext_pods, params);
@@ -1123,6 +1126,42 @@ mod tests {
         let out = partition(&empty_input()).expect("empty input should solve trivially");
         assert_eq!(out.pod_count, 0);
         assert!(out.pod_statements.is_empty());
+    }
+
+    #[test]
+    fn import_only_problem_has_one_pod_lower_bound() {
+        let input = InputShape {
+            costs: vec![
+                OperationCost {
+                    uses_input_statement_row: true,
+                    ..OperationCost::default()
+                };
+                2
+            ],
+            dep_edges: vec![
+                vec![AbstractDep::External {
+                    pod: 0,
+                    statement: 0,
+                }],
+                vec![AbstractDep::External {
+                    pod: 0,
+                    statement: 1,
+                }],
+            ],
+            output_public_indices: vec![0, 1],
+            num_external_pods: 1,
+            statement_pod: vec![0, 0],
+            params: Params {
+                max_statements: 0,
+                max_open_input_statement_ops: 2,
+                max_input_pods: 1,
+                ..Params::default()
+            },
+        };
+        assert_eq!(resource_lower_bound_k(&input), 1);
+        let output = partition(&input).expect("imports fit without universal slots");
+        assert_eq!(output.pod_count, 1);
+        assert_eq!(output.pod_statements[0], vec![0, 1]);
     }
 
     #[test]

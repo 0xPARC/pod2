@@ -12,8 +12,8 @@ use crate::{
         basetypes::{Proof, VerifierOnlyCircuitData},
         error::{Error, Result},
         mainpod::{
-            extract_merkle_proofs, extract_merkle_transition_proofs, extract_open_input_statements,
-            extract_signatures, layout_statements, partition_inputs, process_public_statements,
+            extract_merkle_proofs, extract_merkle_transition_proofs, extract_signatures,
+            layout_statements, partition_inputs, process_public_statements,
             process_statements_operations, MerkleProofs, MerkleTransitionProofs, Operation,
             OperationAux, SignedBy, Statement,
         },
@@ -148,7 +148,7 @@ impl MockMainPod {
         // Similarly for Merkle state transition proofs.
         let merkle_transition_proofs =
             extract_merkle_transition_proofs(params, &mut aux_list, local_operations)?;
-        let open_input_statements = extract_open_input_statements(&partitioned);
+        let open_input_statements = partitioned.open_input_statements();
         let signatures =
             extract_signatures(params, &mut aux_list, local_operations, &input_statements)?;
 
@@ -279,11 +279,12 @@ impl Pod for MockMainPod {
 
         let universal_start = 1 + self.params.max_open_input_statement_ops;
         if self.statements.len() != universal_start + self.params.max_statements
+            || self.statements_is_pub.len() != self.statements.len()
             || self.operations.len() != self.params.max_statements
             || self.open_input_statements.len() > self.params.max_open_input_statement_ops
         {
             return Err(Error::custom(
-                "Invalid mock POD statement or operation counts",
+                "Invalid mock POD statement, publication flag or operation counts",
             ));
         }
 
@@ -504,6 +505,22 @@ pub mod tests {
     }
 
     #[test]
+    fn deserialized_mock_rejects_mismatched_publication_flags() {
+        let pod = mock_pod_with_imported_statement();
+        for invalid_len in [pod.statements.len() - 1, pod.statements.len() + 1] {
+            let mut data = pod.serialize_data();
+            data["statements_is_pub"] = serde_json::json!(vec![false; invalid_len]);
+            let restored =
+                MockMainPod::deserialize_data(pod.params.clone(), data, pod.vd_set.clone())
+                    .unwrap();
+            let error = restored
+                .verify()
+                .expect_err("publication flags must match the table");
+            assert!(error.to_string().contains("publication flag"));
+        }
+    }
+
+    #[test]
     fn imported_statement_verification_rejects_tampering() {
         let pod = mock_pod_with_imported_statement();
         let mut wrong_statement = pod.clone();
@@ -556,11 +573,11 @@ pub mod tests {
             statements: pod.statements.clone(),
             operations: pod.operations.clone(),
             custom_predicates_with_mpt_proofs: Vec::new(),
+            pad_open_input_statement: Some(pod.open_input_statements[0].clone()),
+            open_input_statements: pod.open_input_statements.clone(),
             aux_table_input: AuxTableInput {
                 merkle_proofs: pod.merkle_proofs.clone(),
                 merkle_transition_proofs: pod.merkle_transition_proofs.clone(),
-                pad_open_input_statement: Some(pod.open_input_statements[0].clone()),
-                open_input_statements: pod.open_input_statements.clone(),
                 public_key_sks: Vec::new(),
                 signed_bys: Vec::new(),
                 custom_predicate_verifications: Vec::new(),

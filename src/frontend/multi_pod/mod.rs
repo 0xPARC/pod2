@@ -17,8 +17,8 @@ use std::{
 use crate::{
     frontend::{MainPod, MainPodBuilder, Operation},
     middleware::{
-        InputPodOpenStatement, MainPodProver, NativeOperation, OperationAux, OperationType, Params,
-        Statement, VDSet, Value, BASE_PARAMS,
+        InputPodOpenStatement, MainPodProver, OperationAux, Params, Statement, VDSet, Value,
+        BASE_PARAMS,
     },
 };
 
@@ -444,9 +444,7 @@ impl SolvedMultiPod {
                 continue;
             }
             let public = !is_output && public_set.contains(&s);
-            if let OperationType::Native(NativeOperation::OpenInputStatement) =
-                &self.operations[s].0
-            {
+            if self.operations[s].is_open_input_statement() {
                 // Staging-time aux carries a `pod_index` from the staging
                 // builder's input slots; re-issue against this POD's
                 // ext_slot mapping.

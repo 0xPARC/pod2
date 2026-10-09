@@ -4,7 +4,7 @@ use std::collections::HashMap;
 
 use crate::{
     frontend::{Operation, OperationArg},
-    middleware::{InputPodOpenStatement, NativeOperation, OperationAux, OperationType, Statement},
+    middleware::{InputPodOpenStatement, OperationAux, Statement},
 };
 
 /// Reference to a statement sourced from an external input POD.
@@ -100,7 +100,7 @@ impl DependencyGraph {
             // on the source pod is implicit in the aux's `sts_root`.
             // Materialize it as an External dep here so the partitioner
             // accounts for the input-tree slot and the external-pod reference.
-            if let OperationType::Native(NativeOperation::OpenInputStatement) = op.0 {
+            if op.is_open_input_statement() {
                 if let OperationAux::OpenInputStatement(InputPodOpenStatement {
                     pod_index, ..
                 }) = &op.2

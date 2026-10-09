@@ -154,7 +154,6 @@ fn operation_verify(
     let aux_table_inputs = AuxTableInputTargets {
         merkle_proofs: merkle_proofs_target,
         merkle_transition_proofs: merkle_transition_proofs_target,
-        open_input_statements: Vec::new(),
         public_key_sks: secret_keys_target,
         signed_bys: signed_by_targets,
         custom_predicate_verifications: Vec::new(),
@@ -2047,9 +2046,6 @@ fn helper_verify_operation_through_aux_table(
     let aux_table_input = AuxTableInputTargets {
         merkle_proofs: MerkleProofsTarget::new_virtual(params, &mut builder),
         merkle_transition_proofs: MerkleTransitionProofsTarget::new_virtual(params, &mut builder),
-        open_input_statements: (0..params.max_open_input_statement_ops)
-            .map(|_| OpenInputStatementTarget::new_virtual(&mut builder))
-            .collect(),
         public_key_sks: (0..params.max_public_key_ops)
             .map(|_| builder.add_virtual_biguint320_target())
             .collect(),
@@ -2235,8 +2231,31 @@ fn imported_statement_witness_uses_universal_operations() {
         crate::backends::plonky2::mock::mainpod::tests::witness_input_with_imported_statement();
     let mut builder = CircuitBuilder::new(CircuitConfig::standard_recursion_config());
     let target = MainPodVerifyTarget::new_virtual(&params, &mut builder);
+    let target: MainPodVerifyTarget =
+        serde_json::from_value(serde_json::to_value(&target).unwrap()).unwrap();
     let mut witness = PartialWitness::new();
     target.set_targets(&mut witness, &input).unwrap();
+
+    let opening = &input.open_input_statements[0];
+    let padding = input.pad_open_input_statement.as_ref().unwrap();
+    for (target, opening) in target.open_input_statements.iter().zip([opening, padding]) {
+        assert_eq!(
+            witness.get_target(target.input_pod_table_index),
+            F::from_canonical_usize(opening.pod_index)
+        );
+        assert_eq!(
+            witness.get_target(target.st_index),
+            F::from_canonical_usize(opening.st_index)
+        );
+        assert_eq!(
+            target
+                .raw_statement
+                .pred_hash()
+                .elements
+                .map(|target| witness.get_target(target)),
+            opening.raw_statement.predicate().hash().0
+        );
+    }
 
     // The imported public statement precedes the local public statement, with padding in
     // both regions. Publication indices must cover every row independently of operations.

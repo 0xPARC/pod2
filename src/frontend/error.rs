@@ -22,6 +22,8 @@ pub enum InnerError {
     TooManyExtendedPublicStatements(usize, usize),
     #[error("Too many statements provided: {0} were provided, but the maximum is {1}")]
     TooManyStatements(usize, usize),
+    #[error("Too many imported statements provided: {0} were provided, but the input statement limit is {1}")]
+    TooManyInputStatements(usize, usize),
     // Other
     #[error("{0}")]
     Custom(String),
@@ -100,5 +102,8 @@ impl Error {
     }
     pub(crate) fn too_many_statements(found: usize, max: usize) -> Self {
         new!(TooManyStatements(found, max))
+    }
+    pub(crate) fn too_many_input_statements(found: usize, max: usize) -> Self {
+        new!(TooManyInputStatements(found, max))
     }
 }

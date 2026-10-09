@@ -1783,7 +1783,7 @@ fn verify_main_pod_circuit(
         params,
         builder,
         &input_pod_table,
-        &main_pod.aux_table_input.open_input_statements,
+        &main_pod.open_input_statements,
     );
     measure_gates_end!(builder, measure_input_statement_region);
     let num_input_statement_rows = input_statement_rows.len();
@@ -1957,7 +1957,6 @@ impl MerkleTransitionProofsTarget {
 struct AuxTableInputTargets {
     merkle_proofs: MerkleProofsTarget,
     merkle_transition_proofs: MerkleTransitionProofsTarget,
-    open_input_statements: Vec<OpenInputStatementTarget>,
     public_key_sks: Vec<BigUInt320Target>,
     signed_bys: Vec<SignedByTarget>,
     custom_predicate_verifications: Vec<CustomPredicateVerifyEntryTarget>,
@@ -2030,17 +2029,6 @@ impl AuxTableInputTargets {
             &input.merkle_transition_proofs,
         )?;
 
-        assert!(input.open_input_statements.len() <= params.max_open_input_statement_ops);
-        for (i, data) in input.open_input_statements.iter().enumerate() {
-            self.open_input_statements[i].set_targets(pw, data)?;
-        }
-        // Padding
-        if let Some(pad_data) = &input.pad_open_input_statement {
-            for i in input.open_input_statements.len()..params.max_open_input_statement_ops {
-                self.open_input_statements[i].set_targets(pw, pad_data)?;
-            }
-        }
-
         assert!(input.public_key_sks.len() <= params.max_public_key_ops);
         for (i, sk) in input.public_key_sks.iter().enumerate() {
             pw.set_biguint320_target(&self.public_key_sks[i], &sk.0)?;
@@ -2104,6 +2092,7 @@ pub struct MainPodVerifyTarget {
     operations: Vec<OperationTarget>,
     sts_mt_proofs: Vec<MerkleTreeStateTransitionProofTarget>,
     custom_predicates: Vec<CustomPredicateInBatchTarget>,
+    open_input_statements: Vec<OpenInputStatementTarget>,
     aux_table_input: AuxTableInputTargets,
 }
 
@@ -2144,14 +2133,14 @@ impl MainPodVerifyTarget {
             custom_predicates: (0..params.max_custom_predicates)
                 .map(|_| CustomPredicateInBatchTarget::new_virtual(builder))
                 .collect(),
+            open_input_statements: (0..params.max_open_input_statement_ops)
+                .map(|_| OpenInputStatementTarget::new_virtual(builder))
+                .collect(),
             aux_table_input: AuxTableInputTargets {
                 merkle_proofs: MerkleProofsTarget::new_virtual(params, builder),
                 merkle_transition_proofs: MerkleTransitionProofsTarget::new_virtual(
                     params, builder,
                 ),
-                open_input_statements: (0..params.max_open_input_statement_ops)
-                    .map(|_| OpenInputStatementTarget::new_virtual(builder))
-                    .collect(),
                 public_key_sks: (0..params.max_public_key_ops)
                     .map(|_| builder.add_virtual_biguint320_target())
                     .collect(),
@@ -2176,8 +2165,6 @@ pub struct CustomPredicateVerification {
 pub struct AuxTableInput {
     pub merkle_proofs: MerkleProofs,
     pub merkle_transition_proofs: MerkleTransitionProofs,
-    pub open_input_statements: Vec<InputPodOpenStatement>,
-    pub pad_open_input_statement: Option<InputPodOpenStatement>,
     pub public_key_sks: Vec<SecretKey>,
     pub signed_bys: Vec<SignedBy>,
     pub custom_predicate_verifications: Vec<CustomPredicateVerification>,
@@ -2196,6 +2183,8 @@ pub struct MainPodVerifyInput {
     /// Universal operations only; arguments index the full statement table.
     pub operations: Vec<mainpod::Operation>,
     pub custom_predicates_with_mpt_proofs: Vec<(CustomPredicateRef, MerkleProof)>,
+    pub open_input_statements: Vec<InputPodOpenStatement>,
+    pub pad_open_input_statement: Option<InputPodOpenStatement>,
     pub aux_table_input: AuxTableInput,
 }
 
@@ -2292,6 +2281,20 @@ impl InnerCircuit for MainPodVerifyTarget {
             .expect("exists");
         for i in input.custom_predicates_with_mpt_proofs.len()..self.params.max_custom_predicates {
             self.custom_predicates[i].set_targets(pw, &pad_cp, &pad_mtp)?;
+        }
+
+        assert!(input.open_input_statements.len() <= self.params.max_open_input_statement_ops);
+        for (target, data) in self
+            .open_input_statements
+            .iter()
+            .zip(&input.open_input_statements)
+        {
+            target.set_targets(pw, data)?;
+        }
+        if let Some(pad_data) = &input.pad_open_input_statement {
+            for target in &self.open_input_statements[input.open_input_statements.len()..] {
+                target.set_targets(pw, pad_data)?;
+            }
         }
 
         self.aux_table_input

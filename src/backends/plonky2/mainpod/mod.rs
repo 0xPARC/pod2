@@ -360,10 +360,17 @@ pub(crate) fn extract_signatures(
     Ok(table)
 }
 
+/// An imported statement and the data that opens its source POD's Merkle leaf.
+pub(crate) struct ImportedStatement {
+    pub is_public: bool,
+    pub statement: middleware::Statement,
+    pub opening: InputPodOpenStatement,
+}
+
 /// Inputs partitioned by their statement-table regions.
 pub(crate) struct PartitionedInputs {
-    /// Imported statements in input order: `(is_pub, output statement, import data)`.
-    pub imports: Vec<(bool, middleware::Statement, InputPodOpenStatement)>,
+    /// Imported statements in input order.
+    pub imports: Vec<ImportedStatement>,
     /// Local statements in input order: `(is_pub, output statement)`.
     pub local_statements: Vec<(bool, middleware::Statement)>,
     pub local_operations: Vec<middleware::Operation>,
@@ -377,8 +384,12 @@ pub(crate) fn partition_inputs(
     let mut local_statements = Vec::new();
     let mut local_operations = Vec::new();
     for ((is_pub, st), op) in zip_eq(inputs.statements, inputs.operations) {
-        if let middleware::Operation::OpenInputStatement(input_pod_open_statement) = op {
-            imports.push((*is_pub, st.clone(), input_pod_open_statement.clone()));
+        if let Some(opening) = op.as_open_input_statement() {
+            imports.push(ImportedStatement {
+                is_public: *is_pub,
+                statement: st.clone(),
+                opening: opening.clone(),
+            });
         } else {
             local_statements.push((*is_pub, st.clone()));
             local_operations.push(op.clone());
@@ -405,14 +416,13 @@ pub(crate) fn partition_inputs(
     })
 }
 
-pub(crate) fn extract_open_input_statements(
-    partitioned: &PartitionedInputs,
-) -> Vec<InputPodOpenStatement> {
-    partitioned
-        .imports
-        .iter()
-        .map(|(_, _, input_pod_open_statement)| input_pod_open_statement.clone())
-        .collect()
+impl PartitionedInputs {
+    pub(crate) fn open_input_statements(&self) -> Vec<InputPodOpenStatement> {
+        self.imports
+            .iter()
+            .map(|import| import.opening.clone())
+            .collect()
+    }
 }
 
 /// Find the operation argument statement in the list of previous statements and return the index.
@@ -469,7 +479,7 @@ pub(crate) fn layout_statements(
         let (is_pub, st) = partitioned
             .imports
             .get(i)
-            .map(|(is_pub, st, _)| (*is_pub, st.clone()))
+            .map(|import| (import.is_public, import.statement.clone()))
             .unwrap_or((false, middleware::Statement::None));
         let mut st = Statement::from(st);
         pad_statement(&mut st);
@@ -588,7 +598,7 @@ impl MainPodProver for Prover {
                 (cpr, mtp)
             })
             .collect_vec();
-        let open_input_statements = extract_open_input_statements(&partitioned);
+        let open_input_statements = partitioned.open_input_statements();
         let pad_open_input_statement = if params.max_input_pods != 0 {
             let pod = &inputs.pods[0];
             let (_, proof) = pod.pub_raw_statements_mt().prove(0)?;
@@ -655,8 +665,6 @@ impl MainPodProver for Prover {
         let aux_table_input = AuxTableInput {
             custom_predicate_verifications,
             merkle_proofs,
-            open_input_statements,
-            pad_open_input_statement,
             public_key_sks,
             signed_bys,
             merkle_transition_proofs,
@@ -670,6 +678,8 @@ impl MainPodProver for Prover {
             statements,
             operations,
             custom_predicates_with_mpt_proofs,
+            open_input_statements,
+            pad_open_input_statement,
             aux_table_input,
         };
 

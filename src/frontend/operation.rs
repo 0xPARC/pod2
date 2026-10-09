@@ -214,6 +214,13 @@ macro_rules! op_impl_st {
 }
 
 impl Operation {
+    pub(crate) fn is_open_input_statement(&self) -> bool {
+        matches!(
+            self.0,
+            OperationType::Native(NativeOperation::OpenInputStatement)
+        )
+    }
+
     op_impl_oa!(eq, EqualFromEntries, 2);
     op_impl_oa!(ne, NotEqualFromEntries, 2);
     op_impl_oa!(gt_eq, GtEqFromEntries, 2);

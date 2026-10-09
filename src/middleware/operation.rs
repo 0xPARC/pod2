@@ -275,6 +275,17 @@ fn ok_or_type_err<T>(o: Option<T>, v: &Value, typ: &'static str) -> Result<T> {
 }
 
 impl Operation {
+    pub(crate) fn as_open_input_statement(&self) -> Option<&InputPodOpenStatement> {
+        match self {
+            Self::OpenInputStatement(data) => Some(data),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn is_open_input_statement(&self) -> bool {
+        self.as_open_input_statement().is_some()
+    }
+
     pub fn op_type(&self) -> OperationType {
         type OT = OperationType;
         use NativeOperation::*;

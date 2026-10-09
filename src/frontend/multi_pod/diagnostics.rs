@@ -70,12 +70,13 @@ fn aggregate_rows<'a>(
     costs: impl IntoIterator<Item = &'a OperationCost>,
     params: &Params,
 ) -> (Vec<UtilizationRow>, usize) {
-    let totals = ResourceTotals::accumulate(costs);
+    let mut num_statements = 0;
+    let totals = ResourceTotals::accumulate(costs.into_iter().inspect(|_| num_statements += 1));
     let state = &params.containers.state_ops;
     let transition = &params.containers.transition_ops;
     let rows = vec![
         UtilizationRow {
-            name: "total statements",
+            name: "universal statements",
             used: totals.num_universal_statements,
             limit: params.max_statements,
         },
@@ -120,13 +121,14 @@ fn aggregate_rows<'a>(
             limit: params.max_custom_predicates,
         },
     ];
-    (rows, totals.num_universal_statements)
+    (rows, num_statements)
 }
 
 /// Pre-solve aggregate resource summary.
 #[derive(Clone, Debug)]
 pub struct ResourceSummary {
     pub rows: Vec<UtilizationRow>,
+    /// Planned statements, including explicit imports and synthetic republishes.
     pub num_statements: usize,
 }
 
@@ -160,7 +162,11 @@ impl ResourceSummary {
 
 impl fmt::Display for ResourceSummary {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        writeln!(f, "Resource Summary ({} statements)", self.num_statements)?;
+        writeln!(
+            f,
+            "Resource Summary ({} planned statements)",
+            self.num_statements
+        )?;
         writeln!(
             f,
             "  {:<30} {:>5}   {:>9}   {:>8}",
@@ -196,6 +202,7 @@ impl fmt::Display for ResourceSummary {
 pub struct PodUtilization {
     pub pod_idx: usize,
     pub is_output: bool,
+    /// Planned statements assigned to this POD, independent of physical import-row usage.
     pub num_statements: usize,
     pub resources: Vec<UtilizationRow>,
     pub imports: UtilizationRow,
@@ -212,6 +219,7 @@ pub struct PodUtilization {
 #[derive(Clone, Debug)]
 pub struct SolutionBreakdown {
     pub pods: Vec<PodUtilization>,
+    /// Planned statements across all PODs, including explicit imports and synthetic republishes.
     pub num_statements: usize,
     pub pod_count: usize,
 }
@@ -299,8 +307,8 @@ impl SolutionBreakdown {
                     }
                 }
 
-                // "total statements" covers universal slots; the next row reports input statement
-                // region imports separately.
+                // Imports include openings generated for cross-POD dependencies, so physical row
+                // usage can exceed the number of planned statements.
                 let total_imports = chain_imports.len() + external_imports.len();
                 let imports_row = UtilizationRow {
                     name: "tree imports",
@@ -342,7 +350,7 @@ impl fmt::Display for SolutionBreakdown {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         writeln!(
             f,
-            "Solution Breakdown ({} statements -> {} PODs)",
+            "Solution Breakdown ({} planned statements -> {} PODs)",
             self.num_statements, self.pod_count
         )?;
 
@@ -352,7 +360,11 @@ impl fmt::Display for SolutionBreakdown {
             } else {
                 "intermediate"
             };
-            writeln!(f, "  POD {} ({}):", pod.pod_idx, role)?;
+            writeln!(
+                f,
+                "  POD {} ({}; {} planned statements):",
+                pod.pod_idx, role, pod.num_statements
+            )?;
 
             for row in
                 pod.resources
@@ -553,7 +565,11 @@ fn identify_overflow(
     let state = &params.containers.state_ops;
     let transition = &params.containers.transition_ops;
     let categories: &[(&'static str, usize, usize)] = &[
-        ("total statements", 1, params.max_statements),
+        (
+            "universal statements",
+            usize::from(!c.uses_input_statement_row),
+            params.max_statements,
+        ),
         ("input pods", input_pods, params.max_input_pods),
         (
             "merkle proofs (small)",
@@ -632,7 +648,7 @@ mod tests {
         let bottleneck = summary
             .bottleneck()
             .expect("non-empty problem has a bottleneck");
-        assert_eq!(bottleneck.name, "total statements");
+        assert_eq!(bottleneck.name, "universal statements");
         assert_eq!(bottleneck.min_pods(), Some(3)); // ceil(6/2)
     }
 
@@ -686,6 +702,68 @@ mod tests {
             }
             other => panic!("expected an input-pod cap violation, got {}", other),
         }
+    }
+
+    #[test]
+    fn planned_statement_counts_distinguish_physical_row_usage() {
+        let input = InputShape {
+            costs: vec![
+                OperationCost {
+                    uses_input_statement_row: true,
+                    ..OperationCost::default()
+                },
+                OperationCost::default(),
+                OperationCost::default(),
+            ],
+            dep_edges: vec![
+                vec![AbstractDep::External {
+                    pod: 0,
+                    statement: 0,
+                }],
+                vec![AbstractDep::Internal(0)],
+                vec![AbstractDep::Internal(1)],
+            ],
+            output_public_indices: vec![2],
+            num_external_pods: 1,
+            statement_pod: vec![0],
+            params: Params {
+                max_statements: 1,
+                max_open_input_statement_ops: 1,
+                ..Params::default()
+            },
+        };
+        let summary = ResourceSummary::from_input(&input);
+        assert_eq!(summary.num_statements, 3);
+        assert_eq!(summary.rows[0].name, "universal statements");
+        assert_eq!(summary.rows[0].used, 2);
+        assert!(summary
+            .to_string()
+            .contains("Resource Summary (3 planned statements)"));
+
+        let output = partition::partition(&input).expect("one universal statement per POD");
+        let breakdown = SolutionBreakdown::from_solution(&input, &output);
+        assert_eq!(breakdown.pod_count, 2);
+        assert_eq!(breakdown.num_statements, 3);
+        assert_eq!(
+            breakdown
+                .pods
+                .iter()
+                .map(|pod| pod.num_statements)
+                .sum::<usize>(),
+            3
+        );
+        assert_eq!(breakdown.pods[0].num_statements, 2);
+        assert_eq!(breakdown.pods[1].num_statements, 1);
+        let universal_rows: usize = breakdown.pods.iter().map(|pod| pod.resources[0].used).sum();
+        let import_rows: usize = breakdown.pods.iter().map(|pod| pod.imports.used).sum();
+        assert_eq!(universal_rows, 2);
+        assert_eq!(import_rows, 2);
+        assert!(breakdown
+            .to_string()
+            .contains("Solution Breakdown (3 planned statements -> 2 PODs)"));
+        assert!(breakdown
+            .to_string()
+            .contains("POD 0 (intermediate; 2 planned statements)"));
     }
 
     #[test]
