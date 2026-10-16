@@ -44,7 +44,7 @@ serde_bytes = "0.11"
 serde_arrays = "0.2.0"
 sha2 = { version = "0.10.9" }
 rand_chacha = "0.3.1"
-good_lp = { version = "1.8", default-features = false, features = [
+good_lp = { version = "1.15.3", default-features = false, features = [
   "scip",
   "scip_bundled",
 ], optional = true }
@@ -69,7 +69,7 @@ jsonschema = "0.30.0"
 tempfile = "3"
 # Always available in tests so the MILP parity sweep and DP-vs-MILP probes
 # compile without callers needing `--features milp`.
-good_lp = { version = "1.8", default-features = false, features = [
+good_lp = { version = "1.15.3", default-features = false, features = [
   "scip",
   "scip_bundled",
 ] }
@@ -99,3 +99,9 @@ jemalloc = ["dep:tikv-jemallocator"]
 # Uncomment in order to enable debug information in the release builds.  This allows getting panic backtraces with a performance similar to regular release.
 # [profile.release]
 # debug = true
+
+# All published `zip` versions that `scip-sys` (pulled in via good_lp's
+# `scip_bundled`) depends on have been yanked. Use a vendored copy that
+# extracts with `zip` 9 instead of `zip-extract`.
+[patch.crates-io]
+scip-sys = { path = "vendor/scip-sys" }
