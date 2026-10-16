@@ -367,10 +367,9 @@ impl fmt::Display for SolutionBreakdown {
                     .chain([&pod.imports, &pod.external_pods, &pod.publishes])
             {
                 if row.used > 0 {
-                    let pct = if row.limit > 0 {
-                        format!("({:>3}%)", (row.used * 100) / row.limit)
-                    } else {
-                        String::new()
+                    let pct = match (row.used * 100).checked_div(row.limit) {
+                        Some(p) => format!("({:>3}%)", p),
+                        None => String::new(),
                     };
                     writeln!(
                         f,

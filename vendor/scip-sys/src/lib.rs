@@ -1,5 +1,7 @@
 //! This crate exposes automatically generated raw bindings to [SCIP](https://scipopt.org/)'s C-API. The documentation is automatically generated from the C-API docs, for further info please refer to SCIP's original [documentation](https://scipopt.org/doc/html/).
 
+#![allow(warnings)]
+#![allow(clippy::all)]
 #![allow(non_upper_case_globals)]
 #![allow(non_camel_case_types)]
 #![allow(non_snake_case)]
@@ -10,9 +12,9 @@ include!(concat!(env!("OUT_DIR"), "/bindings.rs"));
 
 #[cfg(test)]
 mod tests {
+    use std::{ffi::CString, mem::MaybeUninit};
+
     use super::*;
-    use std::ffi::CString;
-    use std::mem::MaybeUninit;
 
     #[test]
     fn test_create() {

@@ -650,7 +650,7 @@ impl MainPodBuilder {
                             OperationArg::Statement(st) => st,
                             _ => return Err(Error::custom("expected statement")),
                         };
-                        let new_st_args = iter::zip(st.args().into_iter(), args)
+                        let new_st_args = iter::zip(st.args(), args)
                             .map(|(st_arg, arg)| match (st_arg, arg) {
                                 (st_arg, OperationArg::Statement(Statement::None)) => Ok(st_arg),
                                 (
