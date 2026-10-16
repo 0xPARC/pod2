@@ -393,19 +393,17 @@ fn store_value(tx: &mut dyn TX, v: Value) -> Result<()> {
 }
 
 fn load_value(db: &dyn db::DB, value_raw: RawValue) -> Result<Value> {
-    match db.load_value(value_raw) {
-        Err(e) => Err(Error::Database(e)),
-        Ok(Some(v)) => Ok(v),
-        Ok(None) => {
-            // We skip storing containers as values and instead store them as
-            // merkle trees via the Container type.
-            if let Ok(c) = Container::from_db(Hash(value_raw.0), db.clone_box()) {
-                Ok(Value::from(c))
-            } else {
-                Err(Error::custom(format!(
-                    "Value from {value_raw} not found in DB"
-                )))
-            }
+    // We skip storing containers as values and instead store them as
+    // merkle trees via the Container type.
+    if let Ok(c) = Container::from_db(Hash(value_raw.0), db.clone_box()) {
+        Ok(Value::from(c))
+    } else {
+        match db.load_value(value_raw) {
+            Err(e) => Err(Error::Database(e)),
+            Ok(Some(v)) => Ok(v),
+            Ok(None) => Err(Error::custom(format!(
+                "Value from {value_raw} not found in DB"
+            ))),
         }
     }
 }
@@ -1188,5 +1186,97 @@ mod tests {
     #[test]
     fn test_mem_to_db() {
         test_databases(&_test_mem_to_db);
+    }
+
+    fn part_snapshot() -> Dictionary {
+        Dictionary::new(
+            [
+                (StrKey::from("serial"), Value::from("ABC-123")),
+                (StrKey::from("weight"), Value::from(10)),
+            ]
+            .into(),
+        )
+    }
+
+    fn certificate(snapshot: &Dictionary) -> Dictionary {
+        Dictionary::new([(StrKey::from("original"), Value::from(snapshot.clone()))].into())
+    }
+
+    fn assert_snapshot_is_readable(certificate: &Dictionary) {
+        let stored_snapshot = certificate
+            .get(&StrKey::from("original"))
+            .unwrap()
+            .expect("certificate contains its original snapshot");
+        let snapshot = stored_snapshot
+            .as_dictionary()
+            .unwrap_or_else(|| panic!("expected a snapshot dictionary, got {stored_snapshot}"));
+        assert_eq!(
+            snapshot.get(&StrKey::from("weight")).unwrap(),
+            Some(Value::from(10))
+        );
+    }
+
+    #[test]
+    fn dictionary_remains_readable_beside_its_raw_commitment() {
+        let snapshot = part_snapshot();
+        let identifier = Value::from(snapshot.commitment());
+        assert!(serde_json::to_string(&identifier).unwrap().contains("Raw"));
+        assert_eq!(identifier.raw(), Value::from(snapshot.clone()).raw());
+
+        let mut certificate = certificate(&snapshot);
+        assert_snapshot_is_readable(&certificate);
+        certificate
+            .insert(&StrKey::from("part_id"), &identifier)
+            .unwrap();
+
+        assert_snapshot_is_readable(&certificate);
+    }
+
+    #[test]
+    fn dictionary_remains_readable_when_sibling_parent_contains_its_raw_commitment() {
+        let snapshot = part_snapshot();
+        let certificate = certificate(&snapshot);
+        let reference =
+            Dictionary::new([(StrKey::from("part_id"), Value::from(snapshot.commitment()))].into());
+        assert_snapshot_is_readable(&certificate);
+
+        let bundle = Dictionary::new(
+            [
+                (
+                    StrKey::from("certificate"),
+                    Value::from(certificate.clone()),
+                ),
+                (StrKey::from("reference"), Value::from(reference)),
+            ]
+            .into(),
+        );
+        assert_snapshot_is_readable(&certificate);
+        let bundled_certificate = bundle
+            .get(&StrKey::from("certificate"))
+            .unwrap()
+            .unwrap()
+            .as_dictionary()
+            .unwrap();
+
+        assert_snapshot_is_readable(&bundled_certificate);
+    }
+
+    #[test]
+    fn dictionary_remains_readable_when_clone_stores_its_raw_commitment() {
+        let snapshot = part_snapshot();
+        let certificate = certificate(&snapshot);
+        let original_root = certificate.commitment();
+        assert_snapshot_is_readable(&certificate);
+
+        let mut copy = certificate.clone();
+        copy.insert(
+            &StrKey::from("part_id"),
+            &Value::from(snapshot.commitment()),
+        )
+        .unwrap();
+        assert_ne!(copy.commitment(), original_root);
+        assert_eq!(certificate.commitment(), original_root);
+
+        assert_snapshot_is_readable(&certificate);
     }
 }

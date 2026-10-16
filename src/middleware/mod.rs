@@ -56,7 +56,7 @@ pub(crate) enum TypedValue {
         i64,
     ),
     // Uses the serialization for middleware::Value:
-    Raw(RawValue),
+    Untyped(RawValue),
     // Schnorr public key variant (EC point)
     PublicKey(PublicKey),
     // Schnorr secret key variant (scalar)
@@ -99,7 +99,7 @@ impl From<bool> for TypedValue {
 
 impl From<Hash> for TypedValue {
     fn from(h: Hash) -> Self {
-        TypedValue::Raw(RawValue(h.0))
+        TypedValue::Untyped(RawValue(h.0))
     }
 }
 
@@ -147,7 +147,7 @@ impl From<Array> for TypedValue {
 
 impl From<RawValue> for TypedValue {
     fn from(v: RawValue) -> Self {
-        TypedValue::Raw(v)
+        TypedValue::Untyped(v)
     }
 }
 
@@ -166,7 +166,7 @@ impl fmt::Display for TypedValue {
             TypedValue::PublicKey(p) => write!(f, "PublicKey({})", p),
             TypedValue::SecretKey(p) => write!(f, "SecretKey({})", p),
             TypedValue::Predicate(p) => write!(f, "Predicate({})", p),
-            TypedValue::Raw(r) => {
+            TypedValue::Untyped(r) => {
                 write!(f, "Raw(0x{})", r.encode_hex::<String>())
             }
         }
@@ -179,7 +179,7 @@ impl From<&TypedValue> for RawValue {
             TypedValue::String(s) => RawValue::from(hash_str(s)),
             TypedValue::Int(v) => RawValue::from(*v),
             TypedValue::Container(d) => RawValue::from(d.commitment()),
-            TypedValue::Raw(v) => *v,
+            TypedValue::Untyped(v) => *v,
             TypedValue::PublicKey(p) => RawValue::from(hash_fields(&p.as_fields())),
             TypedValue::SecretKey(sk) => RawValue::from(hash_fields(&sk.to_limbs())),
             TypedValue::Predicate(p) => RawValue::from(p.hash()),
@@ -367,7 +367,7 @@ impl Value {
     pub fn to_bytes(&self) -> Vec<u8> {
         let v = match &self.typed {
             TypedValue::Int(v) => TypedValueNoRec::Int(*v),
-            TypedValue::Raw(v) => TypedValueNoRec::Raw(*v),
+            TypedValue::Untyped(v) => TypedValueNoRec::Raw(*v),
             TypedValue::PublicKey(v) => TypedValueNoRec::PublicKey(*v),
             TypedValue::SecretKey(v) => TypedValueNoRec::SecretKey(v.clone()),
             TypedValue::Predicate(v) => TypedValueNoRec::Predicate(v.clone()),
@@ -424,8 +424,8 @@ impl Value {
     }
     /// Returns true if the typed value is RawValue, which means it's a generic value with no type
     /// information and no extra value data.
-    pub fn is_raw(&self) -> bool {
-        matches!(self.typed, TypedValue::Raw(_))
+    pub(crate) fn is_untyped(&self) -> bool {
+        matches!(self.typed, TypedValue::Untyped(_))
     }
     pub fn as_raw(&self) -> RawValue {
         self.raw
@@ -456,28 +456,28 @@ impl Value {
     }
     pub fn as_set(&self) -> Option<Set> {
         match &self.typed {
-            TypedValue::Raw(v) if *v == EMPTY_VALUE => Some(Set::new(HashSet::new())),
+            TypedValue::Untyped(v) if *v == EMPTY_VALUE => Some(Set::new(HashSet::new())),
             TypedValue::Container(c) => c.as_set(),
             _ => None,
         }
     }
     pub fn as_container(&self) -> Option<Container> {
         match &self.typed {
-            TypedValue::Raw(v) if *v == EMPTY_VALUE => Some(Container::empty()),
+            TypedValue::Untyped(v) if *v == EMPTY_VALUE => Some(Container::empty()),
             TypedValue::Container(c) => Some(c.clone()),
             _ => None,
         }
     }
     pub fn as_dictionary(&self) -> Option<Dictionary> {
         match &self.typed {
-            TypedValue::Raw(v) if *v == EMPTY_VALUE => Some(Dictionary::new(HashMap::new())),
+            TypedValue::Untyped(v) if *v == EMPTY_VALUE => Some(Dictionary::new(HashMap::new())),
             TypedValue::Container(c) => c.as_dictionary(),
             _ => None,
         }
     }
     pub fn as_array(&self) -> Option<Array> {
         match &self.typed {
-            TypedValue::Raw(v) if *v == EMPTY_VALUE => Some(Array::new(Vec::new())),
+            TypedValue::Untyped(v) if *v == EMPTY_VALUE => Some(Array::new(Vec::new())),
             TypedValue::Container(c) => c.as_array(),
             _ => None,
         }
