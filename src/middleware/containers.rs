@@ -385,6 +385,8 @@ fn store_container_mt(tx: &mut dyn TX, container: &Container) -> Result<()> {
 
 // Store a value into the database while flattening nested containers
 fn store_value(tx: &mut dyn TX, v: Value) -> Result<()> {
+    // We skip storing containers as values and instead store them as
+    // merkle trees via the Container type.
     match &v.typed {
         TypedValue::Container(inner) => store_container_mt(tx, inner)?,
         _ => tx.store_value(v).map_err(Error::Database)?,
@@ -393,18 +395,19 @@ fn store_value(tx: &mut dyn TX, v: Value) -> Result<()> {
 }
 
 fn load_value(db: &dyn db::DB, value_raw: RawValue) -> Result<Value> {
-    // We skip storing containers as values and instead store them as
-    // merkle trees via the Container type.
-    if let Ok(c) = Container::from_db(Hash(value_raw.0), db.clone_box()) {
-        Ok(Value::from(c))
-    } else {
-        match db.load_value(value_raw) {
+    // We try loading a merkle tree first, and if one
+    // doesn't exist then we try to load a shallow value from the db.
+    let root = Hash(value_raw.0);
+    match db.load_node(root) {
+        Err(e) => Err(Error::Database(e)),
+        Ok(Some(node)) => Ok(Value::from(Container::from_db_unchecked(root, db.clone_box()))),
+        Ok(None) => match db.load_value(value_raw) {
             Err(e) => Err(Error::Database(e)),
             Ok(Some(v)) => Ok(v),
             Ok(None) => Err(Error::custom(format!(
-                "Value from {value_raw} not found in DB"
+                        "Value from {value_raw} not found in DB"
             ))),
-        }
+        },
     }
 }
 
@@ -449,14 +452,17 @@ impl Container {
     fn empty_with_db(db: Box<dyn DB>) -> Self {
         Self::from_db(EMPTY_HASH, db).expect("EMPTY_HASH exists implicitly")
     }
-    pub fn from_db(root: Hash, db: Box<dyn DB>) -> Result<Self> {
-        // Make sure the root exists in the db
-        let _ = merkletree::load_node(db.as_ref(), root)?;
+    fn from_db_unchecked(root: Hash, db: Box<dyn DB>) -> Result<Self> {
         let kind = db
             .load_kind(root)
             .map_err(Error::Database)?
             .ok_or_else(|| Error::custom("container kind not found"))?;
         Ok(Self { kind, root, db })
+    }
+    pub fn from_db(root: Hash, db: Box<dyn DB>) -> Result<Self> {
+        // Make sure the root exists in the db
+        let _ = merkletree::load_node(db.as_ref(), root)?;
+        Self::from_db_unchecked(root, db)
     }
     pub fn commitment(&self) -> Hash {
         self.root
