@@ -1,7 +1,7 @@
 //! Predicate splitting for frontend AST
 //!
-//! Predicates whose statement count exceeds the middleware's
-//! `max_custom_predicate_arity` are split by conjunction type.
+//! Predicates whose statement or wildcard count exceeds the middleware's
+//! limits are split by conjunction type.
 //!
 //! Conjunctions become a chain of smaller predicates, each calling the next
 //! via a tail-position chain call. Every statement must be discharged anyway,
@@ -233,7 +233,7 @@ pub(super) fn validate_predicate_is_splittable(
     Ok(())
 }
 
-/// Split a predicate into a chain if it exceeds statement limit. Callers
+/// Split a predicate if it exceeds the statement or wildcard limit. Callers
 /// splitting many predicates under one `Params` share one cache so same-shape
 /// predicates search only once; whole-module callers should prefer
 /// [`split_predicates_if_needed`], which also parallelizes the searches.
@@ -247,7 +247,7 @@ pub fn split_predicate_if_needed(
     // Early validation
     validate_predicate_is_splittable(&pred)?;
 
-    if !needs_split(&pred) {
+    if !needs_split(&pred, params) {
         return Ok(SplitResult::whole(pred));
     }
 
@@ -267,10 +267,10 @@ pub fn split_predicate_if_needed(
     )?))
 }
 
-/// True iff a predicate's statement count exceeds what one custom predicate
-/// can hold, so it must be split into a chain.
-fn needs_split(pred: &CustomPredicateDef) -> bool {
+/// True iff a predicate exceeds the statement or wildcard cap.
+fn needs_split(pred: &CustomPredicateDef, params: &Params) -> bool {
     pred.statements.len() > Params::max_custom_predicate_arity()
+        || pred.declared_wildcards().count() > params.max_custom_predicate_wildcards
 }
 
 /// True iff a splitting disjunction should become a tree rather than a chain.
@@ -278,8 +278,7 @@ fn needs_split(pred: &CustomPredicateDef) -> bool {
 /// worst-case depth of 2 while discharging the head link's disjuncts in a
 /// single operation, so small disjunctions keep the chain split.
 fn needs_tree_split(pred: &CustomPredicateDef) -> bool {
-    needs_split(pred)
-        && pred.conjunction_type == ConjunctionType::Or
+    pred.conjunction_type == ConjunctionType::Or
         && pred.statements.len() >= 2 * Params::max_custom_predicate_arity()
 }
 
@@ -308,7 +307,7 @@ pub fn split_predicates_if_needed(
     // through whole. Typical modules have nothing to chain-split, so skip the
     // rayon dispatch entirely for them.
     let needs_chain_split =
-        |pred: &CustomPredicateDef| needs_split(pred) && !needs_tree_split(pred);
+        |pred: &CustomPredicateDef| needs_split(pred, params) && !needs_tree_split(pred);
     let inputs: Vec<Option<SplitInput>> = if predicates.iter().any(needs_chain_split) {
         predicates
             .par_iter()
@@ -2182,6 +2181,47 @@ mod tests {
         let split_result = result.unwrap();
         assert_eq!(split_result.predicates.len(), 1); // No split needed
         assert!(split_result.chain_info().is_none()); // No chain info for non-split
+    }
+
+    #[test]
+    fn test_split_needed_for_nine_wildcards_in_three_statements() {
+        for conjunction in ["AND", "OR"] {
+            let input = format!(
+                r#"
+                three_sums(A, private: B, C, D, E, F, G, H, I) = {conjunction} (
+                    Sum(A, B, C)
+                    Sum(D, E, F)
+                    Sum(G, H, I)
+                )
+                "#
+            );
+            let pred = parse_predicate(&input);
+            assert_eq!(pred.declared_wildcards().count(), 9);
+            assert!(pred.statements.len() <= Params::max_custom_predicate_arity());
+
+            // Check the default cap, equality at the cap, and a tighter cap.
+            for (wildcard_cap, expected_pieces) in [(8, 2), (9, 1), (6, 2)] {
+                let params = Params {
+                    max_custom_predicate_wildcards: wildcard_cap,
+                    ..Params::default()
+                };
+                let single = split(pred.clone(), &params).unwrap();
+                let module = split_predicates_if_needed(vec![pred.clone()], &params).unwrap();
+                for result in [&single, &module[0]] {
+                    assert_eq!(
+                        result.predicates.len(),
+                        expected_pieces,
+                        "{conjunction} with wildcard cap {wildcard_cap}"
+                    );
+                    assert_eq!(result.chain_info().is_some(), expected_pieces > 1);
+                    validate_generated_predicates(&result.predicates, &params);
+                }
+
+                let loaded = crate::lang::load_module(&input, "sums", &params, &[])
+                    .expect("module should load within the wildcard cap");
+                assert_eq!(loaded.batch.predicates().len(), expected_pieces);
+            }
+        }
     }
 
     #[test]
