@@ -1,0 +1,214 @@
+name: tests
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  bundled-test:
+    strategy:
+      matrix:
+        os: [
+          ubuntu-latest,
+          macos-15,
+          macos-14, # macOS arm runner
+          windows-latest,
+          ubuntu-24.04-arm
+        ]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v3
+      - name: Test bundled
+        run: |
+          cargo b --features bundled --release
+          cargo t --features bundled --release create
+          cargo t --features bundled --release --examples
+
+  # Exercises the lean path: --no-default-features drops bindgen + libclang and
+  # uses the committed prebuilt bindings. Skips platforms whose bindings have not
+  # been committed yet (run the generate-bindings workflow to populate them).
+  bundled-lean-test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [
+          ubuntu-latest,
+          macos-15-intel, # Intel macOS runner
+          macos-14, # macOS arm runner
+          windows-latest,
+          ubuntu-24.04-arm
+        ]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v3
+      - name: Test bundled (no bindgen)
+        shell: bash
+        run: |
+          case "${{ runner.os }}-${{ runner.arch }}" in
+            Linux-X64)     target=linux ;;
+            Linux-ARM64)   target=linux-arm ;;
+            macOS-X64)     target=macos-intel ;;
+            macOS-ARM64)   target=macos-arm ;;
+            Windows-X64)   target=windows ;;
+            *) echo "::error::Unsupported runner ${{ runner.os }}-${{ runner.arch }}"; exit 1 ;;
+          esac
+          if [ ! -f "src/bindings/$target.rs" ]; then
+            echo "::warning::No committed bindings for '$target' yet; skipping lean test. Run the generate-bindings workflow."
+            exit 0
+          fi
+          cargo b --no-default-features --features bundled --release
+          cargo t --no-default-features --features bundled --release create
+          cargo t --no-default-features --features bundled --release --examples
+
+  # Verifies the committed prebuilt bindings still match what bindgen produces on
+  # each platform, so they cannot silently drift from the pinned SCIP release.
+  bundled-bindings-drift:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [
+          ubuntu-latest,
+          macos-15-intel, # Intel macOS runner
+          macos-14, # macOS arm runner
+          windows-latest,
+          ubuntu-24.04-arm
+        ]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v3
+      - name: Regenerate and check for drift
+        shell: bash
+        env:
+          SCIP_SYS_REGENERATE_BINDINGS: "1"
+        run: |
+          case "${{ runner.os }}-${{ runner.arch }}" in
+            Linux-X64)     target=linux ;;
+            Linux-ARM64)   target=linux-arm ;;
+            macOS-X64)     target=macos-intel ;;
+            macOS-ARM64)   target=macos-arm ;;
+            Windows-X64)   target=windows ;;
+            *) echo "::error::Unsupported runner ${{ runner.os }}-${{ runner.arch }}"; exit 1 ;;
+          esac
+          tracked=true
+          git ls-files --error-unmatch "src/bindings/$target.rs" >/dev/null 2>&1 || tracked=false
+          # Regenerates src/bindings/$target.rs in place.
+          cargo b --features bundled --release
+          if [ "$tracked" = false ]; then
+            echo "::warning::No committed bindings for '$target' yet; not enforcing drift. Run the generate-bindings workflow."
+            exit 0
+          fi
+          if ! git diff --exit-code -- "src/bindings/$target.rs"; then
+            echo "::error::Prebuilt bindings for '$target' are out of date. Run the generate-bindings workflow and commit the result."
+            exit 1
+          fi
+
+#  bundled-debug-test:
+#    strategy:
+#      matrix:
+#        os: [
+#          ubuntu-latest,
+#          macos-15,
+#          macos-14, # macOS arm runner
+#          windows-latest,
+#        ]
+#    runs-on: ${{ matrix.os }}
+#    steps:
+#      - uses: actions/checkout@v3
+#      - name: Test bundled
+#        run: |
+#          cargo b --features bundled
+#          cargo t --features bundled create
+#          cargo t --features bundled --examples
+
+  from-source-test:
+    strategy:
+      matrix:
+        os: [
+          macos-15,
+          macos-14,
+          ubuntu-latest,
+          windows-latest,
+        ]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v3
+      - name: Install bison
+        if: ${{ matrix.os == 'macos-15' || matrix.os == 'macos-14' }}
+        run: |
+          brew install bison gcc
+      - name: Test from-source
+        run: |
+          cargo b --features from-source -vv
+          cargo t --features from-source create
+          cargo t --features from-source --examples
+
+  linux-system-test:
+    runs-on: ubuntu-22.04
+    env:
+      SCIP_VERSION: 10.0.2
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Install SCIP from debian package
+        run: |
+          wget --quiet --no-check-certificate https://github.com/scipopt/scip/releases/download/v${{ env.SCIP_VERSION }}/scipoptsuite_${{ env.SCIP_VERSION }}-1+jammy_amd64.deb
+          sudo apt-get update
+          sudo apt install -y ./scipoptsuite_${{ env.SCIP_VERSION }}-1+jammy_amd64.deb
+
+      - name: Verify SCIP headers are in standard locations
+        run: |
+          echo "Checking for headers in standard locations..."
+          ls -la /usr/include/scip/ || echo "No headers in /usr/include/scip"
+          ls -la /usr/local/include/scip/ || echo "No headers in /usr/local/include/scip"
+
+      - name: Build and test (should find headers in system directories)
+        run: |
+          cargo b -vv
+          cargo t create
+          cargo t --examples
+
+  linux-conda-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: conda-incubator/setup-miniconda@v2
+        with:
+          activate-environment: test
+          allow-softlinks: true
+
+      - name: Install dependencies (SCIPOptSuite)
+        run: |
+          conda install -y --prefix $CONDA/envs/test --channel conda-forge scip=10.0.2
+          echo "LD_LIBRARY_PATH=$CONDA/envs/test/lib" >> "${GITHUB_ENV}"
+          echo "CONDA_PREFIX=$CONDA/envs/test" >> "${GITHUB_ENV}"
+
+      - name: Test
+        run: |
+          cargo b -vv
+          cargo t create
+          cargo t --examples
+
+#  from-source-linux-arm-test:
+#    runs-on: ubuntu-latest
+#    steps:
+#      - uses: actions/checkout@v3
+#
+#      - name: Set up QEMU for ARM64 emulation
+#        uses: docker/setup-qemu-action@v2
+#        with:
+#          platforms: arm64
+#
+#      - name: Run test in ARM64 environment
+#        run: |
+#          docker run --rm --platform linux/arm64 \
+#            -v ${{ github.workspace }}:/workspace \
+#            -w /workspace \
+#            rust:latest /bin/bash -c "
+#              cargo build --features from-source -vv
+#              cargo test --features from-source create
+#              cargo test --features from-source --examples
+#            "

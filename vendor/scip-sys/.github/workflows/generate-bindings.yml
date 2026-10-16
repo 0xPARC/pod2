@@ -1,0 +1,71 @@
+name: generate-bindings
+
+# Regenerates the prebuilt bundled bindings (src/bindings/<target>.rs) on each
+# supported platform and opens a PR with the result. The bundled SCIP release is
+# pinned, so these bindings only need regenerating when the pinned version (or
+# the bindgen config) changes. Run this manually after bumping the bundled SCIP.
+on:
+  workflow_dispatch:
+
+jobs:
+  generate:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: linux
+          - os: ubuntu-24.04-arm
+            target: linux-arm
+          - os: macos-15-intel # Intel macOS runner
+            target: macos-intel
+          - os: macos-14 # macOS arm runner
+            target: macos-arm
+          - os: windows-latest
+            target: windows
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Regenerate bundled bindings
+        shell: bash
+        env:
+          # Forces build.rs to run bindgen and write src/bindings/<target>.rs,
+          # even when a prebuilt file already exists.
+          SCIP_SYS_REGENERATE_BINDINGS: "1"
+        run: cargo build --features bundled
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bindings-${{ matrix.target }}
+          path: src/bindings/${{ matrix.target }}.rs
+          if-no-files-found: error
+
+  open-pr:
+    needs: generate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - name: Collect regenerated bindings
+        run: |
+          mkdir -p src/bindings
+          for d in artifacts/bindings-*; do
+            cp "$d"/*.rs src/bindings/
+          done
+          ls -la src/bindings
+      - uses: peter-evans/create-pull-request@v6
+        with:
+          commit-message: "Regenerate prebuilt bundled bindings"
+          title: "Regenerate prebuilt bundled bindings"
+          body: |
+            Automated regeneration of the per-platform prebuilt bundled bindings
+            (`src/bindings/<target>.rs`) via the `generate-bindings` workflow.
+          base: main
+          branch: update-bundled-bindings
+          delete-branch: true
+          # Only commit the bindings, never the downloaded artifacts/ directory.
+          add-paths: src/bindings/*.rs
