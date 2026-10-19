@@ -12,12 +12,11 @@ path = "src/lib.rs"
 [dependencies]
 hex = "0.4.3"
 itertools = "0.14.0"
-strum = "0.26"
 strum_macros = "0.26"
 anyhow = "1.0.56"
 dyn-clone = "1.0.18"
 log = "0.4"
-env_logger = "0.11"
+env_logger = { version = "0.11", optional = true }
 lazy_static = "1.5.0"
 thiserror = { version = "2.0.12" }
 # enabled by features:
@@ -37,7 +36,6 @@ hashbrown = { version = "0.14.3", default-features = false, features = [
 ] }
 pest = "2.8.0"
 pest_derive = "2.8.0"
-petgraph = "0.6"
 rayon = "1.10"
 directories = { version = "6.0.0", optional = true }
 minicbor-serde = { version = "0.5.0", features = ["std"], optional = true }
@@ -74,6 +72,7 @@ good_lp = { version = "1.8", default-features = false, features = [
   "scip",
   "scip_bundled",
 ] }
+env_logger = "0.11"
 
 [build-dependencies]
 vergen-gitcl = { version = "1.0.0", features = ["build"], optional = true }
@@ -83,7 +82,7 @@ default = ["backend_plonky2", "zk", "mem_cache"]
 backend_plonky2 = ["plonky2"]
 zk = []
 metrics = []
-time = []
+time = ["dep:env_logger"]
 examples = []
 disk_cache = ["directories", "minicbor-serde"]
 mem_cache = []
