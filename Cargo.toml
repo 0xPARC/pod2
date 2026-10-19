@@ -76,7 +76,7 @@ good_lp = { version = "1.8", default-features = false, features = [
 ] }
 
 [build-dependencies]
-vergen-gitcl = { version = "1.0.0", features = ["build"] }
+vergen-gitcl = { version = "1.0.0", features = ["build"], optional = true }
 
 [features]
 default = ["backend_plonky2", "zk", "mem_cache"]

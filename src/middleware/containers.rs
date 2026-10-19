@@ -400,12 +400,15 @@ fn load_value(db: &dyn db::DB, value_raw: RawValue) -> Result<Value> {
     let root = Hash(value_raw.0);
     match db.load_node(root) {
         Err(e) => Err(Error::Database(e)),
-        Ok(Some(node)) => Ok(Value::from(Container::from_db_unchecked(root, db.clone_box()))),
+        Ok(Some(_node)) => Ok(Value::from(Container::from_db_unchecked(
+            root,
+            db.clone_box(),
+        )?)),
         Ok(None) => match db.load_value(value_raw) {
             Err(e) => Err(Error::Database(e)),
             Ok(Some(v)) => Ok(v),
             Ok(None) => Err(Error::custom(format!(
-                        "Value from {value_raw} not found in DB"
+                "Value from {value_raw} not found in DB"
             ))),
         },
     }
