@@ -397,7 +397,7 @@ fn standard_gates(config: &CircuitConfig) -> Vec<GateRef<F, D>> {
             >::new_from_config(config),
         ),
         GateRef::new(
-            crate::backends::plonky2::primitives::ec::gates::curve::ECAddXuGate::new(),
+            crate::backends::plonky2::primitives::ec::gates::curve::ECAddXuGate,
         ),
         GateRef::new(
             crate::backends::plonky2::primitives::ec::gates::curve::ECAddHomogOffsetGate::new_from_config(config),
