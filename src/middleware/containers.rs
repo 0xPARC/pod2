@@ -395,18 +395,17 @@ fn store_value(tx: &mut dyn TX, v: Value) -> Result<()> {
 fn load_value(db: &dyn db::DB, value_raw: RawValue) -> Result<Value> {
     match db.load_value(value_raw) {
         Err(e) => Err(Error::Database(e)),
-        Ok(Some(v)) => Ok(v),
-        Ok(None) => {
-            // We skip storing containers as values and instead store them as
-            // merkle trees via the Container type.
-            if let Ok(c) = Container::from_db(Hash(value_raw.0), db.clone_box()) {
-                Ok(Value::from(c))
-            } else {
-                Err(Error::custom(format!(
-                    "Value from {value_raw} not found in DB"
-                )))
-            }
-        }
+        Ok(Some(_node)) => Ok(Value::from(Container::from_db_unchecked(
+            root,
+            db.clone_box(),
+        )?)),
+        Ok(None) => match db.load_value(value_raw) {
+            Err(e) => Err(Error::Database(e)),
+            Ok(Some(v)) => Ok(v),
+            Ok(None) => Err(Error::custom(format!(
+                "Value from {value_raw} not found in DB"
+            ))),
+        },
     }
 }
 
