@@ -84,7 +84,7 @@ fn fmt_statement_index(
         if f.alternate() {
             write!(f, "{:#}", &st)?;
         } else {
-            write!(f, "{}", &st)?;
+            write!(f, "{}", st)?;
         }
         write!(f, " <- ")?;
         if f.alternate() {
