@@ -116,27 +116,6 @@ where
     OperationArg::try_from((container, key))
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::dict;
-
-    #[test]
-    fn missing_dictionary_entry_returns_error() {
-        let dictionary = dict!({"present" => 1});
-
-        entry(&dictionary, "missing").expect_err("missing dictionary key should be rejected");
-    }
-
-    #[test]
-    fn invalid_array_index_returns_error() {
-        let array = Array::new(vec![Value::from(1)]);
-
-        entry(&array, -1).expect_err("negative array index should be rejected");
-        entry(&array, 1).expect_err("missing array index should be rejected");
-    }
-}
-
 impl From<Statement> for OperationArg {
     fn from(s: Statement) -> Self {
         Self::Statement(s)
@@ -310,5 +289,26 @@ impl Operation {
             Value::from(signed_dict.public_key),
             signed_dict.signature.clone(),
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::dict;
+
+    #[test]
+    fn missing_dictionary_entry_returns_error() {
+        let dictionary = dict!({"present" => 1});
+
+        entry(&dictionary, "missing").expect_err("missing dictionary key should be rejected");
+    }
+
+    #[test]
+    fn invalid_array_index_returns_error() {
+        let array = Array::new(vec![Value::from(1)]);
+
+        entry(&array, -1).expect_err("negative array index should be rejected");
+        entry(&array, 1).expect_err("missing array index should be rejected");
     }
 }
