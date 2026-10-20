@@ -180,7 +180,7 @@ pub(super) fn kahn_bin_packing(
                 .0;
             (i, true)
         } else {
-            let segment_start = state.a;
+            let segment_start = state.segment_start;
             let mut best_fit: Option<usize> = None;
             let mut best_fit_prio = (usize::MAX, usize::MAX);
             let mut best_overall = 0_usize;
@@ -221,7 +221,7 @@ pub(super) fn kahn_bin_packing(
         let deps = &input.dep_edges[s];
         if opens_new_segment {
             state.reset();
-            state.a = ordering.len();
+            state.segment_start = ordering.len();
         }
         state.commit_extend(
             s,
@@ -287,7 +287,7 @@ fn tree_imports_ok(
 /// remaining values track sets where we need to check for duplicates.
 #[derive(Default)]
 struct GreedyState {
-    a: usize,
+    segment_start: usize,
     totals: ResourceTotals,
     distinct_cps: Vec<CustomPredicateId>,
     prev_pod_producers: Vec<usize>,
@@ -306,7 +306,7 @@ struct GreedyState {
     /// On segment reset, entries for the previous segment's members
     /// are stale but irrelevant: the export check only looks at
     /// statements in the current segment, identified via `pos_built >=
-    /// state.a`.
+    /// state.segment_start`.
     unfinished_consumers: Vec<usize>,
     /// Scratch buffers used inside [`can_extend`] for deduplication.
     /// Cleared on each call to avoid churning allocations.
@@ -322,7 +322,7 @@ struct GreedyState {
 
 impl GreedyState {
     fn reset(&mut self) {
-        self.a = 0;
+        self.segment_start = 0;
         self.totals = ResourceTotals::default();
         self.distinct_cps.clear();
         self.prev_pod_producers.clear();
@@ -363,7 +363,7 @@ impl GreedyState {
         for dep in deps {
             if let AbstractDep::Internal(d) = dep {
                 if pos_of[*d] != usize::MAX
-                    && pos_of[*d] >= self.a
+                    && pos_of[*d] >= self.segment_start
                     && !self.scratch_seen_segment_deps.contains(d)
                 {
                     self.scratch_seen_segment_deps.push(*d);
@@ -397,7 +397,7 @@ impl GreedyState {
         for dep in deps {
             match dep {
                 AbstractDep::Internal(d) => {
-                    if pos_of[*d] < self.a
+                    if pos_of[*d] < self.segment_start
                         && !self.prev_pod_producers.contains(d)
                         && !self.scratch_new_producers.contains(d)
                     {
@@ -420,7 +420,13 @@ impl GreedyState {
         let n_producers = self.prev_pod_producers.len() + self.scratch_new_producers.len();
         let n_ext_imports = self.external_imports.len() + self.scratch_new_ext_imports.len();
         let n_ext_pods = self.external_pods.len() + self.scratch_new_ext_pods.len();
-        if !tree_imports_ok(self.a == 0, n_producers, n_ext_imports, n_ext_pods, params) {
+        if !tree_imports_ok(
+            self.segment_start == 0,
+            n_producers,
+            n_ext_imports,
+            n_ext_pods,
+            params,
+        ) {
             return None;
         }
         // Only chain imports add statements beyond assigned nodes.
@@ -460,7 +466,7 @@ impl GreedyState {
         for dep in deps {
             if let AbstractDep::Internal(d) = dep {
                 if pos_of[*d] != usize::MAX
-                    && pos_of[*d] >= self.a
+                    && pos_of[*d] >= self.segment_start
                     && !self.scratch_seen_segment_deps.contains(d)
                 {
                     self.scratch_seen_segment_deps.push(*d);
@@ -482,7 +488,7 @@ impl GreedyState {
         for dep in deps {
             match dep {
                 AbstractDep::Internal(d) => {
-                    if pos_of[*d] < self.a && !self.prev_pod_producers.contains(d) {
+                    if pos_of[*d] < self.segment_start && !self.prev_pod_producers.contains(d) {
                         self.prev_pod_producers.push(*d);
                     }
                 }
@@ -521,11 +527,16 @@ fn random_priority(rng: &mut ChaCha20Rng, n: usize) -> Vec<usize> {
 }
 
 fn external_opening_pod(input: &InputShape, statement: usize) -> Option<usize> {
+    // In symbolic inputs, a single external dependency can also belong to a
+    // consuming operation; dependency shape alone does not identify an opening.
     if !input.costs[statement].is_external_opening {
         return None;
     }
     match input.dep_edges[statement].as_slice() {
         [AbstractDep::External { pod, .. }] => Some(*pod),
+        // For symbolic graphs with shared external dependencies, the republish
+        // prepass preserves the opening flag when rewriting its dependency to
+        // Internal(synthetic). Prioritize the synthetic opening in that case.
         _ => None,
     }
 }
@@ -1208,6 +1219,88 @@ mod tests {
         let out = partition(&input).expect("Open plus consumer should fit");
         assert_eq!(out.pod_count, 1);
         assert_eq!(out.pod_statements, vec![vec![0, 1]]);
+    }
+
+    #[test]
+    fn republished_opening_defers_priority_to_synthetic_node() {
+        use crate::{
+            frontend::{
+                multi_pod::{
+                    build_shape_and_index,
+                    deps::{DependencyGraph, ExternalDependency, StatementSource},
+                },
+                Operation, OperationArg,
+            },
+            middleware::{
+                NativeOperation, OperationAux, OperationType, Statement, Value, ValueRef,
+            },
+        };
+
+        let shared = ExternalDependency {
+            pod_index: 0,
+            statement: Statement::Lt(
+                ValueRef::Literal(Value::from(1)),
+                ValueRef::Literal(Value::from(2)),
+            ),
+        };
+        let separate = ExternalDependency {
+            pod_index: 1,
+            statement: Statement::Lt(
+                ValueRef::Literal(Value::from(3)),
+                ValueRef::Literal(Value::from(4)),
+            ),
+        };
+        let consume = |ext: &ExternalDependency| {
+            Operation(
+                OperationType::Native(NativeOperation::LtToNotEqual),
+                vec![OperationArg::Statement(ext.statement.clone())],
+                OperationAux::None,
+            )
+        };
+        // Exercise the symbolic prepass directly, without builder
+        // deduplication or auto-imports: an opening and another operation
+        // share an external statement, triggering a synthetic republish.
+        // The separate POD keeps the last consumer out of republish bundling.
+        let operations = vec![
+            Operation(
+                OperationType::Native(NativeOperation::OpenInputStatement),
+                vec![],
+                OperationAux::None,
+            ),
+            consume(&shared),
+            consume(&separate),
+        ];
+        let deps = DependencyGraph {
+            statement_deps: vec![
+                vec![StatementSource::External(shared.clone())],
+                vec![StatementSource::External(shared)],
+                vec![StatementSource::External(separate)],
+            ],
+        };
+        let (input, _) = build_shape_and_index(&operations, &deps, &[1, 2], &Params::default());
+        let synthetic = operations.len();
+
+        assert_eq!(input.num_statements(), synthetic + 1);
+        assert!(input.costs[0].is_external_opening);
+        assert_eq!(input.dep_edges[0], vec![AbstractDep::Internal(synthetic)]);
+        assert_eq!(input.dep_edges[1], vec![AbstractDep::Internal(synthetic)]);
+        assert_eq!(external_opening_pod(&input, 0), None);
+        assert!(input.costs[synthetic].is_external_opening);
+        assert_eq!(external_opening_pod(&input, synthetic), Some(0));
+
+        assert!(!input.costs[2].is_external_opening);
+        assert!(matches!(
+            input.dep_edges[2].as_slice(),
+            [AbstractDep::External { pod: 1, .. }]
+        ));
+        assert_eq!(external_opening_pod(&input, 2), None);
+
+        let priority = external_opening_priority(&input).expect("synthetic opening gets priority");
+        for original in 0..operations.len() {
+            assert!(priority[synthetic] < priority[original]);
+        }
+        let ordering = kahn_with_priority(&input, &priority).expect("dependencies remain acyclic");
+        assert_eq!(ordering[0], synthetic);
     }
 
     #[test]

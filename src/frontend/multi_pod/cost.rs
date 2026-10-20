@@ -27,8 +27,10 @@ impl From<&CustomPredicateRef> for CustomPredicateId {
     }
 }
 
-/// Resource cost of a single operation. Each field corresponds to a
-/// per-POD limit in `Params`.
+/// Resource costs and scheduling metadata for a single operation.
+/// Numeric fields are additive resource quantities corresponding to
+/// per-POD limits in `Params`; `is_external_opening` classifies the
+/// operation for scheduling and is not accumulated into resource totals.
 ///
 /// Merkle proofs and state transitions are split into `_small` and
 /// `_medium` because the POD circuit exposes two slot pools per category
@@ -47,6 +49,7 @@ impl From<&CustomPredicateRef> for CustomPredicateId {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct OperationCost {
     /// True for a statement copied directly from an external input POD.
+    /// Used to prioritize openings early in the chain, not as a resource count.
     #[serde(default)]
     pub is_external_opening: bool,
     /// `Contains`-family proofs on a shallow tree (depth <=
