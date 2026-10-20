@@ -142,11 +142,12 @@ impl Operation {
             .iter()
             .flat_map(|arg| match arg {
                 OperationArg::None => None,
-                OperationArg::Index(i) => {
-                    let st: Result<crate::middleware::Statement> =
-                        statements[*i].clone().try_into();
-                    Some(st)
-                }
+                OperationArg::Index(i) => Some(
+                    statements
+                        .get(*i)
+                        .ok_or(Error::custom(format!("Missing statement index {}", i)))
+                        .and_then(|st| st.clone().try_into()),
+                ),
             })
             .collect::<Result<Vec<_>>>()?;
         let deref_aux = match self.2 {

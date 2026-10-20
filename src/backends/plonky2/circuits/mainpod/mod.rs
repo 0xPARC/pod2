@@ -511,6 +511,11 @@ fn append_container_proofs_operation_aux_table_circuit(
     }
 }
 
+struct InputStatementRow {
+    statement: StatementTarget,
+    hash: HashOutTarget,
+}
+
 /// Builds the configured input statement region from `OpenInputStatement` targets.
 ///
 /// Each row verifies the raw statement against the input POD's statements root and returns the
@@ -521,7 +526,7 @@ fn build_input_statement_region_circuit(
     builder: &mut CircuitBuilder,
     input_pod_table: &[InputPodEntryTarget],
     open_input_statements: &[OpenInputStatementTarget],
-) -> Vec<(StatementTarget, HashOutTarget)> {
+) -> Vec<InputStatementRow> {
     if !open_input_statements.is_empty() {
         assert!(!input_pod_table.is_empty());
     }
@@ -555,8 +560,11 @@ fn build_input_statement_region_circuit(
             is_intro,
             &pod.vd_hash,
         );
-        let st_hash = st.hash(builder);
-        input_statement_rows.push((st, st_hash));
+        let hash = st.hash(builder);
+        input_statement_rows.push(InputStatementRow {
+            statement: st,
+            hash,
+        });
         measure_gates_end!(builder, measure);
     }
     input_statement_rows
@@ -1810,7 +1818,7 @@ fn verify_main_pod_circuit(
     // predicate statements
     let st_none = StatementTarget::new_native(builder, params, NativePredicate::None, &[]);
     let statements = iter::once(&st_none)
-        .chain(input_statement_rows.iter().map(|(st, _)| st))
+        .chain(input_statement_rows.iter().map(|row| &row.statement))
         .chain(main_pod.statements.iter());
 
     // Precompute flattened statements and their hashes once, then resolve operation args using
@@ -1821,7 +1829,7 @@ fn verify_main_pod_circuit(
     // None row and universal rows here.
     let none_hash = builder.hash_n_to_hash_no_pad::<PoseidonHash>(statement_flatteneds[0].clone());
     let statement_hashes: Vec<HashOutTarget> = iter::once(none_hash)
-        .chain(input_statement_rows.iter().map(|(_, hash)| *hash))
+        .chain(input_statement_rows.iter().map(|row| row.hash))
         .chain(
             statement_flatteneds[1 + num_input_statement_rows..]
                 .iter()
@@ -1837,7 +1845,7 @@ fn verify_main_pod_circuit(
 
     // Input statement rows precede universal slots, so process their public-statement insertions
     // first.
-    for (is_pub, pub_insert_idx, (_, input_statement_hash)) in izip!(
+    for (is_pub, pub_insert_idx, input_statement_row) in izip!(
         &main_pod.statements_is_pub[..num_input_statement_rows],
         &main_pod.pub_insert_idx[..num_input_statement_rows],
         &input_statement_rows
@@ -1849,7 +1857,7 @@ fn verify_main_pod_circuit(
             &sts_roots_table,
             *is_pub,
             *pub_insert_idx,
-            *input_statement_hash,
+            input_statement_row.hash,
             sts_root,
         );
         measure_gates_end!(builder, measure);
@@ -2102,6 +2110,16 @@ impl MainPodVerifyTarget {
         if params.max_open_input_statement_ops > 0 {
             assert!(params.max_input_pods > 0);
         }
+        // Operation args index the whole statement table, and `IndexTarget` supports at most 256
+        // entries.
+        assert!(
+            params.statement_table_size() <= 256,
+            "statement table has {} rows (1 + max_open_input_statement_ops {} + max_statements {}), \
+             but operation args can index at most 256",
+            params.statement_table_size(),
+            params.max_open_input_statement_ops,
+            params.max_statements
+        );
         MainPodVerifyTarget {
             params: params.clone(),
             vds_root: builder.add_virtual_hash(),

@@ -956,6 +956,8 @@ impl MainPodBuilder {
 #[serde(try_from = "SerializedMainPod", into = "SerializedMainPod")]
 pub struct MainPod {
     pub pod: Box<dyn middleware::Pod>,
+    /// In the order of the POD's public statements tree, which `op_input_st` indexes into:
+    /// statements inherited from input POD 0, then imports, then statements deduced in this POD.
     pub public_statements: Vec<Statement>,
     pub params: Params,
 }

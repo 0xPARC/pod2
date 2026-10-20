@@ -109,6 +109,11 @@ impl DependencyGraph {
                         pod_index: *pod_index,
                         statement: statements[idx].clone(),
                     }));
+                } else {
+                    unreachable!(
+                        "OpenInputStatement operation without OpenInputStatement aux: {:?}",
+                        op.2
+                    );
                 }
             }
 

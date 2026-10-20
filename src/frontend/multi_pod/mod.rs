@@ -267,13 +267,7 @@ impl MultiPodBuilder {
     /// Pre-solve resource summary. Aggregates per-statement costs against
     /// per-POD limits and identifies the bottleneck resource.
     pub fn resource_summary(&self) -> ResourceSummary {
-        let costs: Vec<OperationCost> = self
-            .builder
-            .operations
-            .iter()
-            .map(|op| OperationCost::from_operation(op, &self.params))
-            .collect();
-        ResourceSummary::from_costs(costs.iter(), &self.params)
+        ResourceSummary::from_input(&self.input_shape())
     }
 
     /// Solve the partitioning problem with the production heuristic.
@@ -1208,8 +1202,8 @@ mod tests {
                     );
                 }
 
-                // Imports no longer consume universal slots, so greedy matches the DP optimum for
-                // this ordering (K=13). Pin both results to catch regressions.
+                // Imports use input statement rows rather than universal slots, so greedy cuts reach
+                // the DP optimum on this ordering (K=13). Pin both results to catch regressions.
                 let identity: Vec<usize> = (0..shape.num_statements()).collect();
                 let bp_ordering =
                     partition::kahn_bin_packing(&shape, &identity).expect("DAG must be acyclic");

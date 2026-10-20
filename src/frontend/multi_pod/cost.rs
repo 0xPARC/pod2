@@ -54,7 +54,6 @@ pub struct OperationCost {
     pub is_external_opening: bool,
     /// The statement is materialized in the input statement region rather than a
     /// universal statement slot.
-    #[serde(default)]
     pub uses_input_statement_row: bool,
     /// `Contains`-family proofs on a shallow tree (depth <=
     /// `max_depth_small`). May occupy either a small or medium state slot.

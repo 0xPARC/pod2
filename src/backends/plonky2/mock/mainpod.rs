@@ -305,9 +305,13 @@ impl Pod for MockMainPod {
             }
         }
 
-        for (st, op) in zip_eq(&self.statements[universal_start..], &self.operations) {
+        // Like the circuit, a universal operation may only refer to None, input statement rows and
+        // earlier universal statements.
+        for (j, (st, op)) in
+            zip_eq(&self.statements[universal_start..], &self.operations).enumerate()
+        {
             let op = op.deref(
-                &self.statements,
+                &self.statements[..universal_start + j],
                 &self.signatures,
                 &self.merkle_proofs,
                 &self.merkle_transition_proofs,
@@ -548,6 +552,26 @@ pub mod tests {
         let mut missing_operation = pod;
         missing_operation.operations.clear();
         assert!(missing_operation.verify().is_err());
+    }
+
+    #[test]
+    fn local_operations_only_reference_earlier_rows() {
+        use crate::backends::plonky2::mainpod::OperationArg;
+
+        // Row 3 derives Equal(balance, 42) from the imported Contains in row 1 and the None row 0.
+        let pod = mock_pod_with_imported_statement();
+        assert_eq!(pod.operations[0].1[1], OperationArg::Index(0));
+        assert!(pod.statements[4].is_none());
+
+        // Row 4 is padding with the same None content as row 0, so only the row order rejects
+        // citing it from row 3.
+        let mut forward_reference = pod.clone();
+        forward_reference.operations[0].1[1] = OperationArg::Index(4);
+        assert!(forward_reference.verify().is_err());
+
+        let mut out_of_range = pod;
+        out_of_range.operations[0].1[1] = OperationArg::Index(99);
+        assert!(out_of_range.verify().is_err());
     }
 
     pub(crate) fn witness_input_with_imported_statement() -> (

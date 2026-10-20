@@ -89,17 +89,22 @@ pub fn partition(input: &InputShape) -> Option<OutputShape> {
 
 /// Estimated lower bound on K. Returns the largest per-resource
 /// `ceil(total_r / cap_r)` across statement count, summable resources,
-/// and distinct custom-predicate IDs; no partition can beat that. Used
-/// by [`partition`] to early-exit ordering search once a candidate
-/// matches.
+/// distinct custom-predicate IDs and distinct external imports; no
+/// partition can beat that. Used by [`partition`] to early-exit ordering
+/// search once a candidate matches.
 ///
-/// This estimate is loose because it does not account for the maximum
-/// number of imported statements per POD, which might result in a higher
-/// K than the estimate.
+/// This estimate is loose because it does not account for statements
+/// imported from the previous POD in the chain, which also use input
+/// statement rows and might result in a higher K than the estimate.
 fn resource_lower_bound_k(input: &InputShape) -> usize {
+    // Every external statement needs an input statement row in at least one POD.
+    let external_import_bound = input
+        .num_external_statements()
+        .div_ceil(input.params.max_open_input_statement_ops.max(1));
     // Resource totals omit imports, but every nonempty problem still needs at least one POD.
     ResourceTotals::accumulate(input.costs.iter())
         .min_pods(&input.params)
+        .max(external_import_bound)
         .max(usize::from(!input.costs.is_empty()))
 }
 
@@ -1252,6 +1257,7 @@ mod tests {
             statement_pod: vec![0; n],
             params,
         };
+        assert_eq!(resource_lower_bound_k(&input), 2);
         let out = partition(&input).expect("should partition");
         assert!(
             out.pod_count >= 2,
