@@ -117,7 +117,6 @@ impl<'a> Read for MemTx<'a> {
 
 impl<'a> TX for MemTx<'a> {
     fn store_value(&mut self, value: Value) -> anyhow::Result<()> {
-        println!("DBG store_value {}", value);
         let value_raw = value.raw();
         if let Some(old_value) = self.load_value(value_raw)? {
             // Never overwrite an old value with a RawValue.  Skip overwrite if old value is
@@ -145,7 +144,6 @@ impl<'a> TX for MemTx<'a> {
         for (k, v) in self.tmp.kinds {
             self.db.kinds.insert(k, v);
         }
-        // println!("DBG db {:?}", self.db);
         Ok(())
     }
 }
