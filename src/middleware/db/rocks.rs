@@ -145,11 +145,11 @@ impl<'a> TX for RocksTx<'a> {
         if let Some(old_value_bytes) = self.tx.get(&value_key)? {
             // Never overwrite an old value with a RawValue.  Skip overwrite if old value is
             // already non-RawValue.
-            if value.is_raw() || !old_value_bytes.is_empty() {
+            if value.is_untyped() || !old_value_bytes.is_empty() {
                 return Ok(());
             }
         };
-        let value_bytes = if value.is_raw() {
+        let value_bytes = if value.is_untyped() {
             // For RawValue we store an empty vector because it's a duplicate of the key.
             // This way we can easily check for RawValue without decoding.
             vec![]

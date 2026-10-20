@@ -422,9 +422,9 @@ impl Value {
     pub fn raw(&self) -> RawValue {
         self.raw
     }
-    /// Returns true if the typed value is RawValue, which means it's a generic value with no type
+    /// Returns true if the typed value not typed, which means it's a generic value with no type
     /// information and no extra value data.
-    pub(crate) fn is_untyped(&self) -> bool {
+    pub fn is_untyped(&self) -> bool {
         matches!(self.typed, TypedValue::Untyped(_))
     }
     pub fn as_raw(&self) -> RawValue {

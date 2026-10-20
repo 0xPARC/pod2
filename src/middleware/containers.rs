@@ -1229,7 +1229,9 @@ mod tests {
     fn dictionary_remains_readable_beside_its_raw_commitment() {
         let snapshot = part_snapshot();
         let identifier = Value::from(snapshot.commitment());
-        assert!(serde_json::to_string(&identifier).unwrap().contains("Raw"));
+        assert!(serde_json::to_string(&identifier)
+            .unwrap()
+            .contains("Untyped"));
         assert_eq!(identifier.raw(), Value::from(snapshot.clone()).raw());
 
         let mut certificate = certificate(&snapshot);
