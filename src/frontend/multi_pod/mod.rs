@@ -788,7 +788,6 @@ fn build_shape_and_index(
         .collect();
     costs.extend((0..n_synth).map(|_| OperationCost {
         is_external_opening: true,
-        uses_input_statement_row: true,
         ..OperationCost::default()
     }));
 

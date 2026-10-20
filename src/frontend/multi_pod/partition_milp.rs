@@ -231,7 +231,7 @@ pub fn solve_for_k(input: &InputShape, k: usize) -> Option<OutputShape> {
     // constrained separately by (7b).
     for p in 0..k {
         let assign_sum: Expression = (0..n)
-            .filter(|&s| !input.costs[s].uses_input_statement_row)
+            .filter(|&s| !input.costs[s].is_external_opening)
             .map(|s| v.assign[s][p])
             .sum();
         model.add_constraint(constraint!(
@@ -632,7 +632,7 @@ mod tests {
         let input = InputShape {
             costs: vec![
                 OperationCost {
-                    uses_input_statement_row: true,
+                    is_external_opening: true,
                     ..OperationCost::default()
                 },
                 OperationCost::default(),

@@ -30,7 +30,8 @@ impl From<&CustomPredicateRef> for CustomPredicateId {
 /// Resource costs and scheduling metadata for a single operation.
 /// Numeric fields are additive resource quantities corresponding to
 /// per-POD limits in `Params`; `is_external_opening` classifies the
-/// operation for scheduling and is not accumulated into resource totals.
+/// operation, which decides both where its statement lives in the
+/// statement table and how early it is scheduled.
 ///
 /// Merkle proofs and state transitions are split into `_small` and
 /// `_medium` because the POD circuit exposes two slot pools per category
@@ -49,12 +50,9 @@ impl From<&CustomPredicateRef> for CustomPredicateId {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct OperationCost {
     /// True for a statement copied directly from an external input POD.
-    /// Used to prioritize openings early in the chain, not as a resource count.
-    #[serde(default)]
+    /// It is materialized in the input statement region rather than a
+    /// universal statement slot, and is prioritized early in the chain.
     pub is_external_opening: bool,
-    /// The statement is materialized in the input statement region rather than a
-    /// universal statement slot.
-    pub uses_input_statement_row: bool,
     /// `Contains`-family proofs on a shallow tree (depth <=
     /// `max_depth_small`). May occupy either a small or medium state slot.
     pub merkle_proofs_small: usize,
@@ -172,7 +170,7 @@ impl ResourceTotals {
     /// (typically by deduping CP IDs in its own structure) before
     /// calling [`fits_in_pod`].
     pub fn add(&mut self, cost: &OperationCost) {
-        self.num_universal_statements += usize::from(!cost.uses_input_statement_row);
+        self.num_universal_statements += usize::from(!cost.is_external_opening);
         self.merkle_proofs_small += cost.merkle_proofs_small;
         self.merkle_proofs_medium += cost.merkle_proofs_medium;
         self.merkle_state_transitions_small += cost.merkle_state_transitions_small;
@@ -209,10 +207,7 @@ impl OperationCost {
     /// depth; operations on trees deeper than
     /// `params.containers.max_depth_small` are charged to the medium pool.
     pub fn from_operation(op: &Operation, params: &Params) -> Self {
-        let mut cost = Self {
-            uses_input_statement_row: op.is_open_input_statement(),
-            ..Self::default()
-        };
+        let mut cost = Self::default();
         let max_depth_small = params.containers.max_depth_small;
 
         match &op.0 {
@@ -363,7 +358,7 @@ mod tests {
             &params,
         );
 
-        assert!(cost.uses_input_statement_row);
+        assert!(cost.is_external_opening);
         let totals = ResourceTotals::accumulate([&cost]);
         assert_eq!(totals.num_universal_statements, 0);
     }
@@ -386,16 +381,6 @@ mod tests {
         );
         assert_eq!(pk.public_key, 1);
         assert_eq!(pk.signed_by, 0);
-    }
-
-    #[test]
-    fn open_input_is_marked_for_early_scheduling() {
-        let cost = OperationCost::from_operation(
-            &native_op(NativeOperation::OpenInputStatement, OperationAux::None),
-            &Params::default(),
-        );
-
-        assert!(cost.is_external_opening);
     }
 
     /// Contains on a tree at depth `<= max_depth_small` is small-eligible;

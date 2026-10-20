@@ -567,7 +567,7 @@ fn identify_overflow(
     let categories: &[(&'static str, usize, usize)] = &[
         (
             "universal statements",
-            usize::from(!c.uses_input_statement_row),
+            usize::from(!c.is_external_opening),
             params.max_statements,
         ),
         ("input pods", input_pods, params.max_input_pods),
@@ -709,7 +709,7 @@ mod tests {
         let input = InputShape {
             costs: vec![
                 OperationCost {
-                    uses_input_statement_row: true,
+                    is_external_opening: true,
                     ..OperationCost::default()
                 },
                 OperationCost::default(),

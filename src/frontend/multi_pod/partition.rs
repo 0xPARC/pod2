@@ -1138,7 +1138,7 @@ mod tests {
         let input = InputShape {
             costs: vec![
                 OperationCost {
-                    uses_input_statement_row: true,
+                    is_external_opening: true,
                     ..OperationCost::default()
                 };
                 2
@@ -1187,7 +1187,7 @@ mod tests {
         let input = InputShape {
             costs: vec![
                 OperationCost {
-                    uses_input_statement_row: true,
+                    is_external_opening: true,
                     ..OperationCost::default()
                 },
                 OperationCost::default(),

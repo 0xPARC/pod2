@@ -1,7 +1,7 @@
 {
   "costs": [
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -12,7 +12,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -23,7 +23,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -34,7 +34,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 1,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -45,7 +45,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -58,7 +58,7 @@
       ]
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 1,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -69,7 +69,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 1,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -80,7 +80,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -91,7 +91,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -104,7 +104,7 @@
       ]
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 1,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -115,7 +115,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -128,7 +128,7 @@
       ]
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 1,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -139,7 +139,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 1,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -150,7 +150,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -161,7 +161,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -174,7 +174,7 @@
       ]
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 1,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -185,7 +185,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -198,7 +198,7 @@
       ]
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 1,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -209,7 +209,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 1,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -220,7 +220,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -231,7 +231,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -244,7 +244,7 @@
       ]
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -257,7 +257,7 @@
       ]
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 1,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -268,7 +268,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 1,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -279,7 +279,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -290,7 +290,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -301,7 +301,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -314,7 +314,7 @@
       ]
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 1,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -325,7 +325,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 1,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -336,7 +336,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -347,7 +347,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 1,
@@ -358,7 +358,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -371,7 +371,7 @@
       ]
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -384,7 +384,7 @@
       ]
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -397,7 +397,7 @@
       ]
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 1,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -408,7 +408,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -419,7 +419,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -430,7 +430,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -443,7 +443,7 @@
       ]
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 1,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -454,7 +454,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -465,7 +465,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -476,7 +476,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -489,7 +489,7 @@
       ]
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 1,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -500,7 +500,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -511,7 +511,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -522,53 +522,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
-      "merkle_proofs_small": 0,
-      "merkle_proofs_medium": 0,
-      "merkle_state_transitions_small": 0,
-      "merkle_state_transitions_medium": 0,
-      "custom_pred_verifications": 1,
-      "signed_by": 0,
-      "public_key": 0,
-      "custom_predicates_ids": [
-        "ac12d571c04f4f2120213b73db1e0c8a8841fffd0af43d6f30d90c227100be9e"
-      ]
-    },
-    {
-      "uses_input_statement_row": false,
-      "merkle_proofs_small": 1,
-      "merkle_proofs_medium": 0,
-      "merkle_state_transitions_small": 0,
-      "merkle_state_transitions_medium": 0,
-      "custom_pred_verifications": 0,
-      "signed_by": 0,
-      "public_key": 0,
-      "custom_predicates_ids": []
-    },
-    {
-      "uses_input_statement_row": false,
-      "merkle_proofs_small": 0,
-      "merkle_proofs_medium": 0,
-      "merkle_state_transitions_small": 0,
-      "merkle_state_transitions_medium": 0,
-      "custom_pred_verifications": 0,
-      "signed_by": 0,
-      "public_key": 0,
-      "custom_predicates_ids": []
-    },
-    {
-      "uses_input_statement_row": false,
-      "merkle_proofs_small": 0,
-      "merkle_proofs_medium": 0,
-      "merkle_state_transitions_small": 0,
-      "merkle_state_transitions_medium": 0,
-      "custom_pred_verifications": 0,
-      "signed_by": 0,
-      "public_key": 0,
-      "custom_predicates_ids": []
-    },
-    {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -581,7 +535,7 @@
       ]
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 1,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -592,7 +546,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -603,7 +557,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -614,53 +568,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
-      "merkle_proofs_small": 0,
-      "merkle_proofs_medium": 0,
-      "merkle_state_transitions_small": 0,
-      "merkle_state_transitions_medium": 0,
-      "custom_pred_verifications": 1,
-      "signed_by": 0,
-      "public_key": 0,
-      "custom_predicates_ids": [
-        "ac12d571c04f4f2120213b73db1e0c8a8841fffd0af43d6f30d90c227100be9e"
-      ]
-    },
-    {
-      "uses_input_statement_row": false,
-      "merkle_proofs_small": 1,
-      "merkle_proofs_medium": 0,
-      "merkle_state_transitions_small": 0,
-      "merkle_state_transitions_medium": 0,
-      "custom_pred_verifications": 0,
-      "signed_by": 0,
-      "public_key": 0,
-      "custom_predicates_ids": []
-    },
-    {
-      "uses_input_statement_row": false,
-      "merkle_proofs_small": 0,
-      "merkle_proofs_medium": 0,
-      "merkle_state_transitions_small": 0,
-      "merkle_state_transitions_medium": 0,
-      "custom_pred_verifications": 0,
-      "signed_by": 0,
-      "public_key": 0,
-      "custom_predicates_ids": []
-    },
-    {
-      "uses_input_statement_row": false,
-      "merkle_proofs_small": 0,
-      "merkle_proofs_medium": 0,
-      "merkle_state_transitions_small": 0,
-      "merkle_state_transitions_medium": 0,
-      "custom_pred_verifications": 0,
-      "signed_by": 0,
-      "public_key": 0,
-      "custom_predicates_ids": []
-    },
-    {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -673,7 +581,7 @@
       ]
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 1,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -684,7 +592,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -695,7 +603,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -706,53 +614,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
-      "merkle_proofs_small": 0,
-      "merkle_proofs_medium": 0,
-      "merkle_state_transitions_small": 0,
-      "merkle_state_transitions_medium": 0,
-      "custom_pred_verifications": 1,
-      "signed_by": 0,
-      "public_key": 0,
-      "custom_predicates_ids": [
-        "ac12d571c04f4f2120213b73db1e0c8a8841fffd0af43d6f30d90c227100be9e"
-      ]
-    },
-    {
-      "uses_input_statement_row": false,
-      "merkle_proofs_small": 1,
-      "merkle_proofs_medium": 0,
-      "merkle_state_transitions_small": 0,
-      "merkle_state_transitions_medium": 0,
-      "custom_pred_verifications": 0,
-      "signed_by": 0,
-      "public_key": 0,
-      "custom_predicates_ids": []
-    },
-    {
-      "uses_input_statement_row": false,
-      "merkle_proofs_small": 0,
-      "merkle_proofs_medium": 0,
-      "merkle_state_transitions_small": 0,
-      "merkle_state_transitions_medium": 0,
-      "custom_pred_verifications": 0,
-      "signed_by": 0,
-      "public_key": 0,
-      "custom_predicates_ids": []
-    },
-    {
-      "uses_input_statement_row": false,
-      "merkle_proofs_small": 0,
-      "merkle_proofs_medium": 0,
-      "merkle_state_transitions_small": 0,
-      "merkle_state_transitions_medium": 0,
-      "custom_pred_verifications": 0,
-      "signed_by": 0,
-      "public_key": 0,
-      "custom_predicates_ids": []
-    },
-    {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -765,7 +627,7 @@
       ]
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 1,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -776,7 +638,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -787,7 +649,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -798,53 +660,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
-      "merkle_proofs_small": 0,
-      "merkle_proofs_medium": 0,
-      "merkle_state_transitions_small": 0,
-      "merkle_state_transitions_medium": 0,
-      "custom_pred_verifications": 1,
-      "signed_by": 0,
-      "public_key": 0,
-      "custom_predicates_ids": [
-        "ac12d571c04f4f2120213b73db1e0c8a8841fffd0af43d6f30d90c227100be9e"
-      ]
-    },
-    {
-      "uses_input_statement_row": false,
-      "merkle_proofs_small": 1,
-      "merkle_proofs_medium": 0,
-      "merkle_state_transitions_small": 0,
-      "merkle_state_transitions_medium": 0,
-      "custom_pred_verifications": 0,
-      "signed_by": 0,
-      "public_key": 0,
-      "custom_predicates_ids": []
-    },
-    {
-      "uses_input_statement_row": false,
-      "merkle_proofs_small": 0,
-      "merkle_proofs_medium": 0,
-      "merkle_state_transitions_small": 0,
-      "merkle_state_transitions_medium": 0,
-      "custom_pred_verifications": 0,
-      "signed_by": 0,
-      "public_key": 0,
-      "custom_predicates_ids": []
-    },
-    {
-      "uses_input_statement_row": false,
-      "merkle_proofs_small": 0,
-      "merkle_proofs_medium": 0,
-      "merkle_state_transitions_small": 0,
-      "merkle_state_transitions_medium": 0,
-      "custom_pred_verifications": 0,
-      "signed_by": 0,
-      "public_key": 0,
-      "custom_predicates_ids": []
-    },
-    {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -857,7 +673,7 @@
       ]
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 1,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -868,7 +684,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -879,7 +695,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -890,53 +706,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
-      "merkle_proofs_small": 0,
-      "merkle_proofs_medium": 0,
-      "merkle_state_transitions_small": 0,
-      "merkle_state_transitions_medium": 0,
-      "custom_pred_verifications": 1,
-      "signed_by": 0,
-      "public_key": 0,
-      "custom_predicates_ids": [
-        "ac12d571c04f4f2120213b73db1e0c8a8841fffd0af43d6f30d90c227100be9e"
-      ]
-    },
-    {
-      "uses_input_statement_row": false,
-      "merkle_proofs_small": 1,
-      "merkle_proofs_medium": 0,
-      "merkle_state_transitions_small": 0,
-      "merkle_state_transitions_medium": 0,
-      "custom_pred_verifications": 0,
-      "signed_by": 0,
-      "public_key": 0,
-      "custom_predicates_ids": []
-    },
-    {
-      "uses_input_statement_row": false,
-      "merkle_proofs_small": 0,
-      "merkle_proofs_medium": 0,
-      "merkle_state_transitions_small": 0,
-      "merkle_state_transitions_medium": 0,
-      "custom_pred_verifications": 0,
-      "signed_by": 0,
-      "public_key": 0,
-      "custom_predicates_ids": []
-    },
-    {
-      "uses_input_statement_row": false,
-      "merkle_proofs_small": 0,
-      "merkle_proofs_medium": 0,
-      "merkle_state_transitions_small": 0,
-      "merkle_state_transitions_medium": 0,
-      "custom_pred_verifications": 0,
-      "signed_by": 0,
-      "public_key": 0,
-      "custom_predicates_ids": []
-    },
-    {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -949,7 +719,7 @@
       ]
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 1,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -960,29 +730,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
-      "merkle_proofs_small": 1,
-      "merkle_proofs_medium": 0,
-      "merkle_state_transitions_small": 0,
-      "merkle_state_transitions_medium": 0,
-      "custom_pred_verifications": 0,
-      "signed_by": 0,
-      "public_key": 0,
-      "custom_predicates_ids": []
-    },
-    {
-      "uses_input_statement_row": false,
-      "merkle_proofs_small": 1,
-      "merkle_proofs_medium": 0,
-      "merkle_state_transitions_small": 0,
-      "merkle_state_transitions_medium": 0,
-      "custom_pred_verifications": 0,
-      "signed_by": 0,
-      "public_key": 0,
-      "custom_predicates_ids": []
-    },
-    {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -993,29 +741,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
-      "merkle_proofs_small": 1,
-      "merkle_proofs_medium": 0,
-      "merkle_state_transitions_small": 0,
-      "merkle_state_transitions_medium": 0,
-      "custom_pred_verifications": 0,
-      "signed_by": 0,
-      "public_key": 0,
-      "custom_predicates_ids": []
-    },
-    {
-      "uses_input_statement_row": false,
-      "merkle_proofs_small": 1,
-      "merkle_proofs_medium": 0,
-      "merkle_state_transitions_small": 0,
-      "merkle_state_transitions_medium": 0,
-      "custom_pred_verifications": 0,
-      "signed_by": 0,
-      "public_key": 0,
-      "custom_predicates_ids": []
-    },
-    {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -1026,7 +752,20 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
+      "merkle_proofs_small": 0,
+      "merkle_proofs_medium": 0,
+      "merkle_state_transitions_small": 0,
+      "merkle_state_transitions_medium": 0,
+      "custom_pred_verifications": 1,
+      "signed_by": 0,
+      "public_key": 0,
+      "custom_predicates_ids": [
+        "ac12d571c04f4f2120213b73db1e0c8a8841fffd0af43d6f30d90c227100be9e"
+      ]
+    },
+    {
+      "is_external_opening": false,
       "merkle_proofs_small": 1,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -1037,18 +776,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
-      "merkle_proofs_small": 1,
-      "merkle_proofs_medium": 0,
-      "merkle_state_transitions_small": 0,
-      "merkle_state_transitions_medium": 0,
-      "custom_pred_verifications": 0,
-      "signed_by": 0,
-      "public_key": 0,
-      "custom_predicates_ids": []
-    },
-    {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -1059,29 +787,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
-      "merkle_proofs_small": 1,
-      "merkle_proofs_medium": 0,
-      "merkle_state_transitions_small": 0,
-      "merkle_state_transitions_medium": 0,
-      "custom_pred_verifications": 0,
-      "signed_by": 0,
-      "public_key": 0,
-      "custom_predicates_ids": []
-    },
-    {
-      "uses_input_statement_row": false,
-      "merkle_proofs_small": 1,
-      "merkle_proofs_medium": 0,
-      "merkle_state_transitions_small": 0,
-      "merkle_state_transitions_medium": 0,
-      "custom_pred_verifications": 0,
-      "signed_by": 0,
-      "public_key": 0,
-      "custom_predicates_ids": []
-    },
-    {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -1092,7 +798,20 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
+      "merkle_proofs_small": 0,
+      "merkle_proofs_medium": 0,
+      "merkle_state_transitions_small": 0,
+      "merkle_state_transitions_medium": 0,
+      "custom_pred_verifications": 1,
+      "signed_by": 0,
+      "public_key": 0,
+      "custom_predicates_ids": [
+        "ac12d571c04f4f2120213b73db1e0c8a8841fffd0af43d6f30d90c227100be9e"
+      ]
+    },
+    {
+      "is_external_opening": false,
       "merkle_proofs_small": 1,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -1103,18 +822,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
-      "merkle_proofs_small": 1,
-      "merkle_proofs_medium": 0,
-      "merkle_state_transitions_small": 0,
-      "merkle_state_transitions_medium": 0,
-      "custom_pred_verifications": 0,
-      "signed_by": 0,
-      "public_key": 0,
-      "custom_predicates_ids": []
-    },
-    {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -1125,29 +833,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
-      "merkle_proofs_small": 1,
-      "merkle_proofs_medium": 0,
-      "merkle_state_transitions_small": 0,
-      "merkle_state_transitions_medium": 0,
-      "custom_pred_verifications": 0,
-      "signed_by": 0,
-      "public_key": 0,
-      "custom_predicates_ids": []
-    },
-    {
-      "uses_input_statement_row": false,
-      "merkle_proofs_small": 1,
-      "merkle_proofs_medium": 0,
-      "merkle_state_transitions_small": 0,
-      "merkle_state_transitions_medium": 0,
-      "custom_pred_verifications": 0,
-      "signed_by": 0,
-      "public_key": 0,
-      "custom_predicates_ids": []
-    },
-    {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -1158,7 +844,20 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
+      "merkle_proofs_small": 0,
+      "merkle_proofs_medium": 0,
+      "merkle_state_transitions_small": 0,
+      "merkle_state_transitions_medium": 0,
+      "custom_pred_verifications": 1,
+      "signed_by": 0,
+      "public_key": 0,
+      "custom_predicates_ids": [
+        "ac12d571c04f4f2120213b73db1e0c8a8841fffd0af43d6f30d90c227100be9e"
+      ]
+    },
+    {
+      "is_external_opening": false,
       "merkle_proofs_small": 1,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -1169,18 +868,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
-      "merkle_proofs_small": 1,
-      "merkle_proofs_medium": 0,
-      "merkle_state_transitions_small": 0,
-      "merkle_state_transitions_medium": 0,
-      "custom_pred_verifications": 0,
-      "signed_by": 0,
-      "public_key": 0,
-      "custom_predicates_ids": []
-    },
-    {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -1191,29 +879,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
-      "merkle_proofs_small": 1,
-      "merkle_proofs_medium": 0,
-      "merkle_state_transitions_small": 0,
-      "merkle_state_transitions_medium": 0,
-      "custom_pred_verifications": 0,
-      "signed_by": 0,
-      "public_key": 0,
-      "custom_predicates_ids": []
-    },
-    {
-      "uses_input_statement_row": false,
-      "merkle_proofs_small": 1,
-      "merkle_proofs_medium": 0,
-      "merkle_state_transitions_small": 0,
-      "merkle_state_transitions_medium": 0,
-      "custom_pred_verifications": 0,
-      "signed_by": 0,
-      "public_key": 0,
-      "custom_predicates_ids": []
-    },
-    {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -1224,7 +890,20 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
+      "merkle_proofs_small": 0,
+      "merkle_proofs_medium": 0,
+      "merkle_state_transitions_small": 0,
+      "merkle_state_transitions_medium": 0,
+      "custom_pred_verifications": 1,
+      "signed_by": 0,
+      "public_key": 0,
+      "custom_predicates_ids": [
+        "ac12d571c04f4f2120213b73db1e0c8a8841fffd0af43d6f30d90c227100be9e"
+      ]
+    },
+    {
+      "is_external_opening": false,
       "merkle_proofs_small": 1,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -1235,18 +914,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
-      "merkle_proofs_small": 1,
-      "merkle_proofs_medium": 0,
-      "merkle_state_transitions_small": 0,
-      "merkle_state_transitions_medium": 0,
-      "custom_pred_verifications": 0,
-      "signed_by": 0,
-      "public_key": 0,
-      "custom_predicates_ids": []
-    },
-    {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -1257,29 +925,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
-      "merkle_proofs_small": 1,
-      "merkle_proofs_medium": 0,
-      "merkle_state_transitions_small": 0,
-      "merkle_state_transitions_medium": 0,
-      "custom_pred_verifications": 0,
-      "signed_by": 0,
-      "public_key": 0,
-      "custom_predicates_ids": []
-    },
-    {
-      "uses_input_statement_row": false,
-      "merkle_proofs_small": 1,
-      "merkle_proofs_medium": 0,
-      "merkle_state_transitions_small": 0,
-      "merkle_state_transitions_medium": 0,
-      "custom_pred_verifications": 0,
-      "signed_by": 0,
-      "public_key": 0,
-      "custom_predicates_ids": []
-    },
-    {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -1290,7 +936,20 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
+      "merkle_proofs_small": 0,
+      "merkle_proofs_medium": 0,
+      "merkle_state_transitions_small": 0,
+      "merkle_state_transitions_medium": 0,
+      "custom_pred_verifications": 1,
+      "signed_by": 0,
+      "public_key": 0,
+      "custom_predicates_ids": [
+        "ac12d571c04f4f2120213b73db1e0c8a8841fffd0af43d6f30d90c227100be9e"
+      ]
+    },
+    {
+      "is_external_opening": false,
       "merkle_proofs_small": 1,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -1301,7 +960,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 1,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -1312,7 +971,18 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
+      "merkle_proofs_small": 1,
+      "merkle_proofs_medium": 0,
+      "merkle_state_transitions_small": 0,
+      "merkle_state_transitions_medium": 0,
+      "custom_pred_verifications": 0,
+      "signed_by": 0,
+      "public_key": 0,
+      "custom_predicates_ids": []
+    },
+    {
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -1323,7 +993,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 1,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -1334,7 +1004,18 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
+      "merkle_proofs_small": 1,
+      "merkle_proofs_medium": 0,
+      "merkle_state_transitions_small": 0,
+      "merkle_state_transitions_medium": 0,
+      "custom_pred_verifications": 0,
+      "signed_by": 0,
+      "public_key": 0,
+      "custom_predicates_ids": []
+    },
+    {
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -1345,7 +1026,29 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
+      "merkle_proofs_small": 1,
+      "merkle_proofs_medium": 0,
+      "merkle_state_transitions_small": 0,
+      "merkle_state_transitions_medium": 0,
+      "custom_pred_verifications": 0,
+      "signed_by": 0,
+      "public_key": 0,
+      "custom_predicates_ids": []
+    },
+    {
+      "is_external_opening": false,
+      "merkle_proofs_small": 1,
+      "merkle_proofs_medium": 0,
+      "merkle_state_transitions_small": 0,
+      "merkle_state_transitions_medium": 0,
+      "custom_pred_verifications": 0,
+      "signed_by": 0,
+      "public_key": 0,
+      "custom_predicates_ids": []
+    },
+    {
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -1356,7 +1059,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 1,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -1367,7 +1070,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 1,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -1378,7 +1081,18 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
+      "merkle_proofs_small": 0,
+      "merkle_proofs_medium": 0,
+      "merkle_state_transitions_small": 0,
+      "merkle_state_transitions_medium": 0,
+      "custom_pred_verifications": 0,
+      "signed_by": 0,
+      "public_key": 0,
+      "custom_predicates_ids": []
+    },
+    {
+      "is_external_opening": false,
       "merkle_proofs_small": 1,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -1389,7 +1103,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 1,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -1400,7 +1114,18 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
+      "merkle_proofs_small": 0,
+      "merkle_proofs_medium": 0,
+      "merkle_state_transitions_small": 0,
+      "merkle_state_transitions_medium": 0,
+      "custom_pred_verifications": 0,
+      "signed_by": 0,
+      "public_key": 0,
+      "custom_predicates_ids": []
+    },
+    {
+      "is_external_opening": false,
       "merkle_proofs_small": 1,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -1411,7 +1136,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 1,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -1422,7 +1147,18 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
+      "merkle_proofs_small": 0,
+      "merkle_proofs_medium": 0,
+      "merkle_state_transitions_small": 0,
+      "merkle_state_transitions_medium": 0,
+      "custom_pred_verifications": 0,
+      "signed_by": 0,
+      "public_key": 0,
+      "custom_predicates_ids": []
+    },
+    {
+      "is_external_opening": false,
       "merkle_proofs_small": 1,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -1433,7 +1169,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 1,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -1444,7 +1180,18 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
+      "merkle_proofs_small": 0,
+      "merkle_proofs_medium": 0,
+      "merkle_state_transitions_small": 0,
+      "merkle_state_transitions_medium": 0,
+      "custom_pred_verifications": 0,
+      "signed_by": 0,
+      "public_key": 0,
+      "custom_predicates_ids": []
+    },
+    {
+      "is_external_opening": false,
       "merkle_proofs_small": 1,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -1455,7 +1202,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 1,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -1466,7 +1213,260 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
+      "merkle_proofs_small": 0,
+      "merkle_proofs_medium": 0,
+      "merkle_state_transitions_small": 0,
+      "merkle_state_transitions_medium": 0,
+      "custom_pred_verifications": 0,
+      "signed_by": 0,
+      "public_key": 0,
+      "custom_predicates_ids": []
+    },
+    {
+      "is_external_opening": false,
+      "merkle_proofs_small": 1,
+      "merkle_proofs_medium": 0,
+      "merkle_state_transitions_small": 0,
+      "merkle_state_transitions_medium": 0,
+      "custom_pred_verifications": 0,
+      "signed_by": 0,
+      "public_key": 0,
+      "custom_predicates_ids": []
+    },
+    {
+      "is_external_opening": false,
+      "merkle_proofs_small": 1,
+      "merkle_proofs_medium": 0,
+      "merkle_state_transitions_small": 0,
+      "merkle_state_transitions_medium": 0,
+      "custom_pred_verifications": 0,
+      "signed_by": 0,
+      "public_key": 0,
+      "custom_predicates_ids": []
+    },
+    {
+      "is_external_opening": false,
+      "merkle_proofs_small": 0,
+      "merkle_proofs_medium": 0,
+      "merkle_state_transitions_small": 0,
+      "merkle_state_transitions_medium": 0,
+      "custom_pred_verifications": 0,
+      "signed_by": 0,
+      "public_key": 0,
+      "custom_predicates_ids": []
+    },
+    {
+      "is_external_opening": false,
+      "merkle_proofs_small": 1,
+      "merkle_proofs_medium": 0,
+      "merkle_state_transitions_small": 0,
+      "merkle_state_transitions_medium": 0,
+      "custom_pred_verifications": 0,
+      "signed_by": 0,
+      "public_key": 0,
+      "custom_predicates_ids": []
+    },
+    {
+      "is_external_opening": false,
+      "merkle_proofs_small": 1,
+      "merkle_proofs_medium": 0,
+      "merkle_state_transitions_small": 0,
+      "merkle_state_transitions_medium": 0,
+      "custom_pred_verifications": 0,
+      "signed_by": 0,
+      "public_key": 0,
+      "custom_predicates_ids": []
+    },
+    {
+      "is_external_opening": false,
+      "merkle_proofs_small": 0,
+      "merkle_proofs_medium": 0,
+      "merkle_state_transitions_small": 0,
+      "merkle_state_transitions_medium": 0,
+      "custom_pred_verifications": 0,
+      "signed_by": 0,
+      "public_key": 0,
+      "custom_predicates_ids": []
+    },
+    {
+      "is_external_opening": false,
+      "merkle_proofs_small": 1,
+      "merkle_proofs_medium": 0,
+      "merkle_state_transitions_small": 0,
+      "merkle_state_transitions_medium": 0,
+      "custom_pred_verifications": 0,
+      "signed_by": 0,
+      "public_key": 0,
+      "custom_predicates_ids": []
+    },
+    {
+      "is_external_opening": false,
+      "merkle_proofs_small": 1,
+      "merkle_proofs_medium": 0,
+      "merkle_state_transitions_small": 0,
+      "merkle_state_transitions_medium": 0,
+      "custom_pred_verifications": 0,
+      "signed_by": 0,
+      "public_key": 0,
+      "custom_predicates_ids": []
+    },
+    {
+      "is_external_opening": false,
+      "merkle_proofs_small": 0,
+      "merkle_proofs_medium": 0,
+      "merkle_state_transitions_small": 0,
+      "merkle_state_transitions_medium": 0,
+      "custom_pred_verifications": 0,
+      "signed_by": 0,
+      "public_key": 0,
+      "custom_predicates_ids": []
+    },
+    {
+      "is_external_opening": false,
+      "merkle_proofs_small": 1,
+      "merkle_proofs_medium": 0,
+      "merkle_state_transitions_small": 0,
+      "merkle_state_transitions_medium": 0,
+      "custom_pred_verifications": 0,
+      "signed_by": 0,
+      "public_key": 0,
+      "custom_predicates_ids": []
+    },
+    {
+      "is_external_opening": false,
+      "merkle_proofs_small": 0,
+      "merkle_proofs_medium": 0,
+      "merkle_state_transitions_small": 0,
+      "merkle_state_transitions_medium": 0,
+      "custom_pred_verifications": 0,
+      "signed_by": 0,
+      "public_key": 0,
+      "custom_predicates_ids": []
+    },
+    {
+      "is_external_opening": false,
+      "merkle_proofs_small": 0,
+      "merkle_proofs_medium": 0,
+      "merkle_state_transitions_small": 0,
+      "merkle_state_transitions_medium": 0,
+      "custom_pred_verifications": 0,
+      "signed_by": 0,
+      "public_key": 0,
+      "custom_predicates_ids": []
+    },
+    {
+      "is_external_opening": false,
+      "merkle_proofs_small": 1,
+      "merkle_proofs_medium": 0,
+      "merkle_state_transitions_small": 0,
+      "merkle_state_transitions_medium": 0,
+      "custom_pred_verifications": 0,
+      "signed_by": 0,
+      "public_key": 0,
+      "custom_predicates_ids": []
+    },
+    {
+      "is_external_opening": false,
+      "merkle_proofs_small": 1,
+      "merkle_proofs_medium": 0,
+      "merkle_state_transitions_small": 0,
+      "merkle_state_transitions_medium": 0,
+      "custom_pred_verifications": 0,
+      "signed_by": 0,
+      "public_key": 0,
+      "custom_predicates_ids": []
+    },
+    {
+      "is_external_opening": false,
+      "merkle_proofs_small": 1,
+      "merkle_proofs_medium": 0,
+      "merkle_state_transitions_small": 0,
+      "merkle_state_transitions_medium": 0,
+      "custom_pred_verifications": 0,
+      "signed_by": 0,
+      "public_key": 0,
+      "custom_predicates_ids": []
+    },
+    {
+      "is_external_opening": false,
+      "merkle_proofs_small": 1,
+      "merkle_proofs_medium": 0,
+      "merkle_state_transitions_small": 0,
+      "merkle_state_transitions_medium": 0,
+      "custom_pred_verifications": 0,
+      "signed_by": 0,
+      "public_key": 0,
+      "custom_predicates_ids": []
+    },
+    {
+      "is_external_opening": false,
+      "merkle_proofs_small": 1,
+      "merkle_proofs_medium": 0,
+      "merkle_state_transitions_small": 0,
+      "merkle_state_transitions_medium": 0,
+      "custom_pred_verifications": 0,
+      "signed_by": 0,
+      "public_key": 0,
+      "custom_predicates_ids": []
+    },
+    {
+      "is_external_opening": false,
+      "merkle_proofs_small": 1,
+      "merkle_proofs_medium": 0,
+      "merkle_state_transitions_small": 0,
+      "merkle_state_transitions_medium": 0,
+      "custom_pred_verifications": 0,
+      "signed_by": 0,
+      "public_key": 0,
+      "custom_predicates_ids": []
+    },
+    {
+      "is_external_opening": false,
+      "merkle_proofs_small": 1,
+      "merkle_proofs_medium": 0,
+      "merkle_state_transitions_small": 0,
+      "merkle_state_transitions_medium": 0,
+      "custom_pred_verifications": 0,
+      "signed_by": 0,
+      "public_key": 0,
+      "custom_predicates_ids": []
+    },
+    {
+      "is_external_opening": false,
+      "merkle_proofs_small": 1,
+      "merkle_proofs_medium": 0,
+      "merkle_state_transitions_small": 0,
+      "merkle_state_transitions_medium": 0,
+      "custom_pred_verifications": 0,
+      "signed_by": 0,
+      "public_key": 0,
+      "custom_predicates_ids": []
+    },
+    {
+      "is_external_opening": false,
+      "merkle_proofs_small": 1,
+      "merkle_proofs_medium": 0,
+      "merkle_state_transitions_small": 0,
+      "merkle_state_transitions_medium": 0,
+      "custom_pred_verifications": 0,
+      "signed_by": 0,
+      "public_key": 0,
+      "custom_predicates_ids": []
+    },
+    {
+      "is_external_opening": false,
+      "merkle_proofs_small": 1,
+      "merkle_proofs_medium": 0,
+      "merkle_state_transitions_small": 0,
+      "merkle_state_transitions_medium": 0,
+      "custom_pred_verifications": 0,
+      "signed_by": 0,
+      "public_key": 0,
+      "custom_predicates_ids": []
+    },
+    {
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 1,
@@ -1477,7 +1477,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 1,
@@ -1488,7 +1488,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -1501,7 +1501,7 @@
       ]
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -1514,7 +1514,7 @@
       ]
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -1527,7 +1527,7 @@
       ]
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -1540,7 +1540,7 @@
       ]
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -1553,7 +1553,7 @@
       ]
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -1566,7 +1566,7 @@
       ]
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -1579,7 +1579,7 @@
       ]
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -1592,7 +1592,7 @@
       ]
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -1605,7 +1605,7 @@
       ]
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -1618,7 +1618,7 @@
       ]
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -1631,7 +1631,7 @@
       ]
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -1644,7 +1644,7 @@
       ]
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -1657,7 +1657,7 @@
       ]
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -1670,7 +1670,7 @@
       ]
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -1683,7 +1683,7 @@
       ]
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -1696,7 +1696,7 @@
       ]
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -1709,7 +1709,7 @@
       ]
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -1722,7 +1722,7 @@
       ]
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -1735,7 +1735,7 @@
       ]
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -1748,7 +1748,7 @@
       ]
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -1761,7 +1761,7 @@
       ]
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -1774,7 +1774,7 @@
       ]
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -1787,7 +1787,7 @@
       ]
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -1800,7 +1800,7 @@
       ]
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -1813,7 +1813,7 @@
       ]
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -1826,7 +1826,7 @@
       ]
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -1839,7 +1839,7 @@
       ]
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -1852,7 +1852,7 @@
       ]
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -1865,7 +1865,7 @@
       ]
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -1878,7 +1878,7 @@
       ]
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -1891,7 +1891,7 @@
       ]
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 1,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -1902,7 +1902,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -1913,7 +1913,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -1924,7 +1924,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 1,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -1935,7 +1935,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -1946,7 +1946,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 1,
@@ -1957,7 +1957,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -1970,7 +1970,7 @@
       ]
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 1,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -1981,7 +1981,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -1992,7 +1992,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -2003,7 +2003,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 1,
@@ -2014,7 +2014,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -2027,7 +2027,7 @@
       ]
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 1,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -2038,7 +2038,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 1,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -2049,7 +2049,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -2060,7 +2060,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -2073,7 +2073,7 @@
       ]
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -2086,7 +2086,7 @@
       ]
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -2099,7 +2099,7 @@
       ]
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 1,
@@ -2110,7 +2110,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 1,
@@ -2121,7 +2121,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 1,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -2132,7 +2132,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 1,
@@ -2143,7 +2143,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 1,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -2154,7 +2154,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 1,
@@ -2165,7 +2165,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -2178,7 +2178,7 @@
       ]
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 1,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -2189,7 +2189,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -2200,7 +2200,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -2211,7 +2211,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 1,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -2222,7 +2222,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -2233,7 +2233,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 1,
@@ -2244,7 +2244,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -2257,7 +2257,7 @@
       ]
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 1,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -2268,7 +2268,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -2279,7 +2279,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 1,
@@ -2290,7 +2290,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 1,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -2301,7 +2301,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 1,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -2312,7 +2312,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -2323,7 +2323,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -2336,7 +2336,7 @@
       ]
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 1,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -2347,7 +2347,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -2358,7 +2358,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -2369,7 +2369,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 1,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -2380,7 +2380,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -2391,7 +2391,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 1,
@@ -2402,7 +2402,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -2415,7 +2415,7 @@
       ]
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 1,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -2426,7 +2426,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -2437,7 +2437,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 1,
@@ -2448,7 +2448,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 1,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -2459,7 +2459,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 1,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -2470,7 +2470,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -2481,7 +2481,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -2494,7 +2494,7 @@
       ]
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 1,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -2505,7 +2505,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -2516,7 +2516,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 1,
@@ -2527,7 +2527,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 1,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -2538,7 +2538,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 1,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -2549,7 +2549,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -2560,7 +2560,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -2573,7 +2573,7 @@
       ]
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -2586,7 +2586,7 @@
       ]
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -2599,7 +2599,7 @@
       ]
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 1,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -2610,7 +2610,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -2621,7 +2621,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 1,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -2632,7 +2632,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 1,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -2643,7 +2643,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -2654,7 +2654,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 1,
@@ -2665,7 +2665,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 1,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -2676,7 +2676,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 1,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -2687,7 +2687,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -2698,7 +2698,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -2711,7 +2711,7 @@
       ]
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -2724,7 +2724,7 @@
       ]
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 1,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -2735,7 +2735,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -2746,7 +2746,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 1,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -2757,7 +2757,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 1,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -2768,7 +2768,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -2779,7 +2779,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 1,
@@ -2790,7 +2790,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 1,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -2801,7 +2801,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 1,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -2812,7 +2812,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -2823,7 +2823,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -2836,7 +2836,7 @@
       ]
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -2849,7 +2849,7 @@
       ]
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 1,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -2860,7 +2860,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -2871,7 +2871,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 1,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -2882,7 +2882,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 1,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -2893,7 +2893,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -2904,7 +2904,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 1,
@@ -2915,7 +2915,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 1,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -2926,7 +2926,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 1,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -2937,7 +2937,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -2948,7 +2948,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -2961,7 +2961,7 @@
       ]
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -2974,7 +2974,7 @@
       ]
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 1,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -2985,7 +2985,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -2996,7 +2996,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 1,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -3007,7 +3007,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 1,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -3018,7 +3018,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -3029,7 +3029,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 1,
@@ -3040,7 +3040,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 1,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -3051,7 +3051,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 1,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -3062,7 +3062,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -3073,7 +3073,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -3086,7 +3086,7 @@
       ]
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -3099,7 +3099,7 @@
       ]
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 1,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -3110,7 +3110,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -3121,7 +3121,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 1,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -3132,7 +3132,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 1,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -3143,7 +3143,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -3154,7 +3154,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 1,
@@ -3165,7 +3165,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 1,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -3176,7 +3176,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 1,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -3187,7 +3187,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -3198,7 +3198,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -3211,7 +3211,7 @@
       ]
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -3224,7 +3224,7 @@
       ]
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 1,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -3235,7 +3235,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -3246,7 +3246,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 1,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -3257,7 +3257,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 1,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -3268,7 +3268,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -3279,7 +3279,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 1,
@@ -3290,7 +3290,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 1,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -3301,7 +3301,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 1,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -3312,7 +3312,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -3323,7 +3323,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -3336,7 +3336,7 @@
       ]
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -3349,7 +3349,7 @@
       ]
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 1,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -3360,7 +3360,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -3371,7 +3371,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 1,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -3382,7 +3382,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 1,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -3393,7 +3393,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -3404,7 +3404,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 1,
@@ -3415,7 +3415,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 1,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -3426,7 +3426,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 1,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -3437,7 +3437,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -3448,7 +3448,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -3461,7 +3461,7 @@
       ]
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -3474,7 +3474,7 @@
       ]
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 1,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -3485,7 +3485,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -3496,7 +3496,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 1,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -3507,7 +3507,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 1,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -3518,7 +3518,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -3529,7 +3529,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 1,
@@ -3540,7 +3540,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 1,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -3551,7 +3551,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 1,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -3562,7 +3562,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -3573,7 +3573,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -3586,7 +3586,7 @@
       ]
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -3599,7 +3599,7 @@
       ]
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 1,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -3610,7 +3610,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -3621,7 +3621,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 1,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -3632,7 +3632,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 1,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -3643,7 +3643,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -3654,7 +3654,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 1,
@@ -3665,7 +3665,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 1,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -3676,7 +3676,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 1,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -3687,7 +3687,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -3698,7 +3698,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -3711,7 +3711,7 @@
       ]
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -3724,7 +3724,7 @@
       ]
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -3737,7 +3737,7 @@
       ]
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -3750,7 +3750,7 @@
       ]
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -3763,7 +3763,7 @@
       ]
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -3776,7 +3776,7 @@
       ]
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -3789,7 +3789,7 @@
       ]
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -3802,7 +3802,7 @@
       ]
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 1,
@@ -3813,7 +3813,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 1,
@@ -3824,7 +3824,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 1,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -3835,7 +3835,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 1,
@@ -3846,7 +3846,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 1,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -3857,7 +3857,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 1,
@@ -3868,7 +3868,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -3881,7 +3881,7 @@
       ]
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -3894,7 +3894,7 @@
       ]
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 1,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -3905,7 +3905,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -3916,7 +3916,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -3927,7 +3927,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -3938,7 +3938,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -3949,7 +3949,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -3960,7 +3960,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 1,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,
@@ -3971,7 +3971,7 @@
       "custom_predicates_ids": []
     },
     {
-      "uses_input_statement_row": false,
+      "is_external_opening": false,
       "merkle_proofs_small": 0,
       "merkle_proofs_medium": 0,
       "merkle_state_transitions_small": 0,

@@ -97,7 +97,7 @@ impl DependencyGraph {
             }
 
             // `OpenInputStatement` carries no arg statements; its dependency
-            // on the source pod is implicit in the aux's `sts_root`.
+            // on the source pod is implicit in the aux's `pod_index`.
             // Materialize it as an External dep here so the partitioner
             // accounts for the input-tree slot and the external-pod reference.
             if op.is_open_input_statement() {
