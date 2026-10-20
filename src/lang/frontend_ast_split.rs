@@ -1846,7 +1846,7 @@ fn refactor_suggestion_for(
             spans.push((wildcard.clone(), first, last, last - first));
         }
     }
-    spans.sort_by(|a, b| b.3.cmp(&a.3));
+    spans.sort_by_key(|a| std::cmp::Reverse(a.3));
     if let Some((wildcard, first, last, span)) = spans.first() {
         // A span longer than `max_arity - 2` necessarily crosses at least one
         // link boundary regardless of where the split is placed, which is the

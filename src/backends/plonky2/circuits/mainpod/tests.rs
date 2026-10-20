@@ -1310,7 +1310,7 @@ fn helper_custom_operation_verify_gadget(
 
     // Input
     custom_predicate_target.set_targets(&mut pw, &custom_predicate)?;
-    for (op_arg_target, op_arg) in op_args_target.iter().zip(op_args.into_iter()) {
+    for (op_arg_target, op_arg) in op_args_target.iter().zip(op_args) {
         op_arg_target.set_targets(&mut pw, &op_arg.into())?;
     }
     for (arg_target, arg) in args_target.iter().zip(args.iter()) {

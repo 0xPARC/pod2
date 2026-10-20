@@ -411,7 +411,7 @@ impl ECAddXuGate {
         F: Extendable<D>,
     {
         assert!(targets.len() == Self::INPUTS_PER_OP);
-        let (row, _) = builder.find_slot(ECAddXuGate::new(), &[], &[]);
+        let (row, _) = builder.find_slot(ECAddXuGate, &[], &[]);
         for (i, &t) in targets.iter().enumerate() {
             builder.connect(t, Target::wire(row, i));
         }
@@ -419,10 +419,6 @@ impl ECAddXuGate {
         (0..10)
             .map(|i| Target::wire(row, Self::INPUTS_PER_OP + i))
             .collect()
-    }
-
-    pub fn new() -> Self {
-        Self
     }
 
     pub fn add_numerator_denominator<const D: usize>(
@@ -901,7 +897,7 @@ mod test {
 
     #[test]
     fn test_ec_add_xu_gate() -> Result<(), anyhow::Error> {
-        let gate = ECAddXuGate::new();
+        let gate = ECAddXuGate;
 
         test_eval_fns::<_, PoseidonGoldilocksConfig, _, 2>(gate)
     }
@@ -917,7 +913,7 @@ mod test {
 
     #[test]
     fn test_ec_add_xu_gate_low_degree() -> Result<(), anyhow::Error> {
-        let gate = ECAddXuGate::new();
+        let gate = ECAddXuGate;
 
         test_low_degree::<_, _, 2>(gate);
         Ok(())

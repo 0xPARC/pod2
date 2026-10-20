@@ -830,9 +830,9 @@ pub trait WitnessWriteCurve: WitnessWrite<GoldilocksField> {
     ) -> anyhow::Result<()> {
         assert!(value.bits() <= 320);
         let digits = value.to_u32_digits();
-        for i in 0..10 {
+        for (i, limb) in target.limbs.iter().enumerate() {
             let d = digits.get(i).copied().unwrap_or(0);
-            self.set_target(target.limbs[i], GoldilocksField::from_canonical_u32(d))?;
+            self.set_target(*limb, GoldilocksField::from_canonical_u32(d))?;
         }
         Ok(())
     }
