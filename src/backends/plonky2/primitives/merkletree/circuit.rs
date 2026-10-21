@@ -340,29 +340,25 @@ fn keypath_target(
     builder: &mut CircuitBuilder<F, D>,
     key: &ValueTarget,
 ) -> Vec<BoolTarget> {
-    let n_complete_field_elems: usize = max_depth / F::BITS;
-    let n_extra_bits: usize = max_depth - n_complete_field_elems * F::BITS;
-
-    let path: Vec<BoolTarget> = key
-        .elements
+    assert!(max_depth <= MAX_DEPTH);
+    let zero = builder.zero();
+    let u32_max = builder.constant(F::from_canonical_u32(u32::MAX));
+    key.elements
         .iter()
-        .take(n_complete_field_elems)
-        .flat_map(|e| builder.split_le(*e, F::BITS))
-        .collect();
-
-    let extra_bits = if n_extra_bits > 0 {
-        let extra_bits: Vec<BoolTarget> =
-            builder.split_le(key.elements[n_complete_field_elems], F::BITS);
-        extra_bits[..n_extra_bits].to_vec()
-        // Note: ideally we would do:
-        //     let extra_bits = builder.split_le(key[n_complete_field_elems], n_extra_bits);
-        // and directly get the extra_bits, but the `split_le` method
-        // returns the wrong bits, so currently we get the entire array of
-        // bits and crop it at the desired n_extra_bits amount.
-    } else {
-        vec![]
-    };
-    [path, extra_bits].concat()
+        .take(max_depth.div_ceil(F::BITS))
+        .flat_map(|element| {
+            let bits = builder.split_le(*element, F::BITS);
+            let low = builder.le_sum(bits[..32].iter());
+            let high = builder.le_sum(bits[32..].iter());
+            let high_is_max = builder.is_equal(high, u32_max);
+            // Goldilocks p = 0xffffffff00000001: when the high word is 0xffffffff,
+            // the low word must be zero to keep the decomposition below p. Enforce
+            // this before truncating, since even shallow paths can otherwise use x + p.
+            builder.conditional_assert_eq(high_is_max.target, low, zero);
+            bits
+        })
+        .take(max_depth)
+        .collect()
 }
 
 pub fn kv_hash_target(
@@ -702,9 +698,46 @@ pub mod tests {
         Ok(())
     }
 
-    // Replace only the honest split generators: constraints and verifier data stay intact.
-    // Assigning path bits alone would conflict with the generators' canonical decomposition
-    // and reject the witness before the circuit's constraints could be tested.
+    #[test]
+    fn test_keypath_canonical_boundaries() -> Result<()> {
+        for max_depth in [0, 1, 32, 64, 65, 128, 256] {
+            let mut builder =
+                CircuitBuilder::<F, D>::new(CircuitConfig::standard_recursion_config());
+            let key_target = builder.add_virtual_value();
+            let path = keypath_target(max_depth, &mut builder, &key_target);
+            builder.register_public_inputs(&key_target.elements);
+            for bit in path {
+                builder.register_public_input(bit.target);
+            }
+            let data = builder.build::<C>();
+            for value in [
+                0,
+                u32::MAX as u64 - 1,
+                u32::MAX as u64,
+                1 << 32,
+                F::ORDER - 1,
+            ] {
+                let key = RawValue([F::from_canonical_u64(value); HASH_SIZE]);
+                let mut pw = PartialWitness::new();
+                pw.set_target_arr(&key_target.elements, &key.0)?;
+                let proof = data.prove(pw)?;
+                let expected_path = keypath(key);
+                assert_eq!(
+                    proof.public_inputs,
+                    key.0
+                        .into_iter()
+                        .chain(expected_path[..max_depth].iter().copied().map(F::from_bool))
+                        .collect::<Vec<_>>()
+                );
+                data.verify(proof)?;
+            }
+        }
+        Ok(())
+    }
+
+    // Supply an adversarial decomposition without changing constraints or verifier data.
+    // Bypass the honest split generators so rejection tests the canonicality constraints,
+    // rather than a conflict with the generators' canonical witness assignments.
     fn force_noncanonical_keypath(
         data: &mut CircuitData,
         pw: &mut PartialWitness<F>,
@@ -774,7 +807,7 @@ pub mod tests {
     fn test_keypath_rejects_noncanonical_decomposition() -> Result<()> {
         for element in 0..HASH_SIZE {
             for value in [0, 1, u32::MAX as u64 - 1] {
-                // Check both a truncated path and the complete field-element decomposition.
+                // The x + p decomposition must be rejected for both truncated and full paths.
                 for max_depth in [element * 64 + 1, (element + 1) * 64] {
                     let mut builder =
                         CircuitBuilder::<F, D>::new(CircuitConfig::standard_recursion_config());
@@ -804,8 +837,9 @@ pub mod tests {
 
     #[test]
     fn test_nonexistence_rejects_noncanonical_keypath() -> Result<()> {
-        // Both leaves are in the left subtree. The alternate decomposition of key 0
-        // starts with a 1, pointing at the empty right subtree despite key 0 being present.
+        // Both leaves are in the left subtree. Attempt to prove key 0 absent by supplying
+        // the bits of p, which point at the empty right subtree. Canonicality must reject
+        // this alternate decomposition of the present key.
         let tree = MerkleTree::new(&HashMap::from([
             (RawValue::from(0), RawValue::from(1000)),
             (RawValue::from(2), RawValue::from(1002)),
@@ -844,7 +878,8 @@ pub mod tests {
         forged.op_key = key;
         assert!(forged.op_proof.other_leaf.is_none());
 
-        // Preserve the original key 0 in the left subtree and add another key 0 on the right.
+        // Forge a root with the original key 0 on the left and a duplicate on the right.
+        // The circuit must reject the non-canonical path used to insert the duplicate.
         let mut alternate_path = keypath(key);
         for (i, bit) in alternate_path.iter_mut().take(64).enumerate() {
             *bit = (F::ORDER >> i) & 1 != 0;
