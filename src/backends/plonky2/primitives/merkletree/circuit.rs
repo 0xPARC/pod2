@@ -91,6 +91,12 @@ pub fn verify_merkle_proof_circuit(
     let not_case_ii_selector = builder.not(proof.case_ii_selector);
     let case_i_selector = builder.and(not_existence, not_case_ii_selector);
 
+    // A different-key terminal only proves absence if its key really differs; otherwise the
+    // queried key's own leaf would pass as proof that the key is missing.
+    let same_key = builder.is_equal_flattenable(&proof.key, &proof.other_key);
+    let same_key_terminal = builder.and(proof.case_ii_selector, same_key);
+    builder.assert_zero(same_key_terminal.target);
+
     // use (key,value) or (other_key, other_value) depending if it's a proof
     // of existence or of non-existence, ie:
     // k = key * existence + other_key * (1-existence)
