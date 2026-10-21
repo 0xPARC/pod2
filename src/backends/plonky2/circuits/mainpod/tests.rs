@@ -402,7 +402,7 @@ fn test_operation_verify_rejects_zero_key_reference() -> Result<()> {
         )),
     )?;
 
-    // The zero key makes the reference encode as Literal(root), allowing a false equality.
+    // Zero-key references are rejected in either position because they encode as Literal(root).
     for (st, args) in [
         (
             Statement::equal(root, message.clone()),
