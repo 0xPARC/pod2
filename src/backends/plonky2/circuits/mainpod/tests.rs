@@ -10,7 +10,7 @@ use plonky2::{
 use super::*;
 use crate::{
     backends::plonky2::{
-        basetypes::C,
+        basetypes::{C, D},
         circuits::common::{tests::I64_TEST_PAIRS, IndexTarget},
         mainpod::{
             extract_custom_predicate_verifications, extract_custom_predicates, OperationArg,
@@ -26,8 +26,8 @@ use crate::{
     frontend::{self, literal, CustomPredicateBatchBuilder, StatementTmplBuilder},
     middleware::{
         self, hash_values, AnchoredKey, Hash, Key, OperationType, Predicate, PredicateOrWildcard,
-        RawValue, Statement, StatementArg, StatementTmpl, StatementTmplArg, ValueRef, Wildcard,
-        BASE_PARAMS, EMPTY_VALUE,
+        RawValue, Statement, StatementArg, StatementTmpl, StatementTmplArg, ToFields, ValueRef,
+        Wildcard, BASE_PARAMS, EMPTY_VALUE,
     },
 };
 
@@ -2281,4 +2281,101 @@ fn imported_statement_witness_uses_universal_operations() {
         witness.get_target(target.operations[1].op_type.elements[1]),
         F::from_canonical_usize(middleware::NativeOperation::None as usize)
     );
+}
+
+// Exercise the inner circuit directly: an introduction circuit may publish arbitrary roots.
+fn inherited_statements_root(max_input_pods: usize, is_main: bool, extend: bool) -> Result<()> {
+    let params = Params {
+        max_input_pods,
+        max_statements: 0,
+        max_public_statements: 0,
+        max_open_input_statement_ops: 0,
+        max_custom_predicates: 0,
+        max_custom_predicate_verification_ops: 0,
+        max_public_key_ops: 0,
+        max_signed_by_ops: 0,
+        containers: middleware::ParamsContainers {
+            state_ops: middleware::ParamsMerkleProofs {
+                max_small: 0,
+                max_medium: 0,
+            },
+            transition_ops: middleware::ParamsMerkleProofs {
+                max_small: 0,
+                max_medium: 0,
+            },
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let mut builder = CircuitBuilder::<F, D>::new(CircuitConfig::standard_recursion_config());
+    let main = MainPodVerifyTarget::new_virtual(&params, &mut builder);
+    let mut pw = PartialWitness::new();
+    pw.set_bool_target(main.extend_pod0_pub_statements, extend)?;
+
+    // The arbitrary inherited tree publicly claims Equal(1, 2).
+    let false_statement = mainpod::Statement::from(Statement::Equal(
+        ValueRef::Literal(1.into()),
+        ValueRef::Literal(2.into()),
+    ));
+    let false_hash = crate::middleware::hash_fields(&false_statement.to_fields());
+    let false_tree = MerkleTree::new(&std::collections::HashMap::from([(
+        RawValue::from(0),
+        RawValue::from(false_hash),
+    )]));
+    let vd_hash = Hash::from(RawValue::from(123));
+    let vd_tree = MerkleTree::new(&std::collections::HashMap::from([(
+        RawValue::from(0),
+        RawValue::from(vd_hash),
+    )]));
+    pw.set_hash_target(main.vds_root, vd_tree.root().into())?;
+    let mut verified = Vec::new();
+    for vd_proof in &main.vd_mt_proofs {
+        let (value, proof) = vd_tree.prove(&RawValue::from(0))?;
+        vd_proof.set_targets(
+            &mut pw,
+            &MerkleClaimAndProof::new(vd_tree.root(), RawValue::from(0), Some(value), proof),
+        )?;
+        let public_inputs = false_tree
+            .root()
+            .0
+            .into_iter()
+            .chain(vd_tree.root().0)
+            .chain([F::from_bool(is_main)])
+            .map(|v| builder.constant(v))
+            .collect();
+        verified.push(VerifiedProofTarget {
+            public_inputs,
+            verifier_data_hash: builder.constant_hash(vd_hash.into()),
+        });
+    }
+    let root = verify_main_pod_circuit(&mut builder, &main, &verified)?;
+    builder.register_public_inputs(&root.elements);
+    let data = builder.build::<C>();
+    let proof = data.prove(pw)?;
+    let expected = if extend && max_input_pods != 0 {
+        false_tree.root()
+    } else {
+        EMPTY_HASH
+    };
+    assert_eq!(proof.public_inputs, expected.0);
+    data.verify(proof)?;
+    Ok(())
+}
+
+#[test]
+fn test_inheritance_rejects_intro_pod_root() {
+    assert!(inherited_statements_root(1, false, true).is_err());
+}
+
+#[test]
+fn test_inheritance_rejects_extension_without_inputs() {
+    assert!(inherited_statements_root(0, false, true).is_err());
+}
+
+#[test]
+fn test_inheritance_valid_modes() -> Result<()> {
+    inherited_statements_root(0, false, false)?;
+    inherited_statements_root(1, false, false)?;
+    inherited_statements_root(1, true, false)?;
+    inherited_statements_root(1, true, true)
 }
