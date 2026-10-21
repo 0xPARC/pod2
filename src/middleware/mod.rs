@@ -167,7 +167,7 @@ impl fmt::Display for TypedValue {
             TypedValue::SecretKey(p) => write!(f, "SecretKey({})", p),
             TypedValue::Predicate(p) => write!(f, "Predicate({})", p),
             TypedValue::Untyped(r) => {
-                write!(f, "Raw(0x{})", r.encode_hex::<String>())
+                write!(f, "Untyped(0x{})", r.encode_hex::<String>())
             }
         }
     }
@@ -224,13 +224,13 @@ impl JsonSchema for TypedValue {
             ..Default::default()
         };
 
-        let raw_schema = schemars::schema::SchemaObject {
+        let untyped_schema = schemars::schema::SchemaObject {
             instance_type: Some(SingleOrVec::Single(Box::new(InstanceType::Object))),
             object: Some(Box::new(schemars::schema::ObjectValidation {
-                properties: [("Raw".to_string(), gen.subschema_for::<RawValue>())]
+                properties: [("Untyped".to_string(), gen.subschema_for::<RawValue>())]
                     .into_iter()
                     .collect(),
-                required: ["Raw".to_string()].into_iter().collect(),
+                required: ["Untyped".to_string()].into_iter().collect(),
                 ..Default::default()
             })),
             ..Default::default()
@@ -293,7 +293,7 @@ impl JsonSchema for TypedValue {
                 any_of: Some(vec![
                     Schema::Object(root_schema),
                     Schema::Object(int_schema),
-                    Schema::Object(raw_schema),
+                    Schema::Object(untyped_schema),
                     Schema::Object(public_key_schema),
                     Schema::Object(secret_key_schema),
                     Schema::Object(container_schema),
@@ -352,7 +352,7 @@ impl JsonSchema for Value {
 /// persistent storage.
 #[derive(Serialize, Deserialize)]
 enum TypedValueNoRec {
-    Raw(RawValue),
+    Untyped(RawValue),
     Int(i64),
     PublicKey(PublicKey),
     SecretKey(SecretKey),
@@ -367,7 +367,7 @@ impl Value {
     pub fn to_bytes(&self) -> Vec<u8> {
         let v = match &self.typed {
             TypedValue::Int(v) => TypedValueNoRec::Int(*v),
-            TypedValue::Untyped(v) => TypedValueNoRec::Raw(*v),
+            TypedValue::Untyped(v) => TypedValueNoRec::Untyped(*v),
             TypedValue::PublicKey(v) => TypedValueNoRec::PublicKey(*v),
             TypedValue::SecretKey(v) => TypedValueNoRec::SecretKey(v.clone()),
             TypedValue::Predicate(v) => TypedValueNoRec::Predicate(v.clone()),
@@ -380,7 +380,7 @@ impl Value {
         let v: TypedValueNoRec = serde_json::from_slice(bytes)?;
         Ok(match v {
             TypedValueNoRec::Int(v) => Value::from(v),
-            TypedValueNoRec::Raw(v) => Value::from(v),
+            TypedValueNoRec::Untyped(v) => Value::from(v),
             TypedValueNoRec::PublicKey(v) => Value::from(v),
             TypedValueNoRec::SecretKey(v) => Value::from(v),
             TypedValueNoRec::Predicate(v) => Value::from(v),

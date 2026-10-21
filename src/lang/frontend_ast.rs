@@ -245,7 +245,7 @@ pub enum LiteralValue {
     Int(LiteralInt),
     Bool(LiteralBool),
     String(LiteralString),
-    Raw(LiteralRaw),
+    Untyped(LiteralUntyped),
     PublicKey(LiteralPublicKey),
     SecretKey(LiteralSecretKey),
     Array(LiteralArray),
@@ -291,7 +291,7 @@ pub struct LiteralString {
 
 /// Raw value literal: Raw(0x...)
 #[derive(Debug, Clone, PartialEq)]
-pub struct LiteralRaw {
+pub struct LiteralUntyped {
     pub hash: HashHex,
     pub span: Option<Span>,
 }
@@ -580,7 +580,7 @@ impl fmt::Display for LiteralValue {
             LiteralValue::Int(i) => write!(f, "{}", i),
             LiteralValue::Bool(b) => write!(f, "{}", b),
             LiteralValue::String(s) => write!(f, "{}", s),
-            LiteralValue::Raw(r) => write!(f, "{}", r),
+            LiteralValue::Untyped(r) => write!(f, "{}", r),
             LiteralValue::PublicKey(pk) => write!(f, "{}", pk),
             LiteralValue::SecretKey(sk) => write!(f, "{}", sk),
             LiteralValue::Array(a) => write!(f, "{}", a),
@@ -650,9 +650,9 @@ impl fmt::Display for LiteralString {
     }
 }
 
-impl fmt::Display for LiteralRaw {
+impl fmt::Display for LiteralUntyped {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "Raw({})", self.hash)
+        write!(f, "Untyped({})", self.hash)
     }
 }
 
@@ -1065,7 +1065,7 @@ pub mod parse {
             Rule::literal_int => Ok(LiteralValue::Int(parse_literal_int(inner)?)),
             Rule::literal_bool => Ok(LiteralValue::Bool(parse_literal_bool(inner))),
             Rule::literal_string => Ok(LiteralValue::String(parse_literal_string(inner)?)),
-            Rule::literal_raw => Ok(LiteralValue::Raw(parse_literal_raw(inner))),
+            Rule::literal_untyped => Ok(LiteralValue::Untyped(parse_literal_untyped(inner))),
             Rule::literal_public_key => {
                 Ok(LiteralValue::PublicKey(parse_literal_public_key(inner)?))
             }
@@ -1169,11 +1169,11 @@ pub mod parse {
         })
     }
 
-    fn parse_literal_raw(pair: Pair<Rule>) -> LiteralRaw {
-        assert_eq!(pair.as_rule(), Rule::literal_raw);
+    fn parse_literal_untyped(pair: Pair<Rule>) -> LiteralUntyped {
+        assert_eq!(pair.as_rule(), Rule::literal_untyped);
         let span = get_span(&pair);
         let hash_pair = pair.into_inner().next().unwrap();
-        LiteralRaw {
+        LiteralUntyped {
             hash: parse_hash_hex(hash_pair),
             span: Some(span),
         }
@@ -1494,7 +1494,7 @@ mod tests {
             LiteralValue::Int(i) => i.span = None,
             LiteralValue::Bool(b) => b.span = None,
             LiteralValue::String(s) => s.span = None,
-            LiteralValue::Raw(r) => {
+            LiteralValue::Untyped(r) => {
                 r.span = None;
                 r.hash.span = None;
             }
@@ -1600,7 +1600,7 @@ mod tests {
     Equal(C["bool"], true)
     Equal(D["bool2"], false)
     Equal(E["string"], "hello world")
-    Equal(F["raw"], Raw(0x0000000000000000000000000000000000000000000000000000000000000001))
+    Equal(F["raw"], Untyped(0x0000000000000000000000000000000000000000000000000000000000000001))
     Equal(G["pk"], PublicKey({}))
     Equal(H["sk"], SecretKey({}))
 )"#,

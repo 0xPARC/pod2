@@ -150,7 +150,7 @@ pub(crate) fn lower_literal(lit: &LiteralValue) -> Value {
         LiteralValue::Int(i) => Value::from(i.value),
         LiteralValue::Bool(b) => Value::from(b.value),
         LiteralValue::String(s) => Value::from(s.value.clone()),
-        LiteralValue::Raw(r) => Value::from(r.hash.hash),
+        LiteralValue::Untyped(r) => Value::from(r.hash.hash),
         LiteralValue::PublicKey(pk) => Value::from(pk.point),
         LiteralValue::SecretKey(sk) => Value::from(sk.secret_key.clone()),
         LiteralValue::Array(a) => {

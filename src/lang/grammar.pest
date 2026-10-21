@@ -93,7 +93,7 @@ literal_value = {
     literal_set |
     literal_array |
     literal_bool |
-    literal_raw |
+    literal_untyped |
     literal_string |
     predicate_hash_native |
     predicate_hash_external |
@@ -130,7 +130,7 @@ literal_bool = @{ ("true" | "false") ~ word_end }
 // representing a 32-byte value in big-endian order
 hash_hex = @{ "0x" ~ (ASCII_HEX_DIGIT ~ ASCII_HEX_DIGIT){32} }
 
-literal_raw = { "Raw" ~ "(" ~ hash_hex ~ ")" }
+literal_untyped = { "Untyped" ~ "(" ~ hash_hex ~ ")" }
 
 // String literal parsing based on https://pest.rs/book/examples/json.html
 literal_string = ${ "\"" ~ inner ~ "\"" } // Compound atomic string rule
@@ -165,7 +165,7 @@ dict_pair = { literal_string ~ ":" ~ literal_value }
 test_identifier = { SOI ~ identifier ~ EOI }
 test_literal_int = { SOI ~ literal_int ~ EOI }
 test_hash_hex = { SOI ~ hash_hex ~ EOI } 
-test_literal_raw = { SOI ~ literal_raw ~ EOI }
+test_literal_untyped = { SOI ~ literal_untyped ~ EOI }
 test_literal_value = { SOI ~ literal_value ~ EOI }
 test_statement = { SOI ~ statement ~ EOI }
 test_statement_arg = { SOI ~ statement_arg ~ EOI }

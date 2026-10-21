@@ -161,28 +161,28 @@ mod tests {
         assert_fails(Rule::literal_bool, "true_flag");
         assert_fails(Rule::literal_bool, "falsehood");
 
-        // Raw - Require 64 hex digits (32 bytes, equal to 4 * 64-bit field elements)
+        // Untyped - Require 64 hex digits (32 bytes, equal to 4 * 64-bit field elements)
         assert_parses(
-            Rule::literal_raw,
-            "Raw(0x0000000000000000000000000000000000000000000000000000000000000000)",
+            Rule::literal_untyped,
+            "Untyped(0x0000000000000000000000000000000000000000000000000000000000000000)",
         );
         assert_parses(
-            Rule::literal_raw,
-            "Raw(0xabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcd)",
+            Rule::literal_untyped,
+            "Untyped(0xabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcd)",
         );
-        let long_valid_raw = format!("Raw(0x{})", "a".repeat(64));
-        assert_parses(Rule::literal_raw, &long_valid_raw);
+        let long_valid_untyped = format!("Untyped(0x{})", "a".repeat(64));
+        assert_parses(Rule::literal_untyped, &long_valid_untyped);
 
         // Use anchored rule for failure cases
         assert_fails(
-            Rule::test_literal_raw,
+            Rule::test_literal_untyped,
             "0x0000000000000000000000000000000000000000000000000000000000000000",
-        ); // Missing Raw() wrapper
-        assert_fails(Rule::test_literal_raw, "Raw(0xabc)"); // Fails (string is too short)
-        assert_fails(Rule::test_literal_raw, "Raw(0x)"); // Fails (needs at least one pair)
+        ); // Missing Untyped() wrapper
+        assert_fails(Rule::test_literal_untyped, "Untyped(0xabc)"); // Fails (string is too short)
+        assert_fails(Rule::test_literal_untyped, "Untyped(0x)"); // Fails (needs at least one pair)
         assert_fails(
-            Rule::test_literal_raw,
-            &format!("Raw(0x{})", "a".repeat(66)),
+            Rule::test_literal_untyped,
+            &format!("Untyped(0x{})", "a".repeat(66)),
         ); // Fails (string is too long)
 
         // String
@@ -206,7 +206,7 @@ mod tests {
         assert_parses(Rule::literal_set, "#[1, 2, 3]");
         assert_parses(
             Rule::literal_set,
-            "#[ \"a\", Raw(0x0000000000000000000000000000000000000000000000000000000000000000) ]",
+            "#[ \"a\", Untyped(0x0000000000000000000000000000000000000000000000000000000000000000) ]",
         );
 
         // Dict
@@ -215,7 +215,7 @@ mod tests {
         assert_parses(Rule::literal_dict, "{ \"nested\": { \"key\": 1 } }");
         assert_parses(
             Rule::literal_dict,
-            "{ \"raw_val\": Raw(0x0000000000000000000000000000000000000000000000000000000000000000) } ",
+            "{ \"raw_val\": Untyped(0x0000000000000000000000000000000000000000000000000000000000000000) } ",
         );
         assert_fails(Rule::literal_dict, "{ name: \"Alice\" }"); // Key must be string literal with quotes
 
