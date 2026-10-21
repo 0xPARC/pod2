@@ -1705,11 +1705,8 @@ fn verify_main_pod_circuit(
     let measure = measure_gates_begin!(builder, "MainPodVerify");
 
     let mut input_pod_table = Vec::with_capacity(params.max_input_pods);
-    let mut pod0_sts_root = None;
     // 1a. Verify all input recursive pods
-    for (i, (verified_proof, vd_mt_proof)) in
-        izip!(verified_proofs, &main_pod.vd_mt_proofs,).enumerate()
-    {
+    for (verified_proof, vd_mt_proof) in izip!(verified_proofs, &main_pod.vd_mt_proofs) {
         let measure_in_pod = measure_gates_begin!(builder, "VerifyInPod");
 
         let is_main = BoolTarget::new_unsafe(verified_proof.public_inputs[PI_OFFSET_IS_MAIN]);
@@ -1748,9 +1745,6 @@ fn verify_main_pod_circuit(
                 [PI_OFFSET_STATEMENTS_ROOT..PI_OFFSET_STATEMENTS_ROOT + HASH_SIZE],
         )
         .expect("4 elements");
-        if i == 0 {
-            pod0_sts_root = Some(sts_root);
-        }
         input_pod_table.push(InputPodEntryTarget {
             is_main,
             sts_root,
@@ -1763,15 +1757,23 @@ fn verify_main_pod_circuit(
     let empty = HashOutTarget {
         elements: builder.constant_value(EMPTY_VALUE).elements,
     };
-    let mut sts_root = if let Some(pod0_sts_root) = pod0_sts_root {
+    let mut sts_root = if let Some(pod0) = input_pod_table.first() {
+        // Introduction POD roots may contain arbitrary statements, so only MainPods can be
+        // inherited without verifying each statement through an introduction operation.
+        let one = builder.one();
+        builder.conditional_assert_eq(
+            main_pod.extend_pod0_pub_statements.target,
+            pod0.is_main.target,
+            one,
+        );
         builder.select_flattenable(
             params,
             main_pod.extend_pod0_pub_statements,
-            &pod0_sts_root,
+            &pod0.sts_root,
             &empty,
         )
     } else {
-        // Case where the params specify 0 max input pods
+        builder.assert_zero(main_pod.extend_pod0_pub_statements.target);
         empty
     };
 
