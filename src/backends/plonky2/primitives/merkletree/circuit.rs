@@ -857,6 +857,37 @@ pub mod tests {
         Ok(())
     }
 
+    // A present key's own leaf, passed as the different-key terminal, must not prove the key absent.
+    #[test]
+    fn test_nonexistence_rejects_terminal_with_queried_key() -> Result<()> {
+        let max_depth = 16;
+        let kvs = (0..8)
+            .map(|i| (RawValue::from(i), RawValue::from(1000 + i)))
+            .collect::<HashMap<_, _>>();
+        let tree = MerkleTree::new(&kvs);
+        let present_key = RawValue::from(5);
+        let (present_value, membership) = tree.prove(&present_key)?;
+        let forged = MerkleProof {
+            existence: false,
+            siblings: membership.siblings,
+            other_leaf: Some((present_key, present_value)),
+        };
+        assert!(merkletree::verify_nonexistence(tree.root(), &forged, &present_key).is_err());
+
+        let config = CircuitConfig::standard_recursion_config();
+        let mut builder = CircuitBuilder::<F, D>::new(config);
+        let mut pw = PartialWitness::<F>::new();
+        let targets = MerkleClaimAndProofTarget::new_virtual(max_depth, &mut builder);
+        verify_merkle_proof_circuit(&mut builder, &targets);
+        targets.set_targets(
+            &mut pw,
+            &MerkleClaimAndProof::new(tree.root(), present_key, None, forged),
+        )?;
+        let data = builder.build::<C>();
+        assert!(data.prove(pw).is_err());
+        Ok(())
+    }
+
     #[test]
     fn test_merkleproof_only_existence_verify() -> Result<()> {
         for max_depth in [10, 16, 32, 40, 64, 128, 130, 250, 256] {
