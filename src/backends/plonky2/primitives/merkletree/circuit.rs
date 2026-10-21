@@ -1278,6 +1278,165 @@ pub mod tests {
         Ok(())
     }
 
+    fn assert_forged_transition_rejected(
+        op: MerkleTreeOp,
+        mut forged: MerkleTreeStateTransitionProof,
+        tamper_witness: impl FnOnce(&MerkleTreeStateTransitionProofTarget, &mut PartialWitness<F>),
+    ) -> Result<()> {
+        // The same attack applies to deletion by reversing the two roots.
+        match op {
+            MerkleTreeOp::Insert => {}
+            MerkleTreeOp::Delete => {
+                std::mem::swap(&mut forged.old_root, &mut forged.new_root);
+                forged.op = op;
+            }
+            _ => unreachable!("these regression tests cover insertions and deletions"),
+        }
+        assert!(merkletree::verify_state_transition(&forged).is_err());
+
+        let mut builder = CircuitBuilder::<F, D>::new(CircuitConfig::standard_recursion_config());
+        let targets = MerkleTreeStateTransitionProofTarget::new_virtual(8, &mut builder);
+        verify_merkle_state_transition_circuit(&mut builder, &targets);
+        builder.register_public_inputs(&targets.old_root.elements);
+        builder.register_public_inputs(&targets.new_root.elements);
+        builder.register_public_input(targets.op);
+        builder.register_public_inputs(&targets.op_key.elements);
+        builder.register_public_inputs(&targets.op_value.elements);
+
+        let mut pw = PartialWitness::new();
+        targets.set_targets(&mut pw, &forged)?;
+        // A malicious prover can bypass the honest witness setter's auxiliary assignments.
+        tamper_witness(&targets, &mut pw);
+        let data = builder.build::<C>();
+        if let Ok(proof) = data.prove(pw) {
+            data.verify(proof)?;
+            panic!("circuit accepted and verified an invalid {op:?} transition");
+        }
+        Ok(())
+    }
+
+    fn transition_rejects_out_of_range_divergence(op: MerkleTreeOp) -> Result<()> {
+        let original = MerkleTree::new(&HashMap::from([
+            (RawValue::from(0), RawValue::from(1000)),
+            (RawValue::from(1), RawValue::from(1001)),
+        ]));
+        let key = RawValue::from(2);
+        let value = RawValue::from(1002);
+        let mut correct = original.clone();
+        let mut forged = correct.insert(&key, &value)?;
+        assert_eq!(
+            forged.op_proof.other_leaf,
+            Some((RawValue::from(0), RawValue::from(1000)))
+        );
+
+        // Claim to insert key 2 while also removing key 0. Both roots are canonical trees;
+        // the unchanged sibling is key 1, so an out-of-range level skips the divergence check.
+        let replacement = MerkleTree::new(&HashMap::from([
+            (RawValue::from(1), RawValue::from(1001)),
+            (key, value),
+        ]));
+        forged.new_root = replacement.root();
+        forged.siblings = replacement.prove(&key)?.1.siblings;
+        assert_eq!(forged.op_proof.siblings, forged.siblings);
+        assert_ne!(forged.new_root, correct.root());
+
+        assert_forged_transition_rejected(op, forged, |targets, pw| {
+            pw.target_values.insert(
+                targets.divergence_level,
+                F::from_canonical_usize(targets.max_depth),
+            );
+        })
+    }
+
+    #[test]
+    fn test_insert_rejects_out_of_range_divergence() -> Result<()> {
+        transition_rejects_out_of_range_divergence(MerkleTreeOp::Insert)
+    }
+
+    #[test]
+    fn test_delete_rejects_out_of_range_divergence() -> Result<()> {
+        transition_rejects_out_of_range_divergence(MerkleTreeOp::Delete)
+    }
+
+    fn transition_rejects_extra_leaf_in_empty_slot(op: MerkleTreeOp) -> Result<()> {
+        // Keys 0 and 2 occupy the left subtree; the right subtree is empty.
+        let mut correct = MerkleTree::new(&HashMap::from([
+            (RawValue::from(0), RawValue::from(1000)),
+            (RawValue::from(2), RawValue::from(1002)),
+        ]));
+        let key = RawValue::from(1);
+        let mut forged = correct.insert(&key, &RawValue::from(1001))?;
+        assert!(!forged.op_proof.existence);
+        assert!(forged.op_proof.other_leaf.is_none());
+
+        // Claim to insert only key 1, but also insert key 3 into the empty subtree.
+        // For deletion, the reversed transition removes both keys while claiming only key 1.
+        let injected_key = RawValue::from(3);
+        let injected_value = RawValue::from(1003);
+        let mut extra_leaf = correct.clone();
+        extra_leaf.insert(&injected_key, &injected_value)?;
+        forged.new_root = extra_leaf.root();
+        forged.siblings = extra_leaf.prove(&key)?.1.siblings;
+        assert_ne!(forged.new_root, correct.root());
+
+        assert_forged_transition_rejected(op, forged, |targets, pw| {
+            // case_ii_selector stays false: these values are ignored by non-existence,
+            // but their hash is still allowed as a new sibling by the transition check.
+            for (target, value) in [
+                (targets.op_proof.other_key, injected_key),
+                (targets.op_proof.other_value, injected_value),
+            ] {
+                for (target, value) in target.elements.into_iter().zip(value.0) {
+                    pw.target_values.insert(target, value);
+                }
+            }
+        })
+    }
+
+    #[test]
+    fn test_insert_rejects_extra_leaf_in_empty_slot() -> Result<()> {
+        transition_rejects_extra_leaf_in_empty_slot(MerkleTreeOp::Insert)
+    }
+
+    #[test]
+    fn test_delete_rejects_extra_leaf_in_empty_slot() -> Result<()> {
+        transition_rejects_extra_leaf_in_empty_slot(MerkleTreeOp::Delete)
+    }
+
+    fn transition_rejects_late_divergence(op: MerkleTreeOp) -> Result<()> {
+        let other_key = RawValue::from(0);
+        let other_value = RawValue::from(1000);
+        let mut correct = MerkleTree::new(&HashMap::from([(other_key, other_value)]));
+        let key = RawValue::from(3);
+        let value = RawValue::from(1003);
+        let mut forged = correct.insert(&key, &value)?;
+        assert_eq!(forged.op_proof.other_leaf, Some((other_key, other_value)));
+
+        // Keys 0b00 and 0b11 first diverge at level 0, but also differ at level 1.
+        // Put the old leaf at level 1, moving it under the wrong root branch. This uses
+        // an in-range divergence level and an authenticated other leaf.
+        let membership = MerkleProof {
+            existence: true,
+            siblings: vec![EMPTY_HASH, kv_hash(&other_key, Some(other_value))],
+            other_leaf: None,
+        };
+        forged.new_root = membership.compute_root_from_leaf(&key, Some(value))?;
+        forged.siblings = membership.siblings;
+        assert_ne!(forged.new_root, correct.root());
+
+        assert_forged_transition_rejected(op, forged, |_, _| {})
+    }
+
+    #[test]
+    fn test_insert_rejects_late_divergence() -> Result<()> {
+        transition_rejects_late_divergence(MerkleTreeOp::Insert)
+    }
+
+    #[test]
+    fn test_delete_rejects_late_divergence() -> Result<()> {
+        transition_rejects_late_divergence(MerkleTreeOp::Delete)
+    }
+
     #[test]
     fn test_bug_1() {
         let mtp0: MerkleTreeStateTransitionProof = serde_json::from_str(
