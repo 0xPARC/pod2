@@ -20,8 +20,8 @@ env_logger = { version = "0.11", optional = true }
 lazy_static = "1.5.0"
 thiserror = { version = "2.0.12" }
 # enabled by features:
-plonky2 = { git = "https://github.com/0xPARC/plonky2.git", rev = "890cb83dd723d5bff2955266f57ece83faa4160c", optional = true }
-plonky2_u32 = { git = "https://github.com/ax0/plonky2-u32", rev = "cb8e2d9681eb06d069157edbb5ec1d05038611c4" }
+plonky2 = { git = "https://github.com/0xPARC/plonky2.git", rev = "60e32369b7b5c8f0ff1e44265005f7c3c3a0a04b", optional = true }
+plonky2_u32 = { git = "https://github.com/ax0/plonky2-u32", rev = "0e1346c3c946ff87c4f99af9f3d8673542f4828e" }
 serde = "1.0.219"
 serde_json = "1.0.140"
 base64 = "0.22.1"
@@ -53,9 +53,6 @@ rocksdb = { version = "0.24.0", optional = true } # keyvalue database for merkle
 # Uncomment for debugging with https://github.com/ed255/plonky2/ at branch `feat/debug`.  The repo directory needs to be checked out next to the pod2 repo directory.
 # [patch."https://github.com/0xPARC/plonky2"]
 # plonky2 = { path = "../plonky2/plonky2" }
-
-[patch."https://github.com/0xPARC/plonky2"]
-plonky2 = { git = "https://github.com/0xPARC//plonky2", rev = "890cb83dd723d5bff2955266f57ece83faa4160c" }
 
 [dev-dependencies]
 pretty_assertions = "1.4.1"
