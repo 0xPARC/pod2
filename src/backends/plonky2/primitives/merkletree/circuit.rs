@@ -641,12 +641,20 @@ pub mod tests {
     use std::collections::HashMap;
 
     use hex::FromHex;
-    use plonky2::plonk::{circuit_builder::CircuitBuilder, circuit_data::CircuitConfig};
+    use plonky2::{
+        field::types::{Field64, PrimeField64},
+        iop::{
+            generator::{ConstantGenerator, SimpleGenerator, WitnessGeneratorRef},
+            witness::Witness,
+        },
+        plonk::{circuit_builder::CircuitBuilder, circuit_data::CircuitConfig},
+        util::serialization::{Buffer, Read},
+    };
 
     use super::*;
     use crate::{
         backends::plonky2::{
-            basetypes::C,
+            basetypes::{CircuitData, C},
             primitives::merkletree::{self, keypath, kv_hash, MerkleProof, MerkleTree},
         },
         middleware::{hash_value, RawValue},
@@ -692,6 +700,175 @@ pub mod tests {
             data.verify(proof)?;
         }
         Ok(())
+    }
+
+    // Replace only the honest split generators: constraints and verifier data stay intact.
+    // Assigning path bits alone would conflict with the generators' canonical decomposition
+    // and reject the witness before the circuit's constraints could be tested.
+    fn force_noncanonical_keypath(
+        data: &mut CircuitData,
+        pw: &mut PartialWitness<F>,
+        element: Target,
+        alternate: u64,
+    ) -> anyhow::Result<()> {
+        assert_eq!(F::from_noncanonical_u64(alternate), pw.get_target(element));
+        assert_ne!(alternate, pw.get_target(element).to_canonical_u64());
+        let representative = |target: Target| {
+            data.prover_only.representative_map
+                [target.index(data.common.config.num_wires, data.common.degree())]
+        };
+        let mut replaced = 0;
+        for generator in &mut data.prover_only.generators {
+            if generator.0.id() != "WireSplitGenerator"
+                || representative(generator.0.watch_list()[0]) != representative(element)
+            {
+                continue;
+            }
+            let mut bytes = Vec::new();
+            generator.0.serialize(&mut bytes, &data.common).unwrap();
+            let mut buffer = Buffer::new(&bytes);
+            let integer = buffer.read_target().unwrap();
+            assert_eq!(representative(integer), representative(element));
+            let gates = buffer.read_usize_vec().unwrap();
+            let num_limbs = buffer.read_usize().unwrap();
+            assert!(num_limbs < 64);
+            let mut remaining = alternate;
+            for &row in &gates {
+                let chunk = remaining & ((1u64 << num_limbs) - 1);
+                pw.set_target(Target::wire(row, 0), F::from_canonical_u64(chunk))?;
+                remaining >>= num_limbs;
+            }
+            assert_eq!(remaining, 0);
+            // All chunk sums are supplied above; a constant generator preserves generator
+            // indices and needs no new dependencies in the existing watch map.
+            *generator = WitnessGeneratorRef::new(
+                ConstantGenerator {
+                    row: gates[0],
+                    constant_index: 0,
+                    wire_index: 0,
+                    constant: F::from_canonical_u64(alternate & ((1u64 << num_limbs) - 1)),
+                }
+                .adapter(),
+            );
+            replaced += 1;
+        }
+        assert!(
+            replaced > 0,
+            "the test must override an actual key decomposition"
+        );
+        Ok(())
+    }
+
+    fn assert_noncanonical_keypath_rejected(
+        data: &CircuitData,
+        pw: PartialWitness<F>,
+    ) -> Result<()> {
+        if let Ok(proof) = data.prove(pw) {
+            data.verify(proof)?;
+            panic!("circuit accepted and verified a non-canonical key path");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_keypath_rejects_noncanonical_decomposition() -> Result<()> {
+        for element in 0..HASH_SIZE {
+            for value in [0, 1, u32::MAX as u64 - 1] {
+                // Check both a truncated path and the complete field-element decomposition.
+                for max_depth in [element * 64 + 1, (element + 1) * 64] {
+                    let mut builder =
+                        CircuitBuilder::<F, D>::new(CircuitConfig::standard_recursion_config());
+                    let key_target = builder.add_virtual_value();
+                    let path = keypath_target(max_depth, &mut builder, &key_target);
+                    builder.register_public_inputs(&key_target.elements);
+                    for bit in path {
+                        builder.register_public_input(bit.target);
+                    }
+                    let mut pw = PartialWitness::new();
+                    let mut key = EMPTY_VALUE;
+                    key.0[element] = F::from_canonical_u64(value);
+                    pw.set_target_arr(&key_target.elements, &key.0)?;
+                    let mut data = builder.build::<C>();
+                    force_noncanonical_keypath(
+                        &mut data,
+                        &mut pw,
+                        key_target.elements[element],
+                        value + F::ORDER,
+                    )?;
+                    assert_noncanonical_keypath_rejected(&data, pw)?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_nonexistence_rejects_noncanonical_keypath() -> Result<()> {
+        // Both leaves are in the left subtree. The alternate decomposition of key 0
+        // starts with a 1, pointing at the empty right subtree despite key 0 being present.
+        let tree = MerkleTree::new(&HashMap::from([
+            (RawValue::from(0), RawValue::from(1000)),
+            (RawValue::from(2), RawValue::from(1002)),
+        ]));
+        let key = RawValue::from(0);
+        assert!(tree.prove_nonexistence(&key).is_err());
+        let forged = tree.prove_nonexistence(&RawValue::from(1))?;
+        assert!(forged.other_leaf.is_none());
+        assert!(merkletree::verify_nonexistence(tree.root(), &forged, &key).is_err());
+
+        let mut builder = CircuitBuilder::<F, D>::new(CircuitConfig::standard_recursion_config());
+        let targets = MerkleClaimAndProofTarget::new_virtual(8, &mut builder);
+        verify_merkle_proof_circuit(&mut builder, &targets);
+        builder.register_public_inputs(&targets.root.elements);
+        builder.register_public_inputs(&targets.key.elements);
+        let mut pw = PartialWitness::new();
+        targets.set_targets(
+            &mut pw,
+            &MerkleClaimAndProof::new(tree.root(), key, None, forged),
+        )?;
+        let mut data = builder.build::<C>();
+        force_noncanonical_keypath(&mut data, &mut pw, targets.key.elements[0], F::ORDER)?;
+        assert_noncanonical_keypath_rejected(&data, pw)
+    }
+
+    #[test]
+    fn test_insert_rejects_existing_key_at_noncanonical_path() -> Result<()> {
+        let mut tree = MerkleTree::new(&HashMap::from([
+            (RawValue::from(0), RawValue::from(1000)),
+            (RawValue::from(2), RawValue::from(1002)),
+        ]));
+        let key = RawValue::from(0);
+        let value = RawValue::from(2000);
+        assert!(tree.insert(&key, &value).is_err());
+        let mut forged = tree.insert(&RawValue::from(1), &value)?;
+        forged.op_key = key;
+        assert!(forged.op_proof.other_leaf.is_none());
+
+        // Preserve the original key 0 in the left subtree and add another key 0 on the right.
+        let mut alternate_path = keypath(key);
+        for (i, bit) in alternate_path.iter_mut().take(64).enumerate() {
+            *bit = (F::ORDER >> i) & 1 != 0;
+        }
+        let membership = MerkleProof {
+            existence: true,
+            siblings: forged.siblings.clone(),
+            other_leaf: None,
+        };
+        forged.new_root =
+            membership.compute_root_from_node(&kv_hash(&key, Some(value)), alternate_path)?;
+        assert!(merkletree::verify_state_transition(&forged).is_err());
+
+        let mut builder = CircuitBuilder::<F, D>::new(CircuitConfig::standard_recursion_config());
+        let targets = MerkleTreeStateTransitionProofTarget::new_virtual(8, &mut builder);
+        verify_merkle_state_transition_circuit(&mut builder, &targets);
+        builder.register_public_inputs(&targets.old_root.elements);
+        builder.register_public_inputs(&targets.new_root.elements);
+        builder.register_public_inputs(&targets.op_key.elements);
+        let mut pw = PartialWitness::new();
+        targets.set_targets(&mut pw, &forged)?;
+        let mut data = builder.build::<C>();
+        force_noncanonical_keypath(&mut data, &mut pw, targets.op_key.elements[0], F::ORDER)?;
+        assert_noncanonical_keypath_rejected(&data, pw)
     }
 
     #[test]
