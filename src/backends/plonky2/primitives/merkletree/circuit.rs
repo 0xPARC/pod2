@@ -10,7 +10,6 @@
 //!
 use std::iter;
 
-use itertools::zip_eq;
 use plonky2::{
     field::types::Field,
     hash::{
@@ -438,7 +437,7 @@ pub struct MerkleTreeStateTransitionProofTarget {
     pub(crate) op_value: ValueTarget,
     pub(crate) siblings: Vec<HashOutTarget>,
 
-    // auxiliary witness
+    // Deepest non-empty existence sibling, or MAX_DEPTH when the leaf is at the root.
     pub(crate) divergence_level: Target,
 }
 /// creates the targets and defines the logic of the circuit
@@ -515,84 +514,52 @@ pub fn verify_merkle_state_transition_circuit(
         builder.connect(proof.op_proof.key.elements[j], proof.op_key.elements[j]);
     }
 
-    // prepare value for check 5.2)
     let old_leaf_hash = kv_hash_target(
         builder,
         &proof.op_proof.other_key,
         &proof.op_proof.other_value,
     );
-    // prepare values for check 5.3)
     let old_leaf_path = keypath_target(proof.max_depth, builder, &proof.op_proof.other_key);
+    let empty_hash = builder.constant_hash(EMPTY_HASH.into());
+    let mut deepest_sibling = builder.constant(F::from_canonical_usize(MAX_DEPTH));
+    let mut paths_match_before = builder._true();
+    let mut divergence_found = builder._false();
 
-    // 5) check that old_siblings & new_siblings match as expected. They
-    // should match at all levels for an update. Otherwise, let
-    //    d=divergence_level and assert that:
-    // 5.1) old_siblings[i] == new_siblings[i] ∀ i \ {d}
-    // 5.2) at i==d, if old_siblings[i] != new_siblings[i]: old_siblings[i] ==
-    //   EMPTY_HASH new_siblings[i] == old_leaf_hash
-    // 5.3) assert that if other_leaf!=empty, both old_leaf_path&new_leaf_path
-    //   should diverge at the inputted divergence level
-    let old_siblings = proof.op_proof.siblings.clone();
-    let new_siblings = proof.siblings.clone();
+    // Only an authenticated different-key terminal can become a new sibling. Updates and
+    // empty-slot insertions/deletions must preserve every sibling, regardless of other_key/value.
     for i in 0..proof.max_depth {
-        let i_targ = builder.constant(F::from_canonical_u64(i as u64));
-        let is_divergence_level = builder.is_equal(i_targ, proof.divergence_level);
-        let is_not_update = builder.not(is_update);
-        // There is no divergence level for an update.
-        let is_divergence_level = builder.and(is_not_update, is_divergence_level);
+        let old_sibling = &proof.op_proof.siblings[i];
+        let new_sibling = &proof.siblings[i];
+        let i_target = builder.constant(F::from_canonical_usize(i));
+        let sibling_is_empty = builder.is_equal_flattenable(new_sibling, &empty_hash);
+        deepest_sibling = builder.select(sibling_is_empty, deepest_sibling, i_target);
 
-        // 5.1) for all i except for i==divergence_level, assert that the
-        //   siblings are the same
-        let old_sibling_i: Vec<Target> = (0..HASH_SIZE)
-            .map(|j| builder.select(is_divergence_level, zero, old_siblings[i].elements[j]))
-            .collect();
-        let new_sibling_i: Vec<Target> = (0..HASH_SIZE)
-            .map(|j| builder.select(is_divergence_level, zero, new_siblings[i].elements[j]))
-            .collect();
-        for j in 0..HASH_SIZE {
-            builder.connect(old_sibling_i[j], new_sibling_i[j]);
-        }
-
-        // 5.2) when i==d && if old_siblings[i] != new_siblings[i], check that:
-        //   old_siblings[i] == EMPTY_HASH && new_siblings[i] == old_leaf_hash
-
-        // in_case_5_2=true if: i==d (= is_divergence_level) && old_siblings[i]!=new_siblings[i]
-        let old_is_eq_new = zip_eq(old_siblings[i].elements, new_siblings[i].elements).fold(
-            builder._true(),
-            |acc, (old, new)| {
-                let eq_at_i = builder.is_equal(old, new);
-                builder.and(acc, eq_at_i)
-            },
+        let at_divergence = builder.is_equal(i_target, proof.divergence_level);
+        let split_leaf = builder.and(proof.op_proof.case_ii_selector, at_divergence);
+        divergence_found = builder.or(divergence_found, split_leaf);
+        let preserve_sibling = builder.not(split_leaf);
+        builder.conditional_assert_eq_flattenable(
+            preserve_sibling.target,
+            old_sibling,
+            new_sibling,
         );
-        let old_is_noteq_new = builder.not(old_is_eq_new);
-        let in_case_5_2 = builder.and(old_is_noteq_new, is_divergence_level);
+        builder.conditional_assert_eq_flattenable(split_leaf.target, old_sibling, &empty_hash);
+        builder.conditional_assert_eq_flattenable(split_leaf.target, new_sibling, &old_leaf_hash);
 
-        // do the case2's checks
-        let sel = in_case_5_2;
-        for j in 0..HASH_SIZE {
-            builder.conditional_assert_eq(sel.target, old_siblings[i].elements[j], zero);
-            builder.conditional_assert_eq(
-                sel.target,
-                new_siblings[i].elements[j],
-                old_leaf_hash.elements[j],
-            );
-        }
-
-        // 5.3) assert that if other_leaf!=empty, both old_leaf_path&new_leaf_path
-        //   should diverge at the inputted divergence level.
-        let paths_eq_at_d = builder.is_equal(old_leaf_path[i].target, new_leaf_path[i].target);
-        // case_ii is 1 when other_leaf is not empty, 0 when it is empty
-        let is_divergence_level_and_other_not_empty = builder.mul(
-            is_divergence_level.target,
-            proof.op_proof.case_ii_selector.target,
-        );
-        builder.conditional_assert_eq(
-            is_divergence_level_and_other_not_empty,
-            // expect them to not be equal, ie. the is_equal check to be 0
-            paths_eq_at_d.target,
-            zero,
-        );
+        let paths_match_here = builder.is_equal(old_leaf_path[i].target, new_leaf_path[i].target);
+        builder.conditional_assert_eq(split_leaf.target, paths_match_before.target, one);
+        builder.conditional_assert_eq(split_leaf.target, paths_match_here.target, zero);
+        paths_match_before = builder.and(paths_match_before, paths_match_here);
     }
+
+    // Binding the level to the sibling depth also rules out non-empty siblings below the split.
+    // A different-key terminal must split within the circuit's depth; the sentinel is only
+    // usable when there is no terminal to preserve (or for a root-leaf update).
+    builder.connect(proof.divergence_level, deepest_sibling);
+    builder.connect(
+        divergence_found.target,
+        proof.op_proof.case_ii_selector.target,
+    );
 
     measure_gates_end!(builder, measure);
 }
@@ -659,13 +626,11 @@ impl MerkleTreeStateTransitionProofTarget {
         {
             pw.set_hash_target(self.siblings[i], HashOut::from_vec(sibling.0.to_vec()))?;
         }
-        let div_lvl = if new_siblings.is_empty() {
-            // don't subtract since it would underflow, use MAX_DEPTH
-            MAX_DEPTH as u64
-        } else {
-            (new_siblings.len() - 1) as u64
-        };
-        pw.set_target(self.divergence_level, F::from_canonical_u64(div_lvl))?;
+        let div_lvl = new_siblings
+            .iter()
+            .rposition(|sibling| *sibling != EMPTY_HASH)
+            .unwrap_or(MAX_DEPTH);
+        pw.set_target(self.divergence_level, F::from_canonical_usize(div_lvl))?;
 
         Ok(())
     }
@@ -1217,6 +1182,32 @@ pub mod tests {
     }
 
     #[test]
+    fn test_state_transition_depth_boundaries() -> Result<()> {
+        for max_depth in [0, 1, 8] {
+            let mut tree = MerkleTree::new(&HashMap::new());
+            let key = RawValue::from(0);
+            let insertion = tree.insert(&key, &RawValue::from(1000))?;
+            run_state_transition_circuit(true, max_depth, &insertion)?;
+
+            if max_depth > 0 {
+                // The two keys share every path bit except the last one the circuit supports.
+                let other_key = RawValue::from(1i64 << (max_depth - 1));
+                let insertion = tree.insert(&other_key, &RawValue::from(1001))?;
+                run_state_transition_circuit(true, max_depth, &insertion)?;
+                let deletion = tree.delete(&other_key)?;
+                run_state_transition_circuit(true, max_depth, &deletion)?;
+            }
+
+            let update = tree.update(&key, &RawValue::from(2000))?;
+            run_state_transition_circuit(true, max_depth, &update)?;
+            let deletion = tree.delete(&key)?;
+            run_state_transition_circuit(true, max_depth, &deletion)?;
+            assert_eq!(tree.root(), EMPTY_HASH);
+        }
+        Ok(())
+    }
+
+    #[test]
     fn test_state_transition_gadget_with_alteration() -> Result<()> {
         let max_depth: usize = 32;
         let mut kvs = HashMap::new();
@@ -1329,8 +1320,9 @@ pub mod tests {
             Some((RawValue::from(0), RawValue::from(1000)))
         );
 
-        // Claim to insert key 2 while also removing key 0. Both roots are canonical trees;
-        // the unchanged sibling is key 1, so an out-of-range level skips the divergence check.
+        // Claim to insert key 2 while also removing key 0. Both roots are canonical trees,
+        // with key 1 as the unchanged sibling. The circuit must reject an out-of-range
+        // divergence level even when all siblings agree.
         let replacement = MerkleTree::new(&HashMap::from([
             (RawValue::from(1), RawValue::from(1001)),
             (key, value),
@@ -1380,8 +1372,8 @@ pub mod tests {
         assert_ne!(forged.new_root, correct.root());
 
         assert_forged_transition_rejected(op, forged, |targets, pw| {
-            // case_ii_selector stays false: these values are ignored by non-existence,
-            // but their hash is still allowed as a new sibling by the transition check.
+            // case_ii_selector stays false, so non-existence does not authenticate these
+            // values. The transition check must reject their hash as an extra sibling.
             for (target, value) in [
                 (targets.op_proof.other_key, injected_key),
                 (targets.op_proof.other_value, injected_value),
