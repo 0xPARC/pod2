@@ -947,6 +947,13 @@ mod tests {
         }
     }
 
+    #[test]
+    fn new_container_stores_its_kind_in_db() {
+        let dict = Dictionary::new([(StrKey::from("score"), Value::from(42))].into());
+        let reloaded = Container::from_db(dict.commitment(), dict.inner.db.clone()).unwrap();
+        assert_eq!(reloaded.kind(), dict.inner.kind());
+    }
+
     fn test_databases(test_fn: &dyn Fn(Box<dyn DB>)) {
         let db = MemDB::new();
         test_fn(Box::new(db));
