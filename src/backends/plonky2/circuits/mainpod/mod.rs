@@ -146,10 +146,9 @@ impl<const MAX_EQS: usize> StatementCache<MAX_EQS> {
             let ref_is_value = builder.and(ref_is_value_arg[0], ref_is_value_arg[1]);
             let ref_is_value = builder.and(ref_is_value, ref_is_value_arg[2]);
 
-            // References require nonzero keys so their encoding cannot alias Literal(root).
-            let empty = ValueTarget::empty(builder);
-            let key_is_empty = builder.is_equal_flattenable(&op_args[i].args[1].as_value(), &empty);
-            let key_is_nonempty = builder.not(key_is_empty);
+            // Every reference consumer binds this output argument to Contains(root, key).
+            // Reuse its type check to require a nonzero key without comparing the key twice.
+            let key_is_nonempty = builder.not(arg_is_value);
             let is_reference = builder.all([pred_is_contains, ref_is_value, key_is_nonempty]);
             let valid = builder.or(is_literal, is_reference);
             let rhs_from_literal = st.args[i].as_value();

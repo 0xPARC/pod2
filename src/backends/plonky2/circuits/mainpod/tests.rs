@@ -402,15 +402,19 @@ fn test_operation_verify_rejects_zero_key_reference() -> Result<()> {
         )),
     )?;
 
-    // Zero-key references are rejected in either position because they encode as Literal(root).
+    // A zero-key reference cannot masquerade as a literal or as a different, nonzero key.
     for (st, args) in [
         (
             Statement::equal(root, message.clone()),
             vec![OperationArg::Index(1), OperationArg::None],
         ),
         (
-            Statement::equal(message, root),
+            Statement::equal(message.clone(), root),
             vec![OperationArg::None, OperationArg::Index(1)],
+        ),
+        (
+            Statement::equal(AnchoredKey::new(root, Key::from("forged")), message),
+            vec![OperationArg::Index(1), OperationArg::None],
         ),
     ] {
         assert!(operation_verify(
@@ -1154,7 +1158,6 @@ fn test_operation_replace_value_with_entry_rejects_zero_key() {
     let root = tree.root();
     let st_in = Statement::equal(message.clone(), message.clone()).into();
     let st_entry = Statement::contains(root, EMPTY_VALUE, message.clone()).into();
-    let st_out = Statement::equal(root, message).into();
     let mut op_args = vec![OperationArg::None; BASE_PARAMS.max_statement_args + 1];
     op_args[0] = OperationArg::Index(2);
     op_args[BASE_PARAMS.max_statement_args] = OperationArg::Index(1);
@@ -1164,13 +1167,19 @@ fn test_operation_replace_value_with_entry_rejects_zero_key() {
         OperationAux::None,
     );
 
-    assert!(operation_verify(
-        st_out,
-        op,
-        vec![Statement::None.into(), st_in, st_entry],
-        Aux::default(),
-    )
-    .is_err());
+    let prev_statements = vec![Statement::None.into(), st_in, st_entry];
+    for st_out in [
+        Statement::equal(root, message.clone()),
+        Statement::equal(AnchoredKey::new(root, Key::from("forged")), message),
+    ] {
+        assert!(operation_verify(
+            st_out.into(),
+            op.clone(),
+            prev_statements.clone(),
+            Aux::default(),
+        )
+        .is_err());
+    }
 }
 
 #[test]
