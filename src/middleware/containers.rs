@@ -398,19 +398,20 @@ fn load_value(db: &dyn db::DB, value_raw: RawValue) -> Result<Value> {
     // We try loading a merkle tree first, and if one
     // doesn't exist then we try to load a shallow value from the db.
     let root = Hash(value_raw.0);
-    match db.load_node(root) {
-        Err(e) => Err(Error::Database(e)),
-        Ok(Some(_node)) => Ok(Value::from(Container::from_db_unchecked(
-            root,
-            db.clone_box(),
-        )?)),
-        Ok(None) => match db.load_value(value_raw) {
-            Err(e) => Err(Error::Database(e)),
-            Ok(Some(v)) => Ok(v),
-            Ok(None) => Err(Error::custom(format!(
-                "Value from {value_raw} not found in DB"
-            ))),
-        },
+    if let Some(_node) = db.load_node(root).map_err(Error::Database)? {
+        if let Some(kind) = db.load_kind(root).map_err(Error::Database)? {
+            return Ok(Value::from(Container::from_db_unchecked(
+                root,
+                kind,
+                db.clone_box(),
+            )?));
+        }
+    }
+    match db.load_value(value_raw).map_err(Error::Database)? {
+        Some(v) => Ok(v),
+        None => Err(Error::custom(format!(
+            "Value from {value_raw} not found in DB"
+        ))),
     }
 }
 
@@ -455,17 +456,17 @@ impl Container {
     fn empty_with_db(db: Box<dyn DB>) -> Self {
         Self::from_db(EMPTY_HASH, db).expect("EMPTY_HASH exists implicitly")
     }
-    fn from_db_unchecked(root: Hash, db: Box<dyn DB>) -> Result<Self> {
-        let kind = db
-            .load_kind(root)
-            .map_err(Error::Database)?
-            .ok_or_else(|| Error::custom("container kind not found"))?;
+    fn from_db_unchecked(root: Hash, kind: ContainerKind, db: Box<dyn DB>) -> Result<Self> {
         Ok(Self { kind, root, db })
     }
     pub fn from_db(root: Hash, db: Box<dyn DB>) -> Result<Self> {
         // Make sure the root exists in the db
         let _ = merkletree::load_node(db.as_ref(), root)?;
-        Self::from_db_unchecked(root, db)
+        let kind = db
+            .load_kind(root)
+            .map_err(Error::Database)?
+            .ok_or_else(|| Error::custom("container kind not found"))?;
+        Self::from_db_unchecked(root, kind, db)
     }
     pub fn commitment(&self) -> Hash {
         self.root
@@ -1296,5 +1297,26 @@ mod tests {
         assert_eq!(certificate.commitment(), original_root);
 
         assert_snapshot_is_readable(&certificate);
+    }
+
+    #[test]
+    fn raw_value_of_mt_node() {
+        let mut dict = Dictionary::new(
+            [
+                ("a".into(), Value::from(1i64)),
+                ("b".into(), Value::from(2i64)),
+            ]
+            .into(),
+        );
+        // insert an untyped value that has the same hash as a merkle tree node
+        dict.insert(
+            &"c".into(),
+            &merkletree::kv_hash(&Value::from("a").raw(), Some(Value::from(1i64).raw())).into(),
+        )
+        .unwrap();
+        // even though a merkle tree node exists, we haven't registered it as a merkle tree (it's a
+        // leaf), so this should just return an untyped value.
+        let v = dict.get(&"c".into()).unwrap().unwrap();
+        println!("{}", v);
     }
 }
