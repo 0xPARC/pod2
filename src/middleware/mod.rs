@@ -351,7 +351,7 @@ impl JsonSchema for Value {
 /// (merkle tree root of underlying data) is available.  Used for byte serialization for
 /// persistent storage.
 #[derive(Serialize, Deserialize)]
-pub enum TypedValueNoRec {
+enum TypedValueNoRec {
     Untyped(RawValue),
     Int(i64),
     PublicKey(PublicKey),
