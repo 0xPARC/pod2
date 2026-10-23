@@ -437,12 +437,15 @@ impl Container {
     }
     fn new(kind: ContainerKind, kvs: HashMap<Value, Value>) -> Self {
         let db = Box::new(MemDB::new());
-        let mut container = Self::empty_with_db(db);
-        container.kind = kind;
+        let mut tx = DB::tx(db.as_ref());
+        let mut root = EMPTY_HASH;
         for (k, v) in kvs {
-            container.insert(k, v).expect("no duplicates, no db errors");
+            let proof = insert_tx(tx.as_mut(), root, k, v).expect("no duplicates, no db errors");
+            root = proof.new_root;
         }
-        container
+        tx.update_kind(root, kind).expect("no MemDB error");
+        TX::commit(tx).expect("no MemDB error");
+        Self { kind, root, db }
     }
     pub(crate) fn empty() -> Self {
         Self::new(
