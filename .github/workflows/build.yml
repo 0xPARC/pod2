@@ -13,24 +13,31 @@ jobs:
     name: Rust tests
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v6
     - name: Set up Rust
       uses: actions-rust-lang/setup-rust-toolchain@v1
       with:
+        cache: false
+    - name: Resolve dependencies
+      run: cargo generate-lockfile
+    - name: Restore Rust cache
+      uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+      with:
         # See tests.yml: both workflows name their job "test", so without an
         # explicit key they share one cache entry across debug and release.
-        cache-shared-key: build-debug
-        cache-save-if: ${{ github.ref == 'refs/heads/main' }}
+        shared-key: build-debug
+        save-if: ${{ github.ref == 'refs/heads/main' }}
+        cache-on-failure: true
     - name: Build default
-      run: cargo build
+      run: cargo build --locked
     - name: Build non-zk # check without the zk feature enabled
-      run: cargo build --no-default-features --features backend_plonky2,mem_cache
+      run: cargo build --locked --no-default-features --features backend_plonky2,mem_cache
     - name: Build metrics
-      run: cargo build --features metrics
+      run: cargo build --locked --features metrics
     - name: Build time
-      run: cargo build --features time
+      run: cargo build --locked --features time
     - name: Build db_rocksdb
-      run: cargo build --features db_rocksdb
+      run: cargo build --locked --features db_rocksdb
     - name: Build disk_cache
-      run: cargo build --no-default-features --features backend_plonky2,zk,disk_cache
+      run: cargo build --locked --no-default-features --features backend_plonky2,zk,disk_cache
 

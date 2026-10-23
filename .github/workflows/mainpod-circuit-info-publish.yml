@@ -34,6 +34,20 @@ jobs:
 
       - name: Set up Rust
         uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          rust-src-dir: ${{ github.repository }}
+          cache: false
+
+      - name: Resolve dependencies
+        working-directory: ${{ github.repository }}
+        run: cargo generate-lockfile
+
+      - name: Restore Rust cache
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          workspaces: ${{ github.repository }}
+          shared-key: circuit-info-release
+          cache-on-failure: true
 
       - name: Push to wiki
         run: |

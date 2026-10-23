@@ -13,25 +13,14 @@ jobs:
     name: Rust tests
     runs-on: ${{ (github.event.pull_request.head.repo.fork && 'ubuntu-latest') || 'pod2_runner' }}
     env:
-      # Each proof uses Rayon's thread pool and substantial memory. Run one test
-      # at a time so independent proving tests cannot exhaust the runner together.
+      # Limit concurrent proving tests because each retains substantial memory.
       RUST_TEST_THREADS: "4"
     steps:
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v6
     - name: Set up Rust
       uses: actions-rust-lang/setup-rust-toolchain@v1
       with:
-        # Must differ from the key build.yml uses: rust-cache derives its key
-        # from the job id, both workflows call the job "test", and they run
-        # concurrently on the same commit. They then race to save one cache
-        # entry, and whoever wins locks the key out for the other. build.yml
-        # usually wins with debug artifacts, so the release build here starts
-        # from nothing every time.
-        cache-shared-key: tests-release
-        # Caches written from a PR branch are only visible to that branch, so
-        # saving from PRs just burns into the repo's 10 GB cache budget and can
-        # evict the one entry every PR actually restores from.
-        cache-save-if: ${{ github.ref == 'refs/heads/main' }}
+        cache: false
         # Proving is field-arithmetic heavy and plonky2 picks its Goldilocks
         # packing at compile time, so without this every run uses the scalar
         # 1-wide path. Measured at roughly -9% on MainPod::prove, reproduced on
@@ -50,6 +39,14 @@ jobs:
         # `-C target-cpu=x86-64-v3` does NOT imply pclmulqdq and hits the same
         # wall. PCLMULQDQ predates AVX2 in hardware, so this adds no floor.
         rustflags: "-D warnings -C target-feature=+avx2,+pclmulqdq"
+    - name: Resolve dependencies
+      run: cargo generate-lockfile
+    - name: Restore Rust cache
+      uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+      with:
+        shared-key: tests-release
+        save-if: ${{ github.ref == 'refs/heads/main' }}
+        cache-on-failure: true
     - name: Check the runner has AVX2
       # plonky2 has no runtime fallback, so a runner without AVX2 would die
       # with SIGILL somewhere inside a proof. Fail here with a readable reason.
@@ -69,8 +66,8 @@ jobs:
       #
       # The example steps below must use the same feature set, or pod2 gets
       # rebuilt between the steps.
-      run: cargo test --release --features db_rocksdb,mimalloc
+      run: cargo test --locked --release --features db_rocksdb,mimalloc
     - name: Run example 1
-      run: cargo run --release --features db_rocksdb,mimalloc --example main_pod_points -- --mock
+      run: cargo run --locked --release --features db_rocksdb,mimalloc --example main_pod_points -- --mock
     - name: Run example 2
-      run: cargo run --release --features db_rocksdb,mimalloc --example signed_dict
+      run: cargo run --locked --release --features db_rocksdb,mimalloc --example signed_dict
