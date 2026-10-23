@@ -1301,22 +1301,15 @@ mod tests {
 
     #[test]
     fn raw_value_of_mt_node() {
-        let mut dict = Dictionary::new(
-            [
-                ("a".into(), Value::from(1i64)),
-                ("b".into(), Value::from(2i64)),
-            ]
-            .into(),
-        );
-        // insert an untyped value that has the same hash as a merkle tree node
-        dict.insert(
-            &"c".into(),
-            &merkletree::kv_hash(&Value::from("a").raw(), Some(Value::from(1i64).raw())).into(),
-        )
-        .unwrap();
+        let mut dict = Dictionary::new([("b".into(), Value::from(2i64))].into());
+        dict.insert(&"a".into(), &Value::from(1i64)).unwrap();
+        // kv_hash("a", 1) is a leaf node of the tree but was never a root, so it has no kind
+        let leaf = merkletree::kv_hash(&Value::from("a").raw(), Some(Value::from(1i64).raw()));
+        dict.insert(&"c".into(), &leaf.into()).unwrap();
         // even though a merkle tree node exists, we haven't registered it as a merkle tree (it's a
         // leaf), so this should just return an untyped value.
         let v = dict.get(&"c".into()).unwrap().unwrap();
+        assert!(v.is_untyped());
         println!("{}", v);
     }
 }
