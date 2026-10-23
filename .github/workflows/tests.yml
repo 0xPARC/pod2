@@ -12,6 +12,10 @@ jobs:
     if: github.event.pull_request.draft == false
     name: Rust tests
     runs-on: ${{ (github.event.pull_request.head.repo.fork && 'ubuntu-latest') || 'pod2_runner' }}
+    env:
+      # Each proof uses Rayon's thread pool and substantial memory. Run one test
+      # at a time so independent proving tests cannot exhaust the runner together.
+      RUST_TEST_THREADS: "4"
     steps:
     - uses: actions/checkout@v3
     - name: Set up Rust

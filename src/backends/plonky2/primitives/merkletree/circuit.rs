@@ -10,7 +10,6 @@
 //!
 use std::iter;
 
-use itertools::zip_eq;
 use plonky2::{
     field::types::Field,
     hash::{
@@ -90,6 +89,12 @@ pub fn verify_merkle_proof_circuit(
     let not_existence = builder.not(proof.existence);
     let not_case_ii_selector = builder.not(proof.case_ii_selector);
     let case_i_selector = builder.and(not_existence, not_case_ii_selector);
+
+    // A different-key terminal only proves absence if its key really differs; otherwise the
+    // queried key's own leaf would pass as proof that the key is missing.
+    let same_key = builder.is_equal_flattenable(&proof.key, &proof.other_key);
+    let same_key_terminal = builder.and(proof.case_ii_selector, same_key);
+    builder.assert_zero(same_key_terminal.target);
 
     // use (key,value) or (other_key, other_value) depending if it's a proof
     // of existence or of non-existence, ie:
@@ -335,29 +340,25 @@ fn keypath_target(
     builder: &mut CircuitBuilder<F, D>,
     key: &ValueTarget,
 ) -> Vec<BoolTarget> {
-    let n_complete_field_elems: usize = max_depth / F::BITS;
-    let n_extra_bits: usize = max_depth - n_complete_field_elems * F::BITS;
-
-    let path: Vec<BoolTarget> = key
-        .elements
+    assert!(max_depth <= MAX_DEPTH);
+    let zero = builder.zero();
+    let u32_max = builder.constant(F::from_canonical_u32(u32::MAX));
+    key.elements
         .iter()
-        .take(n_complete_field_elems)
-        .flat_map(|e| builder.split_le(*e, F::BITS))
-        .collect();
-
-    let extra_bits = if n_extra_bits > 0 {
-        let extra_bits: Vec<BoolTarget> =
-            builder.split_le(key.elements[n_complete_field_elems], F::BITS);
-        extra_bits[..n_extra_bits].to_vec()
-        // Note: ideally we would do:
-        //     let extra_bits = builder.split_le(key[n_complete_field_elems], n_extra_bits);
-        // and directly get the extra_bits, but the `split_le` method
-        // returns the wrong bits, so currently we get the entire array of
-        // bits and crop it at the desired n_extra_bits amount.
-    } else {
-        vec![]
-    };
-    [path, extra_bits].concat()
+        .take(max_depth.div_ceil(F::BITS))
+        .flat_map(|element| {
+            let bits = builder.split_le(*element, F::BITS);
+            let low = builder.le_sum(bits[..32].iter());
+            let high = builder.le_sum(bits[32..].iter());
+            let high_is_max = builder.is_equal(high, u32_max);
+            // Goldilocks p = 0xffffffff00000001: when the high word is 0xffffffff,
+            // the low word must be zero to keep the decomposition below p. Enforce
+            // this before truncating, since even shallow paths can otherwise use x + p.
+            builder.conditional_assert_eq(high_is_max.target, low, zero);
+            bits
+        })
+        .take(max_depth)
+        .collect()
 }
 
 pub fn kv_hash_target(
@@ -432,7 +433,7 @@ pub struct MerkleTreeStateTransitionProofTarget {
     pub(crate) op_value: ValueTarget,
     pub(crate) siblings: Vec<HashOutTarget>,
 
-    // auxiliary witness
+    // Deepest non-empty existence sibling, or MAX_DEPTH when the leaf is at the root.
     pub(crate) divergence_level: Target,
 }
 /// creates the targets and defines the logic of the circuit
@@ -509,84 +510,52 @@ pub fn verify_merkle_state_transition_circuit(
         builder.connect(proof.op_proof.key.elements[j], proof.op_key.elements[j]);
     }
 
-    // prepare value for check 5.2)
     let old_leaf_hash = kv_hash_target(
         builder,
         &proof.op_proof.other_key,
         &proof.op_proof.other_value,
     );
-    // prepare values for check 5.3)
     let old_leaf_path = keypath_target(proof.max_depth, builder, &proof.op_proof.other_key);
+    let empty_hash = builder.constant_hash(EMPTY_HASH.into());
+    let mut deepest_sibling = builder.constant(F::from_canonical_usize(MAX_DEPTH));
+    let mut paths_match_before = builder._true();
+    let mut divergence_found = builder._false();
 
-    // 5) check that old_siblings & new_siblings match as expected. They
-    // should match at all levels for an update. Otherwise, let
-    //    d=divergence_level and assert that:
-    // 5.1) old_siblings[i] == new_siblings[i] ∀ i \ {d}
-    // 5.2) at i==d, if old_siblings[i] != new_siblings[i]: old_siblings[i] ==
-    //   EMPTY_HASH new_siblings[i] == old_leaf_hash
-    // 5.3) assert that if other_leaf!=empty, both old_leaf_path&new_leaf_path
-    //   should diverge at the inputted divergence level
-    let old_siblings = proof.op_proof.siblings.clone();
-    let new_siblings = proof.siblings.clone();
+    // Only an authenticated different-key terminal can become a new sibling. Updates and
+    // empty-slot insertions/deletions must preserve every sibling, regardless of other_key/value.
     for i in 0..proof.max_depth {
-        let i_targ = builder.constant(F::from_canonical_u64(i as u64));
-        let is_divergence_level = builder.is_equal(i_targ, proof.divergence_level);
-        let is_not_update = builder.not(is_update);
-        // There is no divergence level for an update.
-        let is_divergence_level = builder.and(is_not_update, is_divergence_level);
+        let old_sibling = &proof.op_proof.siblings[i];
+        let new_sibling = &proof.siblings[i];
+        let i_target = builder.constant(F::from_canonical_usize(i));
+        let sibling_is_empty = builder.is_equal_flattenable(new_sibling, &empty_hash);
+        deepest_sibling = builder.select(sibling_is_empty, deepest_sibling, i_target);
 
-        // 5.1) for all i except for i==divergence_level, assert that the
-        //   siblings are the same
-        let old_sibling_i: Vec<Target> = (0..HASH_SIZE)
-            .map(|j| builder.select(is_divergence_level, zero, old_siblings[i].elements[j]))
-            .collect();
-        let new_sibling_i: Vec<Target> = (0..HASH_SIZE)
-            .map(|j| builder.select(is_divergence_level, zero, new_siblings[i].elements[j]))
-            .collect();
-        for j in 0..HASH_SIZE {
-            builder.connect(old_sibling_i[j], new_sibling_i[j]);
-        }
-
-        // 5.2) when i==d && if old_siblings[i] != new_siblings[i], check that:
-        //   old_siblings[i] == EMPTY_HASH && new_siblings[i] == old_leaf_hash
-
-        // in_case_5_2=true if: i==d (= is_divergence_level) && old_siblings[i]!=new_siblings[i]
-        let old_is_eq_new = zip_eq(old_siblings[i].elements, new_siblings[i].elements).fold(
-            builder._true(),
-            |acc, (old, new)| {
-                let eq_at_i = builder.is_equal(old, new);
-                builder.and(acc, eq_at_i)
-            },
+        let at_divergence = builder.is_equal(i_target, proof.divergence_level);
+        let split_leaf = builder.and(proof.op_proof.case_ii_selector, at_divergence);
+        divergence_found = builder.or(divergence_found, split_leaf);
+        let preserve_sibling = builder.not(split_leaf);
+        builder.conditional_assert_eq_flattenable(
+            preserve_sibling.target,
+            old_sibling,
+            new_sibling,
         );
-        let old_is_noteq_new = builder.not(old_is_eq_new);
-        let in_case_5_2 = builder.and(old_is_noteq_new, is_divergence_level);
+        builder.conditional_assert_eq_flattenable(split_leaf.target, old_sibling, &empty_hash);
+        builder.conditional_assert_eq_flattenable(split_leaf.target, new_sibling, &old_leaf_hash);
 
-        // do the case2's checks
-        let sel = in_case_5_2;
-        for j in 0..HASH_SIZE {
-            builder.conditional_assert_eq(sel.target, old_siblings[i].elements[j], zero);
-            builder.conditional_assert_eq(
-                sel.target,
-                new_siblings[i].elements[j],
-                old_leaf_hash.elements[j],
-            );
-        }
-
-        // 5.3) assert that if other_leaf!=empty, both old_leaf_path&new_leaf_path
-        //   should diverge at the inputted divergence level.
-        let paths_eq_at_d = builder.is_equal(old_leaf_path[i].target, new_leaf_path[i].target);
-        // case_ii is 1 when other_leaf is not empty, 0 when it is empty
-        let is_divergence_level_and_other_not_empty = builder.mul(
-            is_divergence_level.target,
-            proof.op_proof.case_ii_selector.target,
-        );
-        builder.conditional_assert_eq(
-            is_divergence_level_and_other_not_empty,
-            // expect them to not be equal, ie. the is_equal check to be 0
-            paths_eq_at_d.target,
-            zero,
-        );
+        let paths_match_here = builder.is_equal(old_leaf_path[i].target, new_leaf_path[i].target);
+        builder.conditional_assert_eq(split_leaf.target, paths_match_before.target, one);
+        builder.conditional_assert_eq(split_leaf.target, paths_match_here.target, zero);
+        paths_match_before = builder.and(paths_match_before, paths_match_here);
     }
+
+    // Binding the level to the sibling depth also rules out non-empty siblings below the split.
+    // A different-key terminal must split within the circuit's depth; the sentinel is only
+    // usable when there is no terminal to preserve (or for a root-leaf update).
+    builder.connect(proof.divergence_level, deepest_sibling);
+    builder.connect(
+        divergence_found.target,
+        proof.op_proof.case_ii_selector.target,
+    );
 
     measure_gates_end!(builder, measure);
 }
@@ -653,13 +622,11 @@ impl MerkleTreeStateTransitionProofTarget {
         {
             pw.set_hash_target(self.siblings[i], HashOut::from_vec(sibling.0.to_vec()))?;
         }
-        let div_lvl = if new_siblings.is_empty() {
-            // don't subtract since it would underflow, use MAX_DEPTH
-            MAX_DEPTH as u64
-        } else {
-            (new_siblings.len() - 1) as u64
-        };
-        pw.set_target(self.divergence_level, F::from_canonical_u64(div_lvl))?;
+        let div_lvl = new_siblings
+            .iter()
+            .rposition(|sibling| *sibling != EMPTY_HASH)
+            .unwrap_or(MAX_DEPTH);
+        pw.set_target(self.divergence_level, F::from_canonical_usize(div_lvl))?;
 
         Ok(())
     }
@@ -670,12 +637,20 @@ pub mod tests {
     use std::collections::HashMap;
 
     use hex::FromHex;
-    use plonky2::plonk::{circuit_builder::CircuitBuilder, circuit_data::CircuitConfig};
+    use plonky2::{
+        field::types::{Field64, PrimeField64},
+        iop::{
+            generator::{ConstantGenerator, SimpleGenerator, WitnessGeneratorRef},
+            witness::Witness,
+        },
+        plonk::{circuit_builder::CircuitBuilder, circuit_data::CircuitConfig},
+        util::serialization::{Buffer, Read},
+    };
 
     use super::*;
     use crate::{
         backends::plonky2::{
-            basetypes::C,
+            basetypes::{CircuitData, C},
             primitives::merkletree::{self, keypath, kv_hash, MerkleProof, MerkleTree},
         },
         middleware::{hash_value, RawValue},
@@ -721,6 +696,214 @@ pub mod tests {
             data.verify(proof)?;
         }
         Ok(())
+    }
+
+    #[test]
+    fn test_keypath_canonical_boundaries() -> Result<()> {
+        for max_depth in [0, 1, 32, 64, 65, 128, 256] {
+            let mut builder =
+                CircuitBuilder::<F, D>::new(CircuitConfig::standard_recursion_config());
+            let key_target = builder.add_virtual_value();
+            let path = keypath_target(max_depth, &mut builder, &key_target);
+            builder.register_public_inputs(&key_target.elements);
+            for bit in path {
+                builder.register_public_input(bit.target);
+            }
+            let data = builder.build::<C>();
+            for value in [
+                0,
+                u32::MAX as u64 - 1,
+                u32::MAX as u64,
+                1 << 32,
+                F::ORDER - 1,
+            ] {
+                let key = RawValue([F::from_canonical_u64(value); HASH_SIZE]);
+                let mut pw = PartialWitness::new();
+                pw.set_target_arr(&key_target.elements, &key.0)?;
+                let proof = data.prove(pw)?;
+                let expected_path = keypath(key);
+                assert_eq!(
+                    proof.public_inputs,
+                    key.0
+                        .into_iter()
+                        .chain(expected_path[..max_depth].iter().copied().map(F::from_bool))
+                        .collect::<Vec<_>>()
+                );
+                data.verify(proof)?;
+            }
+        }
+        Ok(())
+    }
+
+    // Supply an adversarial decomposition without changing constraints or verifier data.
+    // Bypass the honest split generators so rejection tests the canonicality constraints,
+    // rather than a conflict with the generators' canonical witness assignments.
+    fn force_noncanonical_keypath(
+        data: &mut CircuitData,
+        pw: &mut PartialWitness<F>,
+        element: Target,
+        alternate: u64,
+    ) -> anyhow::Result<()> {
+        assert_eq!(F::from_noncanonical_u64(alternate), pw.get_target(element));
+        assert_ne!(alternate, pw.get_target(element).to_canonical_u64());
+        let representative = |target: Target| {
+            data.prover_only.representative_map
+                [target.index(data.common.config.num_wires, data.common.degree())]
+        };
+        let mut replaced = 0;
+        for generator in &mut data.prover_only.generators {
+            if generator.0.id() != "WireSplitGenerator"
+                || representative(generator.0.watch_list()[0]) != representative(element)
+            {
+                continue;
+            }
+            let mut bytes = Vec::new();
+            generator.0.serialize(&mut bytes, &data.common).unwrap();
+            let mut buffer = Buffer::new(&bytes);
+            let integer = buffer.read_target().unwrap();
+            assert_eq!(representative(integer), representative(element));
+            let gates = buffer.read_usize_vec().unwrap();
+            let num_limbs = buffer.read_usize().unwrap();
+            assert!(num_limbs < 64);
+            let mut remaining = alternate;
+            for &row in &gates {
+                let chunk = remaining & ((1u64 << num_limbs) - 1);
+                pw.set_target(Target::wire(row, 0), F::from_canonical_u64(chunk))?;
+                remaining >>= num_limbs;
+            }
+            assert_eq!(remaining, 0);
+            // All chunk sums are supplied above; a constant generator preserves generator
+            // indices and needs no new dependencies in the existing watch map.
+            *generator = WitnessGeneratorRef::new(
+                ConstantGenerator {
+                    row: gates[0],
+                    constant_index: 0,
+                    wire_index: 0,
+                    constant: F::from_canonical_u64(alternate & ((1u64 << num_limbs) - 1)),
+                }
+                .adapter(),
+            );
+            replaced += 1;
+        }
+        assert!(
+            replaced > 0,
+            "the test must override an actual key decomposition"
+        );
+        Ok(())
+    }
+
+    fn assert_noncanonical_keypath_rejected(
+        data: &CircuitData,
+        pw: PartialWitness<F>,
+    ) -> Result<()> {
+        if let Ok(proof) = data.prove(pw) {
+            data.verify(proof)?;
+            panic!("circuit accepted and verified a non-canonical key path");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_keypath_rejects_noncanonical_decomposition() -> Result<()> {
+        for element in 0..HASH_SIZE {
+            for value in [0, 1, u32::MAX as u64 - 1] {
+                // The x + p decomposition must be rejected for both truncated and full paths.
+                for max_depth in [element * 64 + 1, (element + 1) * 64] {
+                    let mut builder =
+                        CircuitBuilder::<F, D>::new(CircuitConfig::standard_recursion_config());
+                    let key_target = builder.add_virtual_value();
+                    let path = keypath_target(max_depth, &mut builder, &key_target);
+                    builder.register_public_inputs(&key_target.elements);
+                    for bit in path {
+                        builder.register_public_input(bit.target);
+                    }
+                    let mut pw = PartialWitness::new();
+                    let mut key = EMPTY_VALUE;
+                    key.0[element] = F::from_canonical_u64(value);
+                    pw.set_target_arr(&key_target.elements, &key.0)?;
+                    let mut data = builder.build::<C>();
+                    force_noncanonical_keypath(
+                        &mut data,
+                        &mut pw,
+                        key_target.elements[element],
+                        value + F::ORDER,
+                    )?;
+                    assert_noncanonical_keypath_rejected(&data, pw)?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_nonexistence_rejects_noncanonical_keypath() -> Result<()> {
+        // Both leaves are in the left subtree. Attempt to prove key 0 absent by supplying
+        // the bits of p, which point at the empty right subtree. Canonicality must reject
+        // this alternate decomposition of the present key.
+        let tree = MerkleTree::new(&HashMap::from([
+            (RawValue::from(0), RawValue::from(1000)),
+            (RawValue::from(2), RawValue::from(1002)),
+        ]));
+        let key = RawValue::from(0);
+        assert!(tree.prove_nonexistence(&key).is_err());
+        let forged = tree.prove_nonexistence(&RawValue::from(1))?;
+        assert!(forged.other_leaf.is_none());
+        assert!(merkletree::verify_nonexistence(tree.root(), &forged, &key).is_err());
+
+        let mut builder = CircuitBuilder::<F, D>::new(CircuitConfig::standard_recursion_config());
+        let targets = MerkleClaimAndProofTarget::new_virtual(8, &mut builder);
+        verify_merkle_proof_circuit(&mut builder, &targets);
+        builder.register_public_inputs(&targets.root.elements);
+        builder.register_public_inputs(&targets.key.elements);
+        let mut pw = PartialWitness::new();
+        targets.set_targets(
+            &mut pw,
+            &MerkleClaimAndProof::new(tree.root(), key, None, forged),
+        )?;
+        let mut data = builder.build::<C>();
+        force_noncanonical_keypath(&mut data, &mut pw, targets.key.elements[0], F::ORDER)?;
+        assert_noncanonical_keypath_rejected(&data, pw)
+    }
+
+    #[test]
+    fn test_insert_rejects_existing_key_at_noncanonical_path() -> Result<()> {
+        let mut tree = MerkleTree::new(&HashMap::from([
+            (RawValue::from(0), RawValue::from(1000)),
+            (RawValue::from(2), RawValue::from(1002)),
+        ]));
+        let key = RawValue::from(0);
+        let value = RawValue::from(2000);
+        assert!(tree.insert(&key, &value).is_err());
+        let mut forged = tree.insert(&RawValue::from(1), &value)?;
+        forged.op_key = key;
+        assert!(forged.op_proof.other_leaf.is_none());
+
+        // Forge a root with the original key 0 on the left and a duplicate on the right.
+        // The circuit must reject the non-canonical path used to insert the duplicate.
+        let mut alternate_path = keypath(key);
+        for (i, bit) in alternate_path.iter_mut().take(64).enumerate() {
+            *bit = (F::ORDER >> i) & 1 != 0;
+        }
+        let membership = MerkleProof {
+            existence: true,
+            siblings: forged.siblings.clone(),
+            other_leaf: None,
+        };
+        forged.new_root =
+            membership.compute_root_from_node(&kv_hash(&key, Some(value)), alternate_path)?;
+        assert!(merkletree::verify_state_transition(&forged).is_err());
+
+        let mut builder = CircuitBuilder::<F, D>::new(CircuitConfig::standard_recursion_config());
+        let targets = MerkleTreeStateTransitionProofTarget::new_virtual(8, &mut builder);
+        verify_merkle_state_transition_circuit(&mut builder, &targets);
+        builder.register_public_inputs(&targets.old_root.elements);
+        builder.register_public_inputs(&targets.new_root.elements);
+        builder.register_public_inputs(&targets.op_key.elements);
+        let mut pw = PartialWitness::new();
+        targets.set_targets(&mut pw, &forged)?;
+        let mut data = builder.build::<C>();
+        force_noncanonical_keypath(&mut data, &mut pw, targets.op_key.elements[0], F::ORDER)?;
+        assert_noncanonical_keypath_rejected(&data, pw)
     }
 
     #[test]
@@ -854,6 +1037,37 @@ pub mod tests {
         let data = builder.build::<C>();
         let proof = data.prove(pw)?;
         data.verify(proof)?;
+        Ok(())
+    }
+
+    // A present key's own leaf, passed as the different-key terminal, must not prove the key absent.
+    #[test]
+    fn test_nonexistence_rejects_terminal_with_queried_key() -> Result<()> {
+        let max_depth = 16;
+        let kvs = (0..8)
+            .map(|i| (RawValue::from(i), RawValue::from(1000 + i)))
+            .collect::<HashMap<_, _>>();
+        let tree = MerkleTree::new(&kvs);
+        let present_key = RawValue::from(5);
+        let (present_value, membership) = tree.prove(&present_key)?;
+        let forged = MerkleProof {
+            existence: false,
+            siblings: membership.siblings,
+            other_leaf: Some((present_key, present_value)),
+        };
+        assert!(merkletree::verify_nonexistence(tree.root(), &forged, &present_key).is_err());
+
+        let config = CircuitConfig::standard_recursion_config();
+        let mut builder = CircuitBuilder::<F, D>::new(config);
+        let mut pw = PartialWitness::<F>::new();
+        let targets = MerkleClaimAndProofTarget::new_virtual(max_depth, &mut builder);
+        verify_merkle_proof_circuit(&mut builder, &targets);
+        targets.set_targets(
+            &mut pw,
+            &MerkleClaimAndProof::new(tree.root(), present_key, None, forged),
+        )?;
+        let data = builder.build::<C>();
+        assert!(data.prove(pw).is_err());
         Ok(())
     }
 
@@ -1180,6 +1394,32 @@ pub mod tests {
     }
 
     #[test]
+    fn test_state_transition_depth_boundaries() -> Result<()> {
+        for max_depth in [0, 1, 8] {
+            let mut tree = MerkleTree::new(&HashMap::new());
+            let key = RawValue::from(0);
+            let insertion = tree.insert(&key, &RawValue::from(1000))?;
+            run_state_transition_circuit(true, max_depth, &insertion)?;
+
+            if max_depth > 0 {
+                // The two keys share every path bit except the last one the circuit supports.
+                let other_key = RawValue::from(1i64 << (max_depth - 1));
+                let insertion = tree.insert(&other_key, &RawValue::from(1001))?;
+                run_state_transition_circuit(true, max_depth, &insertion)?;
+                let deletion = tree.delete(&other_key)?;
+                run_state_transition_circuit(true, max_depth, &deletion)?;
+            }
+
+            let update = tree.update(&key, &RawValue::from(2000))?;
+            run_state_transition_circuit(true, max_depth, &update)?;
+            let deletion = tree.delete(&key)?;
+            run_state_transition_circuit(true, max_depth, &deletion)?;
+            assert_eq!(tree.root(), EMPTY_HASH);
+        }
+        Ok(())
+    }
+
+    #[test]
     fn test_state_transition_gadget_with_alteration() -> Result<()> {
         let max_depth: usize = 32;
         let mut kvs = HashMap::new();
@@ -1239,6 +1479,166 @@ pub mod tests {
         assert_eq!(state_transition_proof.old_root, old_root);
         assert_ne!(state_transition_proof.new_root, tree.root()); // Tamper check
         Ok(())
+    }
+
+    fn assert_forged_transition_rejected(
+        op: MerkleTreeOp,
+        mut forged: MerkleTreeStateTransitionProof,
+        tamper_witness: impl FnOnce(&MerkleTreeStateTransitionProofTarget, &mut PartialWitness<F>),
+    ) -> Result<()> {
+        // The same attack applies to deletion by reversing the two roots.
+        match op {
+            MerkleTreeOp::Insert => {}
+            MerkleTreeOp::Delete => {
+                std::mem::swap(&mut forged.old_root, &mut forged.new_root);
+                forged.op = op;
+            }
+            _ => unreachable!("these regression tests cover insertions and deletions"),
+        }
+        assert!(merkletree::verify_state_transition(&forged).is_err());
+
+        let mut builder = CircuitBuilder::<F, D>::new(CircuitConfig::standard_recursion_config());
+        let targets = MerkleTreeStateTransitionProofTarget::new_virtual(8, &mut builder);
+        verify_merkle_state_transition_circuit(&mut builder, &targets);
+        builder.register_public_inputs(&targets.old_root.elements);
+        builder.register_public_inputs(&targets.new_root.elements);
+        builder.register_public_input(targets.op);
+        builder.register_public_inputs(&targets.op_key.elements);
+        builder.register_public_inputs(&targets.op_value.elements);
+
+        let mut pw = PartialWitness::new();
+        targets.set_targets(&mut pw, &forged)?;
+        // A malicious prover can bypass the honest witness setter's auxiliary assignments.
+        tamper_witness(&targets, &mut pw);
+        let data = builder.build::<C>();
+        if let Ok(proof) = data.prove(pw) {
+            data.verify(proof)?;
+            panic!("circuit accepted and verified an invalid {op:?} transition");
+        }
+        Ok(())
+    }
+
+    fn transition_rejects_out_of_range_divergence(op: MerkleTreeOp) -> Result<()> {
+        let original = MerkleTree::new(&HashMap::from([
+            (RawValue::from(0), RawValue::from(1000)),
+            (RawValue::from(1), RawValue::from(1001)),
+        ]));
+        let key = RawValue::from(2);
+        let value = RawValue::from(1002);
+        let mut correct = original.clone();
+        let mut forged = correct.insert(&key, &value)?;
+        assert_eq!(
+            forged.op_proof.other_leaf,
+            Some((RawValue::from(0), RawValue::from(1000)))
+        );
+
+        // Claim to insert key 2 while also removing key 0. Both roots are canonical trees,
+        // with key 1 as the unchanged sibling. The circuit must reject an out-of-range
+        // divergence level even when all siblings agree.
+        let replacement = MerkleTree::new(&HashMap::from([
+            (RawValue::from(1), RawValue::from(1001)),
+            (key, value),
+        ]));
+        forged.new_root = replacement.root();
+        forged.siblings = replacement.prove(&key)?.1.siblings;
+        assert_eq!(forged.op_proof.siblings, forged.siblings);
+        assert_ne!(forged.new_root, correct.root());
+
+        assert_forged_transition_rejected(op, forged, |targets, pw| {
+            pw.target_values.insert(
+                targets.divergence_level,
+                F::from_canonical_usize(targets.max_depth),
+            );
+        })
+    }
+
+    #[test]
+    fn test_insert_rejects_out_of_range_divergence() -> Result<()> {
+        transition_rejects_out_of_range_divergence(MerkleTreeOp::Insert)
+    }
+
+    #[test]
+    fn test_delete_rejects_out_of_range_divergence() -> Result<()> {
+        transition_rejects_out_of_range_divergence(MerkleTreeOp::Delete)
+    }
+
+    fn transition_rejects_extra_leaf_in_empty_slot(op: MerkleTreeOp) -> Result<()> {
+        // Keys 0 and 2 occupy the left subtree; the right subtree is empty.
+        let mut correct = MerkleTree::new(&HashMap::from([
+            (RawValue::from(0), RawValue::from(1000)),
+            (RawValue::from(2), RawValue::from(1002)),
+        ]));
+        let key = RawValue::from(1);
+        let mut forged = correct.insert(&key, &RawValue::from(1001))?;
+        assert!(!forged.op_proof.existence);
+        assert!(forged.op_proof.other_leaf.is_none());
+
+        // Claim to insert only key 1, but also insert key 3 into the empty subtree.
+        // For deletion, the reversed transition removes both keys while claiming only key 1.
+        let injected_key = RawValue::from(3);
+        let injected_value = RawValue::from(1003);
+        let mut extra_leaf = correct.clone();
+        extra_leaf.insert(&injected_key, &injected_value)?;
+        forged.new_root = extra_leaf.root();
+        forged.siblings = extra_leaf.prove(&key)?.1.siblings;
+        assert_ne!(forged.new_root, correct.root());
+
+        assert_forged_transition_rejected(op, forged, |targets, pw| {
+            // case_ii_selector stays false, so non-existence does not authenticate these
+            // values. The transition check must reject their hash as an extra sibling.
+            for (target, value) in [
+                (targets.op_proof.other_key, injected_key),
+                (targets.op_proof.other_value, injected_value),
+            ] {
+                for (target, value) in target.elements.into_iter().zip(value.0) {
+                    pw.target_values.insert(target, value);
+                }
+            }
+        })
+    }
+
+    #[test]
+    fn test_insert_rejects_extra_leaf_in_empty_slot() -> Result<()> {
+        transition_rejects_extra_leaf_in_empty_slot(MerkleTreeOp::Insert)
+    }
+
+    #[test]
+    fn test_delete_rejects_extra_leaf_in_empty_slot() -> Result<()> {
+        transition_rejects_extra_leaf_in_empty_slot(MerkleTreeOp::Delete)
+    }
+
+    fn transition_rejects_late_divergence(op: MerkleTreeOp) -> Result<()> {
+        let other_key = RawValue::from(0);
+        let other_value = RawValue::from(1000);
+        let mut correct = MerkleTree::new(&HashMap::from([(other_key, other_value)]));
+        let key = RawValue::from(3);
+        let value = RawValue::from(1003);
+        let mut forged = correct.insert(&key, &value)?;
+        assert_eq!(forged.op_proof.other_leaf, Some((other_key, other_value)));
+
+        // Keys 0b00 and 0b11 first diverge at level 0, but also differ at level 1.
+        // Put the old leaf at level 1, moving it under the wrong root branch. This uses
+        // an in-range divergence level and an authenticated other leaf.
+        let membership = MerkleProof {
+            existence: true,
+            siblings: vec![EMPTY_HASH, kv_hash(&other_key, Some(other_value))],
+            other_leaf: None,
+        };
+        forged.new_root = membership.compute_root_from_leaf(&key, Some(value))?;
+        forged.siblings = membership.siblings;
+        assert_ne!(forged.new_root, correct.root());
+
+        assert_forged_transition_rejected(op, forged, |_, _| {})
+    }
+
+    #[test]
+    fn test_insert_rejects_late_divergence() -> Result<()> {
+        transition_rejects_late_divergence(MerkleTreeOp::Insert)
+    }
+
+    #[test]
+    fn test_delete_rejects_late_divergence() -> Result<()> {
+        transition_rejects_late_divergence(MerkleTreeOp::Delete)
     }
 
     #[test]

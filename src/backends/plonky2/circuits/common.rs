@@ -28,9 +28,12 @@ use crate::{
         circuits::{mainpod::CustomPredicateVerification, mux_table::TableGetGenerator},
         error::Result,
         mainpod::{Operation, OperationArg, OperationAux, Statement},
-        primitives::merkletree::{
-            verify_merkle_proof_circuit, MerkleClaimAndProof, MerkleClaimAndProofTarget,
-            MerkleProof, MerkleProofExistenceTarget, MerkleTreeStateTransitionProofTarget,
+        primitives::{
+            ec::bits::CircuitBuilderBits,
+            merkletree::{
+                verify_merkle_proof_circuit, MerkleClaimAndProof, MerkleClaimAndProofTarget,
+                MerkleProof, MerkleProofExistenceTarget, MerkleTreeStateTransitionProofTarget,
+            },
         },
     },
     middleware::{
@@ -1585,7 +1588,9 @@ impl CircuitBuilderPod<F, D> for CircuitBuilder {
                     .into_iter()
                     .reduce(|alpha, beta| self.add(alpha, beta))
                     .expect("Iterator should be nonempty.");
-                let (sum_residue, sum_quotient) = self.split_low_high(sum, NUM_BITS, F::BITS);
+                // Two u32 limbs plus a carry fit in 33 bits. A 64-bit split would also
+                // permit a decomposition of sum + p and could introduce a false carry.
+                let (sum_residue, sum_quotient) = self.split_low_high(sum, NUM_BITS, NUM_BITS + 1);
                 (sum_quotient, [out, vec![sum_residue]].concat())
             },
         );
@@ -1639,15 +1644,23 @@ impl CircuitBuilderPod<F, D> for CircuitBuilder {
             self.mul(x[1], y[0]),
         ]
         .into_iter()
-        .map(|p| self.split_low_high(p, NUM_BITS, F::BITS))
+        // A u32 product is below the Goldilocks modulus, but its 64-bit decomposition
+        // must still be canonical to prevent replacing the product by product + p.
+        .map(|p| {
+            let [low, high] = self.split_32_bit(p);
+            (low, high)
+        })
         .collect::<Vec<_>>();
 
         let prod_lower = prods[0].0;
 
-        let (prod_upper, _) = {
+        let prod_upper = {
             let sum1 = self.add(prods[1].0, prods[2].0);
             let sum2 = self.add(sum1, prods[0].1);
-            self.split_low_high(sum2, NUM_BITS, F::BITS)
+            // This is the upper 32-bit limb of the product.
+            // Reject any carry beyond it, which would overflow the 64-bit product.
+            self.range_check(sum2, NUM_BITS);
+            sum2
         };
 
         let abs_prod = ValueTarget::from_slice(&[prod_lower, prod_upper, zero, int_tag]);
@@ -1931,20 +1944,24 @@ pub(crate) mod tests {
 
     use anyhow::anyhow;
     use itertools::Itertools;
-    use plonky2::plonk::{
-        circuit_builder::CircuitBuilder, circuit_data::CircuitConfig,
-        config::PoseidonGoldilocksConfig,
+    use plonky2::{
+        field::types::Field64,
+        iop::generator::WitnessGeneratorRef,
+        plonk::{
+            circuit_builder::CircuitBuilder, circuit_data::CircuitConfig,
+            config::PoseidonGoldilocksConfig,
+        },
     };
 
     use super::*;
     use crate::{
-        backends::plonky2::basetypes::C,
+        backends::plonky2::basetypes::{CircuitData, C},
         examples::custom::eth_dos_batch,
         frontend::{self, CustomPredicateBatchBuilder},
         middleware::CustomPredicateBatch,
     };
 
-    pub(crate) const I64_TEST_PAIRS: [(i64, i64); 36] = [
+    pub(crate) const I64_TEST_PAIRS: [(i64, i64); 46] = [
         // Nonnegative numbers
         (0, 0),
         (0, 50),
@@ -1984,6 +2001,17 @@ pub(crate) mod tests {
         (i64::MIN, 1 << 31),
         (i64::MIN, 1 << 62),
         (i64::MIN, i64::MAX),
+        // Limb carries and the signed multiplication boundary.
+        ((1 << 32) - 2, 1),
+        ((1 << 32) - 1, 1),
+        ((1 << 32) - 1, 2),
+        ((1 << 32) - 1, 1 << 31),
+        ((1 << 32) - 1, (1 << 31) + 1),
+        (1 << 32, 1 << 31),
+        (-(1 << 32), 1 << 31),
+        (3037000499, 3037000499),
+        (3037000500, 3037000500),
+        (4294967295, 4294967298),
     ];
 
     #[test]
@@ -2094,6 +2122,216 @@ pub(crate) mod tests {
                 (true, Err(_)) => Ok(()),
             }
         })
+    }
+
+    #[derive(Clone, Debug)]
+    struct NoncanonicalSplitGenerator {
+        integer: Target,
+        low: Target,
+        high: Target,
+        alternate: u64,
+    }
+
+    impl SimpleGenerator<F, D> for NoncanonicalSplitGenerator {
+        fn id(&self) -> String {
+            "NoncanonicalSplitGenerator".into()
+        }
+
+        fn dependencies(&self) -> Vec<Target> {
+            vec![self.integer]
+        }
+
+        fn run_once(
+            &self,
+            witness: &PartitionWitness<F>,
+            out: &mut GeneratedValues<F>,
+        ) -> anyhow::Result<()> {
+            assert_eq!(
+                witness.get_target(self.integer),
+                F::from_noncanonical_u64(self.alternate)
+            );
+            out.set_target(self.low, F::from_canonical_u32(self.alternate as u32))?;
+            out.set_target(self.high, F::from_canonical_u64(self.alternate >> 32))
+        }
+
+        fn serialize(&self, _: &mut Vec<u8>, _: &CommonCircuitData) -> IoResult<()> {
+            unreachable!("this adversarial generator is only used in circuit tests")
+        }
+
+        fn deserialize(_: &mut Buffer, _: &CommonCircuitData) -> IoResult<Self> {
+            unreachable!("this adversarial generator is only used in circuit tests")
+        }
+    }
+
+    // Replace only witness generation so rejection must come from the unchanged constraints.
+    fn force_noncanonical_split(data: &mut CircuitData, split_index: usize, alternate: u64) {
+        let generator = data
+            .prover_only
+            .generators
+            .iter_mut()
+            .filter(|generator| generator.0.id() == "LowHighGenerator")
+            .nth(split_index)
+            .expect("the test must override an actual limb split");
+        let mut bytes = Vec::new();
+        generator.0.serialize(&mut bytes, &data.common).unwrap();
+        let mut buffer = Buffer::new(&bytes);
+        let integer = buffer.read_target().unwrap();
+        assert_eq!(buffer.read_usize().unwrap(), NUM_BITS);
+        let low = buffer.read_target().unwrap();
+        let high = buffer.read_target().unwrap();
+        *generator = WitnessGeneratorRef::new(
+            NoncanonicalSplitGenerator {
+                integer,
+                low,
+                high,
+                alternate,
+            }
+            .adapter(),
+        );
+    }
+
+    #[test]
+    fn test_i64_add_rejects_noncanonical_carry() -> anyhow::Result<()> {
+        let mut builder = CircuitBuilder::<F, D>::new(CircuitConfig::standard_recursion_config());
+        let x = builder.add_virtual_value();
+        let y = builder.add_virtual_value();
+        builder.assert_i64(x);
+        builder.assert_i64(y);
+        let result = builder.i64_add(x, y);
+        builder.register_public_inputs(&x.elements);
+        builder.register_public_inputs(&y.elements);
+        builder.register_public_inputs(&result.elements);
+        let mut data = builder.build::<C>();
+
+        // Claim 0 + 0 = 2^32 by decomposing the high-limb sum 0 as p instead of 0.
+        // The circuit must reject the alternate decomposition even though its field sum agrees.
+        force_noncanonical_split(&mut data, 1, F::ORDER);
+        let mut pw = PartialWitness::new();
+        pw.set_target_arr(&x.elements, &RawValue::from(0).0)?;
+        pw.set_target_arr(&y.elements, &RawValue::from(0).0)?;
+        pw.set_target_arr(&result.elements, &RawValue::from(1i64 << 32).0)?;
+        if let Ok(proof) = data.prove(pw) {
+            data.verify(proof)?;
+            panic!("circuit accepted and verified 0 + 0 = 2^32");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_i64_mul_rejects_noncanonical_absolute_value() -> anyhow::Result<()> {
+        let mut builder = CircuitBuilder::<F, D>::new(CircuitConfig::standard_recursion_config());
+        let x = builder.add_virtual_value();
+        let y = builder.add_virtual_value();
+        builder.assert_i64(x);
+        builder.assert_i64(y);
+        let result = builder.i64_mul(x, y);
+        builder.register_public_inputs(&x.elements);
+        builder.register_public_inputs(&y.elements);
+        builder.register_public_inputs(&result.elements);
+        let mut data = builder.build::<C>();
+
+        // i64_abs(-1) uses wrapping addition for negation. Attempt to inflate its magnitude
+        // to 2^32 + 1 through a non-canonical high-limb split; multiplication must reject it.
+        force_noncanonical_split(&mut data, 1, F::ORDER);
+        let mut pw = PartialWitness::new();
+        pw.set_target_arr(&x.elements, &RawValue::from(-1).0)?;
+        pw.set_target_arr(&y.elements, &RawValue::from(1).0)?;
+        pw.set_target_arr(&result.elements, &RawValue::from(-((1i64 << 32) + 1)).0)?;
+        if let Ok(proof) = data.prove(pw) {
+            data.verify(proof)?;
+            panic!("circuit accepted and verified -1 * 1 = -(2^32 + 1)");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_i64_mul_rejects_noncanonical_limb_product() -> anyhow::Result<()> {
+        let mut builder = CircuitBuilder::<F, D>::new(CircuitConfig::standard_recursion_config());
+        let x = builder.add_virtual_value();
+        let y = builder.add_virtual_value();
+        builder.assert_i64(x);
+        builder.assert_i64(y);
+        let result = builder.i64_mul(x, y);
+        builder.register_public_inputs(&x.elements);
+        builder.register_public_inputs(&y.elements);
+        builder.register_public_inputs(&result.elements);
+        let mut data = builder.build::<C>();
+
+        // The first four splits negate the inputs; the fifth splits their low-limb product.
+        // Attempt to split 0 * 1 as p, claiming 2^32 * 1 = 1 after the middle limb wraps.
+        // Canonical product splitting and the overflow check must reject this witness.
+        force_noncanonical_split(&mut data, 4, F::ORDER);
+        let mut pw = PartialWitness::new();
+        pw.set_target_arr(&x.elements, &RawValue::from(1i64 << 32).0)?;
+        pw.set_target_arr(&y.elements, &RawValue::from(1).0)?;
+        pw.set_target_arr(&result.elements, &RawValue::from(1).0)?;
+        if let Ok(proof) = data.prove(pw) {
+            data.verify(proof)?;
+            panic!("circuit accepted and verified 2^32 * 1 = 1");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_i64_mul_rejects_middle_carry_overflow() -> anyhow::Result<()> {
+        let mut builder = CircuitBuilder::<F, D>::new(CircuitConfig::standard_recursion_config());
+        let x = builder.add_virtual_value();
+        let y = builder.add_virtual_value();
+        builder.assert_i64(x);
+        builder.assert_i64(y);
+        let result = builder.i64_mul(x, y);
+        builder.register_public_inputs(&x.elements);
+        builder.register_public_inputs(&y.elements);
+        builder.register_public_inputs(&result.elements);
+        let data = builder.build::<C>();
+
+        // (2^32 - 1)(2^32 + 2) has a carry out of the middle limb. Reject overflow
+        // with an honest witness, regardless of operand order or the product's sign.
+        for (a, b) in [(4294967295i64, 4294967298i64), (4294967298, 4294967295)] {
+            for (a, b) in [(a, b), (-a, b), (a, -b), (-a, -b)] {
+                assert!(a.checked_mul(b).is_none());
+                let mut pw = PartialWitness::new();
+                pw.set_target_arr(&x.elements, &RawValue::from(a).0)?;
+                pw.set_target_arr(&y.elements, &RawValue::from(b).0)?;
+                pw.set_target_arr(&result.elements, &RawValue::from(a.wrapping_mul(b)).0)?;
+                if let Ok(proof) = data.prove(pw) {
+                    data.verify(proof)?;
+                    panic!("circuit accepted and verified overflowing product {a} * {b}");
+                }
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_i64_multiplication_serialization_round_trip() -> anyhow::Result<()> {
+        use crate::backends::plonky2::serialization::{
+            Pod2GateSerializer, Pod2GeneratorSerializer,
+        };
+
+        let mut builder = CircuitBuilder::<F, D>::new(CircuitConfig::standard_recursion_config());
+        let x = builder.add_virtual_value();
+        let y = builder.add_virtual_value();
+        builder.assert_i64(x);
+        builder.assert_i64(y);
+        let result = builder.i64_mul(x, y);
+        builder.register_public_inputs(&result.elements);
+        let data = builder.build::<C>();
+        let bytes = data
+            .to_bytes(&Pod2GateSerializer, &Pod2GeneratorSerializer {})
+            .unwrap();
+        let restored =
+            CircuitData::from_bytes(&bytes, &Pod2GateSerializer, &Pod2GeneratorSerializer {})
+                .unwrap();
+        assert_eq!(data, restored);
+
+        let mut pw = PartialWitness::new();
+        pw.set_target_arr(&x.elements, &RawValue::from(4294967295).0)?;
+        pw.set_target_arr(&y.elements, &RawValue::from(2).0)?;
+        pw.set_target_arr(&result.elements, &RawValue::from(8589934590).0)?;
+        let proof = restored.prove(pw)?;
+        data.verify(proof)?;
+        Ok(())
     }
 
     #[test]
