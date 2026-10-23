@@ -361,23 +361,24 @@ enum TypedValueNoRec {
     String(String),
 }
 
-// NOTE: byte serialization is using json.  Using a byte-native serialization would improve
-// performance and storage usage.
-impl Value {
-    pub fn to_bytes(&self) -> Vec<u8> {
-        let v = match &self.typed {
-            TypedValue::Int(v) => TypedValueNoRec::Int(*v),
-            TypedValue::Untyped(v) => TypedValueNoRec::Untyped(*v),
-            TypedValue::PublicKey(v) => TypedValueNoRec::PublicKey(*v),
-            TypedValue::SecretKey(v) => TypedValueNoRec::SecretKey(v.clone()),
-            TypedValue::Predicate(v) => TypedValueNoRec::Predicate(v.clone()),
+impl From<Value> for TypedValueNoRec {
+    fn from(v: Value) -> Self {
+        match v.typed {
+            TypedValue::Int(v) => TypedValueNoRec::Int(v),
+            TypedValue::Untyped(v) => TypedValueNoRec::Untyped(v),
+            TypedValue::PublicKey(v) => TypedValueNoRec::PublicKey(v),
+            TypedValue::SecretKey(v) => TypedValueNoRec::SecretKey(v),
+            TypedValue::Predicate(v) => TypedValueNoRec::Predicate(v),
             TypedValue::Container(v) => TypedValueNoRec::Container(v.commitment()),
-            TypedValue::String(v) => TypedValueNoRec::String(v.clone()),
-        };
-        serde_json::to_vec(&v).expect("json serialization succeeds")
+            TypedValue::String(v) => TypedValueNoRec::String(v),
+        }
     }
-    pub fn from_bytes(bytes: &[u8], db: Box<dyn db::DB>) -> Result<Self> {
-        let v: TypedValueNoRec = serde_json::from_slice(bytes)?;
+}
+
+impl TryFrom<(TypedValueNoRec, Box<dyn db::DB>)> for Value {
+    type Error = Error;
+
+    fn try_from((v, db): (TypedValueNoRec, Box<dyn db::DB>)) -> Result<Self> {
         Ok(match v {
             TypedValueNoRec::Int(v) => Value::from(v),
             TypedValueNoRec::Untyped(v) => Value::from(v),
@@ -387,6 +388,19 @@ impl Value {
             TypedValueNoRec::Container(v) => Value::from(Container::from_db(v, db)?),
             TypedValueNoRec::String(v) => Value::from(v),
         })
+    }
+}
+
+// NOTE: byte serialization is using json.  Using a byte-native serialization would improve
+// performance and storage usage.
+impl Value {
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let v = TypedValueNoRec::from(self.clone());
+        serde_json::to_vec(&v).expect("json serialization succeeds")
+    }
+    pub fn from_bytes(bytes: &[u8], db: Box<dyn db::DB>) -> Result<Self> {
+        let v: TypedValueNoRec = serde_json::from_slice(bytes)?;
+        Value::try_from((v, db))
     }
 }
 

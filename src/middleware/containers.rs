@@ -398,19 +398,20 @@ fn load_value(db: &dyn db::DB, value_raw: RawValue) -> Result<Value> {
     // We try loading a merkle tree first, and if one
     // doesn't exist then we try to load a shallow value from the db.
     let root = Hash(value_raw.0);
-    match db.load_node(root) {
-        Err(e) => Err(Error::Database(e)),
-        Ok(Some(_node)) => Ok(Value::from(Container::from_db_unchecked(
-            root,
-            db.clone_box(),
-        )?)),
-        Ok(None) => match db.load_value(value_raw) {
-            Err(e) => Err(Error::Database(e)),
-            Ok(Some(v)) => Ok(v),
-            Ok(None) => Err(Error::custom(format!(
-                "Value from {value_raw} not found in DB"
-            ))),
-        },
+    if let Some(_node) = db.load_node(root).map_err(Error::Database)? {
+        if let Some(kind) = db.load_kind(root).map_err(Error::Database)? {
+            return Ok(Value::from(Container::from_db_unchecked(
+                root,
+                kind,
+                db.clone_box(),
+            )));
+        }
+    }
+    match db.load_value(value_raw).map_err(Error::Database)? {
+        Some(v) => Ok(v),
+        None => Err(Error::custom(format!(
+            "Value from {value_raw} not found in DB"
+        ))),
     }
 }
 
@@ -436,12 +437,15 @@ impl Container {
     }
     fn new(kind: ContainerKind, kvs: HashMap<Value, Value>) -> Self {
         let db = Box::new(MemDB::new());
-        let mut container = Self::empty_with_db(db);
-        container.kind = kind;
+        let mut tx = DB::tx(db.as_ref());
+        let mut root = EMPTY_HASH;
         for (k, v) in kvs {
-            container.insert(k, v).expect("no duplicates, no db errors");
+            let proof = insert_tx(tx.as_mut(), root, k, v).expect("no duplicates, no db errors");
+            root = proof.new_root;
         }
-        container
+        tx.update_kind(root, kind).expect("no MemDB error");
+        TX::commit(tx).expect("no MemDB error");
+        Self { kind, root, db }
     }
     pub(crate) fn empty() -> Self {
         Self::new(
@@ -455,17 +459,17 @@ impl Container {
     fn empty_with_db(db: Box<dyn DB>) -> Self {
         Self::from_db(EMPTY_HASH, db).expect("EMPTY_HASH exists implicitly")
     }
-    fn from_db_unchecked(root: Hash, db: Box<dyn DB>) -> Result<Self> {
-        let kind = db
-            .load_kind(root)
-            .map_err(Error::Database)?
-            .ok_or_else(|| Error::custom("container kind not found"))?;
-        Ok(Self { kind, root, db })
+    fn from_db_unchecked(root: Hash, kind: ContainerKind, db: Box<dyn DB>) -> Self {
+        Self { kind, root, db }
     }
     pub fn from_db(root: Hash, db: Box<dyn DB>) -> Result<Self> {
         // Make sure the root exists in the db
         let _ = merkletree::load_node(db.as_ref(), root)?;
-        Self::from_db_unchecked(root, db)
+        let kind = db
+            .load_kind(root)
+            .map_err(Error::Database)?
+            .ok_or_else(|| Error::custom("container kind not found"))?;
+        Ok(Self::from_db_unchecked(root, kind, db))
     }
     pub fn commitment(&self) -> Hash {
         self.root
@@ -1296,5 +1300,35 @@ mod tests {
         assert_eq!(certificate.commitment(), original_root);
 
         assert_snapshot_is_readable(&certificate);
+    }
+
+    #[test]
+    fn raw_value_of_mt_node() {
+        let mut dict = Dictionary::new([("b".into(), Value::from(2i64))].into());
+        dict.insert(&"a".into(), &Value::from(1i64)).unwrap();
+        // kv_hash("a", 1) is a leaf node of the tree but was never a root, so it has no kind
+        let leaf = merkletree::kv_hash(&Value::from("a").raw(), Some(Value::from(1i64).raw()));
+        dict.insert(&"c".into(), &leaf.into()).unwrap();
+        // even though a merkle tree node exists, we haven't registered it as a merkle tree (it's a
+        // leaf), so this should just return an untyped value.
+        let v = dict.get(&"c".into()).unwrap().unwrap();
+        assert!(v.is_untyped());
+        println!("{}", v);
+    }
+
+    // This test fails and requires a fix in how store_container_mt works.  https://github.com/0xPARC/pod2/issues/571
+    #[ignore]
+    #[test]
+    fn store_container_mt_raw_value_of_mt_node() {
+        let inner = Dictionary::new([("k".into(), Value::from(5i64))].into());
+        // Single-leaf array whose root is kv_hash(0, inner.commitment())
+        let mut arr = Array::new(vec![Value::from(inner.commitment())]);
+        // The nested Array[inner] has that same root, so store_container_mt returns early
+        // and inner's tree is never written to arr's DB
+        arr.insert(1, Value::from(Array::new(vec![Value::from(inner.clone())])))
+            .unwrap();
+        let nested = arr.get(1).unwrap().unwrap().as_array().unwrap();
+        let v = nested.get(0).unwrap().unwrap();
+        assert!(v.as_dictionary().is_some()); // fails: v is Untyped
     }
 }
