@@ -11,7 +11,7 @@ jobs:
   test:
     if: github.event.pull_request.draft == false
     name: Rust tests
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event.pull_request.head.repo.fork && 'ubuntu-latest') || 'pod2_runner' }}
     steps:
     - uses: actions/checkout@v3
     - name: Set up Rust
