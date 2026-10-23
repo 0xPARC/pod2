@@ -404,7 +404,7 @@ fn load_value(db: &dyn db::DB, value_raw: RawValue) -> Result<Value> {
                 root,
                 kind,
                 db.clone_box(),
-            )?));
+            )));
         }
     }
     match db.load_value(value_raw).map_err(Error::Database)? {
@@ -459,8 +459,8 @@ impl Container {
     fn empty_with_db(db: Box<dyn DB>) -> Self {
         Self::from_db(EMPTY_HASH, db).expect("EMPTY_HASH exists implicitly")
     }
-    fn from_db_unchecked(root: Hash, kind: ContainerKind, db: Box<dyn DB>) -> Result<Self> {
-        Ok(Self { kind, root, db })
+    fn from_db_unchecked(root: Hash, kind: ContainerKind, db: Box<dyn DB>) -> Self {
+        Self { kind, root, db }
     }
     pub fn from_db(root: Hash, db: Box<dyn DB>) -> Result<Self> {
         // Make sure the root exists in the db
@@ -469,7 +469,7 @@ impl Container {
             .load_kind(root)
             .map_err(Error::Database)?
             .ok_or_else(|| Error::custom("container kind not found"))?;
-        Self::from_db_unchecked(root, kind, db)
+        Ok(Self::from_db_unchecked(root, kind, db))
     }
     pub fn commitment(&self) -> Hash {
         self.root
