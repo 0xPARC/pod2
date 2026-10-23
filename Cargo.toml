@@ -50,9 +50,13 @@ good_lp = { version = "1.8", default-features = false, features = [
 annotate-snippets = "0.11"
 rocksdb = { version = "0.24.0", optional = true } # keyvalue database for merkletree
 
-# Uncomment for debugging with https://github.com/ed255/plonky2/ at branch `feat/debug`.  The repo directory needs to be checked out next to the pod2 repo directory.
-# [patch."https://github.com/0xPARC/plonky2"]
-# plonky2 = { path = "../plonky2/plonky2" }
+# plonky2 from its GPU fork (the gpu branch of robknight/plonky2), which adds the `gpu` feature
+# without changing proofs, circuit data or the verifier. The patch also applies to plonky2_u32's
+# plonky2 dependency, so both use the same crate. For debugging with a local checkout (for example
+# https://github.com/ed255/plonky2/ at branch `feat/debug`, next to the pod2 repo directory), use
+# `plonky2 = { path = "../plonky2/plonky2" }` instead.
+[patch."https://github.com/0xPARC/plonky2"]
+plonky2 = { git = "https://github.com/robknight/plonky2", rev = "035c827656e00ac390cf11cb45c6df3c715b181d" }
 
 [dev-dependencies]
 pretty_assertions = "1.4.1"
@@ -79,6 +83,12 @@ vergen-gitcl = { version = "1.0.0", features = ["build"], optional = true }
 [features]
 default = ["backend_plonky2", "zk", "mem_cache"]
 backend_plonky2 = ["dep:plonky2"]
+# Prove on a GPU through plonky2's `gpu` feature (Metal, Vulkan or DirectX 12,
+# chosen at run time; the CPU paths run when no adapter is usable).
+gpu = ["plonky2/gpu"]
+# plonky2's GPU diagnostics (see the `plonky2::gpu` module documentation).
+gpu-profiling = ["gpu", "plonky2/gpu-profiling"]
+
 zk = []
 metrics = []
 time = ["dep:env_logger"]
