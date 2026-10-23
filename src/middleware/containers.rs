@@ -1315,4 +1315,20 @@ mod tests {
         assert!(v.is_untyped());
         println!("{}", v);
     }
+
+    // This test fails and requires a fix in how store_container_mt works.  https://github.com/0xPARC/pod2/issues/571
+    #[ignore]
+    #[test]
+    fn store_container_mt_raw_value_of_mt_node() {
+        let inner = Dictionary::new([("k".into(), Value::from(5i64))].into());
+        // Single-leaf array whose root is kv_hash(0, inner.commitment())
+        let mut arr = Array::new(vec![Value::from(inner.commitment())]);
+        // The nested Array[inner] has that same root, so store_container_mt returns early
+        // and inner's tree is never written to arr's DB
+        arr.insert(1, Value::from(Array::new(vec![Value::from(inner.clone())])))
+            .unwrap();
+        let nested = arr.get(1).unwrap().unwrap().as_array().unwrap();
+        let v = nested.get(0).unwrap().unwrap();
+        assert!(v.as_dictionary().is_some()); // fails: v is Untyped
+    }
 }
