@@ -17,9 +17,16 @@ jobs:
       - uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           components: clippy
+          cache: false
+      - name: Resolve dependencies
+        run: cargo generate-lockfile
+      - name: Restore Rust cache
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
           # rustfmt.yml also names its job "rustfmt", and it caches an empty
           # target dir; without separate keys it can claim this one.
-          cache-shared-key: clippy
-          cache-save-if: ${{ github.ref == 'refs/heads/main' }}
+          shared-key: clippy
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          cache-on-failure: true
       - name: Check lints with clippy
-        run: cargo clippy --tests --examples
+        run: cargo clippy --locked --tests --examples

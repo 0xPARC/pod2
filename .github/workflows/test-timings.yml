@@ -13,22 +13,35 @@ on:
 jobs:
   timings:
     name: Test timings
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event.pull_request.head.repo.fork && 'ubuntu-latest') || 'pod2_runner' }}
+    env:
+      RUST_TEST_THREADS: "4"
     steps:
     - uses: actions/checkout@v4
     - name: Set up Rust
       uses: actions-rust-lang/setup-rust-toolchain@v1
       with:
+        cache: false
+        rustflags: "-D warnings -C target-feature=+avx2,+pclmulqdq"
+    - name: Resolve dependencies
+      run: cargo generate-lockfile
+    - name: Restore Rust cache
+      uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+      with:
         # Read the tests.yml cache but never write to it: the feature set here
         # differs, and this job should not disturb the entry PRs restore from.
-        cache-shared-key: tests-release
-        cache-save-if: false
+        shared-key: tests-release
+        save-if: false
+    - name: Check the runner has AVX2
+      run: |
+        grep -qm1 avx2 /proc/cpuinfo || {
+          echo "::error::runner lacks AVX2; drop +avx2 from rustflags in this workflow"
+          exit 1
+        }
     - name: Run tests with timing
       # `--nocapture` is load-bearing. The `timed!` macro and plonky2's
       # TimingTree both print, and libtest swallows stdout without it, so the
-      # timings silently vanish. Tests still run in parallel, so samples
-      # interleave and cannot be attributed to an individual test; the totals
-      # are what this job is for.
+      # timings silently vanish.
       #
       # The filter goes through env rather than being interpolated into the
       # script: a dispatch input pasted straight into `run:` would let anyone
@@ -37,7 +50,7 @@ jobs:
         FILTER: ${{ inputs.filter || '' }}
       run: |
         set -o pipefail
-        cargo test --release --features time,db_rocksdb ${FILTER:+"$FILTER"} \
+        cargo test --locked --release --features time,db_rocksdb,mimalloc ${FILTER:+"$FILTER"} \
           -- --nocapture 2>&1 | tee timings.log
     - name: Summarise
       if: always()
