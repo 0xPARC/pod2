@@ -178,6 +178,16 @@ pub fn validate(
     validator.validate(document)
 }
 
+pub fn validate_value(
+    value: &LiteralValue,
+    available_modules: &HashMap<Hash, Arc<Module>>,
+    params: &Params,
+    mode: ParseMode,
+) -> Result<(), ValidationError> {
+    let validator = Validator::new(available_modules, params, mode);
+    validator.validate_literal_value(value)
+}
+
 struct Validator {
     available_modules: HashMap<Hash, Arc<Module>>,
     params: Params,
@@ -889,7 +899,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        lang::{frontend_ast::parse::parse_document, parser::parse_podlang, Module},
+        lang::{frontend_ast::parse::parse_document, parser::parse_podlang_document, Module},
         middleware::{CustomPredicate, Params, EMPTY_HASH},
     };
 
@@ -897,7 +907,7 @@ mod tests {
         input: &str,
         modules: &HashMap<Hash, Arc<Module>>,
     ) -> Result<ValidatedAST, ValidationError> {
-        let parsed = parse_podlang(input).expect("Failed to parse");
+        let parsed = parse_podlang_document(input).expect("Failed to parse");
         let document = parse_document(parsed.into_iter().next().unwrap()).expect("Failed to parse");
         validate(document, modules, &Params::default(), ParseMode::Module)
     }
@@ -906,7 +916,7 @@ mod tests {
         input: &str,
         modules: &HashMap<Hash, Arc<Module>>,
     ) -> Result<ValidatedAST, ValidationError> {
-        let parsed = parse_podlang(input).expect("Failed to parse");
+        let parsed = parse_podlang_document(input).expect("Failed to parse");
         let document = parse_document(parsed.into_iter().next().unwrap()).expect("Failed to parse");
         validate(document, modules, &Params::default(), ParseMode::Request)
     }
@@ -1359,7 +1369,7 @@ mod tests {
                 "record Big = ({})\nmy_pred(A) = AND(Equal(A[\"x\"], 1))",
                 entries.join(", ")
             );
-            let parsed = parse_podlang(&input).expect("Failed to parse");
+            let parsed = parse_podlang_document(&input).expect("Failed to parse");
             let document =
                 parse_document(parsed.into_iter().next().unwrap()).expect("Failed to parse");
             validate(document, &HashMap::new(), &params, ParseMode::Module)

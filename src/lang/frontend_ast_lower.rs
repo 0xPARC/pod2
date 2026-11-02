@@ -599,14 +599,14 @@ mod tests {
     use crate::lang::{
         frontend_ast::parse::parse_document,
         frontend_ast_validate::{validate, ParseMode},
-        parser::parse_podlang,
+        parser::parse_podlang_document,
     };
 
     fn parse_validate_and_lower_module(
         input: &str,
         params: &Params,
     ) -> Result<Module, LoweringError> {
-        let parsed = parse_podlang(input).expect("Failed to parse");
+        let parsed = parse_podlang_document(input).expect("Failed to parse");
         let document = parse_document(parsed.into_iter().next().unwrap()).expect("Failed to parse");
         let validated = validate(document, &HashMap::new(), params, ParseMode::Module)
             .expect("Failed to validate");
@@ -835,7 +835,7 @@ mod tests {
         let params = Params::default();
 
         // Parse, validate, and lower
-        let parsed = parse_podlang(&input).expect("Failed to parse");
+        let parsed = parse_podlang_document(&input).expect("Failed to parse");
         let document =
             parse_document(parsed.into_iter().next().unwrap()).expect("Failed to parse document");
         let validated = validate(document, &HashMap::new(), &params, ParseMode::Module)

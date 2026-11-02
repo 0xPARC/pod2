@@ -38,7 +38,7 @@ pub mod module;
 pub mod parser;
 pub mod pretty_print;
 
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 pub use diagnostics::render_error;
 pub use error::{LangError, LangErrorKind};
@@ -46,10 +46,13 @@ pub use frontend_ast_split::{
     SplitChainInfo, SplitChainPiece, SplitInfo, SplitResult, SplitTreeInfo,
 };
 pub use module::{Module, MultiOperationError};
-pub use parser::{parse_podlang, Pairs, ParseError, Rule};
+pub use parser::{parse_podlang_document, parse_podlang_literal_value, Pairs, ParseError, Rule};
 pub use pretty_print::PrettyPrint;
 
-use crate::{frontend::PodRequest, middleware::Params};
+use crate::{
+    frontend::PodRequest,
+    middleware::{Params, Value},
+};
 
 /// Load a module from Podlang source.
 ///
@@ -76,7 +79,7 @@ fn load_module_inner(
     available_modules: &[Arc<Module>],
 ) -> Result<Module, LangError> {
     let started = std::time::Instant::now();
-    let pairs = parse_podlang(source)?;
+    let pairs = parse_podlang_document(source)?;
     log::debug!("module {name}: parse: {:?}", started.elapsed());
     let document_pair = pairs
         .into_iter()
@@ -124,7 +127,7 @@ fn parse_request_inner(
     params: &Params,
     available_modules: &[Arc<Module>],
 ) -> Result<PodRequest, LangError> {
-    let pairs = parse_podlang(source)?;
+    let pairs = parse_podlang_document(source)?;
     let document_pair = pairs
         .into_iter()
         .next()
@@ -142,6 +145,25 @@ fn parse_request_inner(
     )?;
     let request = frontend_ast_lower::lower_request(validated, params)?;
     Ok(request)
+}
+
+pub fn parse_value(source: &str) -> Result<Value, LangError> {
+    let pairs = parse_podlang_literal_value(source)?;
+    let literal_pair = pairs
+        .into_iter()
+        .next()
+        .expect("parse_value should always return at least one pair for a valid value");
+    let literal = frontend_ast::parse::parse_literal_value(literal_pair)?;
+    frontend_ast_validate::validate_value(
+        &literal,
+        // For now we don't consider any available module in scope when parsing an
+        // isolated podlang value
+        &HashMap::new(),
+        &Params::default(),
+        frontend_ast_validate::ParseMode::Module,
+    )?;
+    let value = frontend_ast_lower::lower_literal(&literal);
+    Ok(value)
 }
 
 #[cfg(test)]
@@ -1486,5 +1508,30 @@ mod tests {
         let pod = builder.prove(&MockProver {}).unwrap();
         pod.pod.verify().unwrap();
         Ok(())
+    }
+
+    #[test]
+    fn test_parse_value() {
+        use crate::middleware::{
+            containers::{Array, Dictionary},
+            StrKey,
+        };
+
+        assert_eq!(parse_value("42").unwrap(), Value::from(42i64));
+        assert_eq!(parse_value(r#""hello""#).unwrap(), Value::from("hello"));
+        assert_eq!(
+            parse_value("[1, 2]").unwrap(),
+            Value::from(Array::new(vec![Value::from(1i64), Value::from(2i64)]))
+        );
+        assert_eq!(
+            parse_value(r#"{"a": 1, "b": 2}"#).unwrap(),
+            Value::from(Dictionary::new(
+                [
+                    (StrKey::from("a"), Value::from(1i64)),
+                    (StrKey::from("b"), Value::from(2i64))
+                ]
+                .into()
+            ))
+        );
     }
 }
