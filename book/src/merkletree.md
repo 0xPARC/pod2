@@ -1,202 +1,104 @@
 # MerkleTree
 
-In the POD2 backend, a MerkleTree is used to store an unordered set of key-value pairs.  The frontend compound types `Array`, `Set`, and `Dictionary` are all represented as `MerkleTree`s on the backend.
+A `MerkleTree` is a sparse binary Merkle tree that stores a set of key-value
+pairs with unique keys, and is committed to by its root hash.
 
-From the high level, we can think of a `MerkleTree` as a 'hashmap' storage, that allows us to generate proofs of inclusion and non-inclusion of the key-values stored into it.
+## Notation
 
-A `MerkleTree` is represented in-circuit as its Merkle root; in the Plonky2 backend, this root is a tuple of four field elements.  This makes a `MerkleTree` the same size in-circuit as the atomic types `Integer` and `String`.  (In general, regardless of the proof system used on the backend, all three types are represented in-circuit by the same number of field elements; this number is determined by the security requirement of the hash function.)
+- A `key`, a `value` and a hash are each 4 Goldilocks field elements.
+- `EMPTY = (0, 0, 0, 0)`.
+- `H(flag, x)`: Poseidon permutation whose 12-element state is initialized to
+  `flag` in every position, then the first 8 positions are overwritten with the
+  8 elements of `x`, permuted once, and the first 4 elements are returned.
 
-The encoding of the `MerkleTree` is a recursive process:
-- Encode all keys and values in the `MerkleTree`.
-- Put all keys and values into a sparse Merkle tree.
-- The `MerkleTree` is encoded in-circuit as the root of this sparse Merkle tree.
+## Key path
 
-This document explains the construction of the sparse Merkle tree.
+The path of a key is its little-endian bit decomposition, using the canonical
+(less than the field modulus) 64-bit representation of each element:
 
-## The branching rule
-
-A sparse Merkle tree is implemented as a binary tree.  The insertion path of any key is given by a deterministic rule: given ```key``` and a nonnegative integer ```depth```, the rule determines that ```key``` belongs to either the ```left``` or ```right``` branch at depth ```depth```.
-
-The precise rule is as follows.  In-circuit, compute a Poseidon hash of ```key``` to obtain a 4-tuple of field elements 
 ```
-Poseidon(key) = (k_0, k_1, k_2, k_3).
-```
-Write the field elements in binary (in little-endian order):
-```
-k_0 = b_0 b_1 ... b_63
-k_1 = b_64 b_65 ... b_127
-....
+path[i] = bit (i mod 64) of key[i / 64]
 ```
 
-At the root, ```key``` goes to the left subtree if ```b_0 = 0```, otherwise the right subtree.  At depth 1, ```key``` goes to the left subtree if ```b_1 = 0```, otherwise the right subtree, and similarly for higher depth.
+`path[i] = 0` means "go left" at depth `i`, and `1` means "go right".  Distinct
+keys have distinct paths, so the tree has depth at most 256.
 
-## The tree structure
+Paths are taken from the raw keys, not from their hashes, so the shape of the
+tree is controlled by the choice of keys.  This allows filling a shallow tree
+completely, e.g. with the sequential keys `0..2^d` for a tree of depth `d`.
+The flip side is that keys sharing a long path prefix produce a deep tree, so
+whoever chooses the keys can push entries past a circuit's `max_depth`.  Keys
+should be either chosen deliberately (e.g. sequential) or uniformly
+distributed (e.g. hashes).
 
-A Merkle tree with no entry at all is represented by the hash value
-```root = hash(0).```
-(With the Plonky2 backend, the hash function ```hash``` will output a 4-tuple of field elements.)
+## Tree
 
-A Merkle tree with a single entry ```(key, value)``` is called a "leaf".  It is represented by the hash value
-```root = hash(1, (key, value))```, where `1` is a flag indicating that it is a leaf, and it's used as the initial state of the hash (Poseidon) permutation.
+The root of a set of entries `S`, all sharing the first `d` bits of their
+paths, is defined recursively:
 
-A Merkle tree ```tree``` with more than one entry is required to have two subtrees, ```left``` and ```right```.  It is then represented by the hash value
-```root = hash(2, (left_root, right_root))```, where `2` is a flag indicating that it is an intermediate node, and it's used as the initial state of the hash (Poseidon) permutation.
-
-The flags are used as the initial state of the Poseidon permutation so that they don't account for extra inputs in the Poseidon gadget, needing only 1 gate for each node/leaf hash.
-
-(The role of the constants 1 and 2 is to prevent collisions between leaves and non-leaf Merkle roots.  If the constants were omitted, a large Merkle tree could be dishonestly interpreted as a leaf, leading to security vulnerabilities.)
-
-## Example 1
-
-Suppose we want to build a Merkle tree from the following `Dictionary` with three key-value pairs:
 ```
-{
-    4: "even",
-    5: "odd",
-    6: "even"
-}
+root(S, d) =
+    EMPTY                              if S is empty
+    leaf_hash(key, value)              if S = {(key, value)}
+    node_hash(root(L, d+1), root(R, d+1))  otherwise
 ```
 
-The keys are integers, so the are represented in-circuit by themselves.  Let's suppose that in little-endian order, the first three bits of the hashes of the keys are:
-```
-hash(4) = 000...
-hash(5) = 010...
-hash(6) = 001...
-```
+where `L` (resp. `R`) are the entries of `S` with `path[d] = 0` (resp. `1`),
+and
 
-The resulting tree looks like:
 ```
-                        root
-                         /\   
-                        /  \  
-                       /    \ 
-                      /      \
-                   L_root   R_root = hash(0)
-                     /\       
-                    /  \                             
-                   /    \     
-                  /      \    
-               LL_root  LR_root = hash((4, "even", 1))
-                 /\           
-                /  \          
-               /    \         
-              /      \        
-        LLL_root   LLR_root = hash((5, "odd", 1))
-          ||          
-  hash((6, "even", 1))
+leaf_hash(key, value)  = H(1, key ‖ value)
+node_hash(left, right) = H(2, left ‖ right)
 ```
 
-The intermediate roots are computed as hashes of their subroots:
+The root of the tree is `root(S, 0)`.  The flags `1` and `2` separate leaves
+from intermediate nodes, so that one can't be passed off as the other.
+
+## Example
+
+Take the entries `{0: v0, 2: v2, 5: v5}`.  The first path bits are
+`0 → 000`, `2 → 010` and `5 → 101`:
+
 ```
-LL_root = hash((LLL_root, LLR_root, 2))
-L_root = hash((LL_root, LR_root, 2))
-root = hash((L_root, R_root, 2)).
-```
+            root
+           /    \
+          n      leaf(5)
+         / \
+   leaf(0)  leaf(2)
 
-The full `Dictionary` is then represented in the backend as `root` (four field elements in the Plonky2 backend).
-
-### Example 2
-So for example, imagine we have 8 key-pairs, where the keys are just an enumeration from 0 to 7, then the tree leaves positions would look like:
-![](img/merkletree-example-1-a.png)
-
-Now let's change the key of the leaf `key=1`, and set it as `key=13`. Then, their respective leaf paths will be the same until they diverge in the 4-th bit:
-
-![](img/merkletree-example-1-b.png)
-
-
-### Example 3
-
-Suppose we have 4 key-values, where the first four bits of the hashes of the keys are `0000`, `0100`, `1010` and `1011`. The tree would look like:
-![](img/merkletree-example-2-a.png)
-
-To iterate this example, suppose we have the following data in a POD:
-```js
-{
-	id: "11000...",
-	kvs : {
-		idNumber: "424242",
-		dateOfBirth: 1169909384,
-		userPk: 9876543210, // target user of this POD
-		_signerPk: 1234567890, // signer of the POD
-	},
-	// ...
-}
+n    = node_hash(leaf_hash(0, v0), leaf_hash(2, v2))
+root = node_hash(n, leaf_hash(5, v5))
 ```
 
-The merkletree will contain the key values from the `kvs` field.
+## Proofs
 
-Suppose that the binary representation of the hash of the key `userPk` is `1011...`. This uniquely defines the leaf position that contains the public key of the authenticated user. Similarly for the other key-values:
+A Merkle proof for a key is the list of sibling hashes `siblings[0..n]` along
+the key's path, where `siblings[i]` is the root of the subtree next to the
+path at depth `i + 1`, and `n` is the depth where the path ends at a leaf or an
+empty subtree.  It proves either that `(key, value)` is in the tree, or that
+`key` is not, by showing that its path ends at an empty subtree or at a leaf
+with a different key.
 
-![](img/merkletree-example-2-b.png)
+## Verification of a proof of existence
 
+Input: `root`, `key`, `value` and `siblings[0..n]`.  The same check is implemented natively (`merkletree::verify`) and
+in-circuit (`verify_merkle_proof_existence_circuit`).
 
-## Proofs of inclusion and non-inclusion
-Merkle proofs contain the siblings along the path from the leaf to the root, where the leaf position is determined by the key binary representation. 
-
-Since leaf positions are deterministic based on the key, the same approach is used for non-inclusion proofs, where it can be proven that a key is not in the tree, and furthermore, that a value is not in the tree (although the key exists):
-1. Proving that the key does not exist in the tree is achieved by generating the merkle-proof for the specific key, and showing that the (virtual) leaf is empty - this is, showing that going down the path of the non-existing key, there is a leaf with a different key, meaning that the non-existing key has not been inserted in the tree.
-2. Proving that a value is not in the tree (although the key exists) is achieved by generating the merkle-proof for the specific key, and showing that the leaf exists but it has a different value than the one being proved.
-
-For the current use cases, we don't need to prove that the key exists but the value is different on that leaf, so we only use the option 1.
-
-There are 2 cases to have into account when dealing with non-inclusion proofs:
-- case i) the expected leaf does not exist.
-- case ii) the expected leaf does exist in the tree, but it has a different `key`.
-
-
-## Encoding
-> TODO: how key-values, nodes, merkle-proofs, ... are encoded.
-
-## Interface
-
-```rust
-impl MerkleTree {
-    /// builds a new `MerkleTree` where the leaves contain the given key-values
-    fn new(max_depth: usize, kvs: &HashMap<Value, Value>) -> Result<Self>;
-
-    /// returns the root of the tree
-    fn root(&self) -> Hash;
-    
-    /// returns the max_depth parameter from the tree
-    fn max_depth(&self) -> usize;
-
-    /// returns the value at the given key
-    fn get(&self, key: &Value) -> Result<Value>;
-    
-    /// returns a boolean indicating whether the key exists in the tree
-    fn contains(&self, key: &Value) -> Result<bool>;
-
-    /// returns a proof of existence, which proves that the given key exists in
-    /// the tree. It returns the `value` of the leaf at the given `key`, and the
-    /// `MerkleProof`.
-    fn prove(&self, key: &Value) -> Result<(Value, MerkleProof)>;
-
-    /// returns a proof of non-existence, which proves that the given
-    /// `key` does not exist in the tree. The return value specifies
-    /// the key-value pair in the leaf reached as a result of
-    /// resolving `key` as well as a `MerkleProof`.
-    fn prove_nonexistence(&self, key: &Value) -> Result<MerkleProof>;
-
-    /// verifies an inclusion proof for the given `key` and `value`
-    fn verify(max_depth: usize, root: Hash, proof: &MerkleProof,
-                        key: &Value, value: &Value,) -> Result<()>;
-
-    /// verifies a non-inclusion proof for the given `key`, that is, the given
-    /// `key` does not exist in the tree
-    fn verify_nonexistence( max_depth: usize, root: Hash,
-                        proof: &MerkleProof, key: &Value,) -> Result<()>;
-
-    /// returns an iterator over the leaves of the tree
-    fn iter(&self) -> Iter;
-}
+```
+h = leaf_hash(key, value)
+for i = n-1 down to 0:
+    if path[i] == 0:
+        h = node_hash(h, siblings[i])
+    else:
+        h = node_hash(siblings[i], h)
+accept iff h == root
 ```
 
-## Development plan
-- short term: merkle tree as a 'precompile' in POD operations, which allows to directly verify proofs
-- long term exploration:
-	- explore feasibility of using Starky (for lookups) connected to Plonky2, which would allow doing the approach described at [https://hackmd.io/@aardvark/SkJ-wcTDJe](https://hackmd.io/@aardvark/SkJ-wcTDJe)
+### Circuit specifics
 
-
-## Resources
-- [https://docs.iden3.io/publications/pdfs/Merkle-Tree.pdf](https://docs.iden3.io/publications/pdfs/Merkle-Tree.pdf)
-- [https://eprint.iacr.org/2018/955](https://eprint.iacr.org/2018/955)
+The circuit is built for a fixed `max_depth` (at most 256) and only uses the
+first `max_depth` bits of the path.
+`siblings` is padded with `EMPTY` up to `max_depth`, and `n` is taken as one
+plus the index of the last non-empty sibling (`0` if all are empty).  This
+loses nothing: in a valid proof the last sibling is never `EMPTY`, otherwise
+the leaf would have been collapsed one level higher.
