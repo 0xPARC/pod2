@@ -1,47 +1,50 @@
 
-# Ethdos custom predicate, using binary AND and OR: example of a recursive group
+# Ethdos custom predicate, using binary AND and OR: example of a recursive batch
 
 ```
-eth_dos_distance(src_or, src_key, dst_or, dst_key, distance_or, distance_key) = OR( 
-    eth_dos_distance_ind_0(src_or, src_key, dst_or, dst_key, distance_or, distance_key),
-    eth_dos_distance_base(src_or, src_key, dst_or, dst_key, distance_or, distance_key)
-) 
+eth_friend(src, dst, private: attestation) = AND(
+    SignedBy(attestation, src)
+    Contains(attestation, "attestation", dst)
+)
 
-eth_dos_distance_base(src_or, src_key, dst_or, dst_key, distance_or, distance_key) = AND(
-    Equal(src_or[src_key], dst_or[dst_key]),
-    ValueOf(distance_or[distance_key], 0)
-) 
+eth_dos_base(src, dst, distance) = AND(
+    Equal(src, dst)
+    Equal(distance, 0)
+)
 
-eth_dos_distance_ind_0(src_or, src_key, dst_or, dst_key, distance_or, distance_key, private: intermed_or, intermed_key, shorter_distance_or, shorter_distance_key, one_or, one_key) = AND(
-    eth_dos_distance(src_or, src_key, intermed_or, intermed_key, shorter_distance_or, shorter_distance_key)
-
+eth_dos_ind(src, dst, distance, private: shorter_distance, intermed) = AND(
+    eth_dos(src, intermed, shorter_distance)
     // distance == shorter_distance + 1
-    ValueOf(one_or[one_key], 1)
-    SumOf(distance_or[distance_key], shorter_distance_or[shorter_distance_key], one_or[one_key])
-
+    Sum(shorter_distance, 1, distance)
     // intermed is a friend of dst
-    eth_friend(intermed_or, intermed_key, dst_or, dst_key)
+    eth_friend(intermed, dst)
+)
+
+eth_dos(src, dst, distance) = OR(
+    eth_dos_base(src, dst, distance)
+    eth_dos_ind(src, dst, distance)
 )
 ```
 
-This group includes three statements.
+This batch includes four predicates.
 
-When the definition is serialized for hashing, the statements are renamed to SELF.1, SELF.2, SELF.3.
+When the definition is serialized for hashing, references to predicates in the same batch are replaced by their index in the batch: `self.0`, `self.1`, `self.2`, `self.3`.
 
-With this renaming and the wildcards, the first of the three definitions becomes:
+With this renaming and the wildcards, the last of the four definitions becomes:
 ```
-SELF.1(?1, ?2, ?3, ?4, ?5, ?6) = OR( 
-    SELF.2(?1, ?2, ?3, ?4, ?5, ?6)
-    SELF.3(?1, ?2, ?3, ?4, ?5, ?6) 
-) 
+self.3(?0, ?1, ?2) = OR(
+    self.1(?0, ?1, ?2)
+    self.2(?0, ?1, ?2)
+)
 ```
-and similarly for the other two definitions.
+and similarly for the other definitions.
 
-The above definition is serialized in-circuit and merkelized with a zk-friendly hash to generate the "group hash", a unique cryptographic identifier for the group.
+Each definition is serialized and hashed, and the hashes are merkelized with a zk-friendly hash to generate the "batch ID", a unique cryptographic identifier for the batch.
 
-Then the individual statements in the group are identified as:
+Then the individual predicates in the batch are identified as:
 ```
-eth_dos_distance = groupHASH.1
-eth_dos_distance_base = groupHASH.2
-eth_dos_distance_ind = groupHASH.3
+eth_friend = (batchID, 0)
+eth_dos_base = (batchID, 1)
+eth_dos_ind = (batchID, 2)
+eth_dos = (batchID, 3)
 ```

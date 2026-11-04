@@ -12,7 +12,7 @@ A "proof" is a table that looks like
 
 In other words:
 
-A "proof" is an ordered list of 100 proof-rows.
+A "proof" is an ordered list of proof-rows, with a fixed maximum length given by the circuit parameters.
 
 Each "row" is a pair (statement, reason).
 
@@ -23,11 +23,11 @@ The reason is everything the circuit needs to verify that the statement is true.
 Example:
 
 ```
-STATEMENT1 = Equals(olddict["name"], otherdict["field"])
+STATEMENT1 = Equal(olddict["name"], otherdict["field"])
 
-STATEMENT2 = Equals(otherdict["field"], newdict["result"])
+STATEMENT2 = Equal(otherdict["field"], newdict["result"])
 
-STATEMENT3 = Equals(olddict["name"], newdict["result"])
+STATEMENT3 = Equal(olddict["name"], newdict["result"])
 ```
 
 The reasons in human-readable simplified format:
@@ -42,7 +42,7 @@ REASON3 -- "use transitive property on STATEMENT1 and STATEMENT2"
 
 ## What does the reason look like in circuit?
 
-It won't be so simple.  I'll just explain what REASON3 has to look like.
+Let's look at what REASON3 has to look like.
 
 First, the operation (deduction rule).
 
@@ -51,54 +51,43 @@ First, the operation (deduction rule).
 Here is the transitive property of equality, in human-readable form.
 ```
 if
-Equals(a, b) and Equals(b, c)
+Equal(a, b) and Equal(b, c)
 then
-Equals(a, c)
-```
-
-First, we need to decompose all the anchored keys as (dict, key) pairs.  This is the frontend description of the deduction rule.
-```
-IF
-Equals(a_or[a_key], b_or[b_key])
-AND
-Equals(b_or[b_key], c_or[c_key])
-THEN
-Equals(a_or[a_key], c_or[c_key])
+Equal(a, c)
 ```
 
 In-circuit, all these identifiers are replaced with wildcards, which come in numerical order (because they will be used as array indices).  So the backend representation is:
 ```
 IF
-Equals( ?1[?2], ?3[?4] ) and Equals ( ?3[?4], ?5[?6] )
+Equal( ?0, ?1 ) and Equal( ?1, ?2 )
 THEN
-Equals( ?1[?2], ?5[?6] )
+Equal( ?0, ?2 )
 ```
 
+Native operations such as `TransitiveEqualFromStatements` are implemented directly in the circuit, but [custom operations](./custom.md) are verified following exactly these steps.
 
 ## What does REASON3 need to look like in-circuit?
 
 - Repeat deduction rule
  ```
 IF
-Equals( ?1[?2], ?3[?4] ) and Equals ( ?3[?4], ?5[?6] )
+Equal( ?0, ?1 ) and Equal( ?1, ?2 )
 THEN
-Equals( ?1[?2], ?5[?6] )
+Equal( ?0, ?2 )
 ```
 - Say what the wildcards are
 ```
-?1 -- olddict
-?2 -- "name"
-?3 -- otherdict
-...
+?0 -- olddict["name"]
+?1 -- otherdict["field"]
+?2 -- newdict["result"]
 ```
 - Substitute the wildcards into the deduction rule
 ```
 IF
-Equals( olddict["name"], ... ) ...
-Equals( otherdict["value"])
+Equal( olddict["name"], otherdict["field"] ) and
+Equal( otherdict["field"], newdict["result"] )
 THEN
-Equals( olddict["name"] newdict[...] )
-...
+Equal( olddict["name"], newdict["result"] )
 ```
 - Say where to find the previous statements (indices in the list), and check that they are above this one.
 ```
@@ -109,41 +98,31 @@ Statement2
 
 
 
-## Decomposing anchored keys
+## Anchored keys in deduction rules
 
 Sometimes a deduction rule requires different anchored keys to come from the same dictionary.  Here's an example from Ethdos.
 
-The wildcard system handles this very naturally, since the dict of the anchored key can use its own wildcard.
+The wildcard system handles this very naturally, since the dictionary of an anchored key is itself a wildcard.
 
 ```
-eth_friend(src_or, src_key, dst_or, dst_key) = and<
-    // the attestation dict is signed by (src_or, src_key)
-    SignedBy(attestation_dict, src_or[src_key])
+eth_friend(src, dst, private: attestation) = AND(
+    // the attestation dict is signed by src
+    SignedBy(attestation, src)
 
-    // that same attestation pod has an "attestation"
-    Equal(attestation_dict["attestation"], dst_or[dst_key])
->
+    // that same attestation dict has an "attestation" entry equal to dst
+    Equal(attestation["attestation"], dst)
+)
 ```
 
-In terms of anchored keys, it would be a little more complicated. five anchored keys show up in this deduction rule:
-```
-AK1 = src
-AK2 = dst
-AK3 = attestation_dict["attestation"]
-```
-
-and we need to force AK3, AK4, AK5 to come from the same origin.
+The dictionary `attestation` shows up twice: once as a value and once as the root of the anchored key `attestation["attestation"]`.  Both uses must refer to the same dictionary.
 
 WILDCARD matching takes care of it.
 
 ```
-eth_friend(?1, ?2, ?3, ?4) = and<
-    // the attestation dict is signed by (src_or, src_key)
-    SignedBy(?5, ?1[?2])
-
-    // that same attestation pod has an "attestation"
-    Equal(?5["attestation"], ?3[?4])
->
+eth_friend(?0, ?1, private: ?2) = AND(
+    SignedBy(?2, ?0)
+    Equal(?2["attestation"], ?1)
+)
 ```
 
 ## Another perspective
@@ -175,23 +154,23 @@ For example,
 
 <div style="display:flex;">
 <div style="padding:10px;max-width:50%; border-right:1px solid #ccc;">
-    
+
 So, for example, for the given predicate:
 
 ```
-IsComposite(n, private: a, b) = AND(
-  ProductOf(n, a, b)
-  GtFromEntries(a, 1)
-  GtFromEntries(b, 1)
+is_composite(n, private: a, b) = AND(
+  Product(a, b, n)
+  Gt(a, 1)
+  Gt(b, 1)
 )
 ```
 
 </div>
 <div style="padding:10px;max-width:45%;">
-    
+
 We can view it as:
 
-The *statement* `IsComposite(n)` is `true` if and only if $\exists$ `n`, `a`, `b`
+The *statement* `is_composite(n)` is `true` if and only if $\exists$ `a`, `b`
  such that the following statements hold:
 - $n = a \cdot b$
 - $a > 1$

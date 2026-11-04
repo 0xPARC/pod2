@@ -8,7 +8,7 @@ A `Value` is simply a tuple of field elements.  With the plonky2 backend, a `Val
 
 The backend encoding stores integers in such a way that arithmetic operations (addition, multiplication, comparison) are inexpensive to verify in-circuit.
 
-In the case of the Plonky2 backend, an integer $x$ is decomposed as
+In the case of the Plonky2 backend, an integer $x$ (an `i64`) is first interpreted as a `u64` via its two's complement representation, which is then decomposed as
 $$x = x_0 + x_1 \cdot 2^{32}$$
 with $0 \leq x_0, x_1 < 2^{32}$ and represented as
 $$\texttt{map}\ \iota\ [x_0, x_1, 0, -1],$$
@@ -20,7 +20,7 @@ On the backend, a boolean is stored as an integer, either 0 or 1; so logical ope
 
 ## Strings
 
-The backend encoding stores strings as hashes, using a hash function that might not be zk-friendly.  For this reason, string operations (substrings, accessing individual characters) are hard to verify in-circuit.  The POD2 system does not provide methods for manipulating strings.
+The backend encoding stores strings as hashes.  For this reason, string operations (substrings, accessing individual characters) are hard to verify in-circuit.  The POD2 system does not provide methods for manipulating strings.
 
 In other words: As POD2 sees it, two strings are either equal or not equal.  There are no other relationships between strings.
 
@@ -38,6 +38,15 @@ $$[b_0,\dots,b_{N-1}]\mapsto \sum_{i=0}^{N-1} b_i \cdot 2^{8i},$$
 
 and $\jmath_\texttt{string->bytes}$ is the canonical mapping of a string to its UTF-8 representation.
 
+## Keys and predicates
+
+A `PublicKey` (an elliptic curve point) and a `SecretKey` (a scalar) are
+represented by the Poseidon hash of their field element representation.  A
+`Predicate` is represented by the hash of the predicate (see
+[custom predicates](./customhash.md)).
+
 ## Compound types
 
 The three front-end compound types (`Dictionary`, `Array`, `Set`) are all represented as Merkle roots on the backend.  The details of the representation are explained on a separate [Merkle tree](./merkletree.md) page.
+
+[^aux]: Definitions of `drop` and `take` may be found [here](https://hackage.haskell.org/package/haskell98-2.0.0.3/docs/Prelude.html#v:drop) and [here](https://hackage.haskell.org/package/haskell98-2.0.0.3/docs/Prelude.html#v:take).

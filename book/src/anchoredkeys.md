@@ -1,10 +1,12 @@
 # Anchored keys
-Rather than dealing with just keys, we introduce the notion of an *anchored key*, which is a pair consisting of an dictionary specifier and a key, i.e.
+Rather than dealing with just keys, we introduce the notion of an *anchored key*, which is a pair consisting of a container (identified by its Merkle root) and a key, i.e.
 
 ```
-type AnchoredKey = (Dict, Key)
-type Key = String
+type AnchoredKey = (Root, Key)
+type Key = String | Int
 ```
+
+String keys are used for dictionaries, and integer keys for arrays.
 
 Statements can use anchored keys or literal values as arguments.  Since our
 system uses constructive logic, if a statement that uses an anchored key in
@@ -22,3 +24,7 @@ For example:
 2: Lt(foo["bar"], 100) <- LtFromEntries 1 0
 3: NotEqual(foo.bar, 100) <- LtToNotEqual 2
 ```
+
+A statement with literal arguments can also be converted into one that uses
+anchored keys with the `ReplaceValueWithEntry` [operation](./operations.md),
+given the `Contains` statements that introduce those anchored keys.
