@@ -14,4 +14,4 @@ The first implementation of POD2 uses Plonky2 as its proving system.  In princip
 
 ## User-facing types versus in-circuit types
 
-The frontend type system exposes human-readable types to POD developers: strings, ints, bools, and so forth.  On the backend, all types are build out of field elements.  The middleware should handle the conversion.
+The frontend type system exposes human-readable types to POD developers: strings, ints, bools, and so forth.  On the backend, all types are built out of field elements.  The middleware should handle the conversion.

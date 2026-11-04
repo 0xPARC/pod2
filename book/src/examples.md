@@ -1,205 +1,169 @@
 # Examples
 
-Examples of POD2 use cases
+Examples of POD2 use cases, written in [Podlang](./podlang.md).  Names in
+uppercase (`ZOO_GOV`, `SANCTION_LIST`, ...) stand for literal values.
 
 ## EthDos
-*Check also the [custom statement example](./customexample.md) section.*
 
-Original in prolog https://gist.github.com/ludns/f84b379ec8c53c97b7f95630e16cc39c#file-eth_dos-pl
-
-An EthDos Pod exposes a single custom statement with two custom deduction
-rules, the inductive case and the base case.
+An EthDos POD exposes a single custom statement with two custom deduction
+rules, the inductive case and the base case.  The four predicates form a
+recursive batch (see [how it is hashed](./customhash.md#example)).
 
 ```
-// src, dst: PubKey, attetation_pod: Pod
-eth_dos_friend(src, dst, private: attestation_pod) = AND(
-    ValueOf(attestation_pod[KEY_TYPE], SIGNATURE)
-    Equal(attestation_pod[KEY_SIGNER], src)
-    Equal(attestation_pod["attestation"], dst) 
+// src, dst: PublicKey, attestation: Dictionary
+eth_friend(src, dst, private: attestation) = AND(
+    SignedBy(attestation, src)
+    Contains(attestation, "attestation", dst)
 )
 
-// src, intermed, dst: PubKey, distance, shorter_distance: Int
-eth_dos_distance(src, dst, distance, private: shorter_distance, intermed) = OR(
-    AND(
-        eth_dos_distance(src, intermed, shorter)
-        Sum(shorter_distance, 1, distance)
-        eth_friend(intermed, dst)
-    )
-    AND(
-        Equal(src, dst)
-        Equal(distance, 0)
-    )
+// src, intermed, dst: PublicKey, distance, shorter_distance: Int
+eth_dos_base(src, dst, distance) = AND(
+    Equal(src, dst)
+    Equal(distance, 0)
+)
+
+eth_dos_ind(src, dst, distance, private: shorter_distance, intermed) = AND(
+    eth_dos(src, intermed, shorter_distance)
+    // distance == shorter_distance + 1
+    Sum(shorter_distance, 1, distance)
+    // intermed is a friend of dst
+    eth_friend(intermed, dst)
+)
+
+eth_dos(src, dst, distance) = OR(
+    eth_dos_base(src, dst, distance)
+    eth_dos_ind(src, dst, distance)
 )
 ```
 
-## ZuKYC (classic)
+## ZuKYC
 
 Original using GPC https://github.com/proofcarryingdata/zukyc
 
 Authority public keys:
-- `ZOO_GOV`: PubKey, issues IDs
-- `ZOO_DEEL`: PubKey, issues bank statements
+- `ZOO_GOV`: PublicKey, issues IDs
+- `ZOO_DEEL`: PublicKey, issues bank statements
+
 Authority lists:
-- `SANCTION_LIST`: Set, Merkle Tree Root of set of sanctioned public keys
-    - values: `["G2345678", "G1987654", "G1657678"]`
+- `SANCTION_LIST`: Set of sanctioned ID numbers
+    - values: `#["G2345678", "G1987654", "G1657678"]`
+
 Date values:
 - `NOW_MINUS_18Y`: Int, 18 years ago
 - `NOW_MINUS_1Y`: Int, 1 year ago
 - `NOW_MINUS_7D`: Int, 7 days ago
 
-A ZuKYC Pod exposes a single custom statement with one custom deduction rule.
+A ZuKYC POD exposes a single custom statement with one custom deduction rule.
 
 ```
-// receiver: PubKey, gov_id, paystub, sk_pok: Pod, nullifier, sk: Raw
-loan_check(receiver, private: gov_id, paystub, nullifier, sk, sk_pok) = AND(
+// receiver: PublicKey, gov_id, paystub: Dictionary, sk: SecretKey, nullifier: Untyped
+loan_check(receiver, nullifier, private: gov_id, paystub, sk) = AND(
     Equal(gov_id["pk"], receiver)
     // Not in the sanction list
-    SetNotContains(SANCTION_LIST, receiver)
+    SetNotContains(SANCTION_LIST, gov_id["id_number"])
     // Valid government-issued ID
-    Equal(gov_id[KEY_SIGNER], ZOO_GOV)
-    Equal(gov_id[KEY_TYPE], SIGNATURE)
+    SignedBy(gov_id, ZOO_GOV)
     // At least 18 years old
-    Lt(gov_id["date_of_birth"], NOW_MINUS_18Y) # date_of_birdth is more than 18y old
-    Equal(paystub[KEY_SIGNER], ZOO_DEEL)
-    Equal(paystub[KEY_TYPE], SIGNATURE)
-    Equal(paystub[ssn], gov_id["ssn"])
+    Lt(gov_id["date_of_birth"], NOW_MINUS_18Y)
+    // Valid paystub for the same person
+    SignedBy(paystub, ZOO_DEEL)
+    Equal(paystub["ssn"], gov_id["ssn"])
     // At least one year of consistent employment with your current employer
-    Lt(paystub["start_date"], NOW_MINUS_1Y) # start_date is more than 1y old
-    Gt(paystub["issue_date"], NOW_MINUS_7D) # issue_date is less than 7d old
+    Lt(paystub["start_date"], NOW_MINUS_1Y)
+    Gt(paystub["issue_date"], NOW_MINUS_7D)
     // Annual salary is at least $20,000
     Gt(paystub["annual_salary"], 20000)
     // Private key knowledge
-    Equal(sk_pok[KEY_SIGNER], receiver)
-    Equal(sk_pok[KEY_TYPE], SIGNATURE)
-    Equal(sk_pok["auth"], "ZUKYC_V1_AUTH")
-    Hash(, 0, sk)
+    PublicKey(sk, receiver)
     // Nullifier
     Hash("ZUKYC_V1_NULLIFIER", sk, nullifier)
 )
 ```
 
-## ZuKYC (simplified for P1)
-
-This simplified version uses less statements but requires a very similar set of
-features.
-
-Authority lists:
-- `SANCTION_LIST`: Set, Merkle Tree Root of set of sanctioned public keys
-    - values: `["G2345678", "G1987654", "G1657678"]`
-Date values:
-- `NOW_MINUS_18Y`: Int, 18 years ago
-- `NOW_MINUS_1Y`: Int, 1 year ago
-
-A ZuKYC Pod exposes a single custom statement with one custom deduction rule.
-
-```
-// receiver: String, gov_pk, paystub_pk: PubKey, gov_id, paystub: Pod
-loan_check(receiver, gov_pk, paystub_pk, private: gov_id, paystub) = AND(
-    Equal(gov_id["id_number"], receiver)
-    // Not in the sanction list
-    SetNotContains(SANCTION_LIST, gov_id["id_number"])
-    // Valid government-issued ID
-    ValueOf(gov_id[KEY_SIGNER], gov_pk)
-    Equal(gov_id[KEY_TYPE], SIGNATURE)
-    // At least 18 years old
-    Lt(gov_id["date_of_birth"], NOW_MINUS_18Y) # date_of_birdth is more than 18y old
-    ValueOf(paystub[KEY_SIGNER], paystub_pk)
-    Equal(paystub[KEY_TYPE], SIGNATURE)
-    Equal(paystub["ssn"], gov_id["ssn"])
-    // At least one year of consistent employment with your current employer
-    Lt(paystub["start_date"], NOW_MINUS_1Y) # start_date is more than 1y old
-)
-```
-
 ## GreatBoy
 
-A Good Boy Pod exposes one custom statement with one custom deduction rule.
+A Good Boy POD exposes one custom statement with one custom deduction rule.
 
 ```
-// user: PubKey, good_boy_issuers: Set, pod: Pod, age: Int
-is_good_boy(user, good_boy_issuers, private: pod, age) = AND(
-    Equal(pod[KEY_TYPE], SIGNATURE)
-    SetContains(good_boy_issuers, pod[KEY_SIGNER])
+// user: PublicKey, good_boy_issuers: Set, attestation: Dictionary, issuer: PublicKey
+is_good_boy(user, good_boy_issuers, private: attestation, issuer) = AND(
+    SetContains(good_boy_issuers, issuer)
     // A good boy issuer says this user is a good boy
-    Equal(pod["user"], user)
-    Equal(pod["age"], age)
+    SignedBy(attestation, issuer)
+    Equal(attestation["user"], user)
 )
 ```
 
-A Friend Pod exposes one custom statement with one custom deduction rule.
+A Friend POD exposes one custom statement with one custom deduction rule.
 
 ```
-// good_boy, friend: PubKey, good_boy_issuers: Set, friend_pod: Pod
-is_friend(good_boy, friend, good_boy_issuers, friend_pod) = AND(
-    Equal(pod[KEY_TYPE], SIGNATURE)
+// good_boy, friend: PublicKey, good_boy_issuers: Set, attestation: Dictionary
+is_friend(good_boy, friend, good_boy_issuers, private: attestation) = AND(
     // The issuer is a good boy
     is_good_boy(good_boy, good_boy_issuers)
     // A good boy says this is their friend
-    Equal(pod[KEY_SIGNER], good_boy)
-    Equal(pod["friend"], friend)
+    SignedBy(attestation, good_boy)
+    Equal(attestation["friend"], friend)
 )
 ```
 
-A Great Boy Pod exposes (in addition to the above) one new custom statement
+A Great Boy POD exposes (in addition to the above) one new custom statement
 with one custom deduction rule.
 
 ```
-great_boy: PubKey, good_boy_issuers: Set, friend_pod_0, friend_pod_1: Pod
-is_great_boy(great_boy, good_boy_issuers, private: friend_pod_0, friend_pod_1) = AND
+// great_boy: PublicKey, good_boy_issuers: Set, friend_0, friend_1: PublicKey
+is_great_boy(great_boy, good_boy_issuers, private: friend_0, friend_1) = AND(
     // Two good boys consider this user their friend
-    is_friend(friend_pod_0[KEY_SIGNER], great_boy)
-    is_friend(friend_pod_1[KEY_SIGNER], great_boy)
+    is_friend(friend_0, great_boy, good_boy_issuers)
+    is_friend(friend_1, great_boy, good_boy_issuers)
     // good boy 0 != good boy 1
-    NotEqual(friend_pod_0[KEY_SIGNER], friend_pod_1[KEY_SIGNER])
-``` 
+    NotEqual(friend_0, friend_1)
+)
+```
 
 ## Attested GreatBoy
 
-An Attested Great Boy Pod is like a Great Boy Pod, but the names of the signers are revealed.
+An Attested Great Boy POD is like a Great Boy POD, but the friends are revealed.
 
 ```
-// great_boy: PubKey, friend0, friend1: String, good_boy_issuers: Set, friend_pod_0, friend_pod_1: Pod
-is_great_boy(great_boy, friend0, friend1, good_boy_issuers, private: friend_pod_0, friend_pod_1) = AND
+// great_boy, friend_0, friend_1: PublicKey, good_boy_issuers: Set
+is_attested_great_boy(great_boy, friend_0, friend_1, good_boy_issuers) = AND(
     // Two good boys consider this user their friend
-    is_friend(friend_pod_0[KEY_SIGNER], great_boy)
-    is_friend(friend_pod_1[KEY_SIGNER], great_boy)
+    is_friend(friend_0, great_boy, good_boy_issuers)
+    is_friend(friend_1, great_boy, good_boy_issuers)
     // good boy 0 != good boy 1
-    NotEqual(friend_pod_0[KEY_SIGNER], friend_pod_1[KEY_SIGNER])
-    // publicize signer names
-    ValueOf(friend_pod_0["name"], friend0)
-    ValueOf(friend_pod_1["name"], friend1)
-``` 
+    NotEqual(friend_0, friend_1)
+)
+```
 
-To produce a Great Boy Pod, you need two Friend Pods, `friend_pod0` and `friend_pod1`, each of which reveals its `signer`.
+## Posts and comments
 
-## Tracking PodIDs: Posts and comments
+The goal of this example is to model a social network, where posts and comments are signed dictionaries.
 
-The goal of this example is to model a social network, where posts and comments are pods.
-
-A Post is a signature pod with the following fields:
+A Post is a signed dictionary with the following fields:
 ```
 content: String
 poster: String
-signer: PubKey
 timestamp: Int
 ```
 
-A Comment is a signature pod with the following fields:
+A Comment is a signed dictionary with the following fields:
 ```
 content: String
-referenced_post: PodID
-signer: PubKey
+referenced_post: Dictionary (the root of the post)
 timestamp: Int
 ```
 
 A post is popular if it has at least two comments from different signers.
 
 ```
-// post, comment1, comment2: Pod
-statement is_popular(post, private: comment1, comment2) = AND(
-    IsEqual(comment1["referenced_post"], post)
-    IsEqual(comment2["referenced_post"], post)
-    NotEqual(comment1[KEY_SIGNER], comment2[KEY_SIGNER])
+// post, comment1, comment2: Dictionary, signer1, signer2: PublicKey
+is_popular(post, private: comment1, comment2, signer1, signer2) = AND(
+    SignedBy(comment1, signer1)
+    SignedBy(comment2, signer2)
+    Equal(comment1["referenced_post"], post)
+    Equal(comment2["referenced_post"], post)
+    NotEqual(signer1, signer2)
 )
 ```
 
@@ -222,12 +186,12 @@ under_18(age) = AND(
 
 With wildcards:
 ```
-over_18(?1) = AND(
-    GtEq(?1, 18)
+over_18(?0) = AND(
+    LtEq(18, ?0)
 )
 ```
 
-Maybe I have two input pods `gov_id1` and `gov_id2`, and I want to prove that these pods refer to two different people, both of whom are over 18; and a third pods `gov_id3` refers to someone under 18.  So in my public output statements, I want to have:
+Maybe I have three dictionaries `gov_id1`, `gov_id2` and `gov_id3`, and I want to prove that the first two refer to two different people, both of whom are over 18; and the third one refers to someone under 18.  So in my public output statements, I want to have:
 ```
 NotEqual(gov_id1["name"], gov_id2["name"])
 over_18(gov_id1["age"])
@@ -238,8 +202,9 @@ under_18(gov_id3["age"]).
 I would prove this with the following sequence of deductions:
 | Statement | Reason |
 | --- | --- |
-| over_18(gov_id1["age"]) | over_18, <br> ?1 = gov_id1["age"] |
-| over_18(gov_id2["age"]) | over_18, <br> ?1 = gov_id2["age"] |
-| under_18(gov_id3["age"]) | under_18, <br> ?1 = gov_id3["age"] |
-| NotEqual(gov_id1["name"], gov_id2["name"]) | (not equal from entries) |
+| over_18(gov_id1["age"]) | over_18, <br> ?0 = gov_id1["age"] |
+| over_18(gov_id2["age"]) | over_18, <br> ?0 = gov_id2["age"] |
+| under_18(gov_id3["age"]) | under_18, <br> ?0 = gov_id3["age"] |
+| NotEqual(gov_id1["name"], gov_id2["name"]) | NotEqualFromEntries |
 
+Each custom operation outputs a statement with the literal value of the age; it is then converted to use the anchored key with `ReplaceValueWithEntry`.
