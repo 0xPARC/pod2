@@ -8,7 +8,7 @@ At the backend level, every definition of a predicate is either a conjunction or
 
 On the backend, custom predicates are defined in _batches_ (called _modules_ in Podlang).  A batch can contain one or more custom predicates and their associated sub-predicates.  Recursive definition is only possible within a batch: the definition of a predicate in a batch can only depend on previously existing predicates, itself, and other predicates in the same batch.
 
-A custom predicate is identified by the batch ID and its index in the batch, so it can be used in any MainPOD: the definition of the batch is provided to the circuit as a witness, and the circuit checks that it hashes to the batch ID.
+A custom predicate is identified by the _batch ID_ (the root of a Merkle tree of the hashes of the predicate definitions in the batch) and its index in the batch, so it can be used in any MainPOD.  See [how to hash a custom predicate](./customhash.md).
 
 ## Arguments of custom predicates
 
@@ -21,22 +21,12 @@ Each argument to a statement template is one of:
 
 The predicate of a statement template can also be a wildcard, which allows a custom predicate to take another predicate as an argument.
 
-## Examples
-
-See [examples](./customexample.md)
-
-## Hashing and predicate IDs
-
-Each custom predicate is defined as part of a _batch_ of predicates. The definitions of all predicates in the batch are merklelized (using sequential indices as keys) (see [examples](./customexample.md)) and the root of the merkle tree is used as the identifier.  For more details, see the pages on [hashing custom statements](./customhash.md) and [custom predicates](./custompred.md).
-
 ## How to prove an application of an operation
 
-The POD proof format is inspired by "two-column proofs" (for an example, see [Wikipedia](https://en.wikipedia.org/wiki/Mathematical_proof)).  A POD contains a "tabular proof", in which each row includes a "statement" and an "operation".  The "operation" is the "reason" that justifies the statement: it is everything the circuit needs as a witness to verify the statement.
-
-For a custom statement, the "reason" includes the following witnesses and verifications:
-- the definition of the predicate, serialized (see [examples](./customexample.md)), together with the definition of the full batch it belongs to
-- verify that the hash of the batch definition is the batch ID
-- the definition will have some number of "wildcards" (?0, ?1, ...) as arguments to statement templates; a value for each wildcard must be provided as a witness
-- the circuit must substitute the claimed values for the wildcards, and the resulting statements will appear as witnesses
-- the circuit must verify that all the input statement templates (for an OR, at least one of them) appear in the previous statements (in higher rows of the table)
-- the circuit also substitutes the claimed values for the public wildcards in the output statement, and verifies that it matches the claimed output statement
+A custom statement is proved by a custom operation, which the circuit verifies
+following the steps described in the [simple example](./simpleexample.md): the
+prover provides the predicate definition and a value for each wildcard, and the
+circuit substitutes the values into the statement templates and checks that the
+resulting statements appear in previous rows of the table.  In addition, the
+prover provides the definition of the full batch, and the circuit verifies that
+it hashes to the batch ID.

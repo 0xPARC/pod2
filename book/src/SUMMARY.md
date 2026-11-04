@@ -17,7 +17,6 @@
   - [Simple example](./simpleexample.md)
   - [Custom statements and custom operations](./custom.md)
     - [Defining custom predicates](./custompred.md)
-    - [Custom statement example](./customexample.md)
     - [How to hash a custom statement](./customhash.md)
 - [Podlang](./podlang.md)
 - [MainPOD](./mainpod.md)

@@ -6,7 +6,7 @@ The native predicates are numbered with small integers, sequentially.  The ID of
 
 This document explains how the definition of a custom predicate is serialized and hashed.
 
-Custom predicates are defined in _batches_; see an [example](./customexample.md).  The definition of a custom predicate in a batch involves other predicates, which may include:
+Custom predicates are defined in _batches_.  The definition of a custom predicate in a batch involves other predicates, which may include:
 - native predicates
 - previously-defined custom predicates
 - introduction predicates
@@ -19,6 +19,23 @@ Each predicate in the batch is serialized (as explained below) and hashed (using
 predicate_ID = (batch_ID, idx)
 ```
 (here `idx` is simply the index of the predicate in the batch).
+
+## Example
+
+The [EthDos batch](./examples.md#ethdos) contains four predicates, which reference each other.  When the batch is serialized, references to predicates in the same batch are replaced by their index: `self.0`, `self.1`, `self.2`, `self.3`.  With this renaming and the wildcards, the last of the four definitions becomes:
+```
+self.3(?0, ?1, ?2) = OR(
+    self.1(?0, ?1, ?2)
+    self.2(?0, ?1, ?2)
+)
+```
+and similarly for the other definitions.  The predicates in the batch are then identified as:
+```
+eth_friend = (batchID, 0)
+eth_dos_base = (batchID, 1)
+eth_dos_ind = (batchID, 2)
+eth_dos = (batchID, 3)
+```
 
 ## Serialization
 

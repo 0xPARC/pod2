@@ -4,12 +4,11 @@ Examples of POD2 use cases, written in [Podlang](./podlang.md).  Names in
 uppercase (`ZOO_GOV`, `SANCTION_LIST`, ...) stand for literal values.
 
 ## EthDos
-*Check also the [custom statement example](./customexample.md) section.*
-
 Original in prolog https://gist.github.com/ludns/f84b379ec8c53c97b7f95630e16cc39c#file-eth_dos-pl
 
 An EthDos POD exposes a single custom statement with two custom deduction
-rules, the inductive case and the base case.
+rules, the inductive case and the base case.  The four predicates form a
+recursive batch (see [how it is hashed](./customhash.md#example)).
 
 ```
 // src, dst: PublicKey, attestation: Dictionary
@@ -19,11 +18,6 @@ eth_friend(src, dst, private: attestation) = AND(
 )
 
 // src, intermed, dst: PublicKey, distance, shorter_distance: Int
-eth_dos(src, dst, distance) = OR(
-    eth_dos_base(src, dst, distance)
-    eth_dos_ind(src, dst, distance)
-)
-
 eth_dos_base(src, dst, distance) = AND(
     Equal(src, dst)
     Equal(distance, 0)
@@ -31,8 +25,15 @@ eth_dos_base(src, dst, distance) = AND(
 
 eth_dos_ind(src, dst, distance, private: shorter_distance, intermed) = AND(
     eth_dos(src, intermed, shorter_distance)
+    // distance == shorter_distance + 1
     Sum(shorter_distance, 1, distance)
+    // intermed is a friend of dst
     eth_friend(intermed, dst)
+)
+
+eth_dos(src, dst, distance) = OR(
+    eth_dos_base(src, dst, distance)
+    eth_dos_ind(src, dst, distance)
 )
 ```
 
