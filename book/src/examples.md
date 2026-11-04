@@ -4,7 +4,6 @@ Examples of POD2 use cases, written in [Podlang](./podlang.md).  Names in
 uppercase (`ZOO_GOV`, `SANCTION_LIST`, ...) stand for literal values.
 
 ## EthDos
-Original in prolog https://gist.github.com/ludns/f84b379ec8c53c97b7f95630e16cc39c#file-eth_dos-pl
 
 An EthDos POD exposes a single custom statement with two custom deduction
 rules, the inductive case and the base case.  The four predicates form a
