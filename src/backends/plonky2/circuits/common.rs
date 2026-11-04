@@ -1912,6 +1912,13 @@ impl SimpleGenerator<F, D> for LtMaskGenerator {
         vec![self.n]
     }
 
+    fn witness_operation(&self) -> Option<plonky2::iop::generator::WitnessOperation> {
+        Some(plonky2::iop::generator::WitnessOperation::LtMask {
+            count: self.n,
+            mask: self.mask.clone(),
+        })
+    }
+
     fn run_once(
         &self,
         witness: &PartitionWitness<F>,

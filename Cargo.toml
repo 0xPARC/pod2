@@ -50,9 +50,18 @@ good_lp = { version = "1.8", default-features = false, features = [
 annotate-snippets = "0.11"
 rocksdb = { version = "0.24.0", optional = true } # keyvalue database for merkletree
 
-# Uncomment for debugging with https://github.com/ed255/plonky2/ at branch `feat/debug`.  The repo directory needs to be checked out next to the pod2 repo directory.
-# [patch."https://github.com/0xPARC/plonky2"]
-# plonky2 = { path = "../plonky2/plonky2" }
+# plonky2 from its GPU fork (the gpu branch of robknight/plonky2), which adds the `gpu` feature
+# without changing proofs, circuit data or the verifier. The patch also applies to plonky2_u32's
+# plonky2 dependency, so both use the same crate. For debugging with a local checkout (for example
+# https://github.com/ed255/plonky2/ at branch `feat/debug`, next to the pod2 repo directory), use
+# `plonky2 = { path = "../plonky2/plonky2" }` instead.
+[patch."https://github.com/0xPARC/plonky2"]
+plonky2 = { git = "https://github.com/robknight/plonky2", rev = "9838da766781a6c4ccc0d8f585f6fe5e7c4cee2d" }
+
+# plonky2_u32 from its fork (the gpu branch of robknight/plonky2-u32), which describes its
+# comparison generator's witness operation for plonky2's compiled witness executor.
+[patch."https://github.com/ax0/plonky2-u32"]
+plonky2_u32 = { git = "https://github.com/robknight/plonky2-u32", rev = "7eece0fd946d0c2da49c99aff7aa957462633115" }
 
 [dev-dependencies]
 pretty_assertions = "1.4.1"
@@ -79,12 +88,21 @@ vergen-gitcl = { version = "1.0.0", features = ["build"], optional = true }
 [features]
 default = ["backend_plonky2", "zk", "mem_cache"]
 backend_plonky2 = ["dep:plonky2"]
+# Prove on a GPU through plonky2's `gpu` feature (Metal, Vulkan or DirectX 12,
+# chosen at run time; the CPU paths run when no adapter is usable).
+gpu = ["plonky2/gpu"]
+# plonky2's GPU diagnostics (see the `plonky2::gpu` module documentation).
+gpu-profiling = ["gpu", "plonky2/gpu-profiling"]
+
 zk = []
 metrics = []
 time = ["dep:env_logger"]
 examples = []
 disk_cache = ["dep:directories", "dep:minicbor-serde", "dep:vergen-gitcl"]
 mem_cache = []
+# Prepare plonky2's compiled witness executor on first use or during mainpod::prepare.
+# PLONKY2_EXECUTOR_CACHE_DIR enables executor caching independently of disk_cache.
+witness_executor = []
 db_rocksdb = ["dep:rocksdb"]
 # Compile the MILP partitioner into the lib. Off by default to keep the SCIP
 # dependency out of slim builds; on for the test target unconditionally via

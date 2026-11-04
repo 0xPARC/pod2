@@ -514,6 +514,27 @@ where
         deps
     }
 
+    fn witness_operation(&self) -> Option<plonky2::iop::generator::WitnessOperation> {
+        (D == 2).then(|| plonky2::iop::generator::WitnessOperation::EcScalarMul {
+            inputs: std::array::from_fn(|i| {
+                if i < 5 {
+                    self.orig.x.components[i]
+                } else {
+                    self.orig.u.components[i - 5]
+                }
+            }),
+            outputs: std::array::from_fn(|i| {
+                if i < 5 {
+                    self.sqrt.x.components[i]
+                } else {
+                    self.sqrt.u.components[i - 5]
+                }
+            }),
+            curve_b1: Point::B1_U32 as u64,
+            scalar_words: GROUP_ORDER_HALF_ROUND_UP.to_u32_digits(),
+        })
+    }
+
     fn run_once(
         &self,
         witness: &plonky2::iop::witness::PartitionWitness<GoldilocksField>,

@@ -331,6 +331,28 @@ where
             .collect()
     }
 
+    fn witness_operation(&self) -> Option<plonky2::iop::generator::WitnessOperation> {
+        use std::any::TypeId;
+        if D != 2
+            || DEG != 5
+            || TypeId::of::<NNF>() != TypeId::of::<QuinticExtension<GoldilocksField>>()
+        {
+            return None;
+        }
+        let inputs = NNFMulGate::<D, DEG, NNF>::wires_ith_multiplicand_0(self.i)
+            .chain(NNFMulGate::<D, DEG, NNF>::wires_ith_multiplicand_1(self.i))
+            .map(|column| Target::wire(self.row, column))
+            .collect::<Vec<_>>()
+            .try_into()
+            .ok()?;
+        let outputs = NNFMulGate::<D, DEG, NNF>::wires_ith_output(self.i)
+            .map(|column| Target::wire(self.row, column))
+            .collect::<Vec<_>>()
+            .try_into()
+            .ok()?;
+        Some(plonky2::iop::generator::WitnessOperation::QuinticMultiply { inputs, outputs })
+    }
+
     fn run_once(
         &self,
         witness: &PartitionWitness<NNF::BaseField>,

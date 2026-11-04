@@ -1,8 +1,11 @@
 use std::{
+    any::Any,
+    collections::HashMap,
     fs::{create_dir_all, rename, File, OpenOptions, TryLockError},
     io::{self, Error, ErrorKind, Read, Write},
     ops::Deref,
     path::Path,
+    sync::{LazyLock, Mutex},
     thread, time,
 };
 
@@ -13,15 +16,22 @@ use sha2::{Digest, Sha256};
 /// How long a writer waits before looking again for an artifact somebody else is building.
 const RETRY_INTERVAL: time::Duration = time::Duration::from_millis(100);
 
-pub struct CacheEntry<T> {
-    value: T,
+/// Artifacts this process has read or built, by name and params; `None` while a thread is
+/// reading or building one.  Kept for the life of the process, like the memory cache, so each
+/// artifact is deserialized once per process rather than on every `get`.
+#[allow(clippy::type_complexity)]
+static KEPT: LazyLock<Mutex<HashMap<String, Option<&'static (dyn Any + Sync)>>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+pub struct CacheEntry<T: 'static> {
+    value: &'static T,
 }
 
 impl<T> Deref for CacheEntry<T> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {
-        &self.value
+        self.value
     }
 }
 
@@ -64,24 +74,76 @@ fn write_and_publish(
 /// Get the artifact named `name` from the disk cache.  If it doesn't exist, it will be built by
 /// calling `build_fn` and stored.
 /// The artifact is indexed by git commit first and then by `params: P` second.
-pub fn get<T: Serialize + DeserializeOwned, P: Serialize>(
+/// The first `get` of an artifact in a process reads it from disk (or builds it); later ones
+/// return the same value without reading or deserializing it again.
+pub fn get<T: Serialize + DeserializeOwned + Sync + 'static, P: Serialize>(
     name: &str,
     params: &P,
-    build_fn: fn(&P) -> T,
+    build_fn: impl FnOnce(&P) -> T,
 ) -> Result<CacheEntry<T>, Box<dyn std::error::Error>> {
+    let key = format!("{}/{}", name, serde_json::to_string(params)?);
+    loop {
+        let mut kept = KEPT.lock().map_err(|e| e.to_string())?;
+        match kept.get(&key) {
+            Some(Some(value)) => {
+                let value = (*value as &dyn Any).downcast_ref::<T>().unwrap_or_else(|| {
+                    panic!(
+                        "type={} doesn't match the type kept for {}",
+                        std::any::type_name::<T>(),
+                        key
+                    )
+                });
+                return Ok(CacheEntry { value });
+            }
+            Some(None) => {
+                // Another thread is reading or building this entry.
+                drop(kept);
+                thread::sleep(RETRY_INTERVAL);
+            }
+            None => {
+                kept.insert(key.clone(), None);
+                break;
+            }
+        }
+    }
+    match get_transient(name, params, build_fn) {
+        Ok(data) => {
+            let value: &'static T = Box::leak(Box::new(data));
+            KEPT.lock()
+                .map_err(|e| e.to_string())?
+                .insert(key, Some(value));
+            Ok(CacheEntry { value })
+        }
+        Err(error) => {
+            KEPT.lock().map_err(|e| e.to_string())?.remove(&key);
+            Err(error)
+        }
+    }
+}
+
+/// Like [`get`], but returns the artifact without keeping it in the process: every call reads
+/// (or builds) it again.  For large artifacts the caller converts and drops right away.
+pub fn get_transient<T: Serialize + DeserializeOwned, P: Serialize>(
+    name: &str,
+    params: &P,
+    build_fn: impl FnOnce(&P) -> T,
+) -> Result<T, Box<dyn std::error::Error>> {
     let base_dirs =
         BaseDirs::new().ok_or(Error::new(ErrorKind::Other, "no valid home directory"))?;
     get_in(base_dirs.cache_dir(), name, params, build_fn)
 }
 
-/// Implementation of [`get`], with the user cache directory passed in so that tests can point it
-/// at a temporary directory instead of the real one.
+/// Implementation of [`get_transient`], with the user cache directory passed in so that tests
+/// can point it at a temporary directory instead of the real one.
 fn get_in<T: Serialize + DeserializeOwned, P: Serialize>(
     user_cache_dir: &Path,
     name: &str,
     params: &P,
-    build_fn: fn(&P) -> T,
-) -> Result<CacheEntry<T>, Box<dyn std::error::Error>> {
+    build_fn: impl FnOnce(&P) -> T,
+) -> Result<T, Box<dyn std::error::Error>> {
+    // Called at most once; the loop below may retry while another thread or process builds the
+    // entry.
+    let mut build_fn = Some(build_fn);
     let commit_hash_str = env!("VERGEN_GIT_SHA");
     let params_json = serde_json::to_string(params)?;
     let params_json_hash = Sha256::digest(&params_json);
@@ -141,12 +203,12 @@ fn get_in<T: Serialize + DeserializeOwned, P: Serialize>(
                 }
                 log::info!("building {} and storing to the disk cache", log_name);
                 let start = std::time::Instant::now();
-                let data = build_fn(params);
+                let data = build_fn.take().expect("built at most once")(params);
                 let elapsed = std::time::Instant::now() - start;
                 log::debug!("built {} in {:?}", log_name, elapsed);
                 let data_cbor = minicbor_serde::to_vec(&data)?;
                 write_and_publish(&mut file_tmp, &cache_path_tmp, &cache_path, &data_cbor)?;
-                return Ok(CacheEntry { value: data });
+                return Ok(data);
             }
         };
         log::debug!("found {} in the disk cache", log_name);
@@ -162,7 +224,7 @@ fn get_in<T: Serialize + DeserializeOwned, P: Serialize>(
         let elapsed = std::time::Instant::now() - start;
         log::debug!("deserialized {} in {:?}", log_name, elapsed);
 
-        return Ok(CacheEntry { value: data });
+        return Ok(data);
     }
 }
 
@@ -232,7 +294,6 @@ mod tests {
                     // thread.
                     s.spawn(|| {
                         get_in(dir.path(), "artifact", &params, slow_build)
-                            .map(|entry| (*entry).clone())
                             .map_err(|err| err.to_string())
                     })
                 })
@@ -278,7 +339,7 @@ mod tests {
         .unwrap();
 
         let rebuilt = get_in(dir.path(), "artifact", &params, |_| artifact()).unwrap();
-        assert_eq!(*rebuilt, expected);
+        assert_eq!(rebuilt, expected);
         // Check the stored length too: the decoder tolerates trailing bytes, so an untruncated
         // tail would otherwise go unnoticed.
         assert_eq!(

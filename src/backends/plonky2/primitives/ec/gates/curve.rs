@@ -5,7 +5,7 @@ use plonky2::{
     field::{
         extension::{quintic::QuinticExtension, Extendable, FieldExtension, OEF},
         goldilocks_field::GoldilocksField,
-        types::Field,
+        types::{Field, PrimeField64},
     },
     gates::gate::Gate,
     hash::hash_types::RichField,
@@ -216,6 +216,12 @@ pub struct ECAddHomogOffsetGenerator {
     i: usize,
 }
 
+impl ECAddHomogOffsetGenerator {
+    pub fn new(row: usize, i: usize) -> Self {
+        Self { row, i }
+    }
+}
+
 impl<const D: usize> SimpleGenerator<F, D> for ECAddHomogOffsetGenerator
 where
     F: Extendable<D>,
@@ -229,6 +235,16 @@ where
             .chain(ECAddHomogOffsetGate::wires_ith_addend_1(self.i))
             .map(|i| Target::wire(self.row, i))
             .collect()
+    }
+
+    fn witness_operation(&self) -> Option<plonky2::iop::generator::WitnessOperation> {
+        (D == 2).then(
+            || plonky2::iop::generator::WitnessOperation::EcAddHomogOffset {
+                inputs: std::array::from_fn(|j| Target::wire(self.row, 40 * self.i + j)),
+                outputs: std::array::from_fn(|j| Target::wire(self.row, 40 * self.i + 20 + j)),
+                curve_b1: Point::B1.to_canonical_u64(),
+            },
+        )
     }
 
     fn run_once(
@@ -284,6 +300,16 @@ pub struct ECAddXuGenerator {
     row: usize,
 }
 
+impl ECAddXuGenerator {
+    pub fn new(row: usize) -> Self {
+        Self { row }
+    }
+
+    pub fn row(&self) -> usize {
+        self.row
+    }
+}
+
 impl<const D: usize> SimpleGenerator<F, D> for ECAddXuGenerator
 where
     F: Extendable<D>,
@@ -314,6 +340,16 @@ where
 
     fn dependencies(&self) -> Vec<Target> {
         (0..26).map(|i| Target::wire(self.row, i)).collect()
+    }
+
+    fn witness_operation(&self) -> Option<plonky2::iop::generator::WitnessOperation> {
+        let g = Point::generator();
+        (D == 2).then_some(plonky2::iop::generator::WitnessOperation::EcAddXu {
+            row: self.row,
+            curve_b1: Point::B1.to_canonical_u64(),
+            generator_x: g.x.0.map(|x| x.to_canonical_u64()),
+            generator_u: g.u.0.map(|x| x.to_canonical_u64()),
+        })
     }
 
     fn run_once(

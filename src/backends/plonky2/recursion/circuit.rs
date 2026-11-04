@@ -167,6 +167,26 @@ impl<I: InnerCircuit> RecursiveCircuitTarget<I> {
     }
 }
 
+/// The inputs a proof of the recursive circuit starts from.
+pub(crate) fn rec_circuit_partial_witness<I: InnerCircuit>(
+    target: &RecursiveCircuitTarget<I>,
+    inner_inputs: &I::Input,
+    proofs: Vec<ProofWithPublicInputs<F, C, D>>,
+    verifier_datas: Vec<VerifierOnlyCircuitData<C, D>>,
+) -> Result<PartialWitness<F>> {
+    let mut pw = PartialWitness::new();
+    crate::timed!(
+        "set recursive proof targets",
+        target.set_targets(
+            &mut pw,
+            inner_inputs, // innercircuit_input
+            proofs,
+            verifier_datas,
+        )
+    )?;
+    Ok(pw)
+}
+
 pub fn prove_rec_circuit<I: InnerCircuit>(
     target: &RecursiveCircuitTarget<I>,
     circuit_data: &CircuitData<F, C, D>,
@@ -174,13 +194,7 @@ pub fn prove_rec_circuit<I: InnerCircuit>(
     proofs: Vec<ProofWithPublicInputs<F, C, D>>,
     verifier_datas: Vec<VerifierOnlyCircuitData<C, D>>,
 ) -> Result<ProofWithPublicInputs<F, C, D>> {
-    let mut pw = PartialWitness::new();
-    target.set_targets(
-        &mut pw,
-        inner_inputs, // innercircuit_input
-        proofs,
-        verifier_datas,
-    )?;
+    let pw = rec_circuit_partial_witness(target, inner_inputs, proofs, verifier_datas)?;
     Ok(crate::backends::plonky2::prove_with_timing(
         "prove_rec_circuit",
         circuit_data,
@@ -202,6 +216,8 @@ impl<I: InnerCircuit> RecursiveCircuit<I> {
             proofs,
             verifier_datas,
         )?;
+        #[cfg(feature = "witness_executor")]
+        crate::backends::plonky2::witness_program::ensure_installed(&self.prover, &pw)?;
         Ok(self.prover.prove(pw)?)
     }
 
