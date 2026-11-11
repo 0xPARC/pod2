@@ -143,6 +143,7 @@ pub fn insert_tx(
         op_value: *value,
         value: None,
         siblings: proof.siblings,
+        last_sibling_children: None,
     })
 }
 
@@ -171,6 +172,7 @@ pub fn update_tx(
         op_value: *value,
         value: Some(old_value),
         siblings: proof.siblings,
+        last_sibling_children: None,
     })
 }
 
@@ -187,6 +189,20 @@ pub fn delete_tx(
     let proof = prove_nonexistence(tx, root, key)?;
     assert!(!proof.existence);
 
+    // If the deleted leaf's slot stays empty, open its last sibling to show that it is an
+    // intermediate node (a leaf would have moved up instead).
+    let last_sibling_children = match (proof.other_leaf, last_sibling(&proof_existence.siblings)) {
+        (None, Some(sibling)) => match load_node(tx, sibling)? {
+            Node::Intermediate(n) => Some((n.left, n.right)),
+            Node::Leaf(_) => {
+                return Err(Error::custom(
+                    "empty terminal after deletion next to a leaf sibling",
+                ))
+            }
+        },
+        _ => None,
+    };
+
     Ok(MerkleTreeStateTransitionProof {
         op: MerkleTreeOp::Delete,
         old_root,
@@ -196,6 +212,7 @@ pub fn delete_tx(
         op_value: value,
         value: None,
         siblings: proof_existence.siblings,
+        last_sibling_children,
     })
 }
 
@@ -376,8 +393,25 @@ pub fn verify_state_transition(proof: &MerkleTreeStateTransitionProof) -> Result
     let new_siblings = proof.siblings.clone();
 
     match proof.op {
-        // A deletion is but an insertion subject to a time reversal.
+        // A deletion is but an insertion subject to a time reversal, except that the result
+        // must be canonical: if the deleted leaf's slot stays empty, its last sibling must be an
+        // intermediate node, otherwise that sibling is a leaf that should have moved up.
         MerkleTreeOp::Delete => {
+            if proof.op_proof.other_leaf.is_none() {
+                if let Some(sibling) = last_sibling(&proof.siblings) {
+                    let (left, right) = proof.last_sibling_children.ok_or_else(|| {
+                        Error::state_transition_fail(
+                            "Invalid proof of deletion: missing last sibling opening".to_string(),
+                        )
+                    })?;
+                    if hash_with_flag(F::TWO, &[left.0, right.0].concat()) != sibling {
+                        return Err(Error::state_transition_fail(
+                            "Invalid proof of deletion: last sibling is not an intermediate node"
+                                .to_string(),
+                        ));
+                    }
+                }
+            }
             let equivalent_insertion_proof = MerkleTreeStateTransitionProof {
                 op: MerkleTreeOp::Insert,
                 new_root: proof.old_root,
@@ -502,6 +536,11 @@ pub fn verify_state_transition(proof: &MerkleTreeStateTransitionProof) -> Result
         }
         _ => Err(Error::invalid_proof("proof.op".to_string())),
     }
+}
+
+/// The deepest non-empty sibling of a proof, the one the terminal node is paired with.
+fn last_sibling(siblings: &[Hash]) -> Option<Hash> {
+    siblings.iter().rev().find(|s| **s != EMPTY_HASH).copied()
 }
 
 impl MerkleTree {
@@ -1040,6 +1079,12 @@ pub struct MerkleTreeStateTransitionProof {
     /// Update: siblings of updated (op_key, op_value) leading to new_root
     /// Delete: siblings of deleted (op_key, op_value) leading to old_root
     pub(crate) siblings: Vec<Hash>,
+
+    /// Delete, when `op_proof` ends in an empty node: the children of the last non-empty
+    /// sibling, showing that it is an intermediate node. This makes deletion deterministic:
+    /// next to a leaf sibling the slot can't stay empty, as that leaf moves up.
+    #[serde(default)]
+    pub(crate) last_sibling_children: Option<(Hash, Hash)>,
 }
 
 impl MerkleTreeStateTransitionProof {
@@ -1054,6 +1099,7 @@ impl MerkleTreeStateTransitionProof {
             op_value: empty_proof_and_claim.value,
             value: None,
             siblings: vec![],
+            last_sibling_children: None,
         }
     }
     /// Value used for padding.  This is a valid transition proof.
@@ -1068,6 +1114,7 @@ impl MerkleTreeStateTransitionProof {
             op_value: pad_proof_and_claim.value,
             value: Some(pad_proof_and_claim.value),
             siblings: vec![],
+            last_sibling_children: None,
         }
     }
 }
