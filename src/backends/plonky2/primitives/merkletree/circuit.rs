@@ -435,6 +435,10 @@ pub struct MerkleTreeStateTransitionProofTarget {
 
     // Deepest non-empty existence sibling, or MAX_DEPTH when the leaf is at the root.
     pub(crate) divergence_level: Target,
+
+    // Children of the deepest non-empty existence sibling. Only checked for a deletion that
+    // leaves an empty node.
+    pub(crate) last_sibling_children: [HashOutTarget; 2],
 }
 /// creates the targets and defines the logic of the circuit
 pub fn verify_merkle_state_transition_circuit(
@@ -518,6 +522,7 @@ pub fn verify_merkle_state_transition_circuit(
     let old_leaf_path = keypath_target(proof.max_depth, builder, &proof.op_proof.other_key);
     let empty_hash = builder.constant_hash(EMPTY_HASH.into());
     let mut deepest_sibling = builder.constant(F::from_canonical_usize(MAX_DEPTH));
+    let mut last_sibling = empty_hash;
     let mut paths_match_before = builder._true();
     let mut divergence_found = builder._false();
 
@@ -529,6 +534,15 @@ pub fn verify_merkle_state_transition_circuit(
         let i_target = builder.constant(F::from_canonical_usize(i));
         let sibling_is_empty = builder.is_equal_flattenable(new_sibling, &empty_hash);
         deepest_sibling = builder.select(sibling_is_empty, deepest_sibling, i_target);
+        last_sibling = HashOutTarget {
+            elements: std::array::from_fn(|j| {
+                builder.select(
+                    sibling_is_empty,
+                    last_sibling.elements[j],
+                    new_sibling.elements[j],
+                )
+            }),
+        };
 
         let at_divergence = builder.is_equal(i_target, proof.divergence_level);
         let split_leaf = builder.and(proof.op_proof.case_ii_selector, at_divergence);
@@ -557,6 +571,23 @@ pub fn verify_merkle_state_transition_circuit(
         proof.op_proof.case_ii_selector.target,
     );
 
+    // A deletion that leaves an empty node must not leave it next to a leaf: that leaf has to
+    // move up (case ii above). So unless the deleted leaf was at the root, its last sibling
+    // must open as an intermediate node. This makes the new root unique.
+    let max_depth_target = builder.constant(F::from_canonical_usize(MAX_DEPTH));
+    let at_root = builder.is_equal(deepest_sibling, max_depth_target);
+    let not_at_root = builder.not(at_root);
+    let not_case_ii = builder.not(proof.op_proof.case_ii_selector);
+    let empty_delete = builder.and(is_deletion, not_case_ii);
+    let check_opening = builder.and(empty_delete, not_at_root);
+    let [left, right] = proof.last_sibling_children;
+    let opened = hash_with_flag_target::<PoseidonHash>(
+        builder,
+        two,
+        [left.elements, right.elements].concat(),
+    );
+    builder.conditional_assert_eq_flattenable(check_opening.target, &opened, &last_sibling);
+
     measure_gates_end!(builder, measure);
 }
 
@@ -575,6 +606,7 @@ impl MerkleTreeStateTransitionProofTarget {
             siblings: builder.add_virtual_hashes(max_depth),
 
             divergence_level: builder.add_virtual_target(),
+            last_sibling_children: [builder.add_virtual_hash(), builder.add_virtual_hash()],
         }
     }
 
@@ -627,6 +659,9 @@ impl MerkleTreeStateTransitionProofTarget {
             .rposition(|sibling| *sibling != EMPTY_HASH)
             .unwrap_or(MAX_DEPTH);
         pw.set_target(self.divergence_level, F::from_canonical_usize(div_lvl))?;
+        let (left, right) = mp.last_sibling_children.unwrap_or((EMPTY_HASH, EMPTY_HASH));
+        pw.set_hash_target(self.last_sibling_children[0], HashOut::from(left.0))?;
+        pw.set_hash_target(self.last_sibling_children[1], HashOut::from(right.0))?;
 
         Ok(())
     }
@@ -1481,12 +1516,11 @@ pub mod tests {
         Ok(())
     }
 
-    /// Deletion is not deterministic: when the deleted leaf's last sibling is another leaf,
-    /// besides the honest new root (where that leaf moves up), the circuit also accepts the
-    /// root of a tree that keeps an empty slot next to that leaf. Both trees store the same
-    /// key-value map but have different roots.
+    /// Deletion is deterministic: when the deleted leaf's last sibling is another leaf, that
+    /// leaf has to move up. Keeping an empty slot next to it instead would give a different root
+    /// for the same key-value map; both the native verifier and the circuit reject it.
     #[test]
-    fn test_state_transition_delete_is_not_deterministic() -> Result<()> {
+    fn test_state_transition_rejects_uncollapsed_delete() -> Result<()> {
         let max_depth: usize = 32;
         let mut kvs = HashMap::new();
         for i in 0..8 {
@@ -1499,13 +1533,12 @@ pub mod tests {
         let mut tree = MerkleTree::new(&kvs);
         let root_without_key = tree.root();
         tree.insert(&key, &value)?;
-        let old_root = tree.root();
 
         // The honest deletion: key=5 moves back up to its original position.
         let honest = tree.clone().delete(&key)?;
-        assert_eq!(honest.old_root, old_root);
         assert_eq!(honest.new_root, root_without_key);
         assert!(honest.op_proof.other_leaf.is_some());
+        assert!(honest.last_sibling_children.is_none());
         run_state_transition_circuit(true, max_depth, &honest)?;
 
         // The alternative: replace key=37's leaf with an empty slot and keep everything else,
@@ -1516,33 +1549,54 @@ pub mod tests {
             other_leaf: None,
         };
         let uncollapsed_root = uncollapsed_proof.compute_root_from_leaf(&key, None)?;
+        assert_ne!(uncollapsed_root, honest.new_root);
         let uncollapsed = MerkleTreeStateTransitionProof {
             new_root: uncollapsed_root,
             op_proof: uncollapsed_proof,
             ..honest.clone()
         };
-        // Both the native verifier and the circuit accept it ...
-        run_state_transition_circuit(true, max_depth, &uncollapsed)?;
-        // ... with a different new root for the same old root, op and key.
-        assert_ne!(uncollapsed.new_root, honest.new_root);
+        // Without an opening of the last sibling (key=5's leaf, which can't open as an
+        // intermediate node), it is rejected.
+        assert!(merkletree::verify_state_transition(&uncollapsed).is_err());
+        run_state_transition_circuit(false, max_depth, &uncollapsed)?;
+        Ok(())
+    }
 
-        // The uncollapsed tree still stores the same map: key=37 is absent (shown by the
-        // accepted transition) and key=5 is present, with an empty sibling instead of key=37.
-        let (_, proof_5) = tree.prove(&RawValue::from(5))?;
-        assert_eq!(proof_5.siblings.last(), Some(&kv_hash(&key, Some(value))));
-        let mut siblings_5 = proof_5.siblings.clone();
-        *siblings_5.last_mut().unwrap() = EMPTY_HASH;
-        let proof_5_uncollapsed = MerkleProof {
-            existence: true,
-            siblings: siblings_5,
-            other_leaf: None,
-        };
-        merkletree::verify(
-            uncollapsed_root,
-            &proof_5_uncollapsed,
-            &RawValue::from(5),
-            &RawValue::from(1005),
-        )?;
+    /// A deletion whose last sibling is an intermediate node leaves an empty slot, and opens
+    /// that sibling.
+    #[test]
+    fn test_state_transition_delete_next_to_intermediate_node() -> Result<()> {
+        let max_depth: usize = 32;
+        let mut kvs = HashMap::new();
+        // Keys 0..6 fill levels 0..3 unevenly: key 2's last sibling is the node above keys
+        // 0 and 4, and key 3's is the node above keys 1 and 5.
+        for i in 0..6 {
+            kvs.insert(RawValue::from(i), RawValue::from(1000 + i));
+        }
+        let mut tree = MerkleTree::new(&kvs);
+        let mut found = false;
+        for i in 0..6 {
+            let deletion = tree.clone().delete(&RawValue::from(i))?;
+            if deletion.op_proof.other_leaf.is_some() {
+                continue;
+            }
+            found = true;
+            assert!(deletion.last_sibling_children.is_some());
+            run_state_transition_circuit(true, max_depth, &deletion)?;
+
+            // A wrong opening is rejected.
+            let mut wrong = deletion.clone();
+            wrong.last_sibling_children = Some((EMPTY_HASH, EMPTY_HASH));
+            assert!(merkletree::verify_state_transition(&wrong).is_err());
+            run_state_transition_circuit(false, max_depth, &wrong)?;
+        }
+        assert!(found);
+        // Deleting every key one by one, down to the empty tree.
+        for i in 0..6 {
+            let deletion = tree.delete(&RawValue::from(i))?;
+            run_state_transition_circuit(true, max_depth, &deletion)?;
+        }
+        assert_eq!(tree.root(), EMPTY_HASH);
         Ok(())
     }
 
