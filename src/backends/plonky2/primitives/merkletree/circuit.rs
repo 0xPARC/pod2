@@ -1481,6 +1481,71 @@ pub mod tests {
         Ok(())
     }
 
+    /// Deletion is not deterministic: when the deleted leaf's last sibling is another leaf,
+    /// besides the honest new root (where that leaf moves up), the circuit also accepts the
+    /// root of a tree that keeps an empty slot next to that leaf. Both trees store the same
+    /// key-value map but have different roots.
+    #[test]
+    fn test_state_transition_delete_is_not_deterministic() -> Result<()> {
+        let max_depth: usize = 32;
+        let mut kvs = HashMap::new();
+        for i in 0..8 {
+            kvs.insert(RawValue::from(i), RawValue::from(1000 + i));
+        }
+        // key=37 shares its path with key=5 until level 6, so after inserting it the two
+        // leaves are siblings.
+        let key = RawValue::from(37);
+        let value = RawValue::from(1037);
+        let mut tree = MerkleTree::new(&kvs);
+        let root_without_key = tree.root();
+        tree.insert(&key, &value)?;
+        let old_root = tree.root();
+
+        // The honest deletion: key=5 moves back up to its original position.
+        let honest = tree.clone().delete(&key)?;
+        assert_eq!(honest.old_root, old_root);
+        assert_eq!(honest.new_root, root_without_key);
+        assert!(honest.op_proof.other_leaf.is_some());
+        run_state_transition_circuit(true, max_depth, &honest)?;
+
+        // The alternative: replace key=37's leaf with an empty slot and keep everything else,
+        // proving the absence of key=37 in the new tree with an empty terminal (case i).
+        let uncollapsed_proof = MerkleProof {
+            existence: false,
+            siblings: honest.siblings.clone(),
+            other_leaf: None,
+        };
+        let uncollapsed_root = uncollapsed_proof.compute_root_from_leaf(&key, None)?;
+        let uncollapsed = MerkleTreeStateTransitionProof {
+            new_root: uncollapsed_root,
+            op_proof: uncollapsed_proof,
+            ..honest.clone()
+        };
+        // Both the native verifier and the circuit accept it ...
+        run_state_transition_circuit(true, max_depth, &uncollapsed)?;
+        // ... with a different new root for the same old root, op and key.
+        assert_ne!(uncollapsed.new_root, honest.new_root);
+
+        // The uncollapsed tree still stores the same map: key=37 is absent (shown by the
+        // accepted transition) and key=5 is present, with an empty sibling instead of key=37.
+        let (_, proof_5) = tree.prove(&RawValue::from(5))?;
+        assert_eq!(proof_5.siblings.last(), Some(&kv_hash(&key, Some(value))));
+        let mut siblings_5 = proof_5.siblings.clone();
+        *siblings_5.last_mut().unwrap() = EMPTY_HASH;
+        let proof_5_uncollapsed = MerkleProof {
+            existence: true,
+            siblings: siblings_5,
+            other_leaf: None,
+        };
+        merkletree::verify(
+            uncollapsed_root,
+            &proof_5_uncollapsed,
+            &RawValue::from(5),
+            &RawValue::from(1005),
+        )?;
+        Ok(())
+    }
+
     fn assert_forged_transition_rejected(
         op: MerkleTreeOp,
         mut forged: MerkleTreeStateTransitionProof,
