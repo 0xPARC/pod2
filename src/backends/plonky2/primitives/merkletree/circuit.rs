@@ -31,7 +31,8 @@ use crate::{
         circuits::common::{CircuitBuilderPod, ValueTarget},
         error::{Error, Result},
         primitives::merkletree::{
-            MerkleClaimAndProof, MerkleTreeOp, MerkleTreeStateTransitionProof, TreeError, MAX_DEPTH,
+            last_sibling_index, MerkleClaimAndProof, MerkleTreeOp, MerkleTreeStateTransitionProof,
+            TreeError, MAX_DEPTH,
         },
     },
     measure_gates_begin, measure_gates_end,
@@ -654,10 +655,7 @@ impl MerkleTreeStateTransitionProofTarget {
         {
             pw.set_hash_target(self.siblings[i], HashOut::from_vec(sibling.0.to_vec()))?;
         }
-        let div_lvl = new_siblings
-            .iter()
-            .rposition(|sibling| *sibling != EMPTY_HASH)
-            .unwrap_or(MAX_DEPTH);
+        let div_lvl = last_sibling_index(&new_siblings).unwrap_or(MAX_DEPTH);
         pw.set_target(self.divergence_level, F::from_canonical_usize(div_lvl))?;
         let (left, right) = mp.last_sibling_children.unwrap_or((EMPTY_HASH, EMPTY_HASH));
         pw.set_hash_target(self.last_sibling_children[0], HashOut::from(left.0))?;
@@ -1586,6 +1584,98 @@ pub mod tests {
         assert!(merkletree::verify_state_transition(&wrong).is_err());
         run_state_transition_circuit(false, max_depth, &wrong)?;
         Ok(())
+    }
+
+    /// Deleting keys one by one down to the empty tree, in two different orders, gives the
+    /// canonical tree for the remaining keys at every step.
+    #[test]
+    fn test_state_transition_delete_down_to_empty() -> Result<()> {
+        let max_depth: usize = 32;
+        let keys: Vec<i64> = (0..6).collect();
+        for order in [keys.clone(), keys.iter().rev().copied().collect()] {
+            let mut kvs: HashMap<_, _> = keys
+                .iter()
+                .map(|&i| (RawValue::from(i), RawValue::from(1000 + i)))
+                .collect();
+            let mut tree = MerkleTree::new(&kvs);
+            for i in order {
+                let key = RawValue::from(i);
+                let deletion = tree.delete(&key)?;
+                kvs.remove(&key);
+                assert_eq!(deletion.new_root, MerkleTree::new(&kvs).root());
+                merkletree::verify_state_transition(&deletion)?;
+                run_state_transition_circuit(true, max_depth, &deletion)?;
+            }
+            assert_eq!(tree.root(), EMPTY_HASH);
+        }
+        Ok(())
+    }
+
+    /// Replaces the siblings of a deletion's `op_proof` and recomputes the new root from them,
+    /// then checks that both the native verifier and the circuit reject the result.
+    fn assert_forged_delete_rejected(
+        honest: &MerkleTreeStateTransitionProof,
+        op_siblings: Vec<crate::middleware::Hash>,
+    ) -> Result<()> {
+        let op_proof = MerkleProof {
+            siblings: op_siblings,
+            ..honest.op_proof.clone()
+        };
+        let new_root = match op_proof.other_leaf {
+            Some((k, v)) => op_proof.compute_root_from_leaf(&k, Some(v))?,
+            None => op_proof.compute_root_from_leaf(&honest.op_key, None)?,
+        };
+        assert_ne!(new_root, honest.new_root);
+        let forged = MerkleTreeStateTransitionProof {
+            new_root,
+            op_proof,
+            ..honest.clone()
+        };
+        assert!(merkletree::verify_state_transition(&forged).is_err());
+        run_state_transition_circuit(false, 32, &forged)
+    }
+
+    /// A deletion that leaves an empty slot can't add siblings below it: they would put
+    /// arbitrary subtrees in the new root.
+    #[test]
+    fn test_state_transition_rejects_delete_with_extra_siblings() -> Result<()> {
+        let kvs: HashMap<_, _> = [0, 2, 4]
+            .into_iter()
+            .map(|i| (RawValue::from(i), RawValue::from(1000 + i)))
+            .collect();
+        let mut tree = MerkleTree::new(&kvs);
+        let honest = tree.delete(&RawValue::from(2))?;
+        assert!(honest.op_proof.other_leaf.is_none());
+
+        let fake_leaf = kv_hash(&RawValue::from(999), Some(RawValue::from(1)));
+        let mut siblings = honest.op_proof.siblings.clone();
+        siblings.push(fake_leaf);
+        assert_forged_delete_rejected(&honest, siblings)
+    }
+
+    /// When the deleted leaf's sibling is a leaf, that leaf has to move all the way up: it can't
+    /// stay below empty siblings, nor stay at its level paired with itself.
+    #[test]
+    fn test_state_transition_rejects_delete_with_leaf_not_moved_up() -> Result<()> {
+        let mut kvs: HashMap<_, _> = (0..8)
+            .map(|i| (RawValue::from(i), RawValue::from(1000 + i)))
+            .collect();
+        // key=37 shares its path with key=5 until level 5, with empty siblings at levels 3 and
+        // 4.
+        kvs.insert(RawValue::from(37), RawValue::from(1037));
+        let mut tree = MerkleTree::new(&kvs);
+        let honest = tree.delete(&RawValue::from(37))?;
+        assert_eq!(
+            honest.op_proof.other_leaf.map(|(k, _)| k),
+            Some(RawValue::from(5))
+        );
+        let d = honest.siblings.len() - 1;
+        assert_eq!(honest.siblings[d - 1], EMPTY_HASH);
+
+        // The other leaf below the empty siblings.
+        assert_forged_delete_rejected(&honest, honest.siblings[..d].to_vec())?;
+        // The other leaf at level d + 1, with itself as sibling.
+        assert_forged_delete_rejected(&honest, honest.siblings.clone())
     }
 
     fn assert_forged_transition_rejected(
