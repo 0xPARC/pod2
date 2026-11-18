@@ -347,6 +347,7 @@ mod tests {
             op_value: RawValue::from(0),
             value: None,
             siblings: vec![EMPTY_HASH; depth],
+            last_sibling_children: None,
         })
     }
 
