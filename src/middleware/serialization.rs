@@ -1,6 +1,6 @@
 use std::fmt::Write;
 
-use plonky2::field::types::Field;
+use plonky2::field::types::{Field, Field64, PrimeField64};
 use serde::Deserialize;
 
 use crate::middleware::{F, HASH_SIZE, VALUE_SIZE};
@@ -14,11 +14,17 @@ where
 {
     // `value` is little-endian in memory. We serialize it as a big-endian hex string
     // for human readability.
+    //
+    // A limb below 2^32 - 1 has two possible stored forms: its value, or its value
+    // plus the field's order. plonky2 skips the final reduction for speed, so hash
+    // outputs hold such limbs in the second form. We always write the value, so each
+    // value has exactly one encoding, and reading the hex as a number gives the value
+    // the circuit sees.
     let s = value
         .iter()
         .rev()
         .fold(String::with_capacity(N * 16), |mut s, limb| {
-            write!(s, "{:016x}", limb.0).unwrap();
+            write!(s, "{:016x}", limb.to_canonical_u64()).unwrap();
             s
         });
     serializer.serialize_str(&s)
@@ -52,7 +58,8 @@ where
         let u64_val = u64::from_str_radix(hex_part, 16).map_err(serde::de::Error::custom)?;
         // The hex string is big-endian, so the first chunk (i=0) is the most significant.
         // We store it in the last position of our little-endian array `v`.
-        v[N - 1 - i] = F::from_canonical_u64(u64_val);
+        // The input may hold a limb at or above the order; reduce it like the encoder does.
+        v[N - 1 - i] = F::from_canonical_u64(u64_val % F::ORDER);
     }
     Ok(v)
 }

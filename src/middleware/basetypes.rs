@@ -33,7 +33,7 @@ use std::{
 
 use hex::{FromHex, FromHexError, ToHex};
 use plonky2::{
-    field::types::{Field, PrimeField64},
+    field::types::{Field, Field64, PrimeField64},
     hash::poseidon::PoseidonHash,
     plonk::config::Hasher,
 };
@@ -133,7 +133,7 @@ impl ToHex for RawValue {
             .iter()
             .rev()
             .fold(String::with_capacity(64), |mut s, limb| {
-                write!(s, "{:016x}", limb.0).unwrap();
+                write!(s, "{:016x}", limb.to_canonical_u64()).unwrap();
                 s
             })
             .chars()
@@ -145,7 +145,7 @@ impl ToHex for RawValue {
             .iter()
             .rev()
             .fold(String::with_capacity(64), |mut s, limb| {
-                write!(s, "{:016X}", limb.0).unwrap();
+                write!(s, "{:016X}", limb.to_canonical_u64()).unwrap();
                 s
             })
             .chars()
@@ -189,7 +189,7 @@ impl ToHex for Hash {
             .iter()
             .rev()
             .fold(String::with_capacity(64), |mut s, limb| {
-                write!(s, "{:016x}", limb.0).unwrap();
+                write!(s, "{:016x}", limb.to_canonical_u64()).unwrap();
                 s
             })
             .chars()
@@ -201,7 +201,7 @@ impl ToHex for Hash {
             .iter()
             .rev()
             .fold(String::with_capacity(64), |mut s, limb| {
-                write!(s, "{:016X}", limb.0).unwrap();
+                write!(s, "{:016X}", limb.to_canonical_u64()).unwrap();
                 s
             })
             .chars()
@@ -279,7 +279,7 @@ impl FromHex for Hash {
             // We read big-endian chunks from a big-endian string,
             // and place them into a little-endian limb array.
             let u64_val = u64::from_be_bytes(chunk);
-            inner[HASH_SIZE - 1 - i] = F::from_canonical_u64(u64_val);
+            inner[HASH_SIZE - 1 - i] = F::from_canonical_u64(u64_val % F::ORDER);
         }
         Ok(Self(inner))
     }
@@ -302,4 +302,67 @@ pub fn hash_str(s: &str) -> Hash {
         })
         .collect();
     hash_fields(&input)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Poseidon leaves a limb below 2^32 - 1 stored as its value plus the field's order,
+    // as here in the most significant limb.
+    fn hash_with_limb_stored_above_order() -> (Hash, Hash) {
+        let canonical = Hash([F(9), F(8), F(7), F(5)]);
+        let stored_above_order = Hash([F(9), F(8), F(7), F(5 + F::ORDER)]);
+        (canonical, stored_above_order)
+    }
+
+    #[test]
+    fn test_hex_writes_limbs_by_canonical_value() {
+        let (canonical, stored_above_order) = hash_with_limb_stored_above_order();
+        assert_eq!(stored_above_order, canonical);
+
+        let hex: String = stored_above_order.encode_hex();
+        assert_eq!(&hex[..16], "0000000000000005");
+        assert_eq!(hex, canonical.encode_hex::<String>());
+        assert_eq!(
+            stored_above_order.encode_hex_upper::<String>(),
+            canonical.encode_hex_upper::<String>()
+        );
+
+        let (raw_canonical, raw_stored_above_order) =
+            (RawValue(canonical.0), RawValue(stored_above_order.0));
+        assert_eq!(
+            raw_stored_above_order.encode_hex::<String>(),
+            raw_canonical.encode_hex::<String>()
+        );
+        assert_eq!(
+            raw_stored_above_order.encode_hex_upper::<String>(),
+            raw_canonical.encode_hex_upper::<String>()
+        );
+
+        assert_eq!(
+            serde_json::to_string(&stored_above_order).unwrap(),
+            serde_json::to_string(&canonical).unwrap()
+        );
+        assert_eq!(
+            serde_json::to_string(&raw_stored_above_order).unwrap(),
+            serde_json::to_string(&raw_canonical).unwrap()
+        );
+    }
+
+    #[test]
+    fn test_hex_reads_limbs_above_order_as_canonical() {
+        let hex_above_order = format!("{:016x}{:016x}{:016x}{:016x}", 5 + F::ORDER, 7, 8, 9);
+        let json_above_order = format!("\"{hex_above_order}\"");
+
+        let from_hex = Hash::from_hex(&hex_above_order).unwrap();
+        let from_raw_hex = RawValue::from_hex(&hex_above_order).unwrap();
+        let from_json: Hash = serde_json::from_str(&json_above_order).unwrap();
+        let from_raw_json: RawValue = serde_json::from_str(&json_above_order).unwrap();
+
+        let (canonical, _) = hash_with_limb_stored_above_order();
+        for limbs in [from_hex.0, from_raw_hex.0, from_json.0, from_raw_json.0] {
+            assert_eq!(limbs.map(|limb| limb.0), canonical.0.map(|limb| limb.0));
+        }
+    }
 }
