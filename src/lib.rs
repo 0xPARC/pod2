@@ -3,6 +3,9 @@
 #![allow(clippy::manual_repeat_n)] // TODO: Remove this in another PR
 #![allow(clippy::large_enum_variant)] // TODO: Remove this in another PR
 #![allow(clippy::needless_range_loop)]
+// With the `gpu` feature, circuit data holds GPU buffer handles, and proving that it is `Sync`
+// (the caches require it) walks deeper through wgpu's types than the default limit of 128.
+#![recursion_limit = "256"]
 
 // Alternative global allocators (#398). Gated on `cfg(test)` so this applies
 // only to pod2's own test harness: a library has no business choosing the

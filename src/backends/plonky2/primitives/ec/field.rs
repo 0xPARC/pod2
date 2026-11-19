@@ -136,6 +136,33 @@ impl<
             .collect()
     }
 
+    fn witness_operation(&self) -> Option<plonky2::iop::generator::WitnessOperation> {
+        use std::any::TypeId;
+
+        use plonky2::field::{
+            extension::quintic::QuinticExtension, goldilocks_field::GoldilocksField,
+        };
+        if D != 2
+            || DEG != 5
+            || TypeId::of::<NNF>() != TypeId::of::<QuinticExtension<GoldilocksField>>()
+        {
+            return None;
+        }
+        let inputs = self
+            .numerator
+            .components
+            .iter()
+            .chain(self.denominator.components.iter())
+            .copied()
+            .collect::<Vec<_>>()
+            .try_into()
+            .ok()?;
+        Some(plonky2::iop::generator::WitnessOperation::QuinticQuotient {
+            inputs,
+            outputs: self.quotient.components.to_vec().try_into().ok()?,
+        })
+    }
+
     fn run_once(
         &self,
         witness: &PartitionWitness<F>,

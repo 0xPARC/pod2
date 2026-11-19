@@ -95,6 +95,25 @@ impl<F: RichField + Extendable<D>, const D: usize> SimpleGenerator<F, D> for Tab
             .collect()
     }
 
+    fn witness_operation(&self) -> Option<plonky2::iop::generator::WitnessOperation> {
+        use plonky2::iop::generator::WitnessOperation;
+        if D != 2 || !WitnessOperation::field_supported::<F>() {
+            return None;
+        }
+        let total = self
+            .entries
+            .iter()
+            .try_fold(0usize, |size, entry| size.checked_add(entry.len()))?;
+        u32::try_from(self.entries.len()).ok()?;
+        u32::try_from(total).ok()?;
+        u32::try_from(self.revealed_entry.len()).ok()?;
+        Some(WitnessOperation::TableLookup {
+            index: [self.index.low, self.index.high],
+            entries: self.entries.clone(),
+            outputs: self.revealed_entry.clone(),
+        })
+    }
+
     fn run_once(
         &self,
         witness: &PartitionWitness<F>,

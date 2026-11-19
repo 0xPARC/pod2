@@ -39,6 +39,14 @@ impl<F: RichField + Extendable<D>, const D: usize> SimpleGenerator<F, D>
         vec![self.if_zero, self.then_zero]
     }
 
+    fn witness_operation(&self) -> Option<plonky2::iop::generator::WitnessOperation> {
+        Some(plonky2::iop::generator::WitnessOperation::ConditionalZero {
+            if_zero: self.if_zero,
+            then_zero: self.then_zero,
+            quotient: self.quot,
+        })
+    }
+
     fn run_once(
         &self,
         witness: &PartitionWitness<F>,
@@ -331,6 +339,15 @@ impl<F: RichField + Extendable<D>, const D: usize> SimpleGenerator<F, D> for Low
 
     fn dependencies(&self) -> Vec<Target> {
         vec![self.integer]
+    }
+
+    fn witness_operation(&self) -> Option<plonky2::iop::generator::WitnessOperation> {
+        (self.n_log < 64).then_some(plonky2::iop::generator::WitnessOperation::LowHigh {
+            integer: self.integer,
+            low: self.low,
+            high: self.high,
+            low_bits: self.n_log as u32,
+        })
     }
 
     fn run_once(

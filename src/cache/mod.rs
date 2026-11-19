@@ -1,7 +1,7 @@
 #[cfg(feature = "disk_cache")]
 mod disk;
 #[cfg(feature = "disk_cache")]
-pub use disk::{get, CacheEntry};
+pub use disk::{get, get_transient, CacheEntry};
 
 #[cfg(feature = "mem_cache")]
 mod mem;
