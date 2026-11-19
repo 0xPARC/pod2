@@ -2005,7 +2005,7 @@ mod tests {
     use crate::lang::{
         frontend_ast::parse::parse_document,
         frontend_ast_validate::{validate, ParseMode},
-        parser::parse_podlang,
+        parser::parse_podlang_document,
     };
 
     /// Split one predicate with a throwaway cache and no cross-predicate name reservations.
@@ -2019,7 +2019,7 @@ mod tests {
     }
 
     fn parse_predicate(input: &str) -> CustomPredicateDef {
-        let parsed = parse_podlang(input).expect("Failed to parse");
+        let parsed = parse_podlang_document(input).expect("Failed to parse");
         let document = parse_document(parsed.into_iter().next().unwrap()).expect("Failed to parse");
 
         // Validate parsed predicates so wildcard calls carry their AST tags.

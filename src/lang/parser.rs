@@ -38,8 +38,13 @@ impl From<pest::error::Error<Rule>> for ParseError {
 }
 
 /// Parses a Podlang input string according to the grammar rules.
-pub fn parse_podlang(input: &str) -> Result<Pairs<'_, Rule>, ParseError> {
+pub fn parse_podlang_document(input: &str) -> Result<Pairs<'_, Rule>, ParseError> {
     let pairs = PodlangParser::parse(Rule::document, input)?;
+    Ok(pairs)
+}
+
+pub fn parse_podlang_literal_value(input: &str) -> Result<Pairs<'_, Rule>, ParseError> {
+    let pairs = PodlangParser::parse(Rule::literal_value, input)?;
     Ok(pairs)
 }
 

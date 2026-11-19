@@ -1055,9 +1055,7 @@ pub mod parse {
         }
     }
 
-    pub(super) fn parse_literal_value(
-        pair: Pair<Rule>,
-    ) -> Result<LiteralValue, parser::ParseError> {
+    pub fn parse_literal_value(pair: Pair<Rule>) -> Result<LiteralValue, parser::ParseError> {
         assert_eq!(pair.as_rule(), Rule::literal_value);
         let inner = pair.into_inner().next().unwrap();
 
@@ -1369,16 +1367,17 @@ mod tests {
     use pest::Parser as _;
 
     use super::*;
-    use crate::lang::parser::{self, parse_podlang, PodlangParser, Rule};
+    use crate::lang::parser::{self, parse_podlang_document, PodlangParser, Rule};
 
     /// Test that parsing and pretty-printing produces equivalent output
     fn test_roundtrip(input: &str) {
-        let parsed = parse_podlang(input).expect("Failed to parse input");
+        let parsed = parse_podlang_document(input).expect("Failed to parse input");
         let document_pair = parsed.into_iter().next().expect("No document pair");
         let mut ast = parse::parse_document(document_pair).expect("Failed to parse");
         let output = ast.to_string();
         // Parse the output to verify it's still valid
-        let reparsed = parse_podlang(&output).expect("Failed to parse pretty-printed output");
+        let reparsed =
+            parse_podlang_document(&output).expect("Failed to parse pretty-printed output");
         let reparsed_document_pair = reparsed
             .into_iter()
             .next()
@@ -1693,7 +1692,7 @@ mixed(a, b R, c, private: d, e R) = AND (
         let input = r#"REQUEST(
     Equal(A["data"], Empty())
 )"#;
-        let parsed = crate::lang::parser::parse_podlang(input);
+        let parsed = crate::lang::parser::parse_podlang_document(input);
         assert!(
             parsed.is_err(),
             "expected empty record literal `Empty()` to be rejected"
@@ -1742,7 +1741,7 @@ mixed(a, b R, c, private: d, e R) = AND (
     fn test_record_keyword_reserved() {
         // `record` may not appear as an identifier name.
         let input = r#"record record = (foo)"#;
-        let parsed = crate::lang::parser::parse_podlang(input);
+        let parsed = crate::lang::parser::parse_podlang_document(input);
         assert!(
             parsed.is_err(),
             "expected `record` to be rejected as an identifier"
@@ -1793,7 +1792,7 @@ REQUEST(
     Equal(D["tab"], "col1\tcol2")
 )"#;
 
-        let parsed = parse_podlang(input).expect("Failed to parse input");
+        let parsed = parse_podlang_document(input).expect("Failed to parse input");
         let document_pair = parsed.into_iter().next().expect("No document pair");
         let ast = parse::parse_document(document_pair).expect("Failed to parse");
 
@@ -1824,7 +1823,7 @@ REQUEST(
     my_pred(X, Y)
 )"#;
 
-        let parsed = parse_podlang(input).expect("Failed to parse input");
+        let parsed = parse_podlang_document(input).expect("Failed to parse input");
         let document_pair = parsed.into_iter().next().expect("No document pair");
         let ast = parse::parse_document(document_pair).expect("Failed to parse");
 
@@ -1858,7 +1857,8 @@ REQUEST(
     fn test_invalid_escape_sequences() {
         // Test invalid unicode codepoint - surrogate pair range
         let input = r#"REQUEST(Equal(A["key"], "test\uD800"))"#;
-        let parsed = crate::lang::parser::parse_podlang(input).expect("Grammar should accept this");
+        let parsed =
+            crate::lang::parser::parse_podlang_document(input).expect("Grammar should accept this");
         let result = parse::parse_document(parsed.into_iter().next().unwrap());
         assert!(result.is_err());
         assert!(matches!(
